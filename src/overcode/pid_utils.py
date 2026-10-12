@@ -1,68 +1,127 @@
 """
 PID file management utilities for Overcode.
 
-Provides common functions for checking process status via PID files,
-used by both the daemon and presence logger.
+Each overcode background process (monitor daemon, supervisor daemon, API
+server, presence logger) takes an exclusive flock on ``<name>.lock`` beside
+its ``<name>.pid`` and holds it for its whole life. The OS drops the lock the
+moment the process dies, however it dies (SIGKILL, ``os._exit``, a crash), so
+**the lock is the single source of truth** for "is it running":
 
-Uses file locking to prevent TOCTOU race conditions when multiple
-daemons try to start simultaneously.
+- lock held: the process is running; the PID file (written by the holder
+  after it took the lock) says which PID it has.
+- lock free: nothing is running, whatever the PID file says. A PID file left
+  behind by a dead process may name a PID the OS has since given to an
+  unrelated process; it is never trusted or signalled.
+
+Only when the lock cannot be consulted (no ``fcntl``, as on Windows, or no
+lock file, i.e. a process from a version that took no lock) do these helpers
+fall back to the PID file plus ``kill -0``.
 """
 
-import fcntl
 import os
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 
-def _read_pid_file(pid_file: Path) -> Optional[int]:
-    """Read a PID file and validate the process is alive.
+def _lock_path(pid_file: Path) -> Path:
+    return pid_file.with_suffix('.lock')
 
-    Args:
-        pid_file: Path to the PID file
 
-    Returns:
-        The PID if file exists and process is alive, None otherwise.
-    """
-    if not pid_file.exists():
-        return None
-
+def _read_pid(pid_file: Path) -> Optional[int]:
+    """The PID written in a PID file, or None if missing or unreadable."""
     try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)
-        return pid
-    except (ValueError, OSError, ProcessLookupError):
+        return int(pid_file.read_text().strip())
+    except (ValueError, OSError):
         return None
 
 
-def is_process_running(pid_file: Path) -> bool:
-    """Check if a process is running based on its PID file.
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except OSError:
+        return False
+
+
+def _lock_state(pid_file: Path) -> Optional[bool]:
+    """Whether the process lock for ``pid_file`` is held.
+
+    True if held (the process is running), False if free (it is not),
+    None if it cannot be told: no ``fcntl`` on this platform, or no lock
+    file (the process, if any, took no lock).
+    """
+    if fcntl is None:
+        return None
+    lock_file = _lock_path(pid_file)
+    try:
+        fd = os.open(str(lock_file), os.O_RDONLY)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        except OSError:
+            return None
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def is_daemon_lock_held(pid_file: Path) -> bool:
+    """True if the process lock for ``pid_file`` is held right now.
 
     Args:
-        pid_file: Path to the PID file
-
-    Returns:
-        True if PID file exists and process is alive, False otherwise.
+        pid_file: Path to the process's PID file (the lock file is its .lock sibling)
     """
-    return _read_pid_file(pid_file) is not None
+    return _lock_state(pid_file) is True
 
 
 def get_process_pid(pid_file: Path) -> Optional[int]:
-    """Get the PID from a PID file if the process is running.
+    """The PID of the running process, or None if it is not running.
 
-    Args:
-        pid_file: Path to the PID file
-
-    Returns:
-        The PID if process is running, None otherwise.
+    With a lock to consult, a free lock means not running, whatever PID the
+    file names (it may have been reused by an unrelated process).
     """
-    return _read_pid_file(pid_file)
+    if _lock_state(pid_file) is False:
+        return None
+    pid = _read_pid(pid_file)
+    if pid is None or not _pid_alive(pid):
+        return None
+    return pid
+
+
+def is_process_running(pid_file: Path) -> bool:
+    """True if the process behind ``pid_file`` is running.
+
+    Decided by its lock when there is one; otherwise by the PID file and
+    ``kill -0``.
+    """
+    state = _lock_state(pid_file)
+    if state is not None:
+        return state
+    return get_process_pid(pid_file) is not None
 
 
 def write_pid_file(pid_file: Path, pid: Optional[int] = None) -> None:
-    """Write a PID to a PID file.
+    """Write a PID to a PID file atomically (no reader sees it half written).
 
     Args:
         pid_file: Path to the PID file
@@ -71,133 +130,99 @@ def write_pid_file(pid_file: Path, pid: Optional[int] = None) -> None:
     if pid is None:
         pid = os.getpid()
     pid_file.parent.mkdir(parents=True, exist_ok=True)
-    pid_file.write_text(str(pid))
+    tmp = pid_file.with_name(f".{pid_file.name}.{os.getpid()}.tmp")
+    tmp.write_text(str(pid))
+    os.replace(tmp, pid_file)
 
 
-def remove_pid_file(pid_file: Path) -> None:
+def remove_pid_file(pid_file: Path, pid: Optional[int] = None) -> None:
     """Remove a PID file if it exists.
 
     Args:
         pid_file: Path to the PID file
+        pid: if given, remove it only while it still names this PID, so a
+            successor's fresh PID file is never deleted.
     """
+    if pid is not None and _read_pid(pid_file) != pid:
+        return
     try:
         pid_file.unlink()
     except FileNotFoundError:
         pass
 
 
+# Lock fds held for the life of this process, by lock file path. Keeping
+# them referenced keeps the locks; the OS releases them when the process exits.
+_held_lock_fds: Dict[str, int] = {}
+
+# How long acquire_daemon_lock keeps trying when the lock is busy. A
+# lock probe (is_process_running from a TUI) holds it for microseconds,
+# so a starting process must not mistake a probe for a running daemon.
+_ACQUIRE_ATTEMPTS = 3
+_ACQUIRE_RETRY_SECONDS = 0.05
+
+
 def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
-    """Atomically check if daemon is running and acquire the lock if not.
+    """Take this process's lock and record its PID, unless one is running.
 
-    Uses file locking to prevent TOCTOU race conditions when multiple
-    processes try to start the daemon simultaneously.
-
-    IMPORTANT: The lock is held for the daemon's entire lifetime. The lock
-    file descriptor is stored in a module-level variable and released
-    automatically when the process exits (normal or crash).
+    The lock is held for the rest of the process's life. Holding it proves
+    no other process for ``pid_file`` is alive, so the PID file is then
+    overwritten whatever it says: a PID left by a dead process may belong
+    to an unrelated process by now.
 
     Args:
         pid_file: Path to the PID file
 
     Returns:
         Tuple of (acquired, existing_pid):
-        - (True, None) if lock was acquired and PID file written
-        - (False, existing_pid) if another daemon is already running
+        - (True, None) if the lock was taken and the PID file written
+        - (False, existing_pid) if another process holds it (existing_pid
+          is None when its PID file cannot be read)
     """
-    global _held_lock_fd
-
     pid_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Use a separate lock file to avoid truncation issues
-    lock_file = pid_file.with_suffix('.lock')
+    if fcntl is None:
+        # No locks on this platform: the PID file and kill -0 are all there is.
+        existing = get_process_pid(pid_file)
+        if existing is not None and existing != os.getpid():
+            return False, existing
+        write_pid_file(pid_file)
+        return True, None
 
+    lock_file = _lock_path(pid_file)
     try:
-        # Open lock file for writing (creates if doesn't exist)
         fd = os.open(str(lock_file), os.O_WRONLY | os.O_CREAT, 0o644)
-
-        try:
-            # Try to acquire exclusive lock (non-blocking)
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-            # We have the lock - now check if another daemon is running
-            # (handles case where previous daemon crashed without releasing lock)
-            if pid_file.exists():
-                try:
-                    existing_pid = int(pid_file.read_text().strip())
-                    # Check if process is still alive
-                    os.kill(existing_pid, 0)
-                    # Process exists - another daemon is running
-                    # This shouldn't happen if locking works, but check anyway
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                    os.close(fd)
-                    return False, existing_pid
-                except (ValueError, OSError, ProcessLookupError):
-                    # PID file exists but process is dead - clean up
-                    pass
-
-            # Write our PID
-            current_pid = os.getpid()
-            pid_file.write_text(str(current_pid))
-
-            # IMPORTANT: Keep the lock held for the daemon's entire lifetime!
-            # The OS will automatically release it when the process exits.
-            # Store fd in module-level variable to prevent garbage collection.
-            _held_lock_fd = fd
-
-            return True, None
-
-        except OSError:
-            # Lock acquisition failed (another process has it)
-            os.close(fd)
-            # Read existing PID if available
-            if pid_file.exists():
-                try:
-                    existing_pid = int(pid_file.read_text().strip())
-                    return False, existing_pid
-                except (ValueError, OSError):
-                    pass
-            return False, None
-
     except OSError:
-        # Could not open lock file
         return False, None
 
-
-# Module-level variable to hold the lock file descriptor.
-# This prevents garbage collection from closing the fd and releasing the lock.
-_held_lock_fd: Optional[int] = None
-
-
-def is_daemon_lock_held(pid_file: Path) -> bool:
-    """Check if a daemon lock is currently held (i.e., daemon is actively running).
-
-    Probes the fcntl lock file that the daemon holds for its entire lifetime.
-    More reliable than pgrep: immune to zombie processes, PID reuse, and
-    substring false matches.
-
-    Args:
-        pid_file: Path to the daemon's PID file (lock file is .lock suffix)
-
-    Returns:
-        True if the lock is held (daemon is running), False otherwise.
-    """
-    lock_file = pid_file.with_suffix('.lock')
-    if not lock_file.exists():
-        return False
-    try:
-        fd = os.open(str(lock_file), os.O_RDONLY)
+    for attempt in range(_ACQUIRE_ATTEMPTS):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # We got the lock — no daemon holds it
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            return False
+            break
         except OSError:
-            # Lock is held by another process = daemon is running
-            return True
-        finally:
-            os.close(fd)
+            if attempt + 1 == _ACQUIRE_ATTEMPTS:
+                os.close(fd)
+                return False, get_process_pid(pid_file)
+            time.sleep(_ACQUIRE_RETRY_SECONDS)
+
+    try:
+        write_pid_file(pid_file)
     except OSError:
-        return False
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        return False, None
+    _held_lock_fds[str(lock_file)] = fd
+    return True, None
+
+
+def release_daemon_lock(pid_file: Path) -> None:
+    """Release a lock this process took with acquire_daemon_lock (tests, mostly)."""
+    fd = _held_lock_fds.pop(str(_lock_path(pid_file)), None)
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def spawn_daemon(args: List[str]) -> Optional[int]:
@@ -229,7 +254,12 @@ def spawn_daemon(args: List[str]) -> Optional[int]:
 
 
 def stop_process(pid_file: Path, timeout: float = 5.0) -> bool:
-    """Stop a process by reading its PID file and sending SIGTERM.
+    """Stop the process behind a PID file: SIGTERM, then SIGKILL after ``timeout``.
+
+    A PID is only signalled while the process's lock is held (or, where
+    there is no lock to consult, while the PID is alive). A free lock means
+    the PID file is stale and its PID may belong to an unrelated process:
+    the file is removed and nothing is signalled.
 
     Args:
         pid_file: Path to the PID file
@@ -238,36 +268,38 @@ def stop_process(pid_file: Path, timeout: float = 5.0) -> bool:
     Returns:
         True if process was stopped, False if it wasn't running.
     """
-    import time
+    locked = _lock_state(pid_file)
+    pid = _read_pid(pid_file)
 
-    if not pid_file.exists():
+    if locked is False or pid is None or not _pid_alive(pid):
+        if locked is not True:
+            remove_pid_file(pid_file)  # stale
         return False
+
+    def running() -> bool:
+        if locked is True and _lock_state(pid_file) is False:
+            return False  # lock dropped: it has exited (or is exiting)
+        return _pid_alive(pid)
 
     try:
-        pid = int(pid_file.read_text().strip())
         os.kill(pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        remove_pid_file(pid_file, pid)
+        return False
 
-        # Wait for process to terminate
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                os.kill(pid, 0)
-                time.sleep(0.1)
-            except (OSError, ProcessLookupError):
-                # Process terminated
-                remove_pid_file(pid_file)
-                return True
+    start = time.time()
+    while time.time() - start < timeout:
+        if not running():
+            remove_pid_file(pid_file, pid)
+            return True
+        time.sleep(0.1)
 
-        # Process didn't terminate, try SIGKILL
+    # It didn't terminate. Re-check before SIGKILL so a process that has
+    # since let go of its lock (and a PID since reused) is never killed.
+    if running():
         try:
             os.kill(pid, signal.SIGKILL)
-            remove_pid_file(pid_file)
-            return True
         except (OSError, ProcessLookupError):
-            remove_pid_file(pid_file)
-            return True
-
-    except (ValueError, OSError, ProcessLookupError):
-        # PID file invalid or process not running
-        remove_pid_file(pid_file)
-        return False
+            pass
+    remove_pid_file(pid_file, pid)
+    return True

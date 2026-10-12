@@ -58,16 +58,22 @@ def main():
     if control_needs_key():
         log(session, f"WARNING: {CONTROL_NEEDS_KEY}")
 
+    from .settings import get_web_server_pid_path
+    from .pid_utils import acquire_daemon_lock
+
+    # The lock (held until this process exits) is what says a server is
+    # running; the PID file is written once it is held.
+    acquired, existing_pid = acquire_daemon_lock(get_web_server_pid_path(session))
+    if not acquired:
+        log(session, f"API server already running (PID {existing_pid}); exiting")
+        sys.exit(1)
+
     try:
-        from .settings import get_web_server_pid_path, get_web_server_port_path
-        from .pid_utils import write_pid_file
+        from .settings import get_web_server_port_path
 
         pid_path = get_web_server_pid_path(session)
         port_path = get_web_server_port_path(session)
-
-        # Write PID file
-        write_pid_file(pid_path)
-        log(session, f"Wrote PID file: {pid_path}")
+        log(session, f"Holding lock; wrote PID file: {pid_path}")
 
         # Write port file so TUI can find the URL
         port_path.write_text(str(port))

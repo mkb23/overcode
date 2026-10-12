@@ -38,7 +38,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .pid_utils import is_process_running, get_process_pid, write_pid_file, remove_pid_file
+from .pid_utils import (
+    acquire_daemon_lock,
+    get_process_pid,
+    is_process_running,
+    remove_pid_file,
+)
 
 # Check for macOS-specific dependencies
 try:
@@ -72,16 +77,6 @@ def is_presence_running() -> bool:
 def get_presence_pid() -> Optional[int]:
     """Get the presence logger PID if running, None otherwise."""
     return get_process_pid(PRESENCE_PID_FILE)
-
-
-def _write_pid_file() -> None:
-    """Write current PID to file."""
-    write_pid_file(PRESENCE_PID_FILE)
-
-
-def _remove_pid_file() -> None:
-    """Remove PID file."""
-    remove_pid_file(PRESENCE_PID_FILE)
 
 
 def default_log_path() -> str:
@@ -533,14 +528,11 @@ def main() -> int:
         print("Sleep detection and TUI heartbeat still work.")
         print()
 
-    # Check if already running
-    if is_presence_running():
-        pid = get_presence_pid()
+    # Take the lock (held until exit) and write the PID file, unless running
+    acquired, pid = acquire_daemon_lock(PRESENCE_PID_FILE)
+    if not acquired:
         print(f"Presence logger already running (PID: {pid})")
         return 1
-
-    # Write PID file
-    _write_pid_file()
 
     logger = PresenceLogger()
     logger.start()
@@ -561,7 +553,7 @@ def main() -> int:
         print("\nStopping logger...")
         logger.stop()
     finally:
-        _remove_pid_file()
+        remove_pid_file(PRESENCE_PID_FILE, os.getpid())
 
     return 0
 

@@ -1712,6 +1712,12 @@ class MonitorDaemon:
         """Socket thread, each second while the main loop has not beaten for ``age`` s."""
         if age >= WATCHDOG_EXIT_SECONDS:
             self.log.error(f"Main loop stuck {age:.0f}s after a wake-up signal; exiting for a restart")
+            # os._exit skips the finally that removes it. The lock is what
+            # says "running", but don't leave a PID that may get reused.
+            try:
+                remove_pid_file(self.pid_path, os.getpid())
+            except Exception:
+                pass
             os._exit(1)
         # Signal again every 30 s: one signal can land outside the sleep
         last = self._stall_signalled_at

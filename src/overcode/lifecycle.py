@@ -139,11 +139,9 @@ def ensure_monitor_daemon(tmux_session: str) -> Optional[bool]:
     """
     import sys
     from .monitor_daemon import is_monitor_daemon_running
-    from .pid_utils import is_daemon_lock_held, spawn_daemon
-    from .settings import get_monitor_daemon_pid_path
+    from .pid_utils import spawn_daemon
 
-    if (is_daemon_lock_held(get_monitor_daemon_pid_path(tmux_session))
-            or is_monitor_daemon_running(tmux_session)):
+    if is_monitor_daemon_running(tmux_session):  # the daemon's lock decides
         return None
     pid = spawn_daemon([sys.executable, "-m", "overcode.monitor_daemon",
                         "--session", tmux_session])

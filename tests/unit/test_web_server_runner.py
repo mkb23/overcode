@@ -72,7 +72,7 @@ class TestMain:
 
         with patch.object(sys, "argv", test_args):
             with patch("overcode.settings.get_session_dir", return_value=Path("/tmp/test")):
-                with patch("overcode.pid_utils.write_pid_file"):
+                with patch("overcode.pid_utils.acquire_daemon_lock", return_value=(True, None)):
                     with patch("overcode.settings.get_web_server_pid_path",
                                return_value=MagicMock()):
                         with patch("overcode.settings.get_web_server_port_path") as mock_port_path:
@@ -97,8 +97,8 @@ class TestMain:
 
         with patch.object(sys, "argv", test_args):
             with patch("overcode.settings.get_session_dir", return_value=Path("/tmp/test")):
-                with patch("overcode.pid_utils.write_pid_file",
-                           side_effect=Exception("write failed")):
+                mock_port_path.write_text.side_effect = Exception("write failed")
+                with patch("overcode.pid_utils.acquire_daemon_lock", return_value=(True, None)):
                     with patch("overcode.settings.get_web_server_pid_path",
                                return_value=mock_pid_path):
                         with patch("overcode.settings.get_web_server_port_path",
@@ -119,7 +119,7 @@ class TestSecurityGuards:
         with patch.object(sys, "argv", test_args), \
              patch("overcode.web_server.get_web_api_key", return_value=None), \
              patch("overcode.web_server_runner.log") as mock_log, \
-             patch("overcode.pid_utils.write_pid_file") as mock_write, \
+             patch("overcode.pid_utils.acquire_daemon_lock") as mock_write, \
              patch("overcode.web_server_runner.HTTPServer") as mock_server_cls:
             with pytest.raises(SystemExit) as exc:
                 main()
@@ -136,7 +136,7 @@ class TestSecurityGuards:
         with patch.object(sys, "argv", test_args), \
              patch("overcode.web_server.get_web_api_key", return_value="k"), \
              patch("overcode.web_server_runner.log"), \
-             patch("overcode.pid_utils.write_pid_file"), \
+             patch("overcode.pid_utils.acquire_daemon_lock", return_value=(True, None)), \
              patch("overcode.settings.get_web_server_pid_path", return_value=MagicMock()), \
              patch("overcode.settings.get_web_server_port_path", return_value=MagicMock()), \
              patch("signal.signal"), \
@@ -153,10 +153,29 @@ class TestSecurityGuards:
              patch("overcode.web_server.get_web_api_key", return_value=None), \
              patch("overcode.web_server.get_web_allow_control", return_value=True), \
              patch("overcode.web_server_runner.log") as mock_log, \
-             patch("overcode.pid_utils.write_pid_file", side_effect=Exception("stop here")), \
+             patch("overcode.pid_utils.acquire_daemon_lock", return_value=(False, 4242)), \
              patch("overcode.settings.get_web_server_pid_path", return_value=MagicMock()), \
              patch("overcode.settings.get_web_server_port_path", return_value=MagicMock()):
             with pytest.raises(SystemExit):
                 main()
         assert any("WARNING" in c.args[1] and "api_key" in c.args[1]
                    for c in mock_log.call_args_list)
+
+
+class TestLock:
+
+    def test_exits_without_touching_files_when_another_server_holds_the_lock(self):
+        test_args = ["prog", "--session", "test-session", "--port", "9999"]
+        pid_path, port_path = MagicMock(), MagicMock()
+        with patch.object(sys, "argv", test_args), \
+             patch("overcode.web_server_runner.log"), \
+             patch("overcode.pid_utils.acquire_daemon_lock", return_value=(False, 4242)), \
+             patch("overcode.settings.get_web_server_pid_path", return_value=pid_path), \
+             patch("overcode.settings.get_web_server_port_path", return_value=port_path), \
+             patch("overcode.web_server_runner.HTTPServer") as mock_server_cls:
+            with pytest.raises(SystemExit) as exc:
+                main()
+        assert exc.value.code == 1
+        mock_server_cls.assert_not_called()
+        pid_path.unlink.assert_not_called()
+        port_path.write_text.assert_not_called()

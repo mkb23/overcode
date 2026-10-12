@@ -38,7 +38,7 @@ from .engine_socket import EngineClient
 from .monitor_daemon import (
     is_monitor_daemon_running,
 )
-from .pid_utils import is_daemon_lock_held, spawn_daemon
+from .pid_utils import spawn_daemon
 from .tmux_utils import _build_tmux_cmd as _tmux_base
 from .tmux_utils import (
     query_pane_attended,
@@ -3778,13 +3778,12 @@ class SupervisorTUI(
         Called automatically on TUI mount to ensure continuous monitoring.
         Also auto-restarts if the running daemon is an old version (#386).
         """
-        from .settings import get_monitor_daemon_pid_path, DAEMON_VERSION
+        from .settings import DAEMON_VERSION
         from .monitor_daemon import stop_monitor_daemon
 
-        running = (
-            is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))
-            or is_monitor_daemon_running(self.tmux_session)
-        )
+        # Decided by the daemon's lock, not the PID file: a stale PID file
+        # may name a reused PID (pid_utils).
+        running = is_monitor_daemon_running(self.tmux_session)
 
         if running:
             # Check for version mismatch (#386)
