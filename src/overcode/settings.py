@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, List, Optional, Set
 
-import yaml
 
 from . import paths
 from .pricing import ModelPricing, MODEL_PRICING
@@ -330,126 +329,128 @@ class UserConfig:
 
     @classmethod
     def load(cls) -> "UserConfig":
-        """Load configuration from config file."""
-        config_path = PATHS.config_file
+        """The settings in config.yaml now (config's shared, stat-gated parse)."""
+        from .config import _cached_config
+        return cls.from_dict(_cached_config())
 
-        if not config_path.exists():
+    @classmethod
+    def from_dict(cls, data) -> "UserConfig":
+        """Settings from a parsed config.yaml mapping; defaults for anything else."""
+        if not isinstance(data, dict):
             return cls()
 
-        try:
-            with open(config_path) as f:
-                data = yaml.safe_load(f)
-                if not isinstance(data, dict):
-                    return cls()
+        # Load pricing config (nested under 'pricing' key)
+        pricing = data.get("pricing", {})
+        if not isinstance(pricing, dict):
+            pricing = {}
 
-                # Load pricing config (nested under 'pricing' key)
-                pricing = data.get("pricing", {})
+        # Parse per-model pricing overrides
+        model_pricing_raw = data.get("model_pricing", {})
+        model_pricing_parsed: dict[str, ModelPricing] = {}
+        if isinstance(model_pricing_raw, dict):
+            for key, vals in model_pricing_raw.items():
+                if isinstance(vals, dict):
+                    model_pricing_parsed[key] = ModelPricing(
+                        input=vals.get("input", 3.0),
+                        output=vals.get("output", 15.0),
+                        cache_write=vals.get("cache_write", 3.75),
+                        cache_read=vals.get("cache_read", 0.30),
+                    )
 
-                # Parse per-model pricing overrides
-                model_pricing_raw = data.get("model_pricing", {})
-                model_pricing_parsed: dict[str, ModelPricing] = {}
-                if isinstance(model_pricing_raw, dict):
-                    for key, vals in model_pricing_raw.items():
-                        if isinstance(vals, dict):
-                            model_pricing_parsed[key] = ModelPricing(
-                                input=vals.get("input", 3.0),
-                                output=vals.get("output", 15.0),
-                                cache_write=vals.get("cache_write", 3.75),
-                                cache_read=vals.get("cache_read", 0.30),
-                            )
+        # Parse bedrock discount (flat + optional per-model overrides)
+        bedrock_raw = data.get("bedrock", {})
+        bedrock_discount = 0.0
+        bedrock_model_discount: dict[str, float] = {}
+        if isinstance(bedrock_raw, dict):
+            bedrock_discount = _clamp_fraction(bedrock_raw.get("discount", 0.0))
+            md_raw = bedrock_raw.get("model_discount", {})
+            if isinstance(md_raw, dict):
+                bedrock_model_discount = {
+                    str(k).lower(): _clamp_fraction(v) for k, v in md_raw.items()
+                }
 
-                # Parse bedrock discount (flat + optional per-model overrides)
-                bedrock_raw = data.get("bedrock", {})
-                bedrock_discount = 0.0
-                bedrock_model_discount: dict[str, float] = {}
-                if isinstance(bedrock_raw, dict):
-                    bedrock_discount = _clamp_fraction(bedrock_raw.get("discount", 0.0))
-                    md_raw = bedrock_raw.get("model_discount", {})
-                    if isinstance(md_raw, dict):
-                        bedrock_model_discount = {
-                            str(k).lower(): _clamp_fraction(v) for k, v in md_raw.items()
-                        }
+        # Parse skill emoji overrides (#252)
+        skill_emoji_raw = data.get("skill_emoji", {})
+        skill_emoji_parsed = (
+            {str(k): str(v) for k, v in skill_emoji_raw.items()}
+            if isinstance(skill_emoji_raw, dict) else {}
+        )
 
-                # Parse skill emoji overrides (#252)
-                skill_emoji_raw = data.get("skill_emoji", {})
-                skill_emoji_parsed = (
-                    {str(k): str(v) for k, v in skill_emoji_raw.items()}
-                    if isinstance(skill_emoji_raw, dict) else {}
-                )
+        # Parse wrapper emoji overrides (#437)
+        wrapper_emoji_raw = data.get("wrapper_emoji", {})
+        wrapper_emoji_parsed = (
+            {str(k): str(v) for k, v in wrapper_emoji_raw.items()}
+            if isinstance(wrapper_emoji_raw, dict) else {}
+        )
 
-                # Parse wrapper emoji overrides (#437)
-                wrapper_emoji_raw = data.get("wrapper_emoji", {})
-                wrapper_emoji_parsed = (
-                    {str(k): str(v) for k, v in wrapper_emoji_raw.items()}
-                    if isinstance(wrapper_emoji_raw, dict) else {}
-                )
+        # Parse burn-rate color thresholds (#174). Accepts either
+        #   burn_thresholds: {green: 1.0, yellow: 10.0, orange: 100.0}
+        # or a list of {color: ..., max_usd_per_hour: ...} entries.
+        # The fallback list is set in the dataclass default.
+        burn_raw = data.get("burn_thresholds")
+        burn_parsed = None
+        if isinstance(burn_raw, dict):
+            pairs = []
+            for color, cutoff in burn_raw.items():
+                try:
+                    pairs.append((str(color), float(cutoff)))
+                except (TypeError, ValueError):
+                    continue
+            pairs.sort(key=lambda p: p[1])
+            if pairs:
+                burn_parsed = pairs
+        elif isinstance(burn_raw, list):
+            pairs = []
+            for entry in burn_raw:
+                if not isinstance(entry, dict):
+                    continue
+                color = entry.get("color")
+                cutoff = entry.get("max_usd_per_hour", entry.get("cutoff"))
+                if color is None or cutoff is None:
+                    continue
+                try:
+                    pairs.append((str(color), float(cutoff)))
+                except (TypeError, ValueError):
+                    continue
+            pairs.sort(key=lambda p: p[1])
+            if pairs:
+                burn_parsed = pairs
 
-                # Parse burn-rate color thresholds (#174). Accepts either
-                #   burn_thresholds: {green: 1.0, yellow: 10.0, orange: 100.0}
-                # or a list of {color: ..., max_usd_per_hour: ...} entries.
-                # The fallback list is set in the dataclass default.
-                burn_raw = data.get("burn_thresholds")
-                burn_parsed = None
-                if isinstance(burn_raw, dict):
-                    pairs = []
-                    for color, cutoff in burn_raw.items():
-                        try:
-                            pairs.append((str(color), float(cutoff)))
-                        except (TypeError, ValueError):
-                            continue
-                    pairs.sort(key=lambda p: p[1])
-                    if pairs:
-                        burn_parsed = pairs
-                elif isinstance(burn_raw, list):
-                    pairs = []
-                    for entry in burn_raw:
-                        if not isinstance(entry, dict):
-                            continue
-                        color = entry.get("color")
-                        cutoff = entry.get("max_usd_per_hour", entry.get("cutoff"))
-                        if color is None or cutoff is None:
-                            continue
-                        try:
-                            pairs.append((str(color), float(cutoff)))
-                        except (TypeError, ValueError):
-                            continue
-                    pairs.sort(key=lambda p: p[1])
-                    if pairs:
-                        burn_parsed = pairs
-
-                kwargs = dict(
-                    default_standing_instructions=data.get(
-                        "default_standing_instructions", ""
-                    ),
-                    tmux_session=data.get("tmux_session", "agents"),
-                    price_input=pricing.get("input", 3.0),
-                    price_output=pricing.get("output", 15.0),
-                    price_cache_write=pricing.get("cache_write", 3.75),
-                    price_cache_read=pricing.get("cache_read", 0.30),
-                    model_pricing=model_pricing_parsed,
-                    bedrock_discount=bedrock_discount,
-                    bedrock_model_discount=bedrock_model_discount,
-                    skill_emoji=skill_emoji_parsed,
-                    wrapper_emoji=wrapper_emoji_parsed,
-                )
-                if burn_parsed is not None:
-                    kwargs["burn_thresholds"] = burn_parsed
-                from .energy import EnergyConfig
-                kwargs["energy"] = EnergyConfig.from_dict(data.get("energy"))
-                return cls(**kwargs)
-        except (yaml.YAMLError, IOError):
-            return cls()
+        kwargs = dict(
+            default_standing_instructions=data.get(
+                "default_standing_instructions", ""
+            ),
+            tmux_session=data.get("tmux_session", "agents"),
+            price_input=pricing.get("input", 3.0),
+            price_output=pricing.get("output", 15.0),
+            price_cache_write=pricing.get("cache_write", 3.75),
+            price_cache_read=pricing.get("cache_read", 0.30),
+            model_pricing=model_pricing_parsed,
+            bedrock_discount=bedrock_discount,
+            bedrock_model_discount=bedrock_model_discount,
+            skill_emoji=skill_emoji_parsed,
+            wrapper_emoji=wrapper_emoji_parsed,
+        )
+        if burn_parsed is not None:
+            kwargs["burn_thresholds"] = burn_parsed
+        from .energy import EnergyConfig
+        kwargs["energy"] = EnergyConfig.from_dict(data.get("energy"))
+        return cls(**kwargs)
 
 
-# Cached user config (lazy loaded)
+# The UserConfig built from config's shared parse, and that parse: rebuilt
+# when config.yaml changes (a new parse is a new object), never otherwise.
 _user_config: Optional[UserConfig] = None
+_user_config_source: Optional[dict] = None
 
 
 def get_user_config() -> UserConfig:
-    """Get the user configuration (cached)."""
-    global _user_config
-    if _user_config is None:
-        _user_config = UserConfig.load()
+    """The user configuration, current with config.yaml (one stat per call)."""
+    global _user_config, _user_config_source
+    from .config import _cached_config
+    data = _cached_config()
+    if _user_config is None or data is not _user_config_source:
+        _user_config, _user_config_source = UserConfig.from_dict(data), data
     return _user_config
 
 

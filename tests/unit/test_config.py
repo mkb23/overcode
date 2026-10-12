@@ -871,3 +871,53 @@ class TestSaveKeepsComments:
             cfg.save_config(loaded)
         assert path.read_text() == self.TEXT  # untouched
         assert not list(tmp_path.glob(".config.*.tmp"))
+
+
+class TestOneStatGatedLoader:
+    """config.yaml has one parse per change, shared by every reader (no TTL)."""
+
+    @staticmethod
+    def _write(path, text, mtime_ns):
+        import os
+        path.write_text(text)
+        os.utime(path, ns=(mtime_ns, mtime_ns))  # a settled stamp
+
+    def test_an_edit_is_seen_on_the_next_read(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+        self._write(cfg, "tmux_session: one\n", 1_000_000_000_000_000_000)
+        assert config.load_config()["tmux_session"] == "one"
+        self._write(cfg, "tmux_session: two\n", 1_000_000_001_000_000_000)
+        assert config.load_config()["tmux_session"] == "two"
+
+    def test_unchanged_file_is_parsed_once(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+        self._write(cfg, "tmux_session: one\n", 1_000_000_000_000_000_000)
+        assert config._cached_config() is config._cached_config()
+
+    def test_follows_overcode_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tmux_session: here\n")
+        assert config.config_path() == tmp_path / "config.yaml"
+        assert config.load_config()["tmux_session"] == "here"
+
+    def test_user_config_follows_edits(self, tmp_path, monkeypatch):
+        """A long-lived daemon sees a pricing / emoji edit without a restart."""
+        from overcode import settings
+        cfg = tmp_path / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+        self._write(cfg, "skill_emoji: {a: X}\n", 1_000_000_000_000_000_000)
+        first = settings.get_user_config()
+        assert first.skill_emoji == {"a": "X"}
+        assert settings.get_user_config() is first
+        self._write(cfg, "skill_emoji: {a: Y}\npricing: {input: 9.0}\n",
+                    1_000_000_001_000_000_000)
+        second = settings.get_user_config()
+        assert second.skill_emoji == {"a": "Y"}
+        assert second.price_input == 9.0
+
+    def test_user_config_without_a_file_is_defaults(self, tmp_path, monkeypatch):
+        from overcode import settings
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "missing.yaml")
+        assert settings.get_user_config() == settings.UserConfig()

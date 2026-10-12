@@ -14,12 +14,13 @@ import os
 import re
 import socket
 import tempfile
-import time
+import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import yaml
 
 from . import paths
+from .stat_gate import FileSignature, is_settled, stat_signature
 
 
 # A test points this at its own file; None means paths.config_file().
@@ -30,19 +31,23 @@ def config_path() -> Path:
     """The config.yaml this process reads and writes."""
     return CONFIG_PATH if CONFIG_PATH is not None else paths.config_file()
 
-# TTL-based config cache to avoid file I/O + YAML parse on every access
-_config_cache: dict | None = None
-_config_cache_time: float = 0.0
-_config_cache_mtime: float = 0.0
-_CONFIG_CACHE_TTL: float = 5.0  # seconds
+
+# The one parse of config.yaml every reader in the process shares (this
+# module's getters, load_config's copies and settings.UserConfig), with the
+# (path, file signature) it came from. Each read costs one os.stat; the
+# file is parsed again only when its signature moves, so a long-lived
+# daemon sees an edit on its next read. No TTL.
+_config_lock = threading.Lock()
+_config_cache: Optional[dict] = None
+_config_cache_key: Optional[Tuple[Path, Optional[FileSignature]]] = None
 
 
 def _clear_config_cache() -> None:
-    """Clear the config cache. Useful for testing."""
-    global _config_cache, _config_cache_time, _config_cache_mtime
-    _config_cache = None
-    _config_cache_time = 0.0
-    _config_cache_mtime = 0.0
+    """Forget the parsed config; the next read parses the file."""
+    global _config_cache, _config_cache_key
+    with _config_lock:
+        _config_cache = None
+        _config_cache_key = None
 
 
 _TOP_LEVEL_KEY = re.compile(r"^([^\s#][^:]*):")
@@ -117,7 +122,6 @@ def save_config(config: dict) -> None:
     Only the top-level entries that changed are rewritten, and the file is
     replaced atomically, so a crash never leaves a half-written config.
     """
-    global _config_cache, _config_cache_time, _config_cache_mtime
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -138,9 +142,8 @@ def save_config(config: dict) -> None:
         except OSError:
             pass
         raise
-    # Invalidate cache so next read picks up the write
-    _config_cache = None
-    _config_cache_time = 0.0
+    # The rename moved the signature already; this only saves the stat
+    _clear_config_cache()
 
 
 def load_config() -> dict:
@@ -151,37 +154,40 @@ def load_config() -> dict:
     return copy.deepcopy(_cached_config())
 
 
-def _cached_config() -> dict:
-    """The parsed config, shared: read-only. A TTL + mtime cache keeps it cheap."""
-    global _config_cache, _config_cache_time, _config_cache_mtime
-
-    now = time.monotonic()
-    if _config_cache is not None and (now - _config_cache_time) < _CONFIG_CACHE_TTL:
-        return _config_cache
-
-    path = config_path()
-    if not path.exists():
-        _config_cache = {}
-        _config_cache_time = now
-        return _config_cache
-
+def _read_config(path: Path) -> Tuple[Optional[FileSignature], dict]:
+    """(signature of the bytes parsed, parsed mapping); {} when missing or invalid."""
     try:
-        mtime = path.stat().st_mtime
-        # If file hasn't changed since last parse, reuse cached result
-        if _config_cache is not None and mtime == _config_cache_mtime:
-            _config_cache_time = now
-            return _config_cache
-
         with open(path) as f:
-            config = yaml.safe_load(f)
-            _config_cache = config if isinstance(config, dict) else {}
-            _config_cache_time = now
-            _config_cache_mtime = mtime
+            sig = FileSignature.of(os.fstat(f.fileno()))
+            try:
+                data = yaml.safe_load(f)
+            except yaml.YAMLError:
+                data = None
+    except OSError:
+        return None, {}
+    return sig, data if isinstance(data, dict) else {}
+
+
+def _cached_config() -> dict:
+    """The parsed config, shared by every reader: treat it as read-only.
+
+    One os.stat per call; a parse only when the file's signature (or the
+    config path) changed. A parse of a file written in the last instant is
+    returned but not remembered (stat_gate.is_settled), so two quick
+    same-size writes cannot leave a stale parse behind.
+    """
+    global _config_cache, _config_cache_key
+    path = config_path()
+    sig = stat_signature(path)
+    with _config_lock:
+        if _config_cache is not None and _config_cache_key == (path, sig):
             return _config_cache
-    except (yaml.YAMLError, IOError):
-        _config_cache = {}
-        _config_cache_time = now
-        return _config_cache
+        read_sig, data = _read_config(path)
+        if read_sig is None or is_settled(read_sig):
+            _config_cache, _config_cache_key = data, (path, read_sig)
+        else:
+            _config_cache, _config_cache_key = None, None
+        return data
 
 
 def _get_config_value(key_path: str, default=None):

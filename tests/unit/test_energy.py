@@ -6,7 +6,7 @@ from GPUs x watts x PUE / throughput, model-name rules that pick a size class,
 config.yaml overrides, and the watts display.
 """
 
-from unittest.mock import PropertyMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -81,7 +81,7 @@ class TestEstimate:
 
         cfg = settings.UserConfig()
         cfg.energy = EnergyConfig(pue=2.4)
-        monkeypatch.setattr(settings, "_user_config", cfg)
+        monkeypatch.setattr(settings, "get_user_config", lambda: cfg)
         doubled = estimate_energy_joules("claude-opus-5", 0, 1000)
         assert doubled == pytest.approx(2 * estimate_energy_joules(
             "claude-opus-5", 0, 1000, config=EnergyConfig()))
@@ -150,23 +150,23 @@ class TestConfig:
         assert EnergyConfig.from_dict({"default_class": "bogus"}).default_class == "medium"
 
     def test_loaded_from_config_yaml(self, tmp_path):
-        from overcode.settings import PATHS, UserConfig
+        from overcode import config
+        from overcode.settings import UserConfig
 
         cfg_file = tmp_path / "config.yaml"
         cfg_file.write_text("energy:\n  pue: 1.4\n  models:\n    opus: medium\n")
-        with patch.object(type(PATHS), "config_file", new_callable=PropertyMock,
-                          return_value=cfg_file):
+        with patch.object(config, "CONFIG_PATH", cfg_file):
             cfg = UserConfig.load()
         assert cfg.energy.pue == 1.4
         assert cfg.energy.profile_for("claude-opus-5") == DEFAULT_CLASSES["medium"]
 
     def test_config_yaml_without_energy_gets_defaults(self, tmp_path):
-        from overcode.settings import PATHS, UserConfig
+        from overcode import config
+        from overcode.settings import UserConfig
 
         cfg_file = tmp_path / "config.yaml"
         cfg_file.write_text("tmux_session: agents\n")
-        with patch.object(type(PATHS), "config_file", new_callable=PropertyMock,
-                          return_value=cfg_file):
+        with patch.object(config, "CONFIG_PATH", cfg_file):
             assert UserConfig.load().energy == EnergyConfig()
 
 

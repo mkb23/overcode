@@ -621,7 +621,7 @@ class TestRenderBurnRate:
         from overcode.settings import UserConfig
         fake = UserConfig()
         fake.burn_thresholds = [("orange", 100.0)]
-        monkeypatch.setattr(settings, "_user_config", fake)
+        monkeypatch.setattr(settings, "get_user_config", lambda: fake)
         assert burn_color_for_rate(50.0) == "orange1"
 
     def test_color_ramp_honors_yaml_overrides(self, monkeypatch):
@@ -629,7 +629,7 @@ class TestRenderBurnRate:
         from overcode.settings import UserConfig
         fake = UserConfig()
         fake.burn_thresholds = [("green", 5.0), ("red", 50.0)]
-        monkeypatch.setattr(settings, "_user_config", fake)
+        monkeypatch.setattr(settings, "get_user_config", lambda: fake)
         assert burn_color_for_rate(3.0) == "green"
         assert burn_color_for_rate(10.0) == "red"
         assert burn_color_for_rate(100.0) == "red"

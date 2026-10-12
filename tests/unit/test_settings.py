@@ -367,8 +367,8 @@ class TestBedrockDiscount:
         assert mp.input == 5.0  # unchanged
 
     def test_discount_loaded_from_yaml(self, tmp_path):
-        from unittest.mock import PropertyMock
-        from overcode.settings import UserConfig, PATHS
+        from overcode import config
+        from overcode.settings import UserConfig
         cfg_file = tmp_path / "config.yaml"
         cfg_file.write_text(
             "bedrock:\n"
@@ -376,8 +376,7 @@ class TestBedrockDiscount:
             "  model_discount:\n"
             "    opus: 0.2\n"
         )
-        with patch.object(type(PATHS), "config_file", new_callable=PropertyMock,
-                          return_value=cfg_file):
+        with patch.object(config, "CONFIG_PATH", cfg_file):
             cfg = UserConfig.load()
         assert cfg.bedrock_discount == pytest.approx(0.35)
         assert cfg.bedrock_model_discount == {"opus": pytest.approx(0.2)}

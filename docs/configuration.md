@@ -114,8 +114,8 @@ energy:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OVERCODE_DIR` | Base data directory | `~/.overcode` |
-| `OVERCODE_STATE_DIR` | Session state directory | `~/.overcode/sessions` |
+| `OVERCODE_DIR` | Base data directory: `config.yaml`, `presets.json`, `jobs/`, wrappers, skills, caches | `~/.overcode` |
+| `OVERCODE_STATE_DIR` | Sessions root: `sessions.json`, the archive, and one directory per tmux session | `$OVERCODE_DIR/sessions` |
 | `OVERCODE_ACTIVITY` | `0` turns the [usage log](#usage-log) off | on |
 
 ### Claude Command
