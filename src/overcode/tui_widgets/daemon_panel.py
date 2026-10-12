@@ -50,8 +50,7 @@ class DaemonPanel(Static):
         self._last_rendered: Optional[Text] = None
 
     def on_mount(self) -> None:
-        """Start log tailing when mounted."""
-        self.set_interval(1.0, self._refresh_logs)
+        """Read the log once now; the app's scheduler ticks _refresh_logs each second."""
         self._refresh_logs()
 
     def _engine(self) -> Optional[tuple]:

@@ -33,6 +33,8 @@ class TestCadences:
             "daemon_status": 1,
             "focused_job_pane": 1,
             "attended_watch": 1,
+            "daemon_panel": 1,
+            "tui_log_panel": 1,
             "focused_sister": 1.5,
             "summarizer": 5,
             "refresh_jobs": 5,

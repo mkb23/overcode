@@ -56,8 +56,7 @@ class TuiLogPanel(Static):
         self._log_file_pos = 0
 
     def on_mount(self) -> None:
-        """Start log tailing when mounted."""
-        self.set_interval(1.0, self._refresh_logs)
+        """Read the log once now; the app's scheduler ticks _refresh_logs each second."""
         self._refresh_logs()
 
     def _refresh_logs(self) -> None:

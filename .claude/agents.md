@@ -37,7 +37,7 @@ add an entry when something bites.
   the app without one, so they never touch tmux. Keep new tmux side effects
   behind that gate.
 - The preview pane is only for sister agents and jobs view.
-- Timer cadences in `tui.py` `TIMER_INTERVALS` are the product's freshness
+- Timer cadences in `tui_timers.py` `TIMER_INTERVALS` are the product's freshness
   contract. Fix CPU by doing the work cheaper, never by polling slower.
 - The TUI is a view of the engine (`docs/design/engine-0.6.md`): it renders
   each agent's published view (`SessionSummary.apply_engine`, `tui_engine.py`)

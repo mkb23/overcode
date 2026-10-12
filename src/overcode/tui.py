@@ -106,6 +106,13 @@ from .tui_actions.activity import ActivityMixin
 from .tui_actions.view_control import ViewControlMixin
 from .tui_actions.overagent import JourneyMixin, OveragentMixin
 from .tui_actions.mentor import MentorMixin
+# The timer tables live in tui_timers (re-exported: tests import them from here)
+from .tui_timers import (  # noqa: F401
+    PAUSED_WHEN_UNATTENDED,
+    TIMER_INTERVALS,
+    TIMER_PHASE_OFFSETS,
+    PeriodicScheduler,
+)
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -127,86 +134,6 @@ def session_row_key(sessions) -> tuple:
         for s in sessions
     )
 
-
-# Periodic timer cadences (seconds). These are the product's freshness
-# contract and are never changed to save CPU. Since 0.6.0 the TUI is a view
-# of the engine (docs/design/engine-0.6.md): statuses, stats, git and burn
-# arrive on engine.sock as the engine publishes them, so no timer here
-# detects, reads stats or polls the daemon's state file. What remains:
-# focused_pane is the one capture loop (the focused agent's terminal, for
-# its pane-derived columns and the preview) and the row clock (durations
-# and countdowns tick); daemon_status is the status bar's local checks
-# (supervisor/API server/summarizer processes, usage, mean spin) and the
-# engine-connection watch; heartbeat_probe is the event-loop diagnostic;
-# attended_watch is the "is anyone looking" poll the engine is told about.
-TIMER_INTERVALS = {
-    "heartbeat_probe": 0.1,
-    "focused_pane": 0.25,
-    "daemon_status": 1,
-    "focused_job_pane": 1,
-    "attended_watch": 1,
-    "focused_sister": 1.5,
-    "summarizer": 5,
-    "refresh_jobs": 5,
-    "heartbeat_flush": 5,
-    "activity_flush": 2,
-    "view_control": 1,
-    "status_changes": 5,
-    "refresh_sessions": 10,
-    "sister_poll": 10,
-    "agent_resize": 15,
-    "timeline": 30,
-}
-
-# Initial delay before each timer's first tick. The intervals above share
-# common multiples (5/10/15/30 s), so timers started at the same instant fire
-# together forever and their main-thread apply callbacks stack up. Distinct
-# offsets (mod 5 s) spread them without touching any cadence. The >= 1 s
-# timers are also kept off each other and off the 250 ms focused-pane grid:
-# an offset that is not a multiple of 0.25 never lands on a focused tick
-# (the hour-long test in test_tui_timers checks every pair). The 0.25 s and
-# 0.1 s timers are the grid itself and stay at phase 0.
-TIMER_PHASE_OFFSETS = {
-    "heartbeat_probe": 0.0,
-    "focused_pane": 0.0,
-    "daemon_status": 1.55,
-    "focused_job_pane": 0.85,
-    "attended_watch": 0.45,
-    "focused_sister": 0.15,
-    "agent_resize": 0.7,
-    "refresh_jobs": 1.1,
-    "refresh_sessions": 2.3,
-    "status_changes": 2.9,
-    "summarizer": 3.3,
-    "timeline": 3.9,
-    "sister_poll": 4.2,
-    "heartbeat_flush": 4.6,
-    "activity_flush": 1.95,
-    "view_control": 1.05,
-}
-
-# Timers paused while no tmux client is attached to the pane the TUI runs
-# in: the capture, the clock, every refresh and every render-driving apply.
-# What keeps running: attended_watch (the signal itself, one tmux command a
-# second) and the cheap flush timers that drain buffers. The engine keeps
-# recording, and its bells still reach this TUI (notifications go out while
-# detached). The whole set resumes, and a full refresh runs, the moment a
-# client attaches again (_on_attended_changed).
-PAUSED_WHEN_UNATTENDED = frozenset(
-    {
-        "heartbeat_probe",
-        "focused_pane",
-        "daemon_status",
-        "focused_job_pane",
-        "focused_sister",
-        "summarizer",
-        "refresh_jobs",
-        "refresh_sessions",
-        "sister_poll",
-        "agent_resize",
-        "timeline",
-    }
-)
 
 # A dropped or absent engine.sock is shown after this long (a normal start
 # connects well within it), and the daemon is (re)started at most this often
@@ -415,9 +342,6 @@ class SupervisorTUI(
                  timers: bool = True):
         super().__init__()
         self.tmux_session = tmux_session
-        # False only in tests (tests/tui_harness.py): no periodic timer
-        # starts, and the test calls the tick methods itself.
-        self._timers_enabled = timers
         # The linked session the split's bottom pane shows (`overcode tmux`
         # passes it). Navigation switches its window; see in_split.
         self.tmux_sync_target: Optional[str] = sync_target
@@ -527,8 +451,10 @@ class SupervisorTUI(
         # pane id means nothing on another server).
         self._tui_tmux_socket: Optional[str] = tui_tmux_socket()
         self._tui_tmux_session: Optional[str] = None  # learned from the first poll
-        # Every periodic Timer by TIMER_INTERVALS name, for pause/resume.
-        self._periodic_timers: dict[str, object] = {}
+        # Every periodic timer (TIMER_INTERVALS names), for pause/resume.
+        # timers=False only in tests (tests/tui_harness.py): no periodic
+        # timer starts, and the test calls the tick methods itself.
+        self.periodic = PeriodicScheduler(self, enabled=timers)
         # SSH proxy windows for remote agents: session_id -> tmux window name
         self._ssh_proxies: dict[str, str] = {}
         # TmuxManager instance for creating proxy windows
@@ -819,6 +745,12 @@ class SupervisorTUI(
             self._start_periodic("status_changes", self._flush_status_changes)
         self._start_periodic("activity_flush", self._flush_activity)
         self._start_periodic("view_control", self._view_control_tick)
+        # The `d` and `O` panels tail their logs each second while shown
+        try:
+            self._start_periodic("daemon_panel", self.query_one("#daemon-panel", DaemonPanel)._refresh_logs)
+            self._start_periodic("tui_log_panel", self.query_one("#tui-log-panel", TuiLogPanel)._refresh_logs)
+        except NoMatches:
+            pass
         self.record_activity("tui", phase="start", version=__version__,
                              size=f"{self.size.width}x{self.size.height}")
 
@@ -865,31 +797,31 @@ class SupervisorTUI(
         if self._initial_jobs_mode:
             self.tui_mode = "jobs"
 
+    @property
+    def periodic(self) -> PeriodicScheduler:
+        """The app's PeriodicScheduler (made on first use for bare test apps)."""
+        scheduler = self.__dict__.get("_periodic")
+        if scheduler is None:
+            scheduler = PeriodicScheduler(self)
+            self.__dict__["_periodic"] = scheduler
+        return scheduler
+
+    @periodic.setter
+    def periodic(self, scheduler: PeriodicScheduler) -> None:
+        self.__dict__["_periodic"] = scheduler
+
+    @property
+    def _periodic_timers(self) -> dict:
+        """Every started periodic Timer by TIMER_INTERVALS name."""
+        return self.periodic.timers
+
+    @_periodic_timers.setter
+    def _periodic_timers(self, timers: dict) -> None:
+        self.periodic.timers = timers
+
     def _start_periodic(self, name: str, callback) -> None:
-        """Start the ``name`` timer at its TIMER_INTERVALS cadence, phase-shifted.
-
-        A non-zero TIMER_PHASE_OFFSETS entry delays the first tick by that
-        many seconds (set_timer, then set_interval), so the timer fires at
-        offset + k * interval instead of k * interval. The Timer is kept in
-        ``self._periodic_timers`` so the attended watcher can pause and
-        resume it. Whether it starts paused is decided when it actually
-        starts — after the delay — from the attended state at that moment:
-        a PAUSED_WHEN_UNATTENDED timer starts paused while nobody is
-        attached.
-        """
-        if not getattr(self, "_timers_enabled", True):
-            return
-        interval = TIMER_INTERVALS[name]
-        delay = TIMER_PHASE_OFFSETS[name]
-
-        def start() -> None:
-            start_paused = name in PAUSED_WHEN_UNATTENDED and not getattr(self, "attended", True)
-            self._periodic_timers[name] = self.set_interval(interval, callback, pause=start_paused)
-
-        if delay > 0:
-            self.set_timer(delay, start)
-        else:
-            start()
+        """Start the ``name`` timer through the scheduler (tui_timers)."""
+        self.periodic.start(name, callback)
 
     # ── Unattended low-power mode ──────────────────────────────────────
 
@@ -939,14 +871,7 @@ class SupervisorTUI(
         engine on its attended cadences (and wakes an unattended one).
         Nothing here runs while the state is unchanged.
         """
-        for name in PAUSED_WHEN_UNATTENDED:
-            timer = self._periodic_timers.get(name)
-            if timer is None:
-                continue
-            if attended:
-                timer.resume()
-            else:
-                timer.pause()
+        self.periodic.set_attended(attended)
         if self._engine_client is not None:
             self._engine_client.set_visible(attended)
         if attended:

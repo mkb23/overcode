@@ -34,6 +34,15 @@ class TestHarness:
             await pilot.pause()
             assert "focused_pane" in app._periodic_timers
 
+    async def test_the_panels_tick_through_the_apps_scheduler(self, make_tui):
+        """The `d` and `O` panels' 1 s log tails are scheduler timers, not their own."""
+        from tests.tui_harness import until
+
+        app = make_tui(three_agents(), timers=True)
+        async with app.run_test() as pilot:
+            assert await until(pilot, lambda: {"daemon_panel", "tui_log_panel"} <= set(app._periodic_timers))
+            assert app._periodic_timers["daemon_panel"]._interval == 1
+
     async def test_publish_reaches_the_rows_at_once(self, make_tui):
         engine = FakeEngine()
         app = make_tui(three_agents(), engine=engine)
