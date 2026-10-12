@@ -325,3 +325,12 @@ def tui(make_tui):
     from tests.tui_harness import three_agents
 
     return make_tui(three_agents())
+
+
+@pytest.fixture(autouse=True)
+def _launcher_waits_are_instant(monkeypatch):
+    """Key-press delays and graceful-exit waits sleep for real in production;
+    in unit tests they would add ~0.5 s per rename or restart."""
+    from overcode.launcher import AgentLauncher
+
+    monkeypatch.setattr(AgentLauncher, "sleep", staticmethod(lambda seconds: None))

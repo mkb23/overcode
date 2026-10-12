@@ -13,7 +13,6 @@ keying them by session id (quality review item 35) would retire most of this.
 """
 
 import os
-import time
 from pathlib import Path
 from typing import List, Tuple
 
@@ -178,7 +177,7 @@ class RenameMixin:
 
         if window_exists:
             self._send_graceful_exit(self.backend_for(session), old_window)
-            time.sleep(graceful_exit_wait)
+            self.sleep(graceful_exit_wait)
 
         new_window = f"{new_name}-{session.id[:4]}"
         if window_exists and not self.tmux.rename_window(old_window, new_window):

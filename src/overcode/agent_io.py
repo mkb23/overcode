@@ -203,7 +203,7 @@ class AgentIOMixin:
                     success = False
                     break
                 if press.delay_after:
-                    time.sleep(press.delay_after)
+                    self.sleep(press.delay_after)
         elif text_lower in special_keys:
             key = special_keys[text_lower]
             if key == "":

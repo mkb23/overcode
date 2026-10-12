@@ -115,6 +115,11 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
     (``lifecycle``).
     """
 
+    # Waits between key presses and around a graceful exit go through this,
+    # so tests can skip them (tests/unit/conftest.py) without patching the
+    # shared time module
+    sleep = staticmethod(time.sleep)
+
     def __init__(
         self,
         tmux_session: str = "agents",
@@ -167,7 +172,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         for press in backend.graceful_exit_keys():
             self.tmux.send_keys(window_name, press.keys, enter=press.enter)
             if press.delay_after:
-                time.sleep(press.delay_after)
+                self.sleep(press.delay_after)
 
     def _build_session_metadata(
         self,
@@ -794,7 +799,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             return False
 
         self._send_graceful_exit(self.backend_for(session), session.tmux_window)
-        time.sleep(graceful_exit_wait)
+        self.sleep(graceful_exit_wait)
 
         if not self._send_launch_for_session(session, session.tmux_window, fresh=fresh):
             return False
