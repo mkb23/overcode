@@ -45,6 +45,7 @@ from .tmux_utils import (
 )
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
+from .launch_settings import LaunchArgs, resolve_launch_settings
 from .dependency_check import require_tmux, require_agent_cli
 from .exceptions import (
     AgentBusyError, AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
@@ -374,57 +375,25 @@ class AgentLauncher:
                 raise LaunchError(
                     f"maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
 
-        # Settings resolution (#433): explicit arg > parent setting > config
-        # default > built-in default. Children inherit the parent's provider,
-        # model, wrapper, agent_teams, and permission mode so a bedrock-pinned
-        # or model-constrained parent doesn't spawn children on different
-        # infrastructure. Opt out with inherit_parent_settings=False.
-        if parent_session and inherit_parent_settings:
-            if backend is None:
-                backend = getattr(parent_session, "backend", None) or None
-                # The overagent persona is one per install: its children are
-                # ordinary agents, not more overagents.
-                from .overagent import OVERAGENT_BACKEND
-                if backend == OVERAGENT_BACKEND:
-                    backend = None
-            # Model ids and provider transports are backend-specific grammar —
-            # a Claude `sonnet`/`claude-fable-5` or a bedrock pin means nothing
-            # to codex/grok (and vice versa), so they only flow to a child on
-            # the same backend. A cross-backend child falls through to config
-            # defaults / the CLI's own default model instead.
-            parent_backend = getattr(parent_session, "backend", None) or DEFAULT_BACKEND
-            same_backend = backend is None or backend == parent_backend
-            if provider is None and same_backend:
-                provider = parent_session.provider
-            if model is None and same_backend:
-                model = parent_session.model
-            if wrapper is None:
-                wrapper = parent_session.wrapper
-            if not agent_teams:
-                agent_teams = parent_session.agent_teams
-            if not skip_permissions and not dangerously_skip_permissions:
-                if parent_session.permissiveness_mode == "bypass":
-                    dangerously_skip_permissions = True
-                elif parent_session.permissiveness_mode == "permissive":
-                    skip_permissions = True
-
-        from .config import get_new_agent_defaults
-        agent_defaults = get_new_agent_defaults()
-        if provider is None:
-            provider = agent_defaults.get("provider") or "web"
-        if wrapper is None:
-            wrapper = agent_defaults.get("wrapper") or None
-        if backend is None:
-            backend = agent_defaults.get("backend") or DEFAULT_BACKEND
-
-        # Skill profile (#499): explicit > parent > pinned folder > default.
+        # Settings resolution (#433, #499): explicit arg > parent setting >
+        # config default > built-in default (see launch_settings).
         from . import skill_library
-        skill_profile = skill_library.resolve_profile_name(
-            skill_profile,
-            parent_session.skill_profile if parent_session and inherit_parent_settings else None,
-            start_directory or os.getcwd(),
-            agent_defaults.get("skill_profile"),
+        from .config import get_new_agent_defaults
+        plan = resolve_launch_settings(
+            LaunchArgs(
+                backend=backend, provider=provider, model=model, wrapper=wrapper,
+                agent_teams=agent_teams, skip_permissions=skip_permissions,
+                dangerously_skip_permissions=dangerously_skip_permissions,
+                skill_profile=skill_profile,
+                inherit_parent_settings=inherit_parent_settings,
+            ),
+            parent_session,
+            get_new_agent_defaults(),
+            folder_profile=lambda: skill_library.profile_for_folder(
+                start_directory or os.getcwd()),
         )
+        provider, model, wrapper = plan.provider, plan.model, plan.wrapper
+        skill_profile = plan.skill_profile
         if skill_profile and skill_profile not in skill_library.get_profiles():
             raise LaunchError(f"skill profile '{skill_profile}' not found "
                               f"(see `overcode skills profile list`)")
@@ -433,7 +402,7 @@ class AgentLauncher:
         # built-in), so the CLI dependency check can finally target the
         # right binary rather than always probing `claude`.
         try:
-            agent_backend = get_backend(backend)
+            agent_backend = get_backend(plan.backend)
         except UnknownBackendError as e:
             raise LaunchError(str(e)) from e
 
@@ -484,13 +453,6 @@ class AgentLauncher:
         if window_name is None:
             raise LaunchError(f"failed to create tmux window '{name}'")
 
-        if dangerously_skip_permissions:
-            perm_mode = "bypass"
-        elif skip_permissions:
-            perm_mode = "permissive"
-        else:
-            perm_mode = "normal"
-
         # Persist the Session in the DB first with all launch-time state
         # populated. `_send_launch_for_session` is the single place that
         # turns a Session into the shell line, so launch / restart / revive
@@ -503,8 +465,8 @@ class AgentLauncher:
             name=name, tmux_window=window_name, command=[],
             start_directory=start_directory, session_id=session_id,
             standing_instructions=default_instructions,
-            permissiveness_mode=perm_mode, allowed_tools=allowed_tools,
-            extra_cli_args=extra_cli_args, agent_teams=agent_teams,
+            permissiveness_mode=plan.permissiveness_mode, allowed_tools=allowed_tools,
+            extra_cli_args=extra_cli_args, agent_teams=plan.agent_teams,
             agent_persona=agent_persona, model=model, provider=provider,
             wrapper=resolved_wrapper, backend=agent_backend.name,
             skill_profile=skill_profile,
