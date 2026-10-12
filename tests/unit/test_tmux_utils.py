@@ -13,6 +13,7 @@ from overcode.tmux_utils import (
     SSH_PROXY_WINDOW_PREFIX,
     is_overcode_owned_window,
     send_text_to_tmux_window,
+    type_text_to_tmux_window,
     get_tmux_pane_content,
     exit_copy_mode_if_active,
     untracked_window_names,
@@ -585,3 +586,19 @@ class TestSendKeysToPane:
             send_keys_to_pane(_RecordingPane(timeline), keys, enter=enter)
 
         assert timeline == expected
+
+
+class TestTypeTextToTmuxWindow:
+    def test_each_line_break_is_a_backslash_and_enter(self):
+        with patch("overcode.tmux_utils.subprocess.run") as run, \
+                patch("overcode.tmux_utils.time.sleep"):
+            run.return_value = MagicMock(returncode=0, stdout="0")
+            assert type_text_to_tmux_window("agents", 1, "- one\n\nthree")
+        sends = [c.args[0][c.args[0].index("send-keys") + 3:]
+                 for c in run.call_args_list if "send-keys" in c.args[0]]
+        assert sends == [
+            ["-l", "--", "- one\\"], ["Enter"],   # "--": a line may start with "-"
+            ["-l", "--", "\\"], ["Enter"],
+            ["-l", "--", "three"],
+            ["Enter"],                             # submit
+        ]

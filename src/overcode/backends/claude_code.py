@@ -138,6 +138,8 @@ class ClaudeCodeBackend:
     # "Your message was only pasted text... do you want me to run it?").
     # A command-line prompt arrives as typed, and waits out the trust dialog.
     prompt_as_argument = True
+    # ...and a multi-line `overcode send` is typed, a backslash-Enter per line break
+    type_multiline_text = True
 
     def build_command(self, spec: LaunchSpec) -> List[str]:
         """Construct the claude CLI argument list.

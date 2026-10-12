@@ -461,7 +461,7 @@ class TestLauncherSendToSession:
             session_manager=session_manager
         )
 
-        launcher.launch(name="test-agent")
+        launcher.launch(name="test-agent", backend="opencode")
         initial_keys = len(mock_tmux.sent_keys)
 
         with patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as mock_send:
@@ -475,6 +475,18 @@ class TestLauncherSendToSession:
         assert call_args[1]["send_enter"] is True
         # send_keys should NOT have been called for the multi-line text
         assert len(mock_tmux.sent_keys) == initial_keys
+
+    def test_claude_multiline_is_typed_not_pasted(self, tmp_path):
+        """Claude 2.1.29x hands a long paste to the model as <pasted_content>."""
+        launcher = AgentLauncher(
+            "agents", TmuxManager("agents", tmux=MockTmux()),
+            SessionManager(state_dir=tmp_path, skip_git_detection=True))
+        launcher.launch(name="test-agent")
+        with patch("overcode.agent_io.type_text_to_tmux_window", return_value=True) as typed, \
+                patch("overcode.agent_io.send_text_to_tmux_window") as pasted:
+            assert launcher.send_to_session("test-agent", "line1\nline2")
+        pasted.assert_not_called()
+        assert typed.call_args[0][2] == "line1\nline2"
 
     def test_send_single_line_uses_send_keys(self, tmp_path):
         """Single-line text still uses send_keys path"""

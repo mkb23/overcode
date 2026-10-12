@@ -510,6 +510,42 @@ def send_text_to_tmux_window(
     return True
 
 
+def type_text_to_tmux_window(
+    tmux_session: str,
+    window: str,
+    text: str,
+    send_enter: bool = True,
+) -> bool:
+    """Type multi-line text, each line break as a backslash and Enter.
+
+    For Claude Code, which hands a long paste to the model inside
+    <pasted_content> tags it is told not to obey (2.1.29x). Typed, the
+    same text is a plain user message (verified live). One tmux command per
+    line: a single burst of keys can itself be taken for a paste.
+    """
+    exit_copy_mode_if_active(tmux_session, window)
+    tmux_cmd = _build_tmux_cmd()
+    target = tmux_window_target(tmux_session, window)
+    lines = text.split('\n')
+    try:
+        for i, line in enumerate(lines):
+            keys = ['-l', '--', line + '\\'] if i < len(lines) - 1 else ['-l', '--', line]
+            if keys[-1]:
+                subprocess.run(tmux_cmd + ['send-keys', '-t', target] + keys,
+                               timeout=5, check=True)
+            if i < len(lines) - 1:
+                subprocess.run(tmux_cmd + ['send-keys', '-t', target, 'Enter'],
+                               timeout=5, check=True)
+        if send_enter:
+            time.sleep(0.3)
+            subprocess.run(tmux_cmd + ['send-keys', '-t', target, 'Enter'],
+                           timeout=5, check=True)
+    except subprocess.SubprocessError as e:
+        logger.warning("Failed to type text to tmux: %s", e)
+        return False
+    return True
+
+
 def get_tmux_pane_content(
     tmux_session: str,
     window: str,

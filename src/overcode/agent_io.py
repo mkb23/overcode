@@ -17,6 +17,7 @@ from .tmux_utils import (
     get_tmux_pane_content,
     send_text_to_tmux_window,
     tmux_window_target,
+    type_text_to_tmux_window,
 )
 
 
@@ -268,6 +269,13 @@ class AgentIOMixin:
             else:
                 # Send special key without Enter
                 success = self.tmux.send_keys(session.tmux_window, key, enter=False)
+        elif '\n' in text and getattr(self.backend_for(session), "type_multiline_text", False):
+            # Claude: a long paste reaches the model as <pasted_content>,
+            # not to be obeyed; typed, it is the user's message
+            success = type_text_to_tmux_window(
+                self.tmux.session_name, session.tmux_window, text,
+                send_enter=enter,
+            )
         elif '\n' in text:
             # Multi-line text: use load-buffer/paste-buffer so newlines are
             # pasted as a single block instead of being interpreted as Enter
