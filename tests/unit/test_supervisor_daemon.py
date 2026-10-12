@@ -1272,3 +1272,48 @@ class TestSyncDaemonClaudeTokens:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestASupervisorPassMayFail:
+    """One failing pass must not end supervision (quality review item 11)."""
+
+    def _daemon(self):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        daemon = SupervisorDaemon.__new__(SupervisorDaemon)
+        daemon.log = MagicMock()
+        daemon.tmux_session = "test"
+        daemon.pid_path = Path("/nonexistent/supervisor.pid")
+        daemon.loop_count = 0
+        daemon.kill_daemon_claude = MagicMock()
+        daemon.wait_for_monitor_daemon = MagicMock(return_value=True)
+        return daemon
+
+    def test_the_loop_survives_a_failing_pass(self):
+        daemon = self._daemon()
+        passes = []
+
+        def iteration():
+            passes.append(1)
+            if len(passes) == 1:
+                raise ValueError("corrupt state file")
+            daemon._shutdown = True
+
+        daemon._iteration = iteration
+        with patch("overcode.supervisor_daemon.acquire_daemon_lock", return_value=(True, None)), \
+                patch("overcode.supervisor_daemon.signal.signal"), \
+                patch("overcode.supervisor_daemon.time.sleep"), \
+                patch("overcode.supervisor_daemon.remove_pid_file"):
+            daemon.run(check_interval=1)
+        assert len(passes) == 2
+        message = daemon.log.error.call_args_list[0].args[0]
+        assert "ValueError: corrupt state file" in message and "Traceback" in message
+
+    def test_the_same_failure_is_not_a_new_traceback_each_pass(self):
+        daemon = self._daemon()
+        for _ in range(8):
+            try:
+                raise ValueError("same")
+            except ValueError as e:
+                daemon._iteration_failed(e)
+        assert daemon.log.error.call_count == 4  # 1st with traceback, then 2, 4, 8

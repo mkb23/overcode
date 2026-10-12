@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -742,6 +743,91 @@ class SupervisorDaemon:
             time.sleep(poll_interval)
         return False
 
+    def _iteration(self) -> None:
+        """One supervision pass: read the monitor's state, act on non-green agents."""
+        # Cleanup orphaned daemon claudes
+        self.cleanup_stale_daemon_claudes()
+
+        # Read state from monitor daemon
+        monitor_state = get_monitor_daemon_state(self.tmux_session)
+        if monitor_state is None or monitor_state.is_stale():
+            self.log.warn("Monitor Daemon state stale, waiting...")
+            self.status = "waiting_monitor"
+            return
+
+        # Get non-green sessions
+        non_green = self.get_non_green_sessions(monitor_state)
+        total = len(monitor_state.sessions)
+        green_count = total - len(non_green)
+
+        self.log.status_summary(
+            total=total,
+            green=green_count,
+            non_green=len(non_green),
+            loop=self.loop_count
+        )
+
+        action = determine_supervisor_action(
+            non_green_count=len(non_green),
+            daemon_claude_running=self.is_daemon_claude_running(),
+            total_sessions=total,
+            all_waiting_user=(
+                bool(non_green)
+                and all(s.current_status == STATUS_WAITING_USER for s in non_green)
+            ),
+            any_has_instructions=any(s.standing_instructions for s in non_green),
+        )
+
+        if action.action == "launch":
+            self.log.info(f"Launching daemon claude for {len(non_green)} session(s) ({action.reason})...")
+            if self.launch_daemon_claude(non_green):
+                self.daemon_claude_launches += 1
+                self.supervisor_stats.supervisor_launches += 1
+                self.supervisor_stats.supervisor_claude_running = True
+                self.supervisor_stats.supervisor_claude_started_at = datetime.now().isoformat()
+                self.supervisor_stats.save(self.stats_path)
+                self.status = "supervising"
+                self.log.success(f"Daemon claude launched in window {self.daemon_claude_window}")
+
+        if action.action in ("launch", "wait") and self.is_daemon_claude_running():
+            completed = self.wait_for_daemon_claude()
+            self.capture_daemon_claude_output()
+            self._mark_daemon_claude_stopped()
+
+            if completed:
+                self.kill_daemon_claude()
+                session_names = [s.name for s in non_green]
+                self.update_intervention_counts(session_names)
+                self._sync_daemon_claude_tokens()
+                # Reset health counter on any successful completion
+                if self.supervisor_stats.consecutive_timeouts:
+                    self.supervisor_stats.consecutive_timeouts = 0
+                    self.supervisor_stats.save(self.stats_path)
+            else:
+                self.log.warn("Daemon claude still working, continuing...")
+                self.supervisor_stats.consecutive_timeouts += 1
+                self.supervisor_stats.last_timeout_at = datetime.now().isoformat()
+                self.supervisor_stats.save(self.stats_path)
+        elif action.action == "waiting_user":
+            self.status = "waiting_user"
+            self.log.warn(action.reason)
+        elif action.action == "idle":
+            self.status = "idle"
+            self.log.success(action.reason)
+        elif action.action == "no_agents":
+            self.status = "no_agents"
+
+    def _iteration_failed(self, error: Exception) -> None:
+        """Log a failed pass: the traceback the first time, then 1, 2, 4, 8... in a row."""
+        count = getattr(self, "_iteration_errors", 0) + 1
+        self._iteration_errors = count
+        message = f"{type(error).__name__}: {error}"
+        if message != getattr(self, "_last_iteration_error", None):
+            self.log.error(f"Supervisor pass failed: {message}\n{traceback.format_exc()}")
+        elif count & (count - 1) == 0:
+            self.log.error(f"Supervisor pass failed ({count} in a row): {message}")
+        self._last_iteration_error = message
+
     def run(self, check_interval: int = None):
         """Main supervisor daemon loop.
 
@@ -788,84 +874,16 @@ class SupervisorDaemon:
         try:
             while not self._shutdown:
                 self.loop_count += 1
-
-                # Cleanup orphaned daemon claudes
-                self.cleanup_stale_daemon_claudes()
-
-                # Read state from monitor daemon
-                monitor_state = get_monitor_daemon_state(self.tmux_session)
-                if monitor_state is None or monitor_state.is_stale():
-                    self.log.warn("Monitor Daemon state stale, waiting...")
-                    self.status = "waiting_monitor"
-                    time.sleep(check_interval)
-                    continue
-
-                # Get non-green sessions
-                non_green = self.get_non_green_sessions(monitor_state)
-                total = len(monitor_state.sessions)
-                green_count = total - len(non_green)
-
-                self.log.status_summary(
-                    total=total,
-                    green=green_count,
-                    non_green=len(non_green),
-                    loop=self.loop_count
-                )
-
-                action = determine_supervisor_action(
-                    non_green_count=len(non_green),
-                    daemon_claude_running=self.is_daemon_claude_running(),
-                    total_sessions=total,
-                    all_waiting_user=(
-                        bool(non_green)
-                        and all(s.current_status == STATUS_WAITING_USER for s in non_green)
-                    ),
-                    any_has_instructions=any(s.standing_instructions for s in non_green),
-                )
-
-                if action.action == "launch":
-                    self.log.info(f"Launching daemon claude for {len(non_green)} session(s) ({action.reason})...")
-                    if self.launch_daemon_claude(non_green):
-                        self.daemon_claude_launches += 1
-                        self.supervisor_stats.supervisor_launches += 1
-                        self.supervisor_stats.supervisor_claude_running = True
-                        self.supervisor_stats.supervisor_claude_started_at = datetime.now().isoformat()
-                        self.supervisor_stats.save(self.stats_path)
-                        self.status = "supervising"
-                        self.log.success(f"Daemon claude launched in window {self.daemon_claude_window}")
-
-                if action.action in ("launch", "wait") and self.is_daemon_claude_running():
-                    completed = self.wait_for_daemon_claude()
-                    self.capture_daemon_claude_output()
-                    self._mark_daemon_claude_stopped()
-
-                    if completed:
-                        self.kill_daemon_claude()
-                        session_names = [s.name for s in non_green]
-                        self.update_intervention_counts(session_names)
-                        self._sync_daemon_claude_tokens()
-                        # Reset health counter on any successful completion
-                        if self.supervisor_stats.consecutive_timeouts:
-                            self.supervisor_stats.consecutive_timeouts = 0
-                            self.supervisor_stats.save(self.stats_path)
-                    else:
-                        self.log.warn("Daemon claude still working, continuing...")
-                        self.supervisor_stats.consecutive_timeouts += 1
-                        self.supervisor_stats.last_timeout_at = datetime.now().isoformat()
-                        self.supervisor_stats.save(self.stats_path)
-                elif action.action == "waiting_user":
-                    self.status = "waiting_user"
-                    self.log.warn(action.reason)
-                elif action.action == "idle":
-                    self.status = "idle"
-                    self.log.success(action.reason)
-                elif action.action == "no_agents":
-                    self.status = "no_agents"
-
+                try:
+                    self._iteration()
+                except Exception as e:
+                    # One bad iteration (a corrupt state file, a tmux hiccup)
+                    # must not end supervision: log it and try again
+                    self._iteration_failed(e)
                 time.sleep(check_interval)
 
         except Exception as e:
-            self.log.error(f"Supervisor daemon error: {e}")
+            self.log.error(f"Supervisor daemon error: {e}\n{traceback.format_exc()}")
             raise
         finally:
             self.log.info("Supervisor daemon shutting down")
