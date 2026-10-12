@@ -46,12 +46,16 @@ class _BoundedTmuxCmd(_libtmux_cmd):
     call raises TmuxTimeoutError.
     """
 
-    def __init__(self, *args: Any) -> None:
+    def __init__(self, *args: Any, tmux_bin: Optional[str] = None, **kwargs: Any) -> None:
         timeout = getattr(_command_timeout, "seconds", None)
         if timeout is None:
-            super().__init__(*args)
+            # libtmux's own command, whatever its signature in this version
+            # (0.55+ takes tmux_bin=): pass everything through untouched
+            if tmux_bin is not None:
+                kwargs["tmux_bin"] = tmux_bin
+            super().__init__(*args, **kwargs)
             return
-        tmux_bin = shutil.which("tmux")
+        tmux_bin = tmux_bin or shutil.which("tmux")
         if not tmux_bin:
             raise libtmux_exc.TmuxCommandNotFound
         self.cmd = [str(c) for c in (tmux_bin, *args)]

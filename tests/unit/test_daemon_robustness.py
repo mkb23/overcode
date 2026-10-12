@@ -40,6 +40,9 @@ def fake_tmux(tmp_path, monkeypatch):
     script = bin_dir / "tmux"
     script.write_text(
         "#!/bin/sh\n"
+        # `tmux -V` never talks to the server, so a wedged one still answers
+        # it (libtmux 0.55+ asks before listing anything)
+        'if [ "$1" = "-V" ]; then echo "tmux 3.5a"; exit 0; fi\n'
         f'echo "$@" >> "{calls}"\n'
         f'if [ -e "{hang}" ]; then exec sleep 30; fi\n'
         'printf "one\\ntwo\\n\\n"\n'
