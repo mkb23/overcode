@@ -1702,7 +1702,11 @@ def make_daemon(paths: FixturePaths, tmux: CountingTmux):
     from overcode.status_detector import PollingStatusDetector
     from overcode.status_detector_factory import StatusDetectorDispatcher
 
-    with _patched(monitor_daemon, "PresenceLogger", None):
+    try:  # where the presence logger is started, on whichever tree
+        from overcode import daemon_presence as presence_module
+    except ImportError:
+        presence_module = monitor_daemon
+    with _patched(presence_module, "PresenceLogger", None):
         daemon = monitor_daemon.MonitorDaemon(
             tmux_session=paths.tmux_session,
             session_manager=SessionManager(state_dir=paths.state_dir),
@@ -1723,21 +1727,35 @@ def make_daemon(paths: FixturePaths, tmux: CountingTmux):
     return daemon
 
 
+# The periodic syncs: the daemon's cadence name, and the stamp attribute
+# older trees kept instead
+PERIODIC_SYNCS = {
+    "stats": "_last_stats_sync",
+    "session_ids": "_last_session_id_sync",
+    "skills": "_last_skills_sync",
+    "sandbox": "_last_sandbox_sync",
+    "resources": "_last_resources_sync",
+    "history_rotation": "_last_history_rotation_check",
+    "model_metadata": "_last_model_metadata_check",
+}
+
+
+def set_sync_stamp(daemon, name: str, when: Optional[datetime]) -> None:
+    """Say the periodic sync ``name`` last ran at ``when`` (None: due now)."""
+    cadence = getattr(daemon, "cadence", None)
+    if cadence is not None:
+        getattr(cadence, name).last = when
+    else:
+        setattr(daemon, PERIODIC_SYNCS[name], when)
+
+
 def seed_steady_state(daemon, sessions, now: datetime) -> None:
     """Make the next tick look like any tick after the first (no first-observation skips)."""
     for s in sessions:
         daemon.previous_states[s.id] = s.stats.current_state
         daemon.last_state_times[s.id] = now - timedelta(seconds=2)
-    for name in (
-        "_last_stats_sync",
-        "_last_session_id_sync",
-        "_last_skills_sync",
-        "_last_sandbox_sync",
-        "_last_resources_sync",
-        "_last_history_rotation_check",
-        "_last_model_metadata_check",
-    ):
-        setattr(daemon, name, now)
+    for name in PERIODIC_SYNCS:
+        set_sync_stamp(daemon, name, now)
 
 
 def time_daemon_phases(paths: FixturePaths, include_syncs: bool = False) -> List[SiteResult]:
@@ -1820,13 +1838,13 @@ def time_daemon_phases(paths: FixturePaths, include_syncs: bool = False) -> List
             with_flush(lambda: daemon._detect_and_enrich(sessions, datetime.now())),
             note=f"{n} sessions, every pane signature moved since the previous loop",
         )
-        daemon._last_resources_sync = None
+        set_sync_stamp(daemon, "resources", None)
         phase(
             "daemon _sync_process_resources",
             "daemon 5 s",
             with_flush(lambda: daemon._sync_process_resources(sessions, datetime.now())),
         )
-        daemon._last_sandbox_sync = None
+        set_sync_stamp(daemon, "sandbox", None)
         phase(
             "daemon _sync_sandbox_state",
             "daemon 15 s",
@@ -1839,13 +1857,13 @@ def time_daemon_phases(paths: FixturePaths, include_syncs: bool = False) -> List
             calls=1,
         )
         if include_syncs:
-            daemon._last_session_id_sync = None
+            set_sync_stamp(daemon, "session_ids", None)
             phase(
                 "daemon _sync_session_ids",
                 "daemon 10 s",
                 with_flush(lambda: daemon._sync_session_ids(sessions, datetime.now())),
             )
-            daemon._last_stats_sync = None
+            set_sync_stamp(daemon, "stats", None)
             phase(
                 "daemon _sync_session_stats",
                 "daemon 60 s",
