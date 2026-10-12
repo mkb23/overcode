@@ -2,7 +2,6 @@
 Session state management for Overcode.
 """
 
-import functools
 import json
 import os
 from collections import Counter
@@ -132,9 +131,9 @@ class SessionStats:
 
 
 # Phase 6 rename map: canonical field name → pre-Phase-6 (Claude-flavoured)
-# name. Drives the ``Session`` constructor/attribute aliases, the ``to_dict``
-# dual-write and the ``from_dict`` read migration, plus the equivalent
-# aliasing in ``SessionManager.update_session``.
+# name. Only read now: ``from_dict`` migrates a state file written before
+# the rename. The old names were also written for one release (0.5.x); 0.6
+# writes the canonical names only.
 LEGACY_SESSION_KEYS = {
     "agent_session_ids": "claude_session_ids",
     "active_agent_session_id": "active_claude_session_id",
@@ -142,8 +141,6 @@ LEGACY_SESSION_KEYS = {
     "agent_persona": "claude_agent",
 }
 
-# Reverse lookup: old name → canonical name.
-CANONICAL_SESSION_KEYS = {old: new for new, old in LEGACY_SESSION_KEYS.items()}
 
 
 @dataclass
@@ -296,51 +293,9 @@ class Session:
     # through tmux pane history.
     launcher_version: str = ""
 
-    # ---- Pre-Phase-6 attribute names -------------------------------------
-    # The fields were renamed to be backend-neutral; these keep every
-    # existing ``session.claude_session_ids`` reader and writer working.
-
-    @property
-    def claude_session_ids(self) -> List[str]:
-        return self.agent_session_ids
-
-    @claude_session_ids.setter
-    def claude_session_ids(self, value: List[str]) -> None:
-        self.agent_session_ids = value
-
-    @property
-    def active_claude_session_id(self) -> Optional[str]:
-        return self.active_agent_session_id
-
-    @active_claude_session_id.setter
-    def active_claude_session_id(self, value: Optional[str]) -> None:
-        self.active_agent_session_id = value
-
-    @property
-    def extra_claude_args(self) -> List[str]:
-        return self.extra_cli_args
-
-    @extra_claude_args.setter
-    def extra_claude_args(self, value: List[str]) -> None:
-        self.extra_cli_args = value
-
-    @property
-    def claude_agent(self) -> Optional[str]:
-        return self.agent_persona
-
-    @claude_agent.setter
-    def claude_agent(self, value: Optional[str]) -> None:
-        self.agent_persona = value
-
     def to_dict(self) -> dict:
         # asdict() recursively converts nested dataclasses (stats)
-        data = asdict(self)
-        # Emit the pre-Phase-6 keys alongside the new ones for one release,
-        # so an older overcode (or an older sister) reading this state file
-        # still finds the fields where it expects them.
-        for new_key, old_key in LEGACY_SESSION_KEYS.items():
-            data[old_key] = data[new_key]
-        return data
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> Optional['Session']:
@@ -398,43 +353,8 @@ class Session:
             return None
 
 
-def _accept_legacy_kwargs(init):
-    """Let ``Session(...)`` still be constructed with the pre-Phase-6 names."""
-
-    @functools.wraps(init)
-    def wrapper(self, *args, **kwargs):
-        for old_key, new_key in CANONICAL_SESSION_KEYS.items():
-            if old_key in kwargs:
-                value = kwargs.pop(old_key)
-                kwargs.setdefault(new_key, value)
-        init(self, *args, **kwargs)
-
-    return wrapper
-
-
-Session.__init__ = _accept_legacy_kwargs(Session.__init__)
-
 _SESSION_FIELD_NAMES = frozenset(f.name for f in fields(Session))
 _STATS_FIELD_NAMES = frozenset(f.name for f in fields(SessionStats))
-
-
-def _with_legacy_keys(kwargs: Dict[str, object]) -> Dict[str, object]:
-    """The keys ``update_session`` writes for ``kwargs``.
-
-    A pre-Phase-6 name is folded onto its canonical field (the canonical
-    one wins when both are given), and every renamed field is written
-    under both names so a state file stays readable by an older overcode
-    for one release.
-    """
-    out = dict(kwargs)
-    for old_key, new_key in CANONICAL_SESSION_KEYS.items():
-        if old_key in out:
-            out.setdefault(new_key, out.pop(old_key))
-            out.pop(old_key, None)
-    for new_key, old_key in LEGACY_SESSION_KEYS.items():
-        if new_key in out:
-            out[old_key] = out[new_key]
-    return out
 
 
 # What ``SessionManager._state_transaction`` yields: the parsed state and
@@ -474,7 +394,7 @@ class PendingUpdates:
             self.archive.append(session_id)
 
     def update_session(self, session_id: str, **kwargs) -> None:
-        self.fields.setdefault(session_id, {}).update(_with_legacy_keys(kwargs))
+        self.fields.setdefault(session_id, {}).update(kwargs)
 
     def update_session_status(self, session_id: str, status: str) -> None:
         self.update_session(session_id, status=status)
@@ -955,8 +875,7 @@ class SessionManager:
                       session_id: Optional[str] = None,
                       wrapper: Optional[str] = None,
                       skill_profile: Optional[str] = None,
-                      launcher_version: str = "",
-                      **legacy_kwargs) -> Session:
+                      launcher_version: str = "") -> Session:
         """Create and register a new session.
 
         Args:
@@ -972,25 +891,7 @@ class SessionManager:
             agent_persona: Agent persona name passed as --agent
             backend: Agent CLI backend name (see overcode.backends)
             session_id: Optional pre-generated session ID (used when ID must be known before window creation)
-            **legacy_kwargs: Pre-Phase-6 parameter names (extra_claude_args,
-                claude_agent) are still accepted.
         """
-        # Only the two renamed fields that are actually create_session
-        # parameters are aliased; anything else falls through to the
-        # TypeError below rather than being silently dropped.
-        if "extra_claude_args" in legacy_kwargs:
-            value = legacy_kwargs.pop("extra_claude_args")
-            if extra_cli_args is None:
-                extra_cli_args = value
-        if "claude_agent" in legacy_kwargs:
-            value = legacy_kwargs.pop("claude_agent")
-            if agent_persona is None:
-                agent_persona = value
-        if legacy_kwargs:
-            raise TypeError(
-                f"create_session() got unexpected keyword arguments: "
-                f"{', '.join(sorted(legacy_kwargs))}"
-            )
         if self._skip_git_detection:
             repo_name, branch = None, None
         else:
@@ -1353,7 +1254,6 @@ class SessionManager:
         pre-Phase-6 key so a state file stays readable by an older overcode
         for one release; either name may be passed in.
         """
-        kwargs = _with_legacy_keys(kwargs)
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id].update(kwargs)
@@ -1476,7 +1376,7 @@ class SessionManager:
                 if agent_session_id not in ids:
                     ids.append(agent_session_id)
                 entry['agent_session_ids'] = ids
-                entry['claude_session_ids'] = ids
+                entry.pop('claude_session_ids', None)  # a pre-0.6 twin
         return True
 
     def set_active_agent_session_id(self, session_id: str, agent_session_id: str):
@@ -1502,7 +1402,7 @@ class SessionManager:
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id]['active_agent_session_id'] = agent_session_id
-                state[session_id]['active_claude_session_id'] = agent_session_id
+                state[session_id].pop('active_claude_session_id', None)  # a pre-0.6 twin
                 state[session_id].pop('active_agent_session_ordinal', None)
                 state[session_id]['active_agent_session_unordered'] = True
 
@@ -1603,7 +1503,7 @@ class SessionManager:
                 # owns: history order says nothing about which one is live.
                 txn.dirty = True
                 entry['active_agent_session_id'] = agent_session_id
-                entry['active_claude_session_id'] = agent_session_id
+                entry.pop('active_claude_session_id', None)  # a pre-0.6 twin
                 if ordinal is not None:
                     entry['active_agent_session_ordinal'] = ordinal
                 else:
@@ -1646,9 +1546,9 @@ class SessionManager:
 
             txn.dirty = True
             entry['agent_session_ids'] = ids
-            entry['claude_session_ids'] = ids
+            entry.pop('claude_session_ids', None)  # a pre-0.6 twin
             entry['active_agent_session_id'] = agent_session_id
-            entry['active_claude_session_id'] = agent_session_id
+            entry.pop('active_claude_session_id', None)  # a pre-0.6 twin
             confirmed = ordinal is not None and not ages_tied
             if confirmed:
                 entry['active_agent_session_ordinal'] = ordinal
@@ -1664,9 +1564,6 @@ class SessionManager:
                 return "advanced_unordered", agent_session_id
             return "advanced", agent_session_id
 
-    # Pre-Phase-6 method names.
-    add_claude_session_id = add_agent_session_id
-    set_active_claude_session_id = set_active_agent_session_id
 
     # =========================================================================
     # Agent Hierarchy (#244)

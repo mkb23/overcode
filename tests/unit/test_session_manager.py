@@ -1397,11 +1397,10 @@ class TestSessionHierarchy:
 
 
 class TestPhase6FieldRenames:
-    """Backend-neutral field names, with the pre-Phase-6 names still working.
+    """Backend-neutral field names; a pre-Phase-6 state file still loads.
 
-    The Phase 6 rename is only safe because every access path — attribute,
-    constructor kwarg, persisted JSON key, SessionManager accessor — answers
-    to both spellings. These tests are that contract.
+    The old names were dual-written for one release (0.5.x). 0.6 writes the
+    canonical names only and keeps reading the old ones from an old file.
     """
 
     OLD_SHAPE = {
@@ -1432,95 +1431,31 @@ class TestPhase6FieldRenames:
         assert session.extra_cli_args == ["--verbose"]
         assert session.agent_persona == "reviewer"
 
-    def test_round_trip_rewrites_both_key_sets(self, tmp_path):
-        """A file written by the previous release re-saves under both names."""
+    def test_round_trip_writes_the_canonical_names_only(self, tmp_path):
+        """An old file re-saves under the new names, and reloads the same."""
         state_file = tmp_path / "sessions.json"
         state_file.write_text(json.dumps({"sess-old": dict(self.OLD_SHAPE)}))
 
         manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         session = manager.get_session("sess-old")
-
-        # Persist the loaded session in full, the way create/import do.
         with manager._locked_state() as state:
             state[session.id] = session.to_dict()
 
         raw = json.loads(state_file.read_text())["sess-old"]
-        for new_key, old_key in [
-            ("agent_session_ids", "claude_session_ids"),
-            ("active_agent_session_id", "active_claude_session_id"),
-            ("extra_cli_args", "extra_claude_args"),
-            ("agent_persona", "claude_agent"),
-        ]:
-            assert raw[old_key] == raw[new_key], new_key
-
-        # And it still reloads to the same values.
+        assert raw["agent_session_ids"] == ["sid-a", "sid-b"]
+        assert raw["agent_persona"] == "reviewer"
+        for old_key in ("claude_session_ids", "active_claude_session_id",
+                        "extra_claude_args", "claude_agent"):
+            assert old_key not in raw
         reloaded = manager.get_session("sess-old")
         assert reloaded.agent_session_ids == ["sid-a", "sid-b"]
         assert reloaded.agent_persona == "reviewer"
-
-    def test_partial_update_dual_writes_a_renamed_field(self, tmp_path):
-        state_file = tmp_path / "sessions.json"
-        state_file.write_text(json.dumps({"sess-old": dict(self.OLD_SHAPE)}))
-        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-
-        manager.update_session("sess-old", agent_persona="auditor")
-
-        raw = json.loads(state_file.read_text())["sess-old"]
-        assert raw["agent_persona"] == "auditor"
-        assert raw["claude_agent"] == "auditor"
 
     def test_new_key_wins_when_a_file_carries_both(self):
         data = dict(self.OLD_SHAPE)
         data["agent_session_ids"] = ["new"]
         data["claude_session_ids"] = ["stale"]
         assert Session.from_dict(data).agent_session_ids == ["new"]
-
-    def test_to_dict_emits_both_names(self):
-        session = Session(
-            id="s", name="n", tmux_session="agents", tmux_window="n",
-            command=["claude"], start_directory=None, start_time="2026-08-01",
-            agent_session_ids=["sid"], active_agent_session_id="sid",
-            extra_cli_args=["--x"], agent_persona="reviewer",
-        )
-        data = session.to_dict()
-        assert data["claude_session_ids"] == ["sid"]
-        assert data["active_claude_session_id"] == "sid"
-        assert data["extra_claude_args"] == ["--x"]
-        assert data["claude_agent"] == "reviewer"
-
-    def test_attribute_aliases_read_and_write(self):
-        session = Session(
-            id="s", name="n", tmux_session="agents", tmux_window="n",
-            command=["claude"], start_directory=None, start_time="2026-08-01",
-        )
-        session.claude_session_ids = ["sid"]
-        session.active_claude_session_id = "sid"
-        session.extra_claude_args = ["--x"]
-        session.claude_agent = "reviewer"
-
-        assert session.agent_session_ids == ["sid"]
-        assert session.active_agent_session_id == "sid"
-        assert session.extra_cli_args == ["--x"]
-        assert session.agent_persona == "reviewer"
-        assert session.claude_session_ids is session.agent_session_ids
-
-    def test_constructor_accepts_the_old_kwarg_names(self):
-        session = Session(
-            id="s", name="n", tmux_session="agents", tmux_window="n",
-            command=["claude"], start_directory=None, start_time="2026-08-01",
-            claude_session_ids=["sid"], claude_agent="reviewer",
-        )
-        assert session.agent_session_ids == ["sid"]
-        assert session.agent_persona == "reviewer"
-
-    def test_create_session_accepts_the_old_kwarg_names(self, tmp_path):
-        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        session = manager.create_session(
-            name="a", tmux_session="agents", tmux_window="a", command=["claude"],
-            extra_claude_args=["--verbose"], claude_agent="reviewer",
-        )
-        assert session.extra_cli_args == ["--verbose"]
-        assert session.agent_persona == "reviewer"
 
     def test_create_session_rejects_unknown_kwargs(self, tmp_path):
         manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -1529,14 +1464,6 @@ class TestPhase6FieldRenames:
                 name="a", tmux_session="agents", tmux_window="a",
                 command=["claude"], nonsense=1,
             )
-
-    def test_update_session_accepts_the_old_key(self, tmp_path):
-        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        session = manager.create_session(
-            name="a", tmux_session="agents", tmux_window="a", command=["claude"],
-        )
-        manager.update_session(session.id, claude_session_ids=["sid"])
-        assert manager.get_session(session.id).agent_session_ids == ["sid"]
 
     def test_accessors_append_onto_a_legacy_only_state_file(self, tmp_path):
         state_file = tmp_path / "sessions.json"
@@ -1548,17 +1475,10 @@ class TestPhase6FieldRenames:
 
         raw = json.loads(state_file.read_text())["sess-old"]
         assert raw["agent_session_ids"] == ["sid-a", "sid-b", "sid-c"]
-        assert raw["claude_session_ids"] == ["sid-a", "sid-b", "sid-c"]
         assert raw["active_agent_session_id"] == "sid-c"
-        assert raw["active_claude_session_id"] == "sid-c"
-
-    def test_accessor_method_aliases_are_the_same_functions(self):
-        assert SessionManager.add_claude_session_id is SessionManager.add_agent_session_id
-        assert (
-            SessionManager.set_active_claude_session_id
-            is SessionManager.set_active_agent_session_id
-        )
-
+        # The old-name twins go on the first write: no stale copy lingers
+        assert "claude_session_ids" not in raw
+        assert "active_claude_session_id" not in raw
 
 # =============================================================================
 # Run tests directly

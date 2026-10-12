@@ -82,15 +82,12 @@ class TestPendingView:
         )
         assert s.stats is not v.stats
 
-    def test_view_ignores_legacy_twins_and_accepts_legacy_names(self, tmp_path):
+    def test_view_applies_a_staged_field(self, tmp_path):
         sm = _manager(tmp_path)
         s = sm.get_session("s0")
         pending = PendingUpdates()
-        pending.update_session("s0", claude_session_ids=["sid-a", "sid-b"])
-        assert pending.fields["s0"] == {
-            "agent_session_ids": ["sid-a", "sid-b"],
-            "claude_session_ids": ["sid-a", "sid-b"],
-        }
+        pending.update_session("s0", agent_session_ids=["sid-a", "sid-b"])
+        assert pending.fields["s0"] == {"agent_session_ids": ["sid-a", "sid-b"]}
         assert pending.view(s).agent_session_ids == ["sid-a", "sid-b"]
 
     def test_later_stage_overrides_earlier_for_the_same_key(self):
@@ -164,11 +161,11 @@ class TestCommitPending:
     def test_commit_matches_the_per_call_writers_byte_for_byte(self, tmp_path):
         """The file after commit_pending equals the file after the same
         changes made through update_session / update_stats /
-        update_session_status one by one, legacy twins included."""
+        update_session_status one by one."""
         per_call = _manager(tmp_path / "a")
         batched = _manager(tmp_path / "b")
 
-        per_call.update_session("s0", branch="feature", claude_session_ids=["sid-a", "sid-z"])
+        per_call.update_session("s0", branch="feature", agent_session_ids=["sid-a", "sid-z"])
         per_call.update_stats("s0", current_task="Active: Edit", operation_times=[1.5, 2.0])
         per_call.update_session_status("s1", "terminated")
         per_call.update_session(
@@ -176,7 +173,7 @@ class TestCommitPending:
         )
 
         pending = PendingUpdates()
-        pending.update_session("s0", branch="feature", claude_session_ids=["sid-a", "sid-z"])
+        pending.update_session("s0", branch="feature", agent_session_ids=["sid-a", "sid-z"])
         pending.update_stats("s0", current_task="Active: Edit", operation_times=[1.5, 2.0])
         pending.update_session_status("s1", "terminated")
         pending.update_session(
@@ -186,8 +183,8 @@ class TestCommitPending:
 
         assert per_call.state_file.read_bytes() == batched.state_file.read_bytes()
         raw = json.loads(batched.state_file.read_text())
-        assert raw["s0"]["claude_session_ids"] == ["sid-a", "sid-z"]
-        assert raw["s2"]["active_claude_session_id"] == "sid-q"
+        assert raw["s0"]["agent_session_ids"] == ["sid-a", "sid-z"]
+        assert raw["s2"]["active_agent_session_id"] == "sid-q"
 
     def test_external_write_between_staging_and_commit_is_preserved(self, tmp_path):
         sm = _manager(tmp_path)
@@ -241,7 +238,8 @@ class TestSettersCompareBeforeWrite:
         assert _signature(sm.state_file) == before
         sm.set_active_agent_session_id("s0", "sid-b")
         raw = json.loads(sm.state_file.read_text())["s0"]
-        assert raw["active_agent_session_id"] == raw["active_claude_session_id"] == "sid-b"
+        assert raw["active_agent_session_id"] == "sid-b"
+        assert "active_claude_session_id" not in raw
 
     def test_add_agent_session_id_is_a_no_op_when_present(self, tmp_path):
         sm = _manager(tmp_path)
