@@ -116,16 +116,14 @@ def resize_agent_window(tmux_session: str, name: str, width: int, height: int) -
     if not session.tmux_window:
         raise ControlError("Agent has no tmux window", status=400)
 
-    import subprocess
-    result = subprocess.run(
-        ["tmux", "resize-window", "-t",
-         f"{tmux_session}:{session.tmux_window}",
-         "-x", str(width), "-y", str(height)],
-        capture_output=True, text=True,
-    )
-    if result.returncode == 0:
+    from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+
+    # overcode's own server (OVERCODE_TMUX_SOCKET), with a bounded wait; a
+    # bare `tmux` reached the default server and could hang forever
+    tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
+    if tmux.resize_window(tmux_session, session.tmux_window, width, height):
         return {"ok": True}
-    raise ControlError(f"Resize failed: {result.stderr.strip()}", status=500)
+    raise ControlError("Resize failed", status=500)
 
 
 def kill_agent(tmux_session: str, name: str, cascade: bool = True) -> dict:

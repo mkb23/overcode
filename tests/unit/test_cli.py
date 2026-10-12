@@ -3262,3 +3262,22 @@ class TestRenameCommand:
         assert result.exit_code == 0
         assert "'original' was renamed to 'current'" in out
         assert calls["old"] == "current"
+
+
+class TestSplitTmuxNeverHangs:
+    """`overcode tmux` is the recovery tool: a wedged tmux server must make it
+    fail, not hang (quality review item 10)."""
+
+    def test_a_hung_tmux_call_returns_a_failure(self, monkeypatch):
+        import subprocess
+        from overcode.cli import split
+
+        def hang(cmd, **kwargs):
+            assert kwargs.get("timeout") == split.SPLIT_TMUX_TIMEOUT_SECONDS
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        monkeypatch.setattr(split.subprocess, "run", hang)
+        result = split._tmux("list-sessions")
+        assert result.returncode == 1
+        assert "did not answer" in result.stderr
+        assert split._tmux_check("has-session", "-t", "x") is False

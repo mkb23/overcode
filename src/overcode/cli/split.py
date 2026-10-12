@@ -207,13 +207,20 @@ def _linked_session_name(agents_session: str) -> str:
     return f"{LINKED_SESSION_PREFIX}-{agents_session}"
 
 
+# A wedged tmux server never answers; `overcode tmux` is how a person
+# recovers, so it must fail rather than hang with them
+SPLIT_TMUX_TIMEOUT_SECONDS = 10.0
+
+
 def _tmux(*args: str, capture: bool = True) -> subprocess.CompletedProcess:
     """Run a tmux command on overcode's server (``OVERCODE_TMUX_SOCKET``, if set)."""
-    return subprocess.run(
-        [*_build_tmux_cmd(), *args],
-        capture_output=capture,
-        text=True,
-    )
+    cmd = [*_build_tmux_cmd(), *args]
+    try:
+        return subprocess.run(cmd, capture_output=capture, text=True,
+                              timeout=SPLIT_TMUX_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            cmd, 1, "", f"tmux did not answer in {SPLIT_TMUX_TIMEOUT_SECONDS:g}s: {' '.join(args[:2])}")
 
 
 def _bottom_pane_command(linked: str) -> str:
