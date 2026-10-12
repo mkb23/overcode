@@ -234,3 +234,44 @@ class TestTheAgentsOwnConversations:
         world.ticks()
 
         _assert_own_conversation(world.agent(alpha), "alpha-2")
+
+
+class TestAdvanceEntry:
+    """The pure decision behind advance_active_agent_session_id."""
+
+    @staticmethod
+    def _entry(**fields):
+        entry = {"agent_session_ids": ["a", "b"], "active_agent_session_id": "b",
+                 "active_agent_session_ordinal": 10.0,
+                 "active_agent_session_unordered": False}
+        entry.update(fields)
+        return entry
+
+    @pytest.mark.parametrize("sid, ordinal, kwargs, outcome", [
+        ("b", 10.0, {}, "current"),
+        ("a", None, {}, "superseded"),
+        ("c", None, {"allow_new": False}, "rejected"),
+        ("c", 5.0, {}, "superseded"),  # older transcript than the active one
+    ])
+    def test_refusals_leave_the_entry_alone(self, sid, ordinal, kwargs, outcome):
+        from overcode.session_identity import advance_entry
+        entry = self._entry()
+        before = json.loads(json.dumps(entry))
+        assert advance_entry(entry, sid, ordinal, **kwargs) == (outcome, "b", False)
+        assert entry == before
+
+    def test_a_newer_id_advances_and_keeps_the_history(self):
+        from overcode.session_identity import advance_entry
+        entry = self._entry()
+        assert advance_entry(entry, "c", 20.0) == ("advanced", "c", True)
+        assert entry["agent_session_ids"] == ["a", "b", "c"]
+        assert entry["active_agent_session_id"] == "c"
+        assert entry["active_agent_session_ordinal"] == 20.0
+        assert entry["active_agent_session_unordered"] is False
+
+    def test_an_age_settles_an_unordered_current_id(self):
+        from overcode.session_identity import advance_entry
+        entry = self._entry(active_agent_session_unordered=True)
+        assert advance_entry(entry, "b", None) == ("current_unordered", "b", False)
+        assert advance_entry(entry, "b", 11.0) == ("advanced", "b", True)
+        assert entry["active_agent_session_unordered"] is False
