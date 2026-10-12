@@ -181,6 +181,9 @@ TUI_ATTENDED_FRESHNESS = 3 * TUI_ATTENDED_TOUCH_SECONDS
 # count, terminated-session archive) was 120 s of wall clock at the 2 s
 # loop; it is a wall-clock cadence now so the unattended loop keeps it.
 HOUSEKEEPING_INTERVAL_SECONDS = 60 * DAEMON.interval_fast
+# Finished jobs older than jobs.retention_hours are dropped from jobs.json
+# this often (it otherwise grew without limit)
+JOB_PRUNE_INTERVAL_SECONDS = 3600.0
 
 
 # Create PID helper functions using factory
@@ -1235,6 +1238,20 @@ class MonitorDaemon:
         if unattended:
             return self._interval_unattended
         return INTERVAL_FAST
+
+    def _prune_finished_jobs(self) -> None:
+        """Drop finished jobs past their retention, at most hourly."""
+        last = getattr(self, "_last_job_prune", None)
+        if last is not None and time.monotonic() - last < JOB_PRUNE_INTERVAL_SECONDS:
+            return
+        self._last_job_prune = time.monotonic()
+        try:
+            from .config import get_jobs_retention_hours
+            from .job_manager import JobManager
+
+            JobManager().cleanup_completed(get_jobs_retention_hours())
+        except Exception as e:  # housekeeping must never fail the tick
+            self.log.warn(f"job retention not applied: {e}")
 
     def _housekeeping_due(self, now: datetime) -> bool:
         """Wall-clock replacement for ``loop_count % 60 == 0``.
@@ -2632,6 +2649,7 @@ class MonitorDaemon:
                 index.by_id.values() if index is not None else self.session_manager.list_sessions()
             )
             self._archive_terminated_sessions(all_sessions, now)
+            self._prune_finished_jobs()
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)
