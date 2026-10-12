@@ -949,7 +949,29 @@ class TestComputeStatusDetail:
         )
         assert d.color == STATUS_COLOR_GREEN
         assert d.badges[0].kind == "blocked_sleep"
-        assert d.badges[0].eta_seconds == 60.0
+        # It ends 60 s after the PreToolUse: a fixed moment that counts down
+        assert d.badges[0].eta_at == pytest.approx(st["timestamp"] + 60.0)
+        assert 59.0 < d.badges[0].eta_seconds <= 60.0
+
+    def test_a_sleeping_agents_published_detail_holds_still(self, monkeypatch):
+        """Published every tick, the badge must not change while it counts
+        down: eta_at was now + duration, a delta every tick (review item 14)."""
+        from overcode import hook_status_detector as hsd
+        from overcode.episodes import status_detail_view
+
+        st = self._state("PreToolUse", tool_name="Bash",
+                         foreground={"kind": "tool", "tool": "Bash", "blocked_on": "sleep"})
+        views = []
+        for t in (0.0, 2.0, 4.0):
+            now = st["timestamp"] + t
+            monkeypatch.setattr(hsd.time, "time", lambda now=now: now)
+            d = compute_status_detail(
+                hook_state=st, event="PreToolUse", session=self._session(),
+                pane_content="", monitor_count=0, has_interrupt=False,
+                sleep_duration_seconds=60, legacy_status=STATUS_BUSY_SLEEPING,
+            )
+            views.append(status_detail_view(d, now))
+        assert views[0] == views[1] == views[2]
 
     # ---- ORANGE — approval ----
     def test_permission_request_is_orange(self):

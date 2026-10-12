@@ -350,7 +350,7 @@ class MonitorDaemonState:
         "green_time_seconds", "non_green_time_seconds", "sleep_time_seconds",
     })
 
-    def to_engine_snapshot(self):
+    def to_engine_snapshot(self, now: Optional[float] = None):
         """This state as the engine publishes it on engine.sock (0.6.0).
 
         Agents are keyed by session id with their SessionDaemonState fields;
@@ -368,8 +368,10 @@ class MonitorDaemonState:
         # Idle seconds grow every tick; when idleness began only changes when
         # the person does something. Views compute the seconds from it.
         idle = fleet.pop("presence_idle_seconds", None)
+        # From the tick's own time, so a frozen test clock freezes it too
+        now = time.time() if now is None else now
         fleet["presence_idle_since"] = (
-            int(time.time() - idle) if isinstance(idle, (int, float)) else None
+            int(now - idle) if isinstance(idle, (int, float)) else None
         )
         skip = self.ENGINE_TICK_AGENT_FIELDS
         agents = {

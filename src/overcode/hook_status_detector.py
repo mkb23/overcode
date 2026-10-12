@@ -245,23 +245,41 @@ def _badges_from_obligations(obligations: list[dict]) -> list[StatusBadge]:
         else:
             eta = obl.get("eta_seconds")
         label = obl.get("label")
+        at = float(eta_abs) if isinstance(eta_abs, (int, float)) else None
         if kind in by_kind:
             b = by_kind[kind]
             b.count += 1
             if isinstance(eta, (int, float)):
                 if b.eta_seconds is None or eta < b.eta_seconds:
                     b.eta_seconds = float(eta)
+                    b.eta_at = at
         else:
             by_kind[kind] = StatusBadge(
                 kind=kind,
                 label=label if isinstance(label, str) else None,
                 count=1,
                 eta_seconds=float(eta) if isinstance(eta, (int, float)) else None,
+                eta_at=at,
             )
     # Stable order: YELLOW kinds in a canonical order, then anything else.
     order = ["schedule_wakeup", "cron", "monitor", "bg_task", "heartbeat"]
     rank = {k: i for i, k in enumerate(order)}
     return sorted(by_kind.values(), key=lambda b: rank.get(b.kind, 99))
+
+
+def _sleep_badge(hook_state: dict, duration: Optional[int]) -> StatusBadge:
+    """A foreground sleep's badge, ending ``duration`` after its PreToolUse.
+
+    Its end is fixed, so the badge carries it (``eta_at``) and counts down;
+    ``now + duration`` would move forward every tick and never count.
+    """
+    if not duration:
+        return StatusBadge(kind="blocked_sleep")
+    try:
+        end = float(hook_state.get("timestamp")) + duration
+    except (TypeError, ValueError):
+        return StatusBadge(kind="blocked_sleep", eta_seconds=float(duration))
+    return StatusBadge(kind="blocked_sleep", eta_seconds=max(0.0, end - time.time()), eta_at=end)
 
 
 def _green_badges(
@@ -282,10 +300,7 @@ def _green_badges(
     if blocked_on == "process":
         return [StatusBadge(kind="blocked_process", label=tool_name or None)]
     if blocked_on == "sleep" or sleep_duration_seconds is not None:
-        return [StatusBadge(
-            kind="blocked_sleep",
-            eta_seconds=float(sleep_duration_seconds) if sleep_duration_seconds else None,
-        )]
+        return [_sleep_badge(hook_state, sleep_duration_seconds)]
 
     if tool_name:
         return [StatusBadge(kind="tool", label=tool_name)]
@@ -374,7 +389,7 @@ def compute_status_detail(
         # *armed*, not acting — that case falls through to YELLOW below.
         if sleep_duration_seconds is not None:
             candidates.append((STATUS_COLOR_GREEN, [
-                StatusBadge(kind="blocked_sleep", eta_seconds=float(sleep_duration_seconds)),
+                _sleep_badge(hook_state, sleep_duration_seconds),
             ]))
         else:
             tool = hook_state.get("tool_name") or ""

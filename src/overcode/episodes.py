@@ -327,7 +327,10 @@ def status_detail_view(detail, now: float) -> Optional[dict]:
             entry["label"] = badge.label
         if badge.count != 1:
             entry["count"] = badge.count
-        if badge.eta_seconds is not None:
+        eta_at = getattr(badge, "eta_at", None)
+        if eta_at is not None:
+            entry["eta_at"] = round(eta_at)  # fixed: no delta while it counts down
+        elif badge.eta_seconds is not None:
             entry["eta_at"] = round(now + badge.eta_seconds)
         badges.append(entry)
     return {"color": detail.color, "badges": badges, "legacy_status": detail.legacy_status}

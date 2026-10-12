@@ -165,6 +165,27 @@ class TestQuickTick:
         assert [(s.name, s.current_status) for s in states] == [("a", "running"), ("b", "waiting_user")]
         d._flush_pending_writes.assert_called_once()
 
+    def test_a_redetected_parent_keeps_its_childrens_cost(self, tmp_path):
+        """Only the parent changed: its subtree cost still counts the
+        children it wasn't re-detected with (was published as 0)."""
+        d = _daemon(tmp_path)
+        d.state.sessions = [
+            SessionDaemonState(session_id="p", name="parent", estimated_cost_usd=1.0,
+                               subtree_cost_usd=3.0),
+            SessionDaemonState(session_id="c", name="child", parent_name="parent",
+                               estimated_cost_usd=2.0),
+        ]
+        d._session_index = lambda: SimpleNamespace(
+            by_id={"p": SimpleNamespace(id="p", name="parent", tmux_session="agents")})
+        d._detect_and_enrich = lambda c, n, i: (
+            [SessionDaemonState(session_id="p", name="parent", estimated_cost_usd=1.5)], False)
+        d._flush_pending_writes = MagicMock()
+        published = []
+        d._publish_state = lambda states, save=True: published.append(states)
+        d._quick_tick({"parent"}, datetime.now())
+        parent = next(s for s in published[0] if s.name == "parent")
+        assert parent.subtree_cost_usd == 3.5
+
     def test_the_state_file_is_saved_at_most_once_a_second(self, tmp_path):
         import time
 

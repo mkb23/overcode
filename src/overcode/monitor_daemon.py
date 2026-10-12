@@ -1414,7 +1414,7 @@ class MonitorDaemon:
         engine = getattr(self, "_engine", None)
         if engine is not None:
             try:
-                engine.publish(self.state.to_engine_snapshot())
+                engine.publish(self.state.to_engine_snapshot(now.timestamp()))
             except Exception as e:  # a view problem must never stop the tick
                 self.log.warn(f"engine.sock publish failed: {e}")
 
@@ -1614,6 +1614,9 @@ class MonitorDaemon:
             fresh = {s.session_id: s for s in states}
             merged = [fresh.pop(s.session_id, s) for s in self.state.sessions]
             merged += list(fresh.values())
+            # Over the whole fleet: _detect_and_enrich saw only the changed
+            # agents, so a parent re-detected without its children got 0
+            self._compute_subtree_costs(merged)
             save = time.monotonic() - self._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
             self._publish_state(merged, save=save)
             # Hook-driven transitions land here: persist what they recorded

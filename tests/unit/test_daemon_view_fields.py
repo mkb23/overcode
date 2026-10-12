@@ -55,9 +55,9 @@ class TestAQuietFleetPublishesNothing:
         with clock.installed():
             # past the first stats sync (real news), then two quiet syncs' worth
             run_ticks(daemon, detector, clock, 4)
-            snaps.append(daemon.state.to_engine_snapshot())
+            snaps.append(daemon.state.to_engine_snapshot(clock.now.timestamp()))
             run_ticks(daemon, detector, clock, 6)
-            snaps.append(daemon.state.to_engine_snapshot())
+            snaps.append(daemon.state.to_engine_snapshot(clock.now.timestamp()))
         delta = diff(snaps[0], snaps[1])
         assert delta.empty, (delta.set, delta.fleet_set)
 

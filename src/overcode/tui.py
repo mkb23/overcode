@@ -1001,7 +1001,9 @@ class SupervisorTUI(
     def on_supervisor_tui_engine_event(self, event: "SupervisorTUI.EngineEvent") -> None:
         if event.kind == "snapshot":
             self._engine_apply_posted = False
-            snapshot = self._engine_pending
+            # Take it: a snapshot landing after the flag reset posts its own
+            # event, which must not find this one again and apply it twice
+            snapshot, self._engine_pending = self._engine_pending, None
             if snapshot is not None:
                 self._apply_engine_snapshot(snapshot)
         elif event.kind == "bell":

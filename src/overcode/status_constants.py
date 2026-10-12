@@ -486,13 +486,16 @@ class StatusBadge:
     `kind` is a key in BADGE_KINDS. `label` is an optional human-readable
     suffix (e.g. tool name for `tool`, "in 4m" for `schedule_wakeup`). `count`
     lets us stack identical kinds compactly: monitor×2 instead of two badges.
-    `eta_seconds` is the seconds-until-fire for wake-time-aware kinds.
+    `eta_seconds` is the seconds-until-fire for wake-time-aware kinds;
+    `eta_at`, when known, is the same moment as epoch seconds. It holds
+    still between ticks, so it is what the engine publishes.
     """
 
     kind: str
     label: Optional[str] = None
     count: int = 1
     eta_seconds: Optional[float] = None
+    eta_at: Optional[float] = None
 
 
 @dataclass

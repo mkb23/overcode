@@ -372,6 +372,11 @@ def make_daemon(
     finally:
         monitor_daemon.PresenceLogger = original_presence
     daemon._tmux = tmux  # the current tree's persistent client; unused by older trees
+    # Presence reads the host's real idle time (Quartz), which moves in real
+    # time while a test's clock is frozen: report "unavailable" instead, so
+    # no tick depends on whether someone is at the keyboard
+    daemon.presence.get_current_state = lambda: (None, None, None)
+    daemon.presence.available = False
     daemon.detector = detector
     daemon._hostname = "test-host"
     daemon._relay_config = None  # older trees had a cloud relay push; never push from a test tick
