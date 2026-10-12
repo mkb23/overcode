@@ -181,6 +181,10 @@ class DaemonStatusBar(Static):
             tick_s = getattr(state, "slow_tick_seconds", None)
             if isinstance(tick_s, (int, float)):
                 content.append(f" ⚠daemon slow ({tick_s:.1f}s tick)", style="bold yellow")
+            # The daemon could not write its state file (a full disk): views
+            # stay live, but `overcode list` and restarts read stale state
+            if getattr(state, "state_file_error", None):
+                content.append(" ⚠state file not saved", style="bold yellow")
             # Version mismatch warning
             if state.daemon_version != DAEMON_VERSION:
                 content.append(f" ⚠v{state.daemon_version}→{DAEMON_VERSION}", style="bold yellow")

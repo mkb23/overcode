@@ -1408,14 +1408,31 @@ class MonitorDaemon:
                 pass
 
         if save:
-            self.state.save(self.state_path)
-            self._last_state_save = time.monotonic()
+            self._save_state_file()
+        # Published whether or not the file could be written: a full disk
+        # must not freeze every view's status (the error rides along)
         engine = getattr(self, "_engine", None)
         if engine is not None:
             try:
                 engine.publish(self.state.to_engine_snapshot())
             except Exception as e:  # a view problem must never stop the tick
                 self.log.warn(f"engine.sock publish failed: {e}")
+
+    def _save_state_file(self) -> None:
+        """Write the state file; on failure keep going and say so in the state."""
+        previous = self.state.state_file_error
+        self.state.state_file_error = None
+        try:
+            self.state.save(self.state_path)
+        except Exception as e:
+            message = f"{type(e).__name__}: {e}"
+            if message != previous:
+                self.log.error(f"State file not saved: {message}")
+            self.state.state_file_error = message
+            return
+        self._last_state_save = time.monotonic()
+        if previous:
+            self.log.info("State file saved again")
 
     def _record_episode(self, session, state: SessionDaemonState, effective_status: str,
                         now: datetime) -> None:
@@ -2222,12 +2239,17 @@ class MonitorDaemon:
                 now,
                 STATUS_HISTORY_KEEPALIVE_SECONDS,
             ):
-                log_agent_status(
-                    session.name, effective_status, activity,
-                    history_file=self.history_path,
-                    session_id=session.id,
-                    hostname=self._hostname,
-                )
+                try:
+                    log_agent_status(
+                        session.name, effective_status, activity,
+                        history_file=self.history_path,
+                        session_id=session.id,
+                        hostname=self._hostname,
+                    )
+                except OSError as e:
+                    # History is a record, not the status: a full disk must
+                    # not fail the tick that publishes every agent's status
+                    self.log.warn(f"[{session.name}] status history not written: {e}")
                 self._last_logged[session.id] = (
                     effective_status, activity[:100] if activity else ""
                 )

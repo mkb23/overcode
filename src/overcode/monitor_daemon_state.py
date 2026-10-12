@@ -316,6 +316,11 @@ class MonitorDaemonState:
     # Untracked tmux windows (#344)
     untracked_window_count: int = 0
 
+    # Why the last state-file save failed (None: it succeeded). The views
+    # still get every update over engine.sock; this says the file, which
+    # the CLI and a restarted view read, is falling behind.
+    state_file_error: Optional[str] = None
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return dataclasses.asdict(self)

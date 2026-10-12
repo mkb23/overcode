@@ -12,7 +12,7 @@ import stat
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -280,6 +280,45 @@ class TestFailingTick:
         logger = BaseDaemonLogger(log_file=tmp_path / "d.log")
         logger.warning("legacy name")  # the three handlers that called it raised
         assert "legacy name" in (tmp_path / "d.log").read_text()
+
+
+class TestStateFileFailure:
+    """A state file that can't be written (a full disk) must not freeze the views."""
+
+    def _daemon(self, tmp_path):
+        from overcode.monitor_daemon import MonitorDaemon
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        daemon = MonitorDaemon.__new__(MonitorDaemon)
+        daemon.log = MagicMock()
+        daemon.state = MonitorDaemonState()
+        daemon.state_path = tmp_path / "monitor_daemon_state.json"
+        daemon.tmux_session = "agents"
+        daemon.presence = MagicMock(available=False)
+        daemon.presence.get_current_state.return_value = (1, 0.0, None)
+        daemon._engine = MagicMock()
+        return daemon
+
+    def test_the_engine_still_gets_the_update_with_the_error(self, tmp_path):
+        daemon = self._daemon(tmp_path)
+        with patch.object(type(daemon.state), "save", side_effect=OSError(28, "No space left on device")):
+            daemon._publish_state([])
+        daemon._engine.publish.assert_called_once()
+        assert "No space left" in daemon.state.state_file_error
+        snapshot = daemon._engine.publish.call_args.args[0]
+        assert "No space left" in snapshot.fleet["state_file_error"]
+        assert daemon.log.error.call_count == 1
+
+    def test_the_same_error_is_logged_once_and_recovery_clears_it(self, tmp_path):
+        daemon = self._daemon(tmp_path)
+        with patch.object(type(daemon.state), "save", side_effect=OSError(28, "full")):
+            daemon._publish_state([])
+            daemon._publish_state([])
+        assert daemon.log.error.call_count == 1
+        daemon._publish_state([])  # the disk has room again
+        assert daemon.state.state_file_error is None
+        assert (tmp_path / "monitor_daemon_state.json").exists()
+        assert "saved again" in daemon.log.info.call_args.args[0]
 
 
 # ── recorder persistence ─────────────────────────────────────────────────
