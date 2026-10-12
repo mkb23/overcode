@@ -287,6 +287,20 @@ class ColumnContext:
 # ---------------------------------------------------------------------------
 # SummaryColumn definition
 # ---------------------------------------------------------------------------
+def plain_from_render(
+    render: Callable[[ColumnContext], ColumnOutput],
+) -> Callable[[ColumnContext], Optional[str]]:
+    """A plain renderer from a styled one: the segments' text joined and
+    trimmed; None when the cell is empty or shows only the "-" placeholder."""
+    def render_plain(ctx: ColumnContext) -> Optional[str]:
+        segments = render(ctx)
+        if not segments:
+            return None
+        text = "".join(t for t, _ in segments).strip()
+        return None if text in ("", "-") else text
+    return render_plain
+
+
 @dataclass
 class SummaryColumn:
     """Declarative definition of a summary line column."""
@@ -296,6 +310,9 @@ class SummaryColumn:
     detail_levels: set  # Which detail levels show this column
     render: Callable[[ColumnContext], ColumnOutput]
     label: str = ""  # Human-readable label for CLI (e.g., "Status", "Uptime")
+    # Plain text for the CLI and uniform_columns; None = no value. Defaults
+    # to the styled cell's text, trimmed, with "-" (no data) as None. Give an
+    # explicit one only where the CLI wants different words (plain_from_render).
     render_plain: Optional[Callable[[ColumnContext], Optional[str]]] = None
     placeholder_width: int = 0  # When visible but render returns None, pad with N spaces
     visible: Optional[Callable[[ColumnContext], bool]] = None  # App-level visibility gate
@@ -322,6 +339,8 @@ class SummaryColumn:
     ticks: bool = False
 
     def __post_init__(self):
+        if self.render_plain is None:
+            self.render_plain = plain_from_render(self.render)
         if self.hide_when_uniform:
             self.description = (self.description + " Hidden while every agent shows the same value.").strip()
 
@@ -847,13 +866,6 @@ def render_pr_number(ctx: ColumnContext) -> ColumnOutput:
     return None
 
 
-def render_pr_number_plain(ctx: ColumnContext) -> Optional[str]:
-    pr = ctx.pr_number
-    if pr is not None:
-        return f"PR#{pr}"
-    return None
-
-
 def render_median_work_time(ctx: ColumnContext) -> ColumnOutput:
     """Median work-cycle time. Dashed when the backend reports no stats."""
     if ctx.claude_stats is None:
@@ -891,13 +903,6 @@ def render_cpu_pct(ctx: ColumnContext) -> ColumnOutput:
     return [(f" {cpu:>4.0f}%", style)]
 
 
-def render_cpu_pct_plain(ctx: ColumnContext) -> Optional[str]:
-    cpu = getattr(ctx.session, 'cpu_percent', 0.0) or 0.0
-    if cpu < 1.0:
-        return None
-    return f"{cpu:.0f}%"
-
-
 def render_ram(ctx: ColumnContext) -> ColumnOutput:
     """Resident memory for the claude process tree, human-readable."""
     rss = getattr(ctx.session, 'rss_bytes', 0) or 0
@@ -914,13 +919,6 @@ def render_ram(ctx: ColumnContext) -> ColumnOutput:
     else:
         style = ctx.mono(f"dim{ctx.bg}", "dim")
     return [(f" {_format_rss(rss)}", style)]
-
-
-def render_ram_plain(ctx: ColumnContext) -> Optional[str]:
-    rss = getattr(ctx.session, 'rss_bytes', 0) or 0
-    if rss <= 0:
-        return None
-    return _format_rss(rss).strip()
 
 
 def render_subagent_count(ctx: ColumnContext) -> ColumnOutput:
@@ -1630,7 +1628,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_key=lambda ctx: ctx.git_untracked_count,
                   sort_desc=True),
     SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
-                  label="PR", render_plain=render_pr_number_plain,
+                  label="PR",
                   visible=lambda ctx: ctx.any_has_pr, placeholder_width=8, header="PR", name="PR Number",
                   description="Open pull request for the agent's branch",
                   sort_key=lambda ctx: ctx.pr_number,
@@ -1751,14 +1749,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_key=_if_stats(lambda ctx: ctx.median_work),
                   sort_desc=True),
     SummaryColumn(id="cpu_pct", group="performance", detail_levels=HIGH_PLUS, render=render_cpu_pct,
-                  label="CPU", render_plain=render_cpu_pct_plain,
+                  label="CPU",
                   visible=lambda ctx: ctx.any_has_cpu,
                   placeholder_width=6, header="CPU", name="CPU %",
                   description="CPU used by the agent's process tree (over 100% = several cores)",
                   sort_key=lambda ctx: getattr(ctx.session, 'cpu_percent', 0.0) or 0.0,
                   sort_desc=True),
     SummaryColumn(id="ram", group="performance", detail_levels=HIGH_PLUS, render=render_ram,
-                  label="RAM", render_plain=render_ram_plain,
+                  label="RAM",
                   visible=lambda ctx: ctx.any_has_ram,
                   placeholder_width=6, header="RAM", name="Memory (RSS)",
                   description="Resident memory of the agent's process tree",

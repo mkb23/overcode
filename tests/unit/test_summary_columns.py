@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
-from overcode.summary_columns import ALL, MED_PLUS, HIGH_PLUS, _tool_emojis, ColumnContext, SUMMARY_COLUMNS, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_pr_number_plain, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
+from overcode.summary_columns import ALL, MED_PLUS, HIGH_PLUS, _tool_emojis, ColumnContext, SUMMARY_COLUMNS, COLUMNS_BY_ID, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
 from overcode.summary_groups import SUMMARY_GROUPS_BY_ID
 
 
@@ -156,6 +156,16 @@ class TestColumnStructure:
             if col.label:
                 assert col.render_plain is not None and callable(col.render_plain), \
                     f"Column '{col.id}' has label '{col.label}' but no render_plain"
+
+    def test_default_plain_is_the_cell_text(self):
+        """Without an explicit render_plain, the CLI shows the styled cell's
+        text trimmed, and nothing for an empty or "-" cell."""
+        cpu, ram = COLUMNS_BY_ID["cpu_pct"].render_plain, COLUMNS_BY_ID["ram"].render_plain
+        assert cpu(_make_ctx(session=_make_session(cpu_percent=37.4))) == "37%"
+        assert cpu(_make_ctx(session=_make_session(cpu_percent=0.5))) is None
+        assert ram(_make_ctx(session=_make_session(rss_bytes=900 * 1024 * 1024))) == "900M"
+        assert ram(_make_ctx(session=_make_session(rss_bytes=3 * 1024 ** 3))) == "3.0G"
+        assert ram(_make_ctx(session=_make_session(rss_bytes=0))) is None
 
     def test_visible_callback_is_callable_when_set(self):
         """Every column with a visible callback must have it be callable."""
@@ -1461,13 +1471,13 @@ class TestRenderPrNumber:
     def test_pr_number_plain_set(self):
         """Should render plain text PR# when set."""
         ctx = _make_ctx(pr_number=42)
-        result = render_pr_number_plain(ctx)
+        result = COLUMNS_BY_ID["pr_number"].render_plain(ctx)
         assert result == "PR#42"
 
     def test_pr_number_plain_none(self):
         """Should return None when pr_number not set."""
         ctx = _make_ctx(pr_number=None)
-        result = render_pr_number_plain(ctx)
+        result = COLUMNS_BY_ID["pr_number"].render_plain(ctx)
         assert result is None
 
 
