@@ -28,11 +28,14 @@ Everything else this reader cares about is one of three ``type``s:
 
 Discovery: primary lookup is by the session id codex's ``SessionStart`` hook
 recorded into ``hook_state_<agent>.json`` (``agent_session_ids`` /
-``agent_session_id`` — see ``hook_handler.write_hook_state``); fallback is a
-``session_meta.cwd`` match within a bounded window of day-directories around
-the agent's launch time, mirroring ``OpencodeStatsReader``'s directory+time
-fallback. Both are bounded to a few calendar days either side of the launch
-date — never a full-history scan.
+``agent_session_id`` — see ``hook_handler.write_hook_state``), trusted only
+once the agent's session record holds it (``_stats_common.agent_hook_ids``),
+so a dead namesake's hook state is ignored. The fallback, only for an agent
+whose hooks never reported, is a ``session_meta.cwd`` match among rollouts
+started since launch within a bounded window of day-directories, skipping
+rollouts other agents own, mirroring ``OpencodeStatsReader``'s
+directory+time fallback. Both are bounded to a few calendar days either side
+of the launch date — never a full-history scan.
 
 Same defensive posture as ``OpencodeStatsReader`` throughout: read-only
 (files are only ever opened for read), any surprise (missing directory,
@@ -51,6 +54,15 @@ from ..stats_reader import (
     AgentSessionStats,
     DiscoveredSessionIds,
     empty_window_usage,
+)
+from ._stats_common import (
+    agent_hook_ids,
+    as_int,
+    hooks_live,
+    iter_jsonl,
+    launch_datetime,
+    others_owned_ids,
+    owned_ids,
 )
 from .jsonl_tail import fold_jsonl
 
@@ -103,19 +115,17 @@ def _rollout_files_in(day_dir: Path) -> List[Path]:
         return []
 
 
-def _iter_jsonl(path: Path):
+def _rollout_started(path: Path) -> Optional[datetime]:
+    """When a rollout began, from its name (``rollout-<local ISO ts>-<id>``).
+
+    codex names the file in local time, like the day directories, so the
+    result compares with a session's naive local ``start_time``.
+    """
+    stamp = path.name[len("rollout-"):len("rollout-") + 19]
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except (ValueError, TypeError):
-                    continue
-    except OSError:
-        return
+        return datetime.strptime(stamp, "%Y-%m-%dT%H-%M-%S")
+    except ValueError:
+        return None
 
 
 def _read_session_meta(path: Path) -> Optional[dict]:
@@ -133,23 +143,6 @@ def _read_session_meta(path: Path) -> Optional[dict]:
         return None
     payload = entry.get("payload")
     return payload if isinstance(payload, dict) else None
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _launch_datetime(session: Any) -> Optional[datetime]:
-    start_time = getattr(session, "start_time", None)
-    if not start_time:
-        return None
-    try:
-        return datetime.fromisoformat(start_time)
-    except (ValueError, TypeError):
-        return None
 
 
 def _new_rollout_state() -> Dict[str, Any]:
@@ -192,15 +185,15 @@ def _apply_rollout_entry(out: Dict[str, Any], entry: Any) -> None:
         info = payload.get("info")
         usage = info.get("total_token_usage") if isinstance(info, dict) else None
         if isinstance(usage, dict):
-            out["input_tokens"] = _as_int(usage.get("input_tokens"))
+            out["input_tokens"] = as_int(usage.get("input_tokens"))
             # codex bills reasoning as output and reports it separately
             # (matching the opencode convention this reader follows
             # elsewhere) — folded into output rather than dropped.
-            out["output_tokens"] = _as_int(usage.get("output_tokens")) + _as_int(
+            out["output_tokens"] = as_int(usage.get("output_tokens")) + as_int(
                 usage.get("reasoning_output_tokens")
             )
-            out["cache_read_tokens"] = _as_int(usage.get("cached_input_tokens"))
-            out["cache_write_tokens"] = _as_int(usage.get("cache_write_input_tokens"))
+            out["cache_read_tokens"] = as_int(usage.get("cached_input_tokens"))
+            out["cache_write_tokens"] = as_int(usage.get("cache_write_input_tokens"))
         # Context occupancy comes from last_token_usage (the latest
         # request: its input already contains the whole conversation,
         # plus its output), NOT total_token_usage — the cumulative
@@ -212,9 +205,9 @@ def _apply_rollout_entry(out: Dict[str, Any], entry: Any) -> None:
         # last_token_usage is absent (single-turn files: identical).
         last = info.get("last_token_usage") if isinstance(info, dict) else None
         if isinstance(last, dict) and last.get("total_tokens") is not None:
-            out["current_context_tokens"] = _as_int(last.get("total_tokens"))
+            out["current_context_tokens"] = as_int(last.get("total_tokens"))
         elif isinstance(usage, dict):
-            out["current_context_tokens"] = _as_int(usage.get("total_tokens"))
+            out["current_context_tokens"] = as_int(usage.get("total_tokens"))
         # model_context_window is a sibling of total_token_usage inside
         # `info`, not nested inside it (#469) — codex's own CLI reports
         # this per token_count event; a running total like the usage
@@ -222,7 +215,7 @@ def _apply_rollout_entry(out: Dict[str, Any], entry: Any) -> None:
         # AgentSessionStats.max_context_tokens over the static
         # history_reader.MODEL_CONTEXT_WINDOWS table when present.
         if isinstance(info, dict):
-            window = _as_int(info.get("model_context_window"))
+            window = as_int(info.get("model_context_window"))
             if window > 0:
                 out["model_context_window"] = window
         return
@@ -257,45 +250,6 @@ def _apply_rollout_entry(out: Dict[str, Any], entry: Any) -> None:
         return
 
 
-def _hook_state_path(session: Any) -> Optional[Path]:
-    """Where hook_handler.py publishes this agent's hook state."""
-    tmux_session = getattr(session, "tmux_session", None)
-    name = getattr(session, "name", None)
-    if not tmux_session or not name:
-        return None
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
-    return base / tmux_session / f"hook_state_{name}.json"
-
-
-def session_ids_from_hook_state(session: Any) -> List[str]:
-    """codex session ids codex's SessionStart hook recorded, newest last.
-
-    Exact analogue of ``opencode_stats.session_ids_from_hook_state`` — the
-    field names (``agent_session_ids`` / ``agent_session_id``) are the same
-    because ``hook_handler.write_hook_state`` writes them the same way for
-    every backend that supplies a ``session_id``.
-    """
-    path = _hook_state_path(session)
-    if path is None:
-        return []
-    try:
-        state = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return []
-    if not isinstance(state, dict):
-        return []
-
-    ids: List[str] = []
-    raw_ids = state.get("agent_session_ids")
-    if isinstance(raw_ids, list):
-        ids.extend(sid for sid in raw_ids if isinstance(sid, str) and sid)
-    active = state.get("agent_session_id")
-    if isinstance(active, str) and active:
-        ids = [sid for sid in ids if sid != active] + [active]
-    return ids
-
-
 def schema_findings() -> List[str]:
     """Doctor warning when the newest rollout file's token_count shape has drifted.
 
@@ -309,7 +263,7 @@ def schema_findings() -> List[str]:
         return []
     usage_keys: Optional[set] = None
     try:
-        for entry in _iter_jsonl(latest):
+        for entry in iter_jsonl(latest):
             if not isinstance(entry, dict):
                 continue
             payload = entry.get("payload")
@@ -370,14 +324,6 @@ class CodexStatsReader:
     def _root(self) -> Path:
         return self._sessions_dir if self._sessions_dir is not None else sessions_root()
 
-    @staticmethod
-    def _owned_ids(session: Any) -> List[str]:
-        ids = list(getattr(session, "agent_session_ids", None) or [])
-        active = getattr(session, "active_agent_session_id", None)
-        if active and active not in ids:
-            ids.append(active)
-        return [sid for sid in ids if isinstance(sid, str) and sid]
-
     def _find_by_session_id(self, session_id: str, around: Optional[datetime]) -> Optional[Path]:
         if not session_id:
             return None
@@ -388,11 +334,22 @@ class CodexStatsReader:
         return None
 
     def _find_by_cwd(self, cwd: str, since: Optional[datetime]) -> List[Path]:
+        """Rollouts in ``cwd`` started at or after ``since``, oldest first.
+
+        One started before ``since`` cannot be the agent's: on a relaunch
+        under a dead agent's name it is the dead agent's conversation.
+        """
         if since is None:
             return []
+        if since.tzinfo is not None:
+            since = since.astimezone().replace(tzinfo=None)
+        floor = since.replace(microsecond=0)
         matches: List[Path] = []
         for day_dir in _day_dirs(self._root(), since):
             for path in _rollout_files_in(day_dir):
+                started = _rollout_started(path)
+                if started is not None and started < floor:
+                    continue
                 meta = _read_session_meta(path)
                 if meta and meta.get("cwd") == cwd:
                     matches.append(path)
@@ -402,13 +359,15 @@ class CodexStatsReader:
         return matches
 
     def _path_for(self, session: Any) -> Optional[Path]:
-        launch_dt = _launch_datetime(session)
-        for session_id in reversed(self._owned_ids(session)):
+        launch_dt = launch_datetime(session)
+        for session_id in reversed(owned_ids(session)):
             found = self._find_by_session_id(session_id, launch_dt)
             if found is not None:
                 return found
         cwd = getattr(session, "start_directory", None)
-        if not cwd:
+        if not cwd or hooks_live(session):
+            # Hooks name this agent's rollout; until the record holds it,
+            # the newest file in the directory may be another codex's.
             return None
         candidates = self._find_by_cwd(str(cwd), launch_dt)
         return candidates[-1] if candidates else None
@@ -448,25 +407,45 @@ class CodexStatsReader:
         # as ClaudeStatsReader.
         return None
 
-    def get_current_session_id(self, session: Any, since: datetime) -> Optional[str]:
-        from_hook = session_ids_from_hook_state(session)
-        if from_hook:
-            return from_hook[-1]
+    def _unowned_cwd_ids(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any]
+    ) -> List[str]:
+        """Rollout ids in the agent's cwd since ``since`` that no other agent owns, oldest first."""
         cwd = getattr(session, "start_directory", None)
         if not cwd:
+            return []
+        taken = others_owned_ids(session, all_sessions)
+        found: List[str] = []
+        for path in self._find_by_cwd(str(cwd), since):
+            meta = _read_session_meta(path)
+            sid = meta.get("id") if meta else None
+            if isinstance(sid, str) and sid and sid not in taken:
+                found.append(sid)
+        return found
+
+    def get_current_session_id(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any] = ()
+    ) -> Optional[str]:
+        """The rollout this agent is in now.
+
+        The id its hooks recorded, once the record holds it. The cwd match
+        is only for agents whose hooks never reported, and skips rollouts
+        other agents own.
+        """
+        hooks = agent_hook_ids(session)
+        if hooks.own:
+            return hooks.own[-1]
+        if hooks.live:
             return None
-        candidates = self._find_by_cwd(str(cwd), since)
-        if not candidates:
-            return None
-        meta = _read_session_meta(candidates[-1])
-        return meta.get("id") if meta else None
+        candidates = self._unowned_cwd_ids(session, since, all_sessions)
+        return candidates[-1] if candidates else None
 
     def discover_session_ids(
         self, session: Any, since: datetime, all_sessions: Sequence[Any]
     ) -> DiscoveredSessionIds:
         from ..claude_pid import is_session_id_owned_by_others
 
-        owned = set(self._owned_ids(session))
+        owned = set(owned_ids(session))
         session_id = getattr(session, "id", None)
 
         discovered: List[str] = []
@@ -482,16 +461,13 @@ class CodexStatsReader:
                 discovered.append(sid)
             latest = sid
 
-        for sid in session_ids_from_hook_state(session):
+        hooks = agent_hook_ids(session)
+        for sid in hooks.own:
             consider(sid)
 
-        if latest is None:
-            cwd = getattr(session, "start_directory", None)
-            if cwd:
-                for path in self._find_by_cwd(str(cwd), since):
-                    meta = _read_session_meta(path)
-                    if meta:
-                        consider(meta.get("id"))
+        if latest is None and not hooks.live:
+            for sid in self._unowned_cwd_ids(session, since, all_sessions):
+                consider(sid)
 
         return DiscoveredSessionIds(ids=discovered, latest=latest)
 
@@ -499,7 +475,7 @@ class CodexStatsReader:
         path = self._path_for(session)
         if path is None:
             return empty_window_usage()
-        launch_dt = _launch_datetime(session)
+        launch_dt = launch_datetime(session)
         if launch_dt is not None and launch_dt < since:
             # `since` starts after this agent's own launch — only a slice of
             # its lifetime is in scope, but token_count events are running
@@ -525,6 +501,5 @@ __all__ = [
     "CodexStatsReader",
     "codex_home",
     "schema_findings",
-    "session_ids_from_hook_state",
     "sessions_root",
 ]

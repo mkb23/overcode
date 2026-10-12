@@ -8,12 +8,9 @@ readable transcripts (Claude Code) return a reader that wraps
 zeros.  See ``docs/design/agent-agnostic-backends-opencode.md`` §2.1, §5.
 """
 
-import json
-import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 from .history_reader import AgentSessionStats
@@ -44,31 +41,17 @@ class DiscoveredSessionIds:
 
 
 def hook_session_ids(session: Any) -> List[str]:
-    """Backend session ids the agent's own hooks recorded, newest last.
+    """Backend session ids the agent's hook state names, newest last.
 
-    ``hook_handler`` writes ``agent_session_id`` into the agent's hook state
-    only after ``advance_active_agent_session_id`` has accepted it, so the
-    id is the conversation this agent's process is in, never a guess. Empty
-    when the agent has no hook state (polling mode, or no event yet).
+    Raw: a hook state file left by an earlier agent of the same name is
+    read too. Anything that adopts an id goes through
+    ``backends._stats_common.agent_hook_ids``, which keeps only the ids
+    that are this agent's. Empty when the agent has no hook state (polling
+    mode, or no event yet).
     """
-    tmux_session = getattr(session, "tmux_session", None)
-    name = getattr(session, "name", None)
-    if not isinstance(tmux_session, str) or not isinstance(name, str):
-        return []
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
-    try:
-        state = json.loads((base / tmux_session / f"hook_state_{name}.json").read_text())
-    except (OSError, ValueError):
-        return []
-    if not isinstance(state, dict):
-        return []
-    ids = [sid for sid in state.get("agent_session_ids") or ()
-           if isinstance(sid, str) and sid]
-    active = state.get("agent_session_id")
-    if isinstance(active, str) and active:
-        ids = [sid for sid in ids if sid != active] + [active]
-    return ids
+    from .backends._stats_common import hook_state_ids, read_hook_state
+
+    return hook_state_ids(read_hook_state(session))
 
 
 class StatsReader(Protocol):
@@ -81,8 +64,14 @@ class StatsReader(Protocol):
     ) -> Optional[AgentSessionStats]: ...
 
     def get_current_session_id(
-        self, session: Any, since: datetime
-    ) -> Optional[str]: ...
+        self, session: Any, since: datetime, all_sessions: Sequence[Any] = ()
+    ) -> Optional[str]:
+        """The conversation the agent is in now.
+
+        ``all_sessions`` lets a directory fallback skip conversations other
+        overcode agents own; the caller still checks the answer.
+        """
+        ...
 
     def discover_session_ids(
         self, session: Any, since: datetime, all_sessions: Sequence[Any]
@@ -122,7 +111,7 @@ class NullStatsReader:
         return None
 
     def get_current_session_id(
-        self, session: Any, since: datetime
+        self, session: Any, since: datetime, all_sessions: Sequence[Any] = ()
     ) -> Optional[str]:
         return None
 
@@ -170,25 +159,13 @@ class ClaudeStatsReader:
 
     @staticmethod
     def _own_hook_ids(session: Any) -> List[str]:
-        """``hook_session_ids`` that this agent's record already holds.
+        """Hook-reported ids that are this agent's (``agent_hook_ids``)."""
+        from .backends._stats_common import agent_hook_ids
 
-        The hook handler records an id in sessions.json before writing it to
-        hook state, so the agent's own hooks always pass. A hook state file
-        left by an earlier agent of the same name does not: its ids were
-        never this record's, and adopting one would pin the new agent to a
-        dead agent's conversation (#500 then rejects the real id as stale).
-        """
-        from_hooks = hook_session_ids(session)
-        if not from_hooks:
-            return []
-        known = set(getattr(session, "agent_session_ids", None) or ())
-        active = getattr(session, "active_agent_session_id", None)
-        if active:
-            known.add(active)
-        return [sid for sid in from_hooks if sid in known]
+        return list(agent_hook_ids(session).own)
 
     def get_current_session_id(
-        self, session: Any, since: datetime
+        self, session: Any, since: datetime, all_sessions: Sequence[Any] = ()
     ) -> Optional[str]:
         """The agent's current conversation.
 

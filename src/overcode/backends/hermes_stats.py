@@ -40,7 +40,6 @@ Load-bearing facts, all verified live:
 """
 
 import json
-import os
 import re
 import sqlite3
 import time
@@ -52,6 +51,18 @@ from ..stats_reader import (
     AgentSessionStats,
     DiscoveredSessionIds,
     empty_window_usage,
+)
+from ._stats_common import (
+    agent_hook_ids,
+    as_float,
+    as_int,
+    directories,
+    hooks_live,
+    launch_datetime,
+    others_owned_ids,
+    owned_ids,
+    placeholders,
+    table_columns,
 )
 
 # Columns the reader reads by name. Anything missing here is schema drift —
@@ -121,14 +132,6 @@ def connect(path: Optional[Path] = None) -> Optional[sqlite3.Connection]:
         return None
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> Tuple[str, ...]:
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    except sqlite3.Error:
-        return ()
-    return tuple(row[1] for row in rows)
-
-
 def missing_columns(conn: sqlite3.Connection) -> Dict[str, List[str]]:
     """Expected columns the live schema lacks, keyed by table."""
     out: Dict[str, List[str]] = {}
@@ -136,7 +139,7 @@ def missing_columns(conn: sqlite3.Connection) -> Dict[str, List[str]]:
         ("sessions", EXPECTED_SESSION_COLUMNS),
         ("messages", EXPECTED_MESSAGE_COLUMNS),
     ):
-        present = set(_table_columns(conn, table))
+        present = set(table_columns(conn, table))
         missing = [col for col in expected if col not in present]
         if missing:
             out[table] = missing
@@ -160,24 +163,6 @@ def schema_findings() -> List[str]:
     ]
 
 
-def _as_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _as_float(value: Any) -> float:
-    try:
-        return float(value or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _placeholders(count: int) -> str:
-    return ",".join("?" for _ in range(count))
-
-
 def fetch_session_rows(
     conn: sqlite3.Connection, session_ids: Sequence[str]
 ) -> List[sqlite3.Row]:
@@ -192,8 +177,8 @@ def fetch_session_rows(
         return []
     sql = (
         "SELECT * FROM sessions "
-        f"WHERE id IN ({_placeholders(len(ids))}) "
-        f"OR parent_session_id IN ({_placeholders(len(ids))}) "
+        f"WHERE id IN ({placeholders(len(ids))}) "
+        f"OR parent_session_id IN ({placeholders(len(ids))}) "
         "ORDER BY started_at ASC"
     )
     return conn.execute(sql, (*ids, *ids)).fetchall()
@@ -212,8 +197,8 @@ def fetch_rows_for_directory(
         return []
     sql = (
         "SELECT * FROM sessions "
-        f"WHERE source IN ({_placeholders(len(CLI_SOURCES))}) "
-        f"AND cwd IN ({_placeholders(len(dirs))}) "
+        f"WHERE source IN ({placeholders(len(CLI_SOURCES))}) "
+        f"AND cwd IN ({placeholders(len(dirs))}) "
         "AND started_at >= ? AND parent_session_id IS NULL "
         "ORDER BY started_at ASC"
     )
@@ -234,7 +219,7 @@ def _scan_messages(
         return out
     sql = (
         "SELECT session_id, role, timestamp FROM messages "
-        f"WHERE session_id IN ({_placeholders(len(ids))}) "
+        f"WHERE session_id IN ({placeholders(len(ids))}) "
         "ORDER BY timestamp DESC LIMIT ?"
     )
     try:
@@ -247,7 +232,7 @@ def _scan_messages(
     last_assistant: Optional[float] = None
     for row in reversed(rows):
         role = row["role"]
-        ts = _as_float(row["timestamp"])
+        ts = as_float(row["timestamp"])
         if role == "user":
             out["interaction_count"] += 1
             if cycle_start is not None and last_assistant is not None:
@@ -276,7 +261,7 @@ def _context_tokens(row: sqlite3.Row) -> int:
     anchor = config.get("_usage_anchor")
     if not isinstance(anchor, dict):
         return 0
-    return _as_int(anchor.get("prompt_tokens"))
+    return as_int(anchor.get("prompt_tokens"))
 
 
 def _effort(row: sqlite3.Row) -> Optional[str]:
@@ -297,38 +282,6 @@ def _effort(row: sqlite3.Row) -> Optional[str]:
         return "none"
     effort = reasoning.get("effort")
     return effort if isinstance(effort, str) and effort else None
-
-
-def _hook_state_path(session: Any) -> Optional[Path]:
-    """Where the plugin (via hook-handler) publishes this agent's hook state."""
-    tmux_session = getattr(session, "tmux_session", None)
-    name = getattr(session, "name", None)
-    if not tmux_session or not name:
-        return None
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
-    return base / tmux_session / f"hook_state_{name}.json"
-
-
-def session_ids_from_hook_state(session: Any) -> List[str]:
-    """Hermes session ids the plugin's SessionStart recorded, newest last."""
-    path = _hook_state_path(session)
-    if path is None:
-        return []
-    try:
-        state = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return []
-    if not isinstance(state, dict):
-        return []
-    ids: List[str] = []
-    raw_ids = state.get("agent_session_ids")
-    if isinstance(raw_ids, list):
-        ids.extend(sid for sid in raw_ids if isinstance(sid, str) and sid)
-    active = state.get("agent_session_id")
-    if isinstance(active, str) and active:
-        ids = [sid for sid in ids if sid != active] + [active]
-    return ids
 
 
 class _WindowSampler:
@@ -389,39 +342,21 @@ class HermesStatsReader:
     def _connect(self) -> Optional[sqlite3.Connection]:
         return connect(self._db_path)
 
-    @staticmethod
-    def _owned_ids(session: Any) -> List[str]:
-        ids = list(getattr(session, "agent_session_ids", None) or [])
-        active = getattr(session, "active_agent_session_id", None)
-        if active and active not in ids:
-            ids.append(active)
-        return [sid for sid in ids if isinstance(sid, str) and sid]
-
-    @staticmethod
-    def _directories(session: Any) -> List[str]:
-        directory = getattr(session, "start_directory", None)
-        if not directory:
-            return []
-        candidates = [str(directory)]
-        try:
-            candidates.append(str(Path(directory).resolve()))
-        except OSError:
-            pass
-        return list(dict.fromkeys(candidates))
-
     def _rows_for(self, conn: sqlite3.Connection, session: Any) -> List[sqlite3.Row]:
-        ids = self._owned_ids(session)
+        ids = owned_ids(session)
         if ids:
             rows = fetch_session_rows(conn, ids)
             if rows:
                 return rows
-        directories = self._directories(session)
-        if not directories:
+        dirs = directories(session)
+        if not dirs or hooks_live(session):
+            # Hooks name this agent's conversation; until the record holds
+            # it, a row in the directory may be another hermes's.
             return []
         since = _launch_ts(session)
         if since is None:
             return []
-        roots = fetch_rows_for_directory(conn, directories, since)
+        roots = fetch_rows_for_directory(conn, dirs, since)
         if not roots:
             return []
         return fetch_session_rows(conn, [row["id"] for row in roots])
@@ -430,14 +365,14 @@ class HermesStatsReader:
     def _totals(rows: Sequence[sqlite3.Row]) -> Dict[str, int]:
         totals = empty_window_usage()
         for row in rows:
-            totals["input_tokens"] += _as_int(row["input_tokens"])
+            totals["input_tokens"] += as_int(row["input_tokens"])
             # Hermes bills reasoning as output and reports it separately;
             # overcode has no reasoning bucket, so it folds into output.
-            totals["output_tokens"] += _as_int(row["output_tokens"]) + _as_int(
+            totals["output_tokens"] += as_int(row["output_tokens"]) + as_int(
                 row["reasoning_tokens"]
             )
-            totals["cache_read_tokens"] += _as_int(row["cache_read_tokens"])
-            totals["cache_creation_tokens"] += _as_int(row["cache_write_tokens"])
+            totals["cache_read_tokens"] += as_int(row["cache_read_tokens"])
+            totals["cache_creation_tokens"] += as_int(row["cache_write_tokens"])
         return totals
 
     # -- StatsReader -----------------------------------------------------
@@ -507,45 +442,62 @@ class HermesStatsReader:
                 status = row["cost_status"]
                 if status is None or status == "unknown":
                     continue
-                total += _as_float(row["estimated_cost_usd"])
+                total += as_float(row["estimated_cost_usd"])
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return None
         finally:
             conn.close()
         return total if total > 0 else None
 
-    def get_current_session_id(
-        self, session: Any, since: datetime
-    ) -> Optional[str]:
-        from_plugin = session_ids_from_hook_state(session)
-        if from_plugin:
-            return from_plugin[-1]
-
-        directories = self._directories(session)
-        if not directories:
-            return None
+    def _unowned_directory_ids(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any]
+    ) -> List[str]:
+        """Root CLI sessions in the agent's directory since ``since`` that
+        no other agent owns, oldest first."""
+        dirs = directories(session)
+        if not dirs:
+            return []
         conn = self._connect()
         if conn is None:
-            return None
+            return []
         try:
-            rows = fetch_rows_for_directory(conn, directories, since.timestamp())
+            rows = fetch_rows_for_directory(conn, dirs, since.timestamp())
         except (sqlite3.Error, OSError, ValueError):
-            return None
+            return []
         finally:
             conn.close()
-        return rows[-1]["id"] if rows else None
+        taken = others_owned_ids(session, all_sessions)
+        return [row["id"] for row in rows if row["id"] not in taken]
+
+    def get_current_session_id(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any] = ()
+    ) -> Optional[str]:
+        """The conversation this agent is in now.
+
+        The id its hooks recorded, once the record holds it. The directory
+        is only for agents whose hooks never reported, and skips sessions
+        other agents own.
+        """
+        hooks = agent_hook_ids(session)
+        if hooks.own:
+            return hooks.own[-1]
+        if hooks.live:
+            return None
+        candidates = self._unowned_directory_ids(session, since, all_sessions)
+        return candidates[-1] if candidates else None
 
     def discover_session_ids(
         self, session: Any, since: datetime, all_sessions: Sequence[Any]
     ) -> DiscoveredSessionIds:
         """Adopt Hermes conversation ids this agent owns but hasn't recorded.
 
-        Plugin-reported ids first (exact), then any unowned root CLI
-        session that started in this directory after launch.
+        Its own hook-reported ids first, then (only when its hooks never
+        reported) any unowned root CLI session that started in this
+        directory after launch.
         """
         from ..claude_pid import is_session_id_owned_by_others
 
-        owned = set(self._owned_ids(session))
+        owned = set(owned_ids(session))
         session_id = getattr(session, "id", None)
 
         discovered: List[str] = []
@@ -561,23 +513,13 @@ class HermesStatsReader:
                 discovered.append(sid)
             latest = sid
 
-        for sid in session_ids_from_hook_state(session):
+        hooks = agent_hook_ids(session)
+        for sid in hooks.own:
             consider(sid)
 
-        if latest is None:
-            directories = self._directories(session)
-            if directories:
-                conn = self._connect()
-                if conn is not None:
-                    try:
-                        for row in fetch_rows_for_directory(
-                            conn, directories, since.timestamp()
-                        ):
-                            consider(row["id"])
-                    except (sqlite3.Error, OSError, ValueError):
-                        pass
-                    finally:
-                        conn.close()
+        if latest is None and not hooks.live:
+            for sid in self._unowned_directory_ids(session, since, all_sessions):
+                consider(sid)
 
         return DiscoveredSessionIds(ids=discovered, latest=latest)
 
@@ -609,13 +551,8 @@ class HermesStatsReader:
 
 def _launch_ts(session: Any) -> Optional[float]:
     """The agent's launch time in Hermes's epoch-seconds convention."""
-    start_time = getattr(session, "start_time", None)
-    if not start_time:
-        return None
-    try:
-        return datetime.fromisoformat(start_time).timestamp()
-    except (ValueError, TypeError):
-        return None
+    launched = launch_datetime(session)
+    return launched.timestamp() if launched is not None else None
 
 
 __all__ = [
@@ -630,5 +567,4 @@ __all__ = [
     "fetch_session_rows",
     "missing_columns",
     "schema_findings",
-    "session_ids_from_hook_state",
 ]

@@ -26,9 +26,8 @@ from overcode.backends.hermes_stats import (
     connect,
     missing_columns,
     schema_findings,
-    session_ids_from_hook_state,
 )
-from overcode.stats_reader import empty_window_usage
+from overcode.stats_reader import empty_window_usage, hook_session_ids
 
 
 SCHEMA = """
@@ -232,14 +231,21 @@ class TestSessionIds:
             "agent_session_ids": ["20260917_130000_aaaaaa", "20260917_131721_8f80ea"],
             "agent_session_id": "20260917_130000_aaaaaa",
         })
-        assert session_ids_from_hook_state(session()) == ["20260917_131721_8f80ea", "20260917_130000_aaaaaa"]
+        assert hook_session_ids(session()) == ["20260917_131721_8f80ea", "20260917_130000_aaaaaa"]
 
     def test_current_session_id_prefers_plugin(self, db, tmp_path, monkeypatch):
         conn, path = db
         add_session(conn, "20260917_131721_8f80ea")
         conn.commit()
         self.write_hook_state(tmp_path, monkeypatch, {"agent_session_id": "20260917_140000_ffffff"})
-        assert HermesStatsReader(path).get_current_session_id(session(), LAUNCH) == "20260917_140000_ffffff"
+        # hook_handler records the id in the session record before writing
+        # hook state, so the agent's own hooks always name a recorded id.
+        mine = session(agent_session_ids=["20260917_140000_ffffff"],
+                       active_agent_session_id="20260917_140000_ffffff")
+        assert HermesStatsReader(path).get_current_session_id(mine, LAUNCH) == "20260917_140000_ffffff"
+        # An id the record never held (a dead namesake's file) is not trusted,
+        # and while hooks report, the directory is not a fallback.
+        assert HermesStatsReader(path).get_current_session_id(session(), LAUNCH) is None
 
     def test_current_session_id_falls_back_to_directory(self, db, tmp_path, monkeypatch):
         conn, path = db

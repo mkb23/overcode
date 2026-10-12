@@ -39,6 +39,18 @@ from ..stats_reader import (
     DiscoveredSessionIds,
     empty_window_usage,
 )
+from ._stats_common import (
+    agent_hook_ids,
+    as_float,
+    as_int,
+    directories,
+    hooks_live,
+    launch_datetime,
+    others_owned_ids,
+    owned_ids,
+    placeholders,
+    table_columns,
+)
 
 # Columns the reader reads by name. Anything missing here is schema drift —
 # `schema_findings()` turns that into a doctor warning and `get_stats` returns
@@ -190,14 +202,6 @@ def connect(path: Optional[Path] = None) -> Optional[sqlite3.Connection]:
         return None
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> Tuple[str, ...]:
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    except sqlite3.Error:
-        return ()
-    return tuple(row[1] for row in rows)
-
-
 def missing_columns(conn: sqlite3.Connection) -> Dict[str, List[str]]:
     """Expected-but-absent columns, keyed by table. Empty when the schema fits."""
     result: Dict[str, List[str]] = {}
@@ -205,7 +209,7 @@ def missing_columns(conn: sqlite3.Connection) -> Dict[str, List[str]]:
         ("session", EXPECTED_SESSION_COLUMNS),
         ("message", EXPECTED_MESSAGE_COLUMNS),
     ):
-        present = set(_table_columns(conn, table))
+        present = set(table_columns(conn, table))
         if not present:
             result[table] = ["<table missing>"]
             continue
@@ -285,24 +289,6 @@ def _parse_variant(raw: Any) -> Optional[str]:
     return variant
 
 
-def _as_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _as_float(value: Any) -> float:
-    try:
-        return float(value or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _placeholders(count: int) -> str:
-    return ",".join("?" * count)
-
-
 def fetch_session_rows(
     conn: sqlite3.Connection, session_ids: Sequence[str]
 ) -> List[sqlite3.Row]:
@@ -312,7 +298,7 @@ def fetch_session_rows(
         return []
     columns = ", ".join(EXPECTED_SESSION_COLUMNS)
     sql = (
-        f"SELECT {columns} FROM session WHERE id IN ({_placeholders(len(ids))}) "
+        f"SELECT {columns} FROM session WHERE id IN ({placeholders(len(ids))}) "
         "ORDER BY time_updated ASC"
     )
     conn.row_factory = sqlite3.Row
@@ -339,7 +325,7 @@ def fetch_rows_for_directory(
     columns = ", ".join(EXPECTED_SESSION_COLUMNS)
     sql = (
         f"SELECT {columns} FROM session "
-        f"WHERE directory IN ({_placeholders(len(candidates))}) "
+        f"WHERE directory IN ({placeholders(len(candidates))}) "
         "AND time_created >= ? AND parent_id IS NULL "
         "ORDER BY time_updated ASC"
     )
@@ -479,7 +465,7 @@ def _fetch_data(
     out: Dict[str, str] = {}
     for start in range(0, len(ids), 500):
         chunk = list(ids[start : start + 500])
-        sql = f"SELECT id, data FROM {table} WHERE id IN ({_placeholders(len(chunk))})"
+        sql = f"SELECT id, data FROM {table} WHERE id IN ({placeholders(len(chunk))})"
         for msg_id, data in conn.execute(sql, chunk):
             out[msg_id] = data
     return out
@@ -653,12 +639,12 @@ def _parse_message_record(
     role = envelope.get("role")
     record = {
         "role": role,
-        "total": _as_int(tokens.get("total")),
-        "input": _as_int(tokens.get("input")),
-        "output": _as_int(tokens.get("output")),
-        "reasoning": _as_int(tokens.get("reasoning")),
-        "cache_read": _as_int(cache.get("read")),
-        "cache_write": _as_int(cache.get("write")),
+        "total": as_int(tokens.get("total")),
+        "input": as_int(tokens.get("input")),
+        "output": as_int(tokens.get("output")),
+        "reasoning": as_int(tokens.get("reasoning")),
+        "cache_read": as_int(cache.get("read")),
+        "cache_write": as_int(cache.get("write")),
         "created": _optional_ms(times.get("created")),
         "completed": _optional_ms(times.get("completed")),
     }
@@ -734,7 +720,7 @@ def _scan_messages(
                 out["work_times"].append(elapsed)
 
         turns.append((
-            _as_int(time_created),
+            as_int(time_created),
             record["input"],
             record["output"] + record["reasoning"],
             record["cache_write"],
@@ -748,107 +734,256 @@ def _scan_messages(
     return out
 
 
-def _hook_state_path(session: Any) -> Optional[Path]:
-    """Where the bundled plugin publishes this agent's hook state."""
-    tmux_session = getattr(session, "tmux_session", None)
-    name = getattr(session, "name", None)
-    if not tmux_session or not name:
-        return None
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
-    return base / tmux_session / f"hook_state_{name}.json"
+class _OpencodeFamilyReader:
+    """What the opencode (v1) and opencode2 readers share.
 
+    Both read the same database file through the same plugin-written hook
+    state; only the tables (``session``/``message`` vs ``session_v2``/
+    ``session_message``) and how a stats row is assembled differ. Subclasses
+    supply ``_fetch_session_rows``, ``_fetch_rows_for_directory``, ``_scan``
+    and ``get_stats``, each calling its own module's functions at call time
+    so tests can patch them there.
 
-def session_ids_from_hook_state(session: Any) -> List[str]:
-    """opencode session ids the plugin recorded, newest last.
-
-    This is the exact analogue of Claude's prescribed ``--session-id``: the
-    agent process itself tells overcode which conversation it owns, so the
-    directory+time fallback below only has to cover a plugin-less launch.
-    """
-    path = _hook_state_path(session)
-    if path is None:
-        return []
-    try:
-        state = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return []
-    if not isinstance(state, dict):
-        return []
-
-    ids: List[str] = []
-    raw_ids = state.get("agent_session_ids")
-    if isinstance(raw_ids, list):
-        ids.extend(sid for sid in raw_ids if isinstance(sid, str) and sid)
-    active = state.get("agent_session_id")
-    if isinstance(active, str) and active:
-        # Active id goes last so callers can treat the tail as "current".
-        ids = [sid for sid in ids if sid != active] + [active]
-    return ids
-
-
-class OpencodeStatsReader:
-    """Reads opencode's SQLite store for one session.
-
-    Locates rows by the ids the bundled plugin captured, falling back to the
-    session's working directory plus its launch time when the plugin never
-    ran. Any failure — no database, a lock, a renamed column — answers
+    Locates rows by the conversation ids the agent's record holds. The
+    bundled plugin reports ids into hook state without touching
+    sessions.json, so a hook id the record lacks counts as this agent's only
+    when its conversation started after the agent launched (``_vouch``): a
+    hook state left by a killed agent of the same name names conversations
+    from before. The directory+launch-time fallback covers a plugin-less
+    launch only. Any failure (no database, a lock, a renamed column) answers
     "unknown" so the columns render dashes instead of zeros.
     """
 
-    backend_name = "opencode"
+    backend_name = ""
+    # The table ``WindowIndex`` keys are scoped to.
+    _message_table = ""
+    # With no plugin ids to go on, adopt a directory row only when it is the
+    # only candidate (two agents in one project read as unknown, never as
+    # each other).
+    _unique_directory_match = False
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self._db_path = db_path
+
+    # -- per schema ------------------------------------------------------
+
+    def _fetch_session_rows(
+        self, conn: sqlite3.Connection, ids: Sequence[str]
+    ) -> List[sqlite3.Row]:
+        raise NotImplementedError
+
+    def _fetch_rows_for_directory(
+        self, conn: sqlite3.Connection, dirs: Sequence[str], since_ms: int
+    ) -> List[sqlite3.Row]:
+        raise NotImplementedError
+
+    def _scan(
+        self, conn: sqlite3.Connection, row_ids: Sequence[str], active_id: Optional[str]
+    ) -> Dict[str, Any]:
+        raise NotImplementedError
 
     # -- helpers ---------------------------------------------------------
 
     def _connect(self) -> Optional[sqlite3.Connection]:
         return connect(self._db_path)
 
-    @staticmethod
-    def _owned_ids(session: Any) -> List[str]:
-        ids = list(getattr(session, "agent_session_ids", None) or [])
-        active = getattr(session, "active_agent_session_id", None)
-        if active and active not in ids:
-            ids.append(active)
-        return [sid for sid in ids if isinstance(sid, str) and sid]
-
-    @staticmethod
-    def _directories(session: Any) -> List[str]:
-        """Every spelling of the agent's working directory worth matching on."""
-        directory = getattr(session, "start_directory", None)
-        if not directory:
-            return []
-        candidates = [str(directory)]
-        try:
-            candidates.append(str(Path(directory).resolve()))
-        except OSError:
-            pass
-        return list(dict.fromkeys(candidates))
+    def _window_key(self, conversation_ids: Sequence[str]) -> Tuple:
+        return window_index_key(
+            self._db_path or database_path(), self._message_table, conversation_ids
+        )
 
     def _rows_for(
         self, conn: sqlite3.Connection, session: Any
     ) -> List[sqlite3.Row]:
-        ids = self._owned_ids(session)
+        ids = owned_ids(session)
         if ids:
-            rows = fetch_session_rows(conn, ids)
+            rows = self._fetch_session_rows(conn, ids)
             if rows:
                 return rows
-        directories = self._directories(session)
-        if not directories:
+        dirs = directories(session)
+        if not dirs or hooks_live(session):
+            # The plugin names this agent's conversation and the daemon
+            # adopts it within a sync; until then a row in the directory
+            # may be another agent's.
             return []
         since_ms = _launch_ms(session)
         if since_ms is None:
             return []
-        return fetch_rows_for_directory(conn, directories, since_ms)
+        rows = self._fetch_rows_for_directory(conn, dirs, since_ms)
+        if self._unique_directory_match and len(rows) != 1:
+            return []
+        return rows
 
-    def _window_key(self, conversation_ids: Sequence[str]) -> Tuple:
-        return window_index_key(
-            self._db_path or database_path(), "message", conversation_ids
-        )
+    def _vouch(self, session: Any) -> Callable[[Sequence[str]], List[str]]:
+        """Hook ids the record lacks that are root conversations started
+        since this agent launched: the plugin's, not a dead namesake's."""
+
+        def vouch(ids: Sequence[str]) -> List[str]:
+            launch_ms = _launch_ms(session)
+            candidates = [sid for sid in ids if sid.startswith(SESSION_ID_PREFIX)]
+            if launch_ms is None or not candidates:
+                return []
+            conn = self._connect()
+            if conn is None:
+                return []
+            try:
+                rows = self._fetch_session_rows(conn, candidates)
+            except (sqlite3.Error, OSError, ValueError):
+                return []
+            finally:
+                conn.close()
+            return [
+                row["id"] for row in rows
+                if row["parent_id"] is None and as_int(row["time_created"]) >= launch_ms
+            ]
+
+        return vouch
+
+    def _unowned_directory_ids(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any]
+    ) -> List[str]:
+        """Root conversations in the agent's directory since ``since`` that
+        no other agent owns, least recently updated first."""
+        dirs = directories(session)
+        if not dirs:
+            return []
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            rows = self._fetch_rows_for_directory(
+                conn, dirs, int(since.timestamp() * 1000)
+            )
+        except (sqlite3.Error, OSError, ValueError):
+            return []
+        finally:
+            conn.close()
+        taken = others_owned_ids(session, all_sessions)
+        return [row["id"] for row in rows if row["id"] not in taken]
 
     # -- StatsReader -----------------------------------------------------
+
+    def get_stored_cost(self, session: Any) -> Optional[float]:
+        """opencode's own cost total for this agent, or None.
+
+        Preferred over recomputing from tokens because opencode records the
+        provider's actual per-turn charge. Returns None when it is zero (the
+        subscription-auth case the design doc flags) so the caller falls back
+        to ``pricing.py``.
+        """
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            rows = self._rows_for(conn, session)
+            total = sum(as_float(row["cost"]) for row in rows)
+        except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
+            return None
+        finally:
+            conn.close()
+        return total if total > 0 else None
+
+    def get_current_session_id(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any] = ()
+    ) -> Optional[str]:
+        """The conversation this agent is in right now.
+
+        The plugin's answer, when it is this agent's, wins. The directory
+        scan is the plugin-less fallback: it skips conversations other
+        agents own, and with ``_unique_directory_match`` answers None when
+        more than one candidate is left.
+        """
+        hooks = agent_hook_ids(session, self._vouch(session))
+        if hooks.own:
+            return hooks.own[-1]
+        if hooks.live:
+            return None
+        candidates = self._unowned_directory_ids(session, since, all_sessions)
+        if self._unique_directory_match:
+            return candidates[0] if len(candidates) == 1 else None
+        return candidates[-1] if candidates else None
+
+    def discover_session_ids(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any]
+    ) -> DiscoveredSessionIds:
+        """Adopt conversation ids this agent owns but hasn't recorded.
+
+        Its own plugin-reported ids first (exact), then, only when the
+        plugin never reported, any unowned root conversation that started
+        in this directory after launch.
+        """
+        from ..claude_pid import is_session_id_owned_by_others
+
+        owned = set(owned_ids(session))
+        session_id = getattr(session, "id", None)
+
+        discovered: List[str] = []
+        latest: Optional[str] = None
+
+        def consider(sid: str) -> None:
+            nonlocal latest
+            if not sid or not sid.startswith(SESSION_ID_PREFIX):
+                return
+            if is_session_id_owned_by_others(sid, session_id, all_sessions):
+                return
+            if sid not in owned and sid not in discovered:
+                discovered.append(sid)
+            latest = sid
+
+        hooks = agent_hook_ids(session, self._vouch(session))
+        for sid in hooks.own:
+            consider(sid)
+
+        if latest is None and not hooks.live:
+            for sid in self._unowned_directory_ids(session, since, all_sessions):
+                consider(sid)
+
+        return DiscoveredSessionIds(ids=discovered, latest=latest)
+
+    def get_window_token_usage(
+        self, session: Any, since: datetime
+    ) -> Dict[str, int]:
+        conn = self._connect()
+        if conn is None:
+            return empty_window_usage()
+        try:
+            rows = self._rows_for(conn, session)
+            if not rows:
+                return empty_window_usage()
+            row_ids = [row["id"] for row in rows]
+            key = self._window_key(row_ids)
+            index = recent_window_index(key)
+            if index is None:
+                index = self._scan(conn, row_ids, row_ids[-1])["window_index"]
+                if index is None:
+                    return empty_window_usage()
+                remember_window_index(key, index)
+            return index.usage(int(since.timestamp() * 1000))
+        except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
+            return empty_window_usage()
+        finally:
+            conn.close()
+
+    def get_container_stats(self, session: Any) -> Optional[AgentSessionStats]:
+        # No devcontainer story yet; the host database is the only source,
+        # and it is not visible from inside a container.
+        return None
+
+
+class OpencodeStatsReader(_OpencodeFamilyReader):
+    """Reads opencode's ``session``/``message`` tables for one session."""
+
+    backend_name = "opencode"
+    _message_table = "message"
+
+    def _fetch_session_rows(self, conn, ids):
+        return fetch_session_rows(conn, ids)
+
+    def _fetch_rows_for_directory(self, conn, dirs, since_ms):
+        return fetch_rows_for_directory(conn, dirs, since_ms)
+
+    def _scan(self, conn, row_ids, active_id):
+        return _scan_messages(conn, row_ids, active_id)
 
     def get_stats(
         self, session: Any, *, history_file: Any = None
@@ -870,15 +1005,15 @@ class OpencodeStatsReader:
             model = None
             effort = None
             for row in rows:
-                input_tokens += _as_int(row["tokens_input"])
+                input_tokens += as_int(row["tokens_input"])
                 # opencode bills reasoning as output and reports it separately;
                 # overcode has no reasoning bucket, so it folds into output
                 # rather than silently disappearing from the totals.
-                output_tokens += _as_int(row["tokens_output"]) + _as_int(
+                output_tokens += as_int(row["tokens_output"]) + as_int(
                     row["tokens_reasoning"]
                 )
-                cache_read += _as_int(row["tokens_cache_read"])
-                cache_creation += _as_int(row["tokens_cache_write"])
+                cache_read += as_int(row["tokens_cache_read"])
+                cache_creation += as_int(row["tokens_cache_write"])
                 parsed_model = _parse_model(row["model"])
                 if parsed_model:
                     model = parsed_model
@@ -889,7 +1024,7 @@ class OpencodeStatsReader:
 
             row_ids = [row["id"] for row in rows]
             active_id = row_ids[-1] if row_ids else None
-            scan = _scan_messages(conn, row_ids, active_id)
+            scan = self._scan(conn, row_ids, active_id)
             # Hand the burn rate this scan (#517) — see WindowIndex.
             if scan["window_index"] is not None:
                 remember_window_index(self._window_key(row_ids), scan["window_index"])
@@ -917,140 +1052,11 @@ class OpencodeStatsReader:
         finally:
             conn.close()
 
-    def get_stored_cost(self, session: Any) -> Optional[float]:
-        """opencode's own cost total for this agent, or None.
-
-        Preferred over recomputing from tokens because opencode records the
-        provider's actual per-turn charge. Returns None when it is zero (the
-        subscription-auth case the design doc flags) so the caller falls back
-        to ``pricing.py``.
-        """
-        conn = self._connect()
-        if conn is None:
-            return None
-        try:
-            rows = self._rows_for(conn, session)
-            total = sum(_as_float(row["cost"]) for row in rows)
-        except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
-            return None
-        finally:
-            conn.close()
-        return total if total > 0 else None
-
-    def get_current_session_id(
-        self, session: Any, since: datetime
-    ) -> Optional[str]:
-        """The conversation this agent is in right now.
-
-        The plugin's answer wins; the directory scan is the plugin-less
-        fallback and mirrors ``ClaudeStatsReader``'s history.jsonl lookup.
-        """
-        from_plugin = session_ids_from_hook_state(session)
-        if from_plugin:
-            return from_plugin[-1]
-
-        directories = self._directories(session)
-        if not directories:
-            return None
-        conn = self._connect()
-        if conn is None:
-            return None
-        try:
-            rows = fetch_rows_for_directory(
-                conn, directories, int(since.timestamp() * 1000)
-            )
-        except (sqlite3.Error, OSError, ValueError):
-            return None
-        finally:
-            conn.close()
-        return rows[-1]["id"] if rows else None
-
-    def discover_session_ids(
-        self, session: Any, since: datetime, all_sessions: Sequence[Any]
-    ) -> DiscoveredSessionIds:
-        """Adopt opencode conversation ids this agent owns but hasn't recorded.
-
-        Plugin-reported ids first (exact), then any unowned root session that
-        started in this directory after launch.
-        """
-        from ..claude_pid import is_session_id_owned_by_others
-
-        owned = set(self._owned_ids(session))
-        session_id = getattr(session, "id", None)
-
-        discovered: List[str] = []
-        latest: Optional[str] = None
-
-        def consider(sid: str) -> None:
-            nonlocal latest
-            if not sid or not sid.startswith(SESSION_ID_PREFIX):
-                return
-            if is_session_id_owned_by_others(sid, session_id, all_sessions):
-                return
-            if sid not in owned and sid not in discovered:
-                discovered.append(sid)
-            latest = sid
-
-        for sid in session_ids_from_hook_state(session):
-            consider(sid)
-
-        if latest is None:
-            directories = self._directories(session)
-            if directories:
-                conn = self._connect()
-                if conn is not None:
-                    try:
-                        rows = fetch_rows_for_directory(
-                            conn, directories, int(since.timestamp() * 1000)
-                        )
-                        for row in rows:
-                            consider(row["id"])
-                    except (sqlite3.Error, OSError, ValueError):
-                        pass
-                    finally:
-                        conn.close()
-
-        return DiscoveredSessionIds(ids=discovered, latest=latest)
-
-    def get_window_token_usage(
-        self, session: Any, since: datetime
-    ) -> Dict[str, int]:
-        conn = self._connect()
-        if conn is None:
-            return empty_window_usage()
-        try:
-            rows = self._rows_for(conn, session)
-            if not rows:
-                return empty_window_usage()
-            row_ids = [row["id"] for row in rows]
-            key = self._window_key(row_ids)
-            index = recent_window_index(key)
-            if index is None:
-                index = _scan_messages(conn, row_ids, row_ids[-1])["window_index"]
-                if index is None:
-                    return empty_window_usage()
-                remember_window_index(key, index)
-            return index.usage(int(since.timestamp() * 1000))
-        except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
-            return empty_window_usage()
-        finally:
-            conn.close()
-
-    def get_container_stats(self, session: Any) -> Optional[AgentSessionStats]:
-        # opencode has no devcontainer story yet; the host database is the
-        # only source, and it is not visible from inside a container.
-        return None
-
 
 def _launch_ms(session: Any) -> Optional[int]:
     """The agent's launch time in opencode's millisecond epoch."""
-    start_time = getattr(session, "start_time", None)
-    if not start_time:
-        return None
-    try:
-        return int(datetime.fromisoformat(start_time).timestamp() * 1000)
-    except (ValueError, TypeError):
-        return None
+    launched = launch_datetime(session)
+    return int(launched.timestamp() * 1000) if launched is not None else None
 
 
 __all__ = [
@@ -1070,5 +1076,4 @@ __all__ = [
     "models_cache_path",
     "opencode_context_limit",
     "schema_findings",
-    "session_ids_from_hook_state",
 ]

@@ -61,6 +61,7 @@ from ..stats_reader import (
     empty_window_usage,
 )
 from .grok import grok_home
+from ._stats_common import as_int, iter_jsonl, owned_ids
 from .jsonl_tail import fold_jsonl
 
 # costUsdTicks unit, empirically determined (see module docstring point 2):
@@ -105,28 +106,6 @@ def project_dir(cwd: str, root: Optional[Path] = None) -> Path:
 def session_dir(cwd: str, session_id: str, root: Optional[Path] = None) -> Path:
     """The one directory a specific grok session's files live in."""
     return project_dir(cwd, root) / session_id
-
-
-def _iter_jsonl(path: Path):
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except (ValueError, TypeError):
-                    continue
-    except OSError:
-        return
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _as_number(value: Any) -> float:
@@ -178,7 +157,7 @@ class _UpdatesFold:
         params = entry.get("params")
         meta = params.get("_meta") if isinstance(params, dict) else None
         if isinstance(meta, dict) and "totalTokens" in meta:
-            self.current_context_tokens = _as_int(meta.get("totalTokens"))
+            self.current_context_tokens = as_int(meta.get("totalTokens"))
 
         usage = _turn_completed_usage(entry)
         if usage is None:
@@ -187,10 +166,10 @@ class _UpdatesFold:
         # than vanishing from the totals — matches the codex/opencode
         # convention this reader follows elsewhere.
         turn = (
-            _as_int(usage.get("inputTokens")),
-            _as_int(usage.get("outputTokens")) + _as_int(usage.get("reasoningTokens")),
-            _as_int(usage.get("cachedReadTokens")),
-            _as_int(usage.get("cacheCreationTokens")),
+            as_int(usage.get("inputTokens")),
+            as_int(usage.get("outputTokens")) + as_int(usage.get("reasoningTokens")),
+            as_int(usage.get("cachedReadTokens")),
+            as_int(usage.get("cacheCreationTokens")),
         )
         ticks = usage.get("costUsdTicks")
         if isinstance(ticks, (int, float)):
@@ -321,7 +300,7 @@ def schema_findings() -> List[str]:
         return []
 
     usage_keys: Optional[set] = None
-    for entry in _iter_jsonl(latest / "updates.jsonl"):
+    for entry in iter_jsonl(latest / "updates.jsonl"):
         usage = _turn_completed_usage(entry)
         if usage is not None:
             usage_keys = set(usage.keys())
@@ -359,14 +338,6 @@ class GrokStatsReader:
     def _root(self) -> Path:
         return self._sessions_dir if self._sessions_dir is not None else sessions_root()
 
-    @staticmethod
-    def _owned_ids(session: Any) -> List[str]:
-        ids = list(getattr(session, "agent_session_ids", None) or [])
-        active = getattr(session, "active_agent_session_id", None)
-        if active and active not in ids:
-            ids.append(active)
-        return [sid for sid in ids if isinstance(sid, str) and sid]
-
     def _dir_for(self, session: Any, session_id: str) -> Optional[Path]:
         cwd = getattr(session, "start_directory", None)
         if not cwd or not session_id:
@@ -375,7 +346,7 @@ class GrokStatsReader:
         return candidate if candidate.exists() else None
 
     def _resolve(self, session: Any) -> Optional[Path]:
-        for session_id in reversed(self._owned_ids(session)):
+        for session_id in reversed(owned_ids(session)):
             found = self._dir_for(session, session_id)
             if found is not None:
                 return found
@@ -440,8 +411,10 @@ class GrokStatsReader:
         cost = scan["cost_usd"]
         return cost if cost > 0 else None
 
-    def get_current_session_id(self, session: Any, since: datetime) -> Optional[str]:
-        owned = self._owned_ids(session)
+    def get_current_session_id(
+        self, session: Any, since: datetime, all_sessions: Sequence[Any] = ()
+    ) -> Optional[str]:
+        owned = owned_ids(session)
         return owned[-1] if owned else None
 
     def discover_session_ids(
@@ -451,7 +424,7 @@ class GrokStatsReader:
         # session id itself — there is nothing to discover on disk that the
         # session object doesn't already know, unlike codex/opencode which
         # have to find an id they never chose.
-        owned = self._owned_ids(session)
+        owned = owned_ids(session)
         return DiscoveredSessionIds(ids=[], latest=owned[-1] if owned else None)
 
     def get_window_token_usage(self, session: Any, since: datetime) -> Dict[str, int]:

@@ -24,8 +24,8 @@ from overcode.backends.opencode_stats import (
     models_cache_path,
     opencode_context_limit,
     schema_findings,
-    session_ids_from_hook_state,
 )
+from overcode.stats_reader import hook_session_ids
 
 SESSION_DDL = """
 CREATE TABLE `session` (
@@ -325,7 +325,7 @@ class TestSessionIdDiscovery:
                 "agent_session_id": SID,
             })
         )
-        assert session_ids_from_hook_state(make_session()) == [OTHER_SID, SID]
+        assert hook_session_ids(make_session()) == [OTHER_SID, SID]
         assert reader.get_current_session_id(make_session(), LAUNCH) == SID
 
     def test_directory_fallback_when_no_hook_state(self, reader, tmp_path, monkeypatch):
@@ -371,7 +371,7 @@ class TestSessionIdDiscovery:
         state = tmp_path / "state" / "agents"
         state.mkdir(parents=True)
         (state / "hook_state_oc-agent.json").write_text("{not json")
-        assert session_ids_from_hook_state(make_session()) == []
+        assert hook_session_ids(make_session()) == []
 
 
 class TestWindowUsage:

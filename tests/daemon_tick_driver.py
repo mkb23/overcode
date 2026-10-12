@@ -73,7 +73,7 @@ class _ScriptedReader:
     def get_container_stats(self, session):
         return None
 
-    def get_current_session_id(self, session, session_start):
+    def get_current_session_id(self, session, session_start, all_sessions=()):
         i = _index(session)
         if i % 10 == 8 and self._tick() >= 5:
             return f"claude-new-{i:04d}"

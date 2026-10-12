@@ -19,9 +19,9 @@ from overcode.backends.codex_stats import (
     CodexStatsReader,
     codex_home,
     schema_findings,
-    session_ids_from_hook_state,
     sessions_root,
 )
+from overcode.stats_reader import hook_session_ids
 
 LAUNCH = datetime(2026, 8, 20, 12, 0, 0)
 PROJECT_DIR = "/tmp/codex-project"
@@ -354,12 +354,12 @@ class TestGetStats:
         # id must win over the more-recent-by-filename fallback.
         root = tmp_path / "sessions"
         write_rollout(
-            rollout_path(root, SID, ts="2026-08-20T10-00-00"),
+            rollout_path(root, SID, ts="2026-08-20T12-00-10"),
             [session_meta_line(session_id=SID), turn_context_event("gpt-5.6-sol"),
              user_turn_item(), token_count_event(input_tokens=1000, total=1100)],
         )
         write_rollout(
-            rollout_path(root, OTHER_SID, ts="2026-08-20T11-00-00"),
+            rollout_path(root, OTHER_SID, ts="2026-08-20T12-00-20"),
             [session_meta_line(session_id=OTHER_SID), turn_context_event("gpt-5.6-mini"),
              user_turn_item(), token_count_event(input_tokens=2000, total=2100)],
         )
@@ -402,7 +402,7 @@ class TestSessionIdDiscovery:
                 "agent_session_id": SID,
             })
         )
-        assert session_ids_from_hook_state(make_session()) == [OTHER_SID, SID]
+        assert hook_session_ids(make_session()) == [OTHER_SID, SID]
         assert reader.get_current_session_id(make_session(), LAUNCH) == SID
 
     def test_cwd_fallback_when_no_hook_state(self, reader, tmp_path, monkeypatch):
@@ -432,7 +432,7 @@ class TestSessionIdDiscovery:
         state = tmp_path / "state" / "agents"
         state.mkdir(parents=True)
         (state / "hook_state_cx-agent.json").write_text("{not json")
-        assert session_ids_from_hook_state(make_session()) == []
+        assert hook_session_ids(make_session()) == []
 
 
 class TestWindowUsage:

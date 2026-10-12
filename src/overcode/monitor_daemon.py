@@ -891,11 +891,14 @@ class MonitorDaemon:
 
             # Fast path: discover the most recent sessionId for this directory.
             # Handles post-/clear detection.
-            current_id = reader.get_current_session_id(session, session_start)
+            # Every tmux session's agents: one in another session can be
+            # working in the same directory. A reader's directory fallback
+            # skips their conversations; the check below is the backstop.
+            all_sessions = self.session_manager.list_sessions()
+            current_id = reader.get_current_session_id(
+                session, session_start, all_sessions=all_sessions
+            )
             if current_id:
-                # Every tmux session's agents: one in another session can be
-                # working in the same directory.
-                all_sessions = self.session_manager.list_sessions()
                 if not is_session_id_owned_by_others(current_id, session.id, all_sessions):
                     self.session_manager.add_agent_session_id(session.id, current_id)
                     self.session_manager.set_active_agent_session_id(session.id, current_id)
