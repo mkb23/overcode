@@ -9,9 +9,9 @@ the parse rate has to follow the *write* rate, not the read rate.
 The gate is one ``os.stat`` per read: while ``(st_mtime_ns, st_size,
 st_ino)`` matches the last parse, the previous result is returned — no
 lock, no read, no ``json.loads``, no object construction. Every writer
-replaces the whole file, by ``rename`` (new inode) or by truncate+dump under
-``LOCK_EX`` (same inode, new ``mtime_ns``), so any write moves the
-signature; a same-size in-place rewrite still moves ``mtime_ns``.
+replaces the whole file, by ``rename`` (new inode; see ``json_store``) or
+by an in-place rewrite (same inode, new ``mtime_ns``), so any write moves
+the signature; a same-size in-place rewrite still moves ``mtime_ns``.
 
 The one hole is timestamp granularity. A filesystem stamps ``mtime`` from a
 clock that may tick coarser than nanoseconds — jiffies (1–10 ms) on Linux

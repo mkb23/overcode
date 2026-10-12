@@ -2,13 +2,11 @@
 Job state management for Overcode.
 
 Tracks bash jobs running in a separate "jobs" tmux session.
-Mirrors SessionManager patterns for atomic writes and file locking.
+Persisted through json_store, as SessionManager is.
 """
 
-import json
 import os
 import re
-import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import MISSING, asdict, dataclass, fields
@@ -16,13 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .exceptions import StateWriteError
-
-try:
-    import fcntl
-    HAS_FCNTL = True
-except ImportError:
-    HAS_FCNTL = False
+from .json_store import JsonStore
 
 
 def _slugify_command(command: str) -> str:
@@ -107,7 +99,7 @@ class JobManager:
     """Manages job state persistence.
 
     State file: ~/.overcode/jobs/jobs.json
-    Uses same atomic write + fcntl locking pattern as SessionManager.
+    Read and written through :class:`~overcode.json_store.JsonStore`.
     """
 
     def __init__(self, state_dir: Optional[Path] = None):
@@ -120,119 +112,22 @@ class JobManager:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / "jobs.json"
+        self._store = JsonStore(self.state_file)
 
     def _load_state(self) -> Dict[str, dict]:
-        """Load all jobs from state file with file locking."""
-        if not self.state_file.exists():
-            return {}
-
-        max_retries = 5
-        retry_delay = 0.1
-
-        for attempt in range(max_retries):
-            try:
-                with open(self.state_file, 'r') as f:
-                    if HAS_FCNTL:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                        try:
-                            return json.load(f)
-                        finally:
-                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    else:
-                        return json.load(f)
-            except json.JSONDecodeError:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                return {}
-            except IOError:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                return {}
-
-        return {}
+        """Load all jobs from the state file (lock-free; see json_store)."""
+        return self._store.load()
 
     def _save_state(self, state: Dict[str, dict]):
-        """Save all jobs to state file with file locking and atomic writes."""
-        import threading
-        max_retries = 5
-        retry_delay = 0.1
-
-        for attempt in range(max_retries):
-            try:
-                if HAS_FCNTL:
-                    temp_suffix = f'.tmp.{os.getpid()}.{threading.get_ident()}'
-                    temp_file = self.state_file.with_suffix(temp_suffix)
-                    try:
-                        with open(temp_file, 'w') as f:
-                            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                            try:
-                                json.dump(state, f, indent=2)
-                                f.flush()
-                                os.fsync(f.fileno())
-                            finally:
-                                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                        temp_file.rename(self.state_file)
-                    finally:
-                        if temp_file.exists():
-                            temp_file.unlink()
-                else:
-                    with open(self.state_file, 'w') as f:
-                        json.dump(state, f, indent=2)
-                return
-            except (IOError, OSError) as e:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                raise StateWriteError(f"Failed to save jobs state after {max_retries} attempts: {e}")
+        """Replace all jobs in the state file (locked, atomic)."""
+        self._store.save(state)
 
     @contextmanager
     def _locked_state(self):
         """Load state under file lock, yield it, save on exit."""
-        if not HAS_FCNTL:
-            state = self._load_state()
-            yield state
-            self._save_state(state)
-            return
-
-        max_retries = 5
-        retry_delay = 0.1
-        f = None
-
-        for attempt in range(max_retries):
-            try:
-                f = open(self.state_file, 'a+')
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                f.seek(0)
-                content = f.read()
-                state = json.loads(content) if content.strip() else {}
-                break
-            except (IOError, OSError, json.JSONDecodeError) as e:
-                if f is not None:
-                    try:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    except OSError:
-                        pass
-                    f.close()
-                    f = None
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                raise StateWriteError(f"Failed to load jobs state after {max_retries} attempts: {e}")
-
-        try:
-            yield state
-            f.seek(0)
-            f.truncate()
-            json.dump(state, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        except (IOError, OSError) as e:
-            raise StateWriteError(f"Failed to save jobs state: {e}")
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-            f.close()
+        with self._store.transaction() as txn:
+            yield txn.state
+            txn.dirty = True
 
     def _unique_name(self, base_name: str) -> str:
         """Ensure name is unique by appending -2, -3, etc. if needed."""

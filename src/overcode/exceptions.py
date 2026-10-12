@@ -30,6 +30,18 @@ class StateWriteError(StateError):
     pass
 
 
+class StateLockTimeout(StateWriteError):
+    """Another process held a state file's lock past the deadline."""
+
+    pass
+
+
+class StateCorruptError(StateWriteError):
+    """A state file is corrupt and there is no usable backup to continue from."""
+
+    pass
+
+
 # =============================================================================
 # Tmux Errors
 # =============================================================================

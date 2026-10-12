@@ -12,9 +12,9 @@ from contextlib import contextmanager
 from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields, replace
 import uuid
-import time
 
 from .exceptions import StateWriteError
+from .json_store import JsonStore, Transaction
 from .stat_gate import FileSignature, StatGatedCache
 
 
@@ -437,15 +437,9 @@ def _with_legacy_keys(kwargs: Dict[str, object]) -> Dict[str, object]:
     return out
 
 
-class _StateTxn:
-    """What ``SessionManager._state_transaction`` yields: the parsed state and
-    whether it must be written back."""
-
-    __slots__ = ("state", "dirty")
-
-    def __init__(self, state: Dict[str, dict]):
-        self.state = state
-        self.dirty = False
+# What ``SessionManager._state_transaction`` yields: the parsed state and
+# whether it must be written back.
+_StateTxn = Transaction
 
 
 class PendingUpdates:
@@ -645,6 +639,7 @@ class SessionManager:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / "sessions.json"
+        self._store = JsonStore(self.state_file)
         # Append-only, one JSON record per line; a legacy archive.json is
         # migrated into it on first access (see _migrate_legacy_archive).
         self.archive_file = self.state_dir / "archive.jsonl"
@@ -698,135 +693,33 @@ class SessionManager:
         return sig, by_id
 
     def _read_state_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
-        """Read and parse the state file under a shared lock — uncached.
+        """Read and parse the state file — uncached, lock-free.
 
-        Also returns the ``fstat`` signature of the bytes parsed, taken while
-        the shared lock is held so an in-place writer cannot slip between
-        the two; it is ``None`` whenever the result did not come from one
-        clean read of the file (missing file, backup restore, give-up after
-        retries), so the caller never remembers such a result.
-
-        On JSON corruption, attempts to restore from backup automatically.
+        Writers replace the file atomically, so one open sees one complete
+        version. Also returns the ``fstat`` signature of the bytes parsed;
+        it is ``None`` whenever the result did not come from one clean read
+        of the file (missing file, or corrupt and served read-only from the
+        backup), so the caller never remembers such a result. See
+        :mod:`overcode.json_store`.
         """
-        if not self.state_file.exists():
-            return None, {}
-
-        max_retries = 5
-        retry_delay = 0.1
-
-        for attempt in range(max_retries):
-            try:
-                with open(self.state_file, 'r') as f:
-                    if HAS_FCNTL:
-                        # Acquire shared lock for reading
-                        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                        try:
-                            sig = FileSignature.of(os.fstat(f.fileno()))
-                            return sig, json.load(f)
-                        finally:
-                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    else:
-                        # No locking on Windows
-                        sig = FileSignature.of(os.fstat(f.fileno()))
-                        return sig, json.load(f)
-            except json.JSONDecodeError as e:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                # JSON corruption detected - try to restore from backup
-                print(f"Warning: State file corrupted: {e}")
-                if self.restore_from_backup():
-                    print("Restored sessions from backup file")
-                    # Try loading the restored file
-                    try:
-                        with open(self.state_file, 'r') as f:
-                            return None, json.load(f)
-                    except json.JSONDecodeError:
-                        print("Warning: Backup file also corrupted, starting fresh")
-                        return None, {}
-                else:
-                    print("Warning: No backup available, starting fresh")
-                    return None, {}
-            except IOError as e:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                print(f"Warning: Could not load state file: {e}")
-                return None, {}
-
-        return None, {}
-
-    def _backup_state(self) -> None:
-        """Create a backup of the current state file before writing."""
-        if not self.state_file.exists():
-            return
-
-        backup_file = self.state_file.with_suffix('.json.bak')
-        try:
-            import shutil
-            shutil.copy2(self.state_file, backup_file)
-        except (OSError, IOError):
-            # Backup is best-effort, don't fail the write
-            pass
+        return self._store.read()
 
     def restore_from_backup(self) -> bool:
-        """Restore state from backup file if available.
+        """Make ``sessions.json.bak`` the live state, under the lock.
+
+        The current file is kept as ``sessions.json.pre-restore-<time>``.
 
         Returns:
             True if backup was restored, False otherwise
         """
-        backup_file = self.state_file.with_suffix('.json.bak')
-        if not backup_file.exists():
-            return False
-
         try:
-            import shutil
-            shutil.copy2(backup_file, self.state_file)
-            return True
-        except (OSError, IOError):
+            return self._store.restore_from_backup()
+        except StateWriteError:
             return False
 
     def _save_state(self, state: Dict[str, dict]):
-        """Save all sessions to state file with file locking and atomic writes"""
-        import threading
-        max_retries = 5
-        retry_delay = 0.1
-
-        # Create backup before writing
-        self._backup_state()
-
-        for attempt in range(max_retries):
-            try:
-                if HAS_FCNTL:
-                    # Use atomic write with exclusive lock
-                    # Use unique temp file name to avoid race conditions
-                    temp_suffix = f'.tmp.{os.getpid()}.{threading.get_ident()}'
-                    temp_file = self.state_file.with_suffix(temp_suffix)
-                    try:
-                        with open(temp_file, 'w') as f:
-                            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                            try:
-                                json.dump(state, f, indent=2)
-                                f.flush()
-                                os.fsync(f.fileno())
-                            finally:
-                                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                        # Atomic rename
-                        temp_file.rename(self.state_file)
-                    finally:
-                        # Clean up temp file if rename failed
-                        if temp_file.exists():
-                            temp_file.unlink()
-                else:
-                    # No locking on Windows, just write
-                    with open(self.state_file, 'w') as f:
-                        json.dump(state, f, indent=2)
-                return
-            except (IOError, OSError) as e:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                raise StateWriteError(f"Failed to save state file after {max_retries} attempts: {e}")
+        """Replace all sessions in the state file (locked, atomic)."""
+        self._store.save(state)
 
     @contextmanager
     def _locked_state(self):
@@ -845,60 +738,13 @@ class SessionManager:
         """Read-modify-write under the exclusive lock, writing only if dirty.
 
         Yields a ``_StateTxn`` whose ``state`` is the parsed file; the file
-        is rewritten (one dump, one fsync) on exit only if the caller set
+        is replaced (one dump, one fsync) on exit only if the caller set
         ``dirty``. ``_locked_state`` always does; ``commit_pending`` does
         only when a staged value differs from what is on disk, so a tick
         with nothing to change costs a parse and no write.
         """
-        if not HAS_FCNTL:
-            # No locking on Windows - fall back to read/modify/write
-            _, state = self._read_state_file()
-            txn = _StateTxn(state)
+        with self._store.transaction() as txn:
             yield txn
-            if txn.dirty:
-                self._save_state(state)
-            return
-
-        max_retries = 5
-        retry_delay = 0.1
-        f = None
-
-        for attempt in range(max_retries):
-            try:
-                # Use 'a+' to create file if missing, then seek to start
-                f = open(self.state_file, 'a+')
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                f.seek(0)
-                content = f.read()
-                state = json.loads(content) if content.strip() else {}
-                break
-            except (IOError, OSError, json.JSONDecodeError) as e:
-                if f is not None:
-                    try:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    except OSError:
-                        pass
-                    f.close()
-                    f = None
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                raise StateWriteError(f"Failed to load state after {max_retries} attempts: {e}")
-
-        try:
-            txn = _StateTxn(state)
-            yield txn
-            if txn.dirty:
-                f.seek(0)
-                f.truncate()
-                json.dump(state, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-        except (IOError, OSError) as e:
-            raise StateWriteError(f"Failed to save state: {e}")
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-            f.close()
 
     def commit_pending(self, pending: "PendingUpdates") -> bool:
         """Apply a tick's staged mutations in one read-modify-write.
