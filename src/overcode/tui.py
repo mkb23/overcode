@@ -2087,9 +2087,13 @@ class SupervisorTUI(
     def _should_recover_focus(self) -> bool:
         """Check if focus recovery should run.
 
-        Returns False when an overlay is visible (help, any modal), the
-        command bar is open, or focus is already on a session/input widget.
+        Returns False when focus is already on a session/input widget (the
+        usual case, answered first and without a DOM query: this runs every
+        250 ms), an overlay is visible (help, any modal), or the command bar
+        is open.
         """
+        if isinstance(self.focused, (SessionSummary, Input, TextArea)):
+            return False
         # Don't steal focus from overlays
         try:
             ho = self.query_one("#help-overlay")
