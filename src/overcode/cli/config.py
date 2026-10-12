@@ -36,8 +36,8 @@ CONFIG_TEMPLATE = """\
 # web:
 #   port: 8080            # Default port for 'overcode web'
 #   host: "127.0.0.1"     # Default bind host (use "0.0.0.0" for LAN/sister access)
-#   api_key: "secret"     # Required when host is not localhost
-#   allow_control: false   # Enable remote control API
+#   api_key: "secret"     # Required when host is not localhost, and for allow_control
+#   allow_control: false   # Enable remote control API (needs api_key)
 
 # Enhanced context hook settings (agent identity, clock, presence, uptime)
 # enhanced_context:

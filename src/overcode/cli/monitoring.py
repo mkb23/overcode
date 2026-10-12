@@ -388,17 +388,7 @@ def web(
         print(f"API server already running at {url}")
         return
 
-    # Security: require API key when binding to non-localhost
-    if host not in ("127.0.0.1", "localhost"):
-        from ..config import get_web_api_key
-        if not get_web_api_key():
-            print("Error: Binding to non-localhost requires web.api_key in config.")
-            print("Set it in ~/.overcode/config.yaml:")
-            print()
-            print("  web:")
-            print('    api_key: "your-secret-key"')
-            raise typer.Exit(1)
-
+    # start_web_server refuses a non-localhost bind without web.api_key.
     success, msg = start_web_server(session, port, host)
     if success:
         print(f"API server started: {msg}")

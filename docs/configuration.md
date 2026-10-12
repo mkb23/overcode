@@ -49,10 +49,11 @@ bedrock:
 
 # API server settings (`overcode web` — serves the sister API only)
 web:
-  # API key for API server authentication
-  # Required when binding to non-localhost (--host 0.0.0.0)
+  # API key for API server authentication (sent as X-API-Key)
+  # Required when binding to non-localhost (--host 0.0.0.0) and for allow_control
   api_key: "your-secret-key"
-  # Allow sisters to send control actions (send, kill, launch, ...)
+  # Allow sisters to send control actions (send, kill, launch, ...).
+  # Needs api_key: without one the control routes answer 403.
   allow_control: false
 
 # Tmux split layout settings

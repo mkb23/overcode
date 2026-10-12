@@ -201,18 +201,22 @@ def sister_allow_control(
 
     if on:
         api_key = get_web_api_key()
-        web["allow_control"] = True
-        save_config(config)
-        rprint("[green]✓ Remote control enabled (web.allow_control = true)[/green]")
-        if api_key:
-            masked_key = api_key[:4] + "..."
-            rprint(f"  API key: {masked_key}")
-        else:
-            rprint("  [yellow]Warning: web.api_key is not set — endpoints are unauthenticated[/yellow]")
-            rprint("  [dim]This is fine if you're using SSH tunnels. Otherwise set it in ~/.overcode/config.yaml:[/dim]")
+        if not api_key:
+            # Control routes are refused without a key (anything that can
+            # reach the port could otherwise drive the agents), so enabling
+            # it now would do nothing.
+            rprint("[red]Error: remote control needs web.api_key.[/red]")
+            rprint("  Set it in ~/.overcode/config.yaml, then run this again:")
             rprint()
             rprint("  web:")
             rprint('    api_key: "your-secret-key"')
+            rprint()
+            rprint("  [dim]Sisters send it as X-API-Key: set the same key on their `sisters:` entry.[/dim]")
+            raise typer.Exit(code=1)
+        web["allow_control"] = True
+        save_config(config)
+        rprint("[green]✓ Remote control enabled (web.allow_control = true)[/green]")
+        rprint(f"  API key: {str(api_key)[:4]}...")
         rprint("  Restart API server for changes to take effect.")
     elif off:
         web["allow_control"] = False
@@ -222,10 +226,12 @@ def sister_allow_control(
         # Show current status
         enabled = web.get("allow_control", False)
         api_key = get_web_api_key()
-        if enabled:
-            masked_key = (api_key[:4] + "...") if api_key else "(not set)"
+        if enabled and not api_key:
+            rprint("Remote control: [yellow]enabled but refused[/yellow]")
+            rprint("  [yellow]web.api_key is not set, so control routes answer 403.[/yellow]")
+        elif enabled:
             rprint("Remote control: [green]enabled[/green]")
-            rprint(f"  API key: {masked_key}")
+            rprint(f"  API key: {str(api_key)[:4]}...")
         else:
             rprint("Remote control: [red]disabled[/red]")
             if not api_key:

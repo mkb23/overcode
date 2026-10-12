@@ -2530,13 +2530,33 @@ class TestSisterCommands:
                     assert "enabled" in result.output
 
     def test_sister_allow_control_on_no_api_key(self):
-        """Enable allow-control warns when no api_key."""
+        """Enabling control without web.api_key is refused and saves nothing:
+        the control routes would answer 403 anyway."""
         with patch('overcode.config.load_config', return_value={"web": {}}):
-            with patch('overcode.config.save_config'):
+            with patch('overcode.config.save_config') as save:
                 with patch('overcode.config.get_web_api_key', return_value=None):
                     result = runner.invoke(app, ["sister", "allow-control", "--on"])
-                    assert result.exit_code == 0
-                    assert "Warning" in result.output
+                    assert result.exit_code == 1
+                    assert "needs web.api_key" in result.output
+                    save.assert_not_called()
+
+    def test_sister_allow_control_show_enabled_without_key(self):
+        """Status says control is refused when it is on but no key is set."""
+        with patch('overcode.config.load_config', return_value={"web": {"allow_control": True}}):
+            with patch('overcode.config.get_web_api_key', return_value=None):
+                result = runner.invoke(app, ["sister", "allow-control"])
+                assert result.exit_code == 0
+                assert "refused" in result.output
+
+    def test_web_off_localhost_without_key_is_refused(self):
+        """`overcode web --host 0.0.0.0` with no key fails, via start_web_server."""
+        with patch('overcode.web_server.get_web_api_key', return_value=None), \
+             patch('overcode.web_server.is_web_server_running', return_value=False), \
+             patch('subprocess.Popen') as popen:
+            result = runner.invoke(app, ["web", "--host", "0.0.0.0"])
+        assert result.exit_code == 1
+        assert "web.api_key" in result.output
+        popen.assert_not_called()
 
     def test_sister_allow_control_off(self):
         """Disable allow-control."""

@@ -183,7 +183,7 @@ The tmux session you run the command from is killed last. An agent that runs
 
 In the TUI, the command palette has **Shut down overcode**. Run it twice to
 confirm, and the TUI exits at the end. An API server with
-`web.allow_control: true` also takes `POST /api/shutdown`. Its default body
+`web.allow_control: true` and a `web.api_key` also takes `POST /api/shutdown`. Its default body
 stops only the supervisor, the monitor and the API server, and agents keep
 running. `{"scope": "all"}` does the full shutdown, and `"dry_run": true`
 returns the plan instead.
@@ -434,13 +434,13 @@ Starts the server in the background and exits immediately. If already running, s
 Routes: `GET /api/status`, `GET /api/agents/{name}/status`,
 `GET /api/timeline/raw`, `GET /health`, and the control routes under
 `/api/agents/...`, `/api/daemon/...` and `POST /api/shutdown` (control needs
-`web.allow_control: true`). See
+`web.allow_control: true` and `web.api_key`). See
 [Advanced Features: API Server](advanced-features.md#api-server).
 
 ```bash
 overcode web                          # Start on localhost:8080
 overcode web --port 3000              # Custom port
-overcode web --host 0.0.0.0           # LAN access (needs api_key)
+overcode web --host 0.0.0.0           # LAN access (refused without web.api_key)
 overcode web --stop                   # Stop the server
 ```
 

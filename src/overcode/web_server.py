@@ -5,11 +5,18 @@ Serves fleet status (GET) and a control API (POST/PUT/DELETE) that sister
 overcode instances call over HTTP (sister_poller, sister_controller,
 ssh_provisioner). There is no HTML UI. Uses Python stdlib http.server -
 no additional dependencies required.
+
+Security: the only clients are overcode processes using urllib/curl, never a
+browser, so no CORS headers are sent; a browser page on any origin cannot read
+the responses. Binding off localhost requires web.api_key, and so does
+web.allow_control (control routes answer 403 without one). Keys are compared
+in constant time.
 """
 
+import hmac
 import json
 import sys
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler
 from typing import Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 
@@ -27,6 +34,45 @@ from .web_api import (
     get_raw_timeline_data,
     get_health_data,
 )
+
+
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+_KEY_HELP = (
+    "Set it in ~/.overcode/config.yaml:\n\n"
+    "  web:\n"
+    '    api_key: "your-secret-key"'
+)
+
+CONTROL_NEEDS_KEY = (
+    "web.allow_control needs web.api_key: control routes are refused until a key is set"
+)
+
+
+def bind_error(host: str) -> Optional[str]:
+    """Why the API server must not bind ``host``, or None if it may.
+
+    Binding anywhere but localhost exposes the fleet (pane content included)
+    to the network, so it requires web.api_key.
+    """
+    if host not in _LOCAL_HOSTS and not get_web_api_key():
+        return f"Binding to {host} (not localhost) requires web.api_key. {_KEY_HELP}"
+    return None
+
+
+def control_needs_key() -> bool:
+    """True when web.allow_control is on but no web.api_key is set.
+
+    The control routes stay closed in that state (see _check_control_allowed).
+    """
+    return bool(get_web_allow_control()) and not get_web_api_key()
+
+
+def _key_matches(request_key: str, api_key) -> bool:
+    """Constant-time comparison of the request's X-API-Key with the config key."""
+    return hmac.compare_digest(
+        (request_key or "").encode("utf-8"), str(api_key).encode("utf-8")
+    )
 
 
 # Route table: path -> method name on OvercodeHandler.
@@ -119,15 +165,14 @@ _AGENT_CONTROL_ROUTES = {
 class OvercodeHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the overcode sister API."""
 
-    # Set by run_server before starting
+    # Set by web_server_runner before starting
     tmux_session: str = "agents"
 
     def do_GET(self) -> None:
         """Handle GET requests."""
         api_key = get_web_api_key()
         if api_key:
-            request_key = self.headers.get("X-API-Key", "")
-            if request_key != api_key:
+            if not _key_matches(self.headers.get("X-API-Key", ""), api_key):
                 self.send_error(401, "Unauthorized: invalid or missing X-API-Key header")
                 return
 
@@ -180,7 +225,6 @@ class OvercodeHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body_bytes)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body_bytes)
@@ -195,8 +239,7 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         """Check API key authentication. Returns True if authorized."""
         api_key = get_web_api_key()
         if api_key:
-            request_key = self.headers.get("X-API-Key", "")
-            if request_key != api_key:
+            if not _key_matches(self.headers.get("X-API-Key", ""), api_key):
                 self._send_json_error(401, "Unauthorized: invalid or missing X-API-Key header")
                 return False
         return True
@@ -205,6 +248,11 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         """Check if remote control is enabled. Returns True if allowed."""
         if not get_web_allow_control():
             self._send_json_error(403, "Remote control not enabled (set web.allow_control: true)")
+            return False
+        if not get_web_api_key():
+            # Control without a key would let anything that can reach the
+            # port drive the agents.
+            self._send_json_error(403, CONTROL_NEEDS_KEY)
             return False
         return True
 
@@ -226,7 +274,6 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
@@ -282,15 +329,6 @@ class OvercodeHandler(BaseHTTPRequestHandler):
 
         raise ControlError(f"Unknown {method} endpoint: {path}", status=404)
 
-    def do_OPTIONS(self) -> None:
-        """Handle CORS preflight requests."""
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
-        self.send_header("Access-Control-Max-Age", "86400")
-        self.end_headers()
-
     def do_POST(self) -> None:
         """Handle POST requests (control API)."""
         self._route_control("POST")
@@ -313,76 +351,6 @@ class OvercodeHandler(BaseHTTPRequestHandler):
             if status.startswith("2") and "/api/" in path:
                 return
         sys.stderr.write(f"[web] {args[0] if args else format}\n")
-
-
-def run_server(
-    host: str = "127.0.0.1",
-    port: int = 8080,
-    tmux_session: str = "agents"
-) -> None:
-    """Run the API server in the foreground.
-
-    Args:
-        host: Host to bind to (default: 127.0.0.1 for localhost only)
-        port: Port to listen on (default: 8080)
-        tmux_session: tmux session name to monitor
-    """
-    # Security: require API key when binding to non-localhost
-    if host != "127.0.0.1" and host != "localhost":
-        if not get_web_api_key():
-            print("Error: Binding to non-localhost requires web.api_key in config.")
-            print("Set it in ~/.overcode/config.yaml:")
-            print()
-            print("  web:")
-            print('    api_key: "your-secret-key"')
-            print()
-            sys.exit(1)
-
-    # Set the tmux session on the handler class
-    OvercodeHandler.tmux_session = tmux_session
-
-    server_address = (host, port)
-
-    try:
-        server = HTTPServer(server_address, OvercodeHandler)
-    except OSError as e:
-        if "Address already in use" in str(e):
-            print(f"Error: Port {port} is already in use. Try a different port with --port")
-            sys.exit(1)
-        raise
-
-    # Get actual bound address for display
-    bound_host, bound_port = server.server_address
-
-    print("Overcode API Server (sister API)")
-    print("================================")
-    print(f"Monitoring tmux session: {tmux_session}")
-    print("")
-    print(f"  API Status: http://localhost:{bound_port}/api/status")
-    print("")
-    print(f"Local:   http://localhost:{bound_port}")
-
-    if host == "0.0.0.0":
-        # Try to get the machine's IP for network access
-        try:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            print(f"Network: http://{ip}:{bound_port}")
-        except Exception:
-            print(f"Network: http://<your-ip>:{bound_port}")
-
-    print("")
-    print("Press Ctrl+C to stop")
-    print("")
-
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        server.shutdown()
 
 
 # =============================================================================
@@ -462,7 +430,12 @@ def start_web_server(session: str, port: int | None = None, host: str | None = N
     if host is None:
         host = get_web_host()
 
-    _log_to_file(session, f"start_web_server called with port={port}")
+    _log_to_file(session, f"start_web_server called with port={port} host={host}")
+
+    refusal = bind_error(host)
+    if refusal:
+        _log_to_file(session, f"Refused: {refusal}")
+        return False, refusal
 
     if is_web_server_running(session):
         url = get_web_server_url(session)
@@ -509,6 +482,9 @@ def start_web_server(session: str, port: int | None = None, host: str | None = N
         if is_web_server_running(session):
             url = get_web_server_url(session)
             _log_to_file(session, f"Server started successfully at {url}")
+            if control_needs_key():
+                _log_to_file(session, CONTROL_NEEDS_KEY)
+                return True, f"Started at {url} ({CONTROL_NEEDS_KEY})"
             return True, f"Started at {url}"
         _log_to_file(session, f"Waiting for server... attempt {i+1}/10")
 

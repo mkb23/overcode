@@ -307,7 +307,7 @@ dashboard, analytics pages and the Cloudflare relay were removed.
 
 ```bash
 overcode web                          # Start on localhost:8080
-overcode web --host 0.0.0.0           # LAN access (needs api_key)
+overcode web --host 0.0.0.0           # LAN access (refused without web.api_key)
 overcode web --port 3000              # Custom port
 overcode web --stop                   # Stop the server
 ```
@@ -322,8 +322,14 @@ Routes (all JSON; `X-API-Key` required when `web.api_key` is set):
 | `GET /api/agents/{name}/status` | sister TUI focused-agent poll |
 | `GET /api/timeline/raw` | sister TUI timeline |
 | `GET /health` | SSH provisioner |
-| `POST/PUT/DELETE /api/agents/...`, `/api/daemon/...` | sister control actions (needs `web.allow_control: true`) |
+| `POST/PUT/DELETE /api/agents/...`, `/api/daemon/...` | sister control actions (needs `web.allow_control: true` and `web.api_key`) |
 | `POST /api/shutdown` | SSH provisioner (stops services, agents keep running) |
+
+The server sends no CORS headers: its clients are overcode processes, not
+browsers, so a web page you visit cannot read your fleet through it. Binding
+off localhost needs `web.api_key`, and `web.allow_control` does too (control
+routes answer 403 without a key). Sisters send the key as `X-API-Key`; set
+the same `api_key` on the sister's entry in `sisters:`.
 
 ### TUI Toggle
 
@@ -477,7 +483,10 @@ overcode web
 
 ### Setup Option A: SSH Tunnels (Recommended)
 
-SSH tunnels keep all traffic encrypted with no API key needed.
+SSH tunnels keep all traffic encrypted with no API key needed for viewing.
+To also control the remote's agents from here, the remote needs
+`web.allow_control: true` and a `web.api_key` (control routes answer 403
+without one), and the sister entry below needs the same `api_key`.
 
 On the **monitoring machine**, add tunnels in `~/.ssh/config`:
 

@@ -245,7 +245,8 @@ def get_web_host() -> str:
 def get_web_api_key() -> Optional[str]:
     """Get API key for API server authentication.
 
-    Required when binding to non-localhost addresses.
+    Required when binding to non-localhost addresses, and for
+    web.allow_control (control routes answer 403 without it).
 
     Config format in ~/.overcode/config.yaml:
         web:
@@ -260,7 +261,8 @@ def get_web_api_key() -> Optional[str]:
 def get_web_allow_control() -> bool:
     """Check if remote control is enabled for the API server.
 
-    When False (default), all POST/PUT/DELETE endpoints return 403.
+    When False (default), all POST/PUT/DELETE endpoints return 403. They
+    also return 403 when this is True but web.api_key is not set.
 
     Config format in ~/.overcode/config.yaml:
         web:

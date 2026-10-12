@@ -552,8 +552,9 @@ class TestServeJson:
 
         handler.send_response.assert_called_once_with(200)
         handler.send_header.assert_any_call("Content-Type", "application/json")
-        handler.send_header.assert_any_call("Access-Control-Allow-Origin", "*")
         handler.send_header.assert_any_call("Cache-Control", "no-cache")
+        assert not [c for c in handler.send_header.call_args_list
+                    if c[0][0].startswith("Access-Control-")]
         handler.end_headers.assert_called_once()
         handler.wfile.write.assert_called_once()
         written = handler.wfile.write.call_args[0][0]
@@ -601,25 +602,17 @@ class TestServeJson:
         assert content_length_calls[0][0][1] == str(len(written))
 
 
-class TestDoOptions:
-    """Tests for do_OPTIONS — CORS preflight requests."""
+class TestNoCors:
+    """The sister API's clients are overcode processes, not browsers: no CORS."""
 
-    def test_returns_204_with_cors_headers(self):
-        """Should return 204 No Content with CORS headers."""
-        handler = _make_handler()
+    def test_no_options_handler(self):
+        """No preflight handler, so a browser cannot be told cross-origin is OK."""
+        assert "do_OPTIONS" not in vars(OvercodeHandler)
 
-        OvercodeHandler.do_OPTIONS(handler)
-
-        handler.send_response.assert_called_once_with(204)
-        handler.send_header.assert_any_call("Access-Control-Allow-Origin", "*")
-        handler.send_header.assert_any_call(
-            "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"
-        )
-        handler.send_header.assert_any_call(
-            "Access-Control-Allow-Headers", "Content-Type, X-API-Key"
-        )
-        handler.send_header.assert_any_call("Access-Control-Max-Age", "86400")
-        handler.end_headers.assert_called_once()
+    def test_source_sends_no_cors_headers(self):
+        import inspect
+        import overcode.web_server as ws
+        assert "Access-Control-" not in inspect.getsource(ws)
 
 
 class TestCheckAuth:
@@ -666,17 +659,111 @@ class TestCheckAuth:
         assert result is False
 
 
+class TestKeyComparison:
+    """API keys are compared in constant time (hmac.compare_digest)."""
+
+    def test_uses_compare_digest(self):
+        from overcode import web_server as ws
+        handler = _make_handler()
+        handler.headers = {"X-API-Key": "abc"}
+        with patch('overcode.web_server.get_web_api_key', return_value="abc"), \
+             patch.object(ws.hmac, "compare_digest", wraps=ws.hmac.compare_digest) as cd:
+            assert OvercodeHandler._check_auth(handler) is True
+        cd.assert_called_once()
+
+    def test_get_route_uses_compare_digest(self):
+        from overcode import web_server as ws
+        handler = _make_handler()
+        handler.path = "/health"
+        handler.headers = {"X-API-Key": "nope"}
+        with patch('overcode.web_server.get_web_api_key', return_value="abc"), \
+             patch.object(ws.hmac, "compare_digest", wraps=ws.hmac.compare_digest) as cd:
+            OvercodeHandler.do_GET(handler)
+        cd.assert_called_once()
+        handler.send_error.assert_called_once()
+
+    def test_prefix_and_non_ascii_keys_do_not_match(self):
+        from overcode.web_server import _key_matches
+        assert _key_matches("abc", "abc")
+        assert not _key_matches("ab", "abc")
+        assert not _key_matches("", "abc")
+        assert not _key_matches("ключ", "abc")
+        assert _key_matches("1234", 1234)  # a YAML number key
+
+
+class TestBindGuard:
+    """Binding off localhost needs web.api_key, on the path every start takes."""
+
+    @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+    def test_localhost_needs_no_key(self, host):
+        from overcode.web_server import bind_error
+        with patch('overcode.web_server.get_web_api_key', return_value=None):
+            assert bind_error(host) is None
+
+    @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "::"])
+    def test_off_localhost_without_key_is_refused(self, host):
+        from overcode.web_server import bind_error
+        with patch('overcode.web_server.get_web_api_key', return_value=None):
+            msg = bind_error(host)
+        assert msg and "web.api_key" in msg and host in msg
+
+    def test_off_localhost_with_key_is_allowed(self):
+        from overcode.web_server import bind_error
+        with patch('overcode.web_server.get_web_api_key', return_value="k"):
+            assert bind_error("0.0.0.0") is None
+
+    def test_start_web_server_refuses_before_spawning(self, tmp_path, monkeypatch):
+        """The TUI's `w` and `overcode web` both go through start_web_server."""
+        from overcode import web_server as ws
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch.object(ws, "get_web_api_key", return_value=None), \
+             patch.object(ws, "is_web_server_running", return_value=False), \
+             patch("subprocess.Popen") as popen:
+            ok, msg = ws.start_web_server("agents", port=8080, host="0.0.0.0")
+        assert ok is False and "web.api_key" in msg
+        popen.assert_not_called()
+
+    def test_run_server_is_gone(self):
+        from overcode import web_server as ws
+        assert not hasattr(ws, "run_server")
+
+
+class TestControlNeedsKey:
+
+    @pytest.mark.parametrize("allow,key,expected", [
+        (False, None, False), (False, "k", False), (True, "k", False), (True, None, True),
+    ])
+    def test_matrix(self, allow, key, expected):
+        from overcode.web_server import control_needs_key
+        with patch('overcode.web_server.get_web_allow_control', return_value=allow), \
+             patch('overcode.web_server.get_web_api_key', return_value=key):
+            assert control_needs_key() is expected
+
+
 class TestCheckControlAllowed:
     """Tests for _check_control_allowed — remote control gate."""
 
     def test_returns_true_when_control_enabled(self):
-        """Should return True when control is allowed."""
+        """Should return True when control is allowed and a key is set."""
         handler = _make_handler()
 
-        with patch('overcode.web_server.get_web_allow_control', return_value=True):
+        with patch('overcode.web_server.get_web_allow_control', return_value=True), \
+             patch('overcode.web_server.get_web_api_key', return_value="k"):
             result = OvercodeHandler._check_control_allowed(handler)
 
         assert result is True
+
+    def test_refused_when_control_enabled_without_key(self):
+        """allow_control without web.api_key: 403 naming the missing key."""
+        from overcode.web_server import CONTROL_NEEDS_KEY
+        handler = _make_handler()
+
+        with patch('overcode.web_server.get_web_allow_control', return_value=True), \
+             patch('overcode.web_server.get_web_api_key', return_value=None):
+            result = OvercodeHandler._check_control_allowed(handler)
+
+        assert result is False
+        handler._send_json_error.assert_called_once_with(403, CONTROL_NEEDS_KEY)
 
     def test_returns_false_when_control_disabled(self):
         """Should return False and send 403 when control is not allowed."""
@@ -747,7 +834,6 @@ class TestSendJsonResponse:
 
         handler.send_response.assert_called_once_with(200)
         handler.send_header.assert_any_call("Content-Type", "application/json")
-        handler.send_header.assert_any_call("Access-Control-Allow-Origin", "*")
         handler.wfile.write.assert_called_once()
 
     def test_send_json_response_custom_status(self):

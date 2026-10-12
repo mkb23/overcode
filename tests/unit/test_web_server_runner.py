@@ -109,3 +109,54 @@ class TestMain:
             # PID and port files should be cleaned up
             mock_pid_path.unlink.assert_called_once_with(missing_ok=True)
             mock_port_path.unlink.assert_called_once_with(missing_ok=True)
+
+
+class TestSecurityGuards:
+    """The runner is the path every API server start takes."""
+
+    def test_refuses_off_localhost_without_key(self):
+        test_args = ["prog", "--session", "test-session", "--port", "9999", "--host", "0.0.0.0"]
+        with patch.object(sys, "argv", test_args), \
+             patch("overcode.web_server.get_web_api_key", return_value=None), \
+             patch("overcode.web_server_runner.log") as mock_log, \
+             patch("overcode.pid_utils.write_pid_file") as mock_write, \
+             patch("overcode.web_server_runner.HTTPServer") as mock_server_cls:
+            with pytest.raises(SystemExit) as exc:
+                main()
+        assert exc.value.code == 1
+        mock_write.assert_not_called()
+        mock_server_cls.assert_not_called()
+        assert any("REFUSED" in c.args[1] for c in mock_log.call_args_list)
+
+    def test_off_localhost_with_key_binds(self, monkeypatch):
+        # main() swaps sys.stdout/stderr before serving; monkeypatch restores them.
+        monkeypatch.setattr(sys, "stdout", sys.stdout)
+        monkeypatch.setattr(sys, "stderr", sys.stderr)
+        test_args = ["prog", "--session", "test-session", "--port", "9999", "--host", "0.0.0.0"]
+        with patch.object(sys, "argv", test_args), \
+             patch("overcode.web_server.get_web_api_key", return_value="k"), \
+             patch("overcode.web_server_runner.log"), \
+             patch("overcode.pid_utils.write_pid_file"), \
+             patch("overcode.settings.get_web_server_pid_path", return_value=MagicMock()), \
+             patch("overcode.settings.get_web_server_port_path", return_value=MagicMock()), \
+             patch("signal.signal"), \
+             patch("builtins.open", MagicMock()), \
+             patch("overcode.web_server_runner.HTTPServer") as mock_server_cls:
+            mock_server_cls.return_value.serve_forever.side_effect = KeyboardInterrupt()
+            with pytest.raises(KeyboardInterrupt):
+                main()
+        assert mock_server_cls.call_args[0][0] == ("0.0.0.0", 9999)
+
+    def test_logs_warning_when_control_has_no_key(self):
+        test_args = ["prog", "--session", "test-session", "--port", "9999"]
+        with patch.object(sys, "argv", test_args), \
+             patch("overcode.web_server.get_web_api_key", return_value=None), \
+             patch("overcode.web_server.get_web_allow_control", return_value=True), \
+             patch("overcode.web_server_runner.log") as mock_log, \
+             patch("overcode.pid_utils.write_pid_file", side_effect=Exception("stop here")), \
+             patch("overcode.settings.get_web_server_pid_path", return_value=MagicMock()), \
+             patch("overcode.settings.get_web_server_port_path", return_value=MagicMock()):
+            with pytest.raises(SystemExit):
+                main()
+        assert any("WARNING" in c.args[1] and "api_key" in c.args[1]
+                   for c in mock_log.call_args_list)

@@ -11,15 +11,17 @@ from tests.container.harness import wait_for
 
 pytestmark = pytest.mark.timeout(180)
 
-CONTROL_ON = "web:\n  allow_control: true\n"
-KEYED = "web:\n  api_key: sekrit-test-key\n  allow_control: true\n"
+KEY = "sekrit-test-key"
+AUTH = {"X-API-Key": KEY}
+CONTROL_NO_KEY = "web:\n  allow_control: true\n"
+CONTROL_ON = KEYED = f"web:\n  api_key: {KEY}\n  allow_control: true\n"
 
 
 def _up(url):
     def probe():
         try:
             # Any HTTP answer (incl. 401 when keyed) means the server is up
-            return requests.get(f"{url}/health", timeout=2).status_code < 500
+            return requests.get(f"{url}/health", headers=AUTH, timeout=2).status_code < 500
         except requests.ConnectionError:
             return False
     wait_for(probe, timeout=30, desc=f"API server up at {url}")
@@ -59,19 +61,33 @@ def test_control_disabled_by_default(oc, oc_wait):
     assert resp.status_code == 403
 
 
+def test_control_refused_without_api_key(oc, oc_wait):
+    """allow_control without web.api_key keeps the control routes closed."""
+    oc.launch("keyless", scenario="startup_idle")
+    oc_wait(lambda: oc.agent("keyless"), desc="agent in registry")
+    url = oc.start_web(CONTROL_NO_KEY)
+    _up(url)
+
+    resp = requests.post(f"{url}/api/agents/keyless/send",
+                         json={"text": "nope"}, timeout=5)
+    assert resp.status_code == 403
+    assert "api_key" in resp.json()["error"]
+    assert "Access-Control-Allow-Origin" not in resp.headers
+
+
 def test_control_send_and_kill(oc, oc_wait, sandbox):
     oc.launch("driven", scenario="startup_idle")
     oc_wait(lambda: "Claude" in oc.pane("driven"), desc="mock claude up")
     url = oc.start_web(CONTROL_ON)
     _up(url)
 
-    send = requests.post(f"{url}/api/agents/driven/send",
+    send = requests.post(f"{url}/api/agents/driven/send", headers=AUTH,
                          json={"text": "via-the-web-api"}, timeout=10)
     assert send.status_code == 200, send.text
     oc_wait(lambda: "via-the-web-api" in oc.pane("driven"),
             desc="API-sent text in pane")
 
-    kill = requests.post(f"{url}/api/agents/driven/kill", json={}, timeout=10)
+    kill = requests.post(f"{url}/api/agents/driven/kill", headers=AUTH, json={}, timeout=10)
     assert kill.status_code == 200, kill.text
     oc_wait(
         lambda: not any(w.startswith("driven") for w in sandbox.list_windows(oc.session)),
@@ -82,7 +98,7 @@ def test_control_send_and_kill(oc, oc_wait, sandbox):
 def test_unknown_agent_404(oc):
     url = oc.start_web(CONTROL_ON)
     _up(url)
-    resp = requests.post(f"{url}/api/agents/no-such-agent/send",
+    resp = requests.post(f"{url}/api/agents/no-such-agent/send", headers=AUTH,
                          json={"text": "x"}, timeout=5)
     assert resp.status_code == 404
 
@@ -105,6 +121,7 @@ def test_launch_via_api_roundtrip(oc, oc_wait):
 
     resp = requests.post(
         f"{url}/api/agents/launch",
+        headers=AUTH,
         json={"name": "api-born"},
         timeout=30,
     )

@@ -45,7 +45,18 @@ def main():
     port = args.port
     host = args.host
 
-    log(session, f"Starting API server on port {port}")
+    log(session, f"Starting API server on {host}:{port}")
+
+    # Security guards live here, on the path every start takes (the TUI's
+    # `w`, `overcode web`, the ssh provisioner's remote start).
+    from .web_server import bind_error, control_needs_key, CONTROL_NEEDS_KEY
+    refusal = bind_error(host)
+    if refusal:
+        log(session, f"REFUSED: {refusal}")
+        print(f"Error: {refusal}", file=sys.stderr)
+        sys.exit(1)
+    if control_needs_key():
+        log(session, f"WARNING: {CONTROL_NEEDS_KEY}")
 
     try:
         from .settings import get_web_server_pid_path, get_web_server_port_path

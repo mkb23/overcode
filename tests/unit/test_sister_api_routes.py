@@ -238,3 +238,61 @@ class TestRouteSetIsTheSisterApi:
         with pytest.raises(Exception) as exc:
             urlopen(req, timeout=5)
         assert getattr(exc.value, "code", None) == 404
+
+
+# ---------------------------------------------------------------------------
+# Browsers and keyless control (quality review item 2)
+# ---------------------------------------------------------------------------
+
+ORIGIN = "https://some-web-page.example"
+
+
+def _cors_headers(headers) -> list:
+    return [h for h in headers if h.lower().startswith("access-control-")]
+
+
+class TestNotOpenToWebPages:
+    """A web page in the user's browser must not be able to read or drive
+    the fleet through the sister API on 127.0.0.1."""
+
+    def test_get_has_no_cors_header(self, server):
+        url, _ = server
+        req = Request(f"{url}/api/status", headers={"X-API-Key": API_KEY, "Origin": ORIGIN})
+        with urlopen(req, timeout=5) as resp:
+            assert resp.status == 200
+            assert _cors_headers(resp.headers) == []
+
+    def test_control_response_has_no_cors_header(self, server):
+        url, _ = server
+        req = Request(f"{url}/api/agents/a1/kill", data=b"{}", method="POST",
+                      headers={"X-API-Key": API_KEY, "Origin": ORIGIN})
+        with urlopen(req, timeout=5) as resp:
+            assert _cors_headers(resp.headers) == []
+
+    def test_preflight_is_not_granted(self, server):
+        url, control = server
+        req = Request(f"{url}/api/agents/a1/keys", method="OPTIONS",
+                      headers={"Origin": ORIGIN,
+                               "Access-Control-Request-Method": "POST",
+                               "Access-Control-Request-Headers": "content-type"})
+        with pytest.raises(Exception) as exc:
+            urlopen(req, timeout=5)
+        assert getattr(exc.value, "code", None) == 501
+        assert _cors_headers(exc.value.headers) == []
+        control["send_key_to_agent"].assert_not_called()
+
+    def test_control_without_configured_key_is_refused(self, server):
+        """allow_control on but no web.api_key: control answers 403, even to
+        a request that carries no key at all, and nothing is dispatched."""
+        url, control = server
+        with patch.object(web_server, "get_web_api_key", return_value=None):
+            req = Request(f"{url}/api/agents/a1/keys", data=b'{"key": "Enter"}',
+                          method="POST", headers={"Content-Type": "application/json"})
+            with pytest.raises(Exception) as exc:
+                urlopen(req, timeout=5)
+            assert exc.value.code == 403
+            assert "api_key" in json.loads(exc.value.read())["error"]
+            # Reads stay open on localhost without a key.
+            with urlopen(f"{url}/health", timeout=5) as resp:
+                assert resp.status == 200
+        control["send_key_to_agent"].assert_not_called()
