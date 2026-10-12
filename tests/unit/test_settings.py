@@ -80,69 +80,6 @@ class TestDaemonIsolation:
             assert session2_monitor.parent.name == "session-2"
 
 
-class TestOvercodePaths:
-    """Test OvercodePaths dataclass."""
-
-    def test_paths_default_values(self, monkeypatch):
-        """OvercodePaths should have sensible defaults."""
-        from overcode.settings import OvercodePaths
-        monkeypatch.delenv("OVERCODE_DIR", raising=False)
-
-        paths = OvercodePaths()
-        assert paths.base_dir == Path.home() / ".overcode"
-
-    def test_paths_config_file(self):
-        """config_file property should return correct path."""
-        from overcode.settings import OvercodePaths
-
-        paths = OvercodePaths()
-        assert paths.config_file == paths.base_dir / "config.yaml"
-
-    def test_paths_sessions_file(self, tmp_path):
-        """sessions_file property should return correct path."""
-        from overcode.settings import OvercodePaths
-
-        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
-            paths = OvercodePaths()
-            result = paths.sessions_file
-            assert result == tmp_path / "sessions.json"
-
-    def test_paths_daemon_log(self):
-        """daemon_log property should return correct path."""
-        from overcode.settings import OvercodePaths
-
-        paths = OvercodePaths()
-        assert paths.daemon_log == paths.base_dir / "daemon.log"
-
-    def test_paths_daemon_pid(self):
-        """daemon_pid property should return correct path."""
-        from overcode.settings import OvercodePaths
-
-        paths = OvercodePaths()
-        assert paths.daemon_pid == paths.base_dir / "daemon.pid"
-
-    def test_paths_monitor_daemon_state(self):
-        """monitor_daemon_state property should return correct path."""
-        from overcode.settings import OvercodePaths
-
-        paths = OvercodePaths()
-        assert paths.monitor_daemon_state == paths.base_dir / "monitor_daemon_state.json"
-
-    def test_paths_presence_log(self):
-        """presence_log property should return correct path."""
-        from overcode.settings import OvercodePaths
-
-        paths = OvercodePaths()
-        assert paths.presence_log == paths.base_dir / "presence_log.csv"
-
-    def test_paths_agent_history(self):
-        """agent_history property should return correct path."""
-        from overcode.settings import OvercodePaths
-
-        paths = OvercodePaths()
-        assert paths.agent_history == paths.base_dir / "agent_status_history.csv"
-
-
 class TestTuiAttendedTouch:
     """The TUI's attended-liveness file: an mtime the daemon reads, no content."""
 
@@ -313,13 +250,6 @@ class TestUserConfig:
 
         config = get_user_config()
         assert isinstance(config, UserConfig)
-
-    def test_get_default_standing_instructions(self):
-        """get_default_standing_instructions should return string."""
-        from overcode.settings import get_default_standing_instructions
-
-        result = get_default_standing_instructions()
-        assert isinstance(result, str)
 
 
 class TestBedrockDiscount:

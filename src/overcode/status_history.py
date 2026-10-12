@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
-from .settings import DAEMON, PATHS
+from .settings import DAEMON, get_agent_history_path
 
 
 def log_agent_status(
@@ -45,7 +45,7 @@ def log_agent_status(
         session_id: Unique session ID (UUID) for disambiguation
         hostname: Machine hostname for multi-host disambiguation
     """
-    path = history_file or PATHS.agent_history
+    path = history_file or get_agent_history_path(DAEMON.default_tmux_session)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if file exists (to write header)
@@ -439,7 +439,7 @@ def read_agent_status_history(
         rows written before v0.3.6. A row stands for its agent until that
         agent's next row.
     """
-    path = history_file or PATHS.agent_history
+    path = history_file or get_agent_history_path(DAEMON.default_tmux_session)
     return _get_or_create_reader(path).read(hours, agent_name, carry)
 
 

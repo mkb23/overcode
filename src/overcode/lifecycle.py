@@ -495,8 +495,8 @@ def shutdown(
     The tmux session this process runs in is killed last, since that ends
     the process.
     """
+    from .paths import overcode_dir
     from .settings import (
-        PATHS,
         get_monitor_daemon_pid_path,
         get_supervisor_daemon_pid_path,
         get_web_server_pid_path,
@@ -603,8 +603,9 @@ def shutdown(
         else:
             add("daemons", "presence logger", "skipped",
                 f"still used by {', '.join(others_alive)}")
-        for legacy in (PATHS.daemon_pid, PATHS.monitor_daemon_pid,
-                       PATHS.supervisor_daemon_pid):
+        # PID files of the pre-per-session daemons, at the top of the tree
+        for name in ("daemon.pid", "monitor_daemon.pid", "supervisor_daemon.pid"):
+            legacy = overcode_dir() / name
             if legacy.exists():
                 stop_pid("daemons", f"legacy {legacy.name}", legacy)
 

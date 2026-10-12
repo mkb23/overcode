@@ -139,9 +139,6 @@ class TestAppSharedState:
         monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / ".overcode" / "state"))
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-        from overcode import settings
-
-        monkeypatch.setattr(settings.PATHS, "base_dir", tmp_path / ".overcode")
         from overcode.tui import SupervisorTUI
 
         app = SupervisorTUI("test-session", diagnostics=True)

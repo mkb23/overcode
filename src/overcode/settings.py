@@ -33,92 +33,6 @@ DAEMON_VERSION = 3  # Increment when daemon behavior changes (3: engine.sock, 0.
 
 
 # =============================================================================
-# File Paths
-# =============================================================================
-
-@dataclass
-class OvercodePaths:
-    """All file paths used by Overcode."""
-
-    # Base directory
-    base_dir: Path = field(default_factory=paths.overcode_dir)
-
-    @property
-    def config_file(self) -> Path:
-        """Configuration file path."""
-        return self.base_dir / "config.yaml"
-
-    @property
-    def state_dir(self) -> Path:
-        """Session state directory."""
-        return paths.sessions_root()
-
-    @property
-    def sessions_file(self) -> Path:
-        """Sessions state file."""
-        return self.state_dir / "sessions.json"
-
-    @property
-    def log_dir(self) -> Path:
-        """Log directory."""
-        return self.base_dir / "logs"
-
-    @property
-    def daemon_log(self) -> Path:
-        """Daemon log file."""
-        return self.base_dir / "daemon.log"
-
-    @property
-    def daemon_pid(self) -> Path:
-        """Daemon PID file."""
-        return self.base_dir / "daemon.pid"
-
-    @property
-    def monitor_daemon_state(self) -> Path:
-        """Monitor daemon state file (new - single source of truth)."""
-        return self.base_dir / "monitor_daemon_state.json"
-
-    @property
-    def monitor_daemon_pid(self) -> Path:
-        """Monitor daemon PID file."""
-        return self.base_dir / "monitor_daemon.pid"
-
-    @property
-    def supervisor_daemon_pid(self) -> Path:
-        """Supervisor daemon PID file."""
-        return self.base_dir / "supervisor_daemon.pid"
-
-    @property
-    def presence_pid(self) -> Path:
-        """Presence logger PID file."""
-        return self.base_dir / "presence.pid"
-
-    @property
-    def presence_log(self) -> Path:
-        """Presence log file."""
-        return self.base_dir / "presence_log.csv"
-
-    @property
-    def activity_signal(self) -> Path:
-        """Activity signal file for daemon."""
-        return self.base_dir / "activity_signal"
-
-    @property
-    def agent_history(self) -> Path:
-        """Agent status history CSV."""
-        return self.base_dir / "agent_status_history.csv"
-
-    @property
-    def supervisor_log(self) -> Path:
-        """Supervisor log file."""
-        return self.base_dir / "supervisor.log"
-
-
-# Global paths instance
-PATHS = OvercodePaths()
-
-
-# =============================================================================
 # Daemon Settings
 # =============================================================================
 
@@ -656,20 +570,6 @@ def ensure_session_dir(session: str) -> Path:
     session_dir = get_session_dir(session)
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
-
-
-# =============================================================================
-# Convenience Functions
-# =============================================================================
-
-def get_default_standing_instructions() -> str:
-    """Get default standing instructions from config.
-
-    Delegates to config.get_default_standing_instructions() — kept here
-    for backwards compatibility with existing imports.
-    """
-    from .config import get_default_standing_instructions as _get
-    return _get()
 
 
 # =============================================================================

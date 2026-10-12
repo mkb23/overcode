@@ -1022,7 +1022,7 @@ def patched_environment(paths: FixturePaths) -> Iterator[None]:
     Covers: the ``HOME`` / ``OVERCODE_DIR`` / ``OVERCODE_STATE_DIR`` env vars
     (read at call time by settings, hook_handler and hook_status_detector),
     ``Path.home`` itself (time_context, bundled_skills), the import-time
-    constants in history_reader / presence_logger / config / settings.PATHS,
+    constants in history_reader / presence_logger / config,
     the module-level ``HistoryFile`` singleton, and the *default arguments*
     of the history_reader functions that bound ``CLAUDE_*_PATH`` at import
     time (``get_session_stats`` and friends — patching the constant alone
@@ -1087,7 +1087,6 @@ def patched_environment(paths: FixturePaths) -> Iterator[None]:
                 fn.__defaults__ = new
         patch(presence_logger, "PRESENCE_PID_FILE", paths.overcode_dir / "presence.pid")
         patch(config, "CONFIG_PATH", paths.overcode_dir / "config.yaml")
-        patch(settings.PATHS, "base_dir", paths.overcode_dir)
         clear_caches()
         yield
     finally:

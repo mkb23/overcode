@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .settings import (
-    PATHS,
     DAEMON,
     get_monitor_daemon_state_path,
 )
@@ -412,9 +411,9 @@ class MonitorDaemonState:
         """Save state to file for consumers to read.
 
         Args:
-            state_file: Optional path override (for testing)
+            state_file: The state file (default: the default tmux session's)
         """
-        path = state_file or PATHS.monitor_daemon_state
+        path = state_file or get_monitor_daemon_state_path(DAEMON.default_tmux_session)
         path.parent.mkdir(parents=True, exist_ok=True)
 
         # Update summaries before saving
@@ -451,7 +450,7 @@ class MonitorDaemonState:
         Returns:
             MonitorDaemonState if file exists and is valid, None otherwise
         """
-        path = state_file or PATHS.monitor_daemon_state
+        path = state_file or get_monitor_daemon_state_path(DAEMON.default_tmux_session)
         return _load_cache_for(path).get(path, lambda: cls._read_state_file(path))
 
     @classmethod
