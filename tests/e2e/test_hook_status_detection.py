@@ -120,7 +120,7 @@ def real_claude_env():
     finally:
         # Kill agents via overcode kill (best-effort)
         try:
-            sessions_file = os.path.join(state_dir, "sessions", "sessions.json")
+            sessions_file = os.path.join(state_dir, "sessions.json")
             if os.path.exists(sessions_file):
                 with open(sessions_file) as f:
                     sessions = json.load(f)
@@ -422,7 +422,7 @@ class TestHookStatusDetection:
         # 2. Find the agent's tmux window from sessions.json
         # Poll for it since it's written async by the launcher
         print("\n--- Finding agent tmux window ---")
-        sessions_file = os.path.join(state_dir, "sessions", "sessions.json")
+        sessions_file = os.path.join(state_dir, "sessions.json")
         agent_window = None
         for _ in range(15):
             try:

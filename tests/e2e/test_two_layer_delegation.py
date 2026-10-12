@@ -103,7 +103,7 @@ def real_claude_env(test_session_name):
         }
     finally:
         try:
-            sessions_file = os.path.join(state_dir, "sessions", "sessions.json")
+            sessions_file = os.path.join(state_dir, "sessions.json")
             if os.path.exists(sessions_file):
                 with open(sessions_file) as f:
                     sessions = json.load(f)
@@ -148,7 +148,7 @@ def real_claude_env(test_session_name):
 
 def _read_sessions(state_dir: str) -> dict:
     """Read sessions.json, returning {} on any error."""
-    sessions_file = os.path.join(state_dir, "sessions", "sessions.json")
+    sessions_file = os.path.join(state_dir, "sessions.json")
     try:
         with open(sessions_file) as f:
             return json.load(f)
