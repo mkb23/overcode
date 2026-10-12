@@ -308,7 +308,7 @@ class TestEngineOwnsTheNumbers:
         synced = []
         d.sync_agent_stats = synced.append
         t0 = datetime(2026, 10, 7, 12, 0, 0)
-        d._last_stats_sync = t0
+        d.cadence.stats.last = t0
         d.state.interval_mode = "attended"
         d._sync_session_stats(["s"], t0 + timedelta(seconds=5))
         assert synced == ["s"]

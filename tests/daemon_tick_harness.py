@@ -401,21 +401,35 @@ def make_daemon(
     return daemon
 
 
+# The periodic syncs a steady-state tick has just done: the daemon's cadence
+# name, and the stamp attribute older trees kept instead
+PERIODIC_SYNCS = {
+    "stats": "_last_stats_sync",
+    "session_ids": "_last_session_id_sync",
+    "skills": "_last_skills_sync",
+    "sandbox": "_last_sandbox_sync",
+    "resources": "_last_resources_sync",
+    "history_rotation": "_last_history_rotation_check",
+    "model_metadata": "_last_model_metadata_check",
+}
+
+
+def set_sync_stamps(daemon, when: Optional[datetime], names=tuple(PERIODIC_SYNCS)) -> None:
+    """Say the periodic syncs ``names`` last ran at ``when`` (None: due now)."""
+    cadence = getattr(daemon, "cadence", None)
+    for name in names:
+        if cadence is not None:
+            getattr(cadence, name).last = when
+        else:
+            setattr(daemon, PERIODIC_SYNCS[name], when)
+
+
 def seed_steady_state(daemon, sessions, now: datetime) -> None:
     """Make the next tick look like any tick after the first (no first-observation skips)."""
     for s in sessions:
         daemon.previous_states[s.id] = s.stats.current_state
         daemon.last_state_times[s.id] = now - timedelta(seconds=2)
-    for name in (
-        "_last_stats_sync",
-        "_last_session_id_sync",
-        "_last_skills_sync",
-        "_last_sandbox_sync",
-        "_last_resources_sync",
-        "_last_history_rotation_check",
-        "_last_model_metadata_check",
-    ):
-        setattr(daemon, name, now)
+    set_sync_stamps(daemon, now)
 
 
 def run_ticks(

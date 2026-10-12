@@ -361,9 +361,9 @@ class TestDaemonArchivesTerminatedSessions:
 
         daemon.state.loop_count = loop
         if loop % 60 == 0:
-            daemon._last_housekeeping = now - timedelta(seconds=HOUSEKEEPING_INTERVAL_SECONDS)
+            daemon.cadence.housekeeping.last = now - timedelta(seconds=HOUSEKEEPING_INTERVAL_SECONDS)
         else:
-            daemon._last_housekeeping = now
+            daemon.cadence.housekeeping.last = now
         with FrozenClock(now).installed():
             daemon._tick(now)
         settle(daemon.session_manager.state_file)

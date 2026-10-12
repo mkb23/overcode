@@ -96,8 +96,8 @@ class TestPidMapSharedByTheSyncs:
         """A tick with the 5 s and 15 s syncs due: one tmux command, no get_pane_pid,
         and the readings reached every session through the map."""
         sm, sessions, tmux, detector, daemon = _fleet(root, self.N)
-        daemon._last_resources_sync = None
-        daemon._last_sandbox_sync = None
+        daemon.cadence.resources.last = None
+        daemon.cadence.sandbox.last = None
         tmux.attached = 2
         p1, p2, p3 = _process_doubles(
             sessions, tmux, lambda s: (50.0 + int(s.name[-2:]), (600 + int(s.name[-2:])) << 20)
@@ -122,13 +122,13 @@ class TestPidMapSharedByTheSyncs:
         p1, p2, p3 = _process_doubles(sessions, tmux, lambda s: (s.cpu_percent, s.rss_bytes))
         t1, t2 = START, START + timedelta(seconds=5)
         with p1, p2, p3:
-            daemon._last_resources_sync = None
+            daemon.cadence.resources.last = None
             daemon._sync_process_resources(sessions, t1)
             assert sum(tmux.calls.values()) == 1
-            daemon._last_sandbox_sync = None
+            daemon.cadence.sandbox.last = None
             daemon._sync_sandbox_state(sessions, t1)
             assert sum(tmux.calls.values()) == 1  # same tick: shared
-            daemon._last_resources_sync = None
+            daemon.cadence.resources.last = None
             daemon._sync_process_resources(sessions, t2)
             assert sum(tmux.calls.values()) == 2  # a new tick: listed again
         assert tmux.calls["list_panes"] == 2 and tmux.calls["get_pane_pid"] == 0
@@ -144,14 +144,14 @@ class TestPidMapSharedByTheSyncs:
         daemon._tmux = FakeTmux("another-session", {})
         p1, p2, p3 = _process_doubles(sessions, _tmux, lambda s: (99.0, 1 << 30))
         with p1, p2, p3:
-            daemon._last_resources_sync = None
+            daemon.cadence.resources.last = None
             daemon._sync_process_resources(sessions, START)
-            daemon._last_sandbox_sync = None
+            daemon.cadence.sandbox.last = None
             daemon._sync_sandbox_state(sessions, START)
         assert daemon._tmux.calls["list_panes"] == 1
         assert not daemon._pending
         assert daemon.session_attached is None
-        assert daemon._last_resources_sync == START and daemon._last_sandbox_sync == START
+        assert daemon.cadence.resources.last == START and daemon.cadence.sandbox.last == START
 
     def test_a_window_gone_from_the_listing_is_skipped(self, root):
         """Absent from ``list-panes`` = no pane pid, the same as a dead window's
@@ -163,7 +163,7 @@ class TestPidMapSharedByTheSyncs:
             [s for s in sessions if s is not gone], tmux, lambda s: (90.0, 1 << 30)
         )
         with p1, p2, p3:
-            daemon._last_resources_sync = None
+            daemon.cadence.resources.last = None
             daemon._sync_process_resources(sessions, START)
         view = daemon._pending.view(gone)
         assert (view.cpu_percent, view.rss_bytes) == (gone.cpu_percent, gone.rss_bytes)
@@ -178,7 +178,7 @@ class TestPidMapSharedByTheSyncs:
             return {pane: ProcInfo(ppid=1, cpu_pct=0.0, rss_kb=96, argv="-zsh")}
 
         with patch("overcode.process_resources.snapshot_processes", snapshot):
-            daemon._last_resources_sync = None
+            daemon.cadence.resources.last = None
             daemon._sync_process_resources([dead], START)
         assert daemon._pending
         view = daemon._pending.view(dead)
@@ -192,7 +192,7 @@ class TestPidMapSharedByTheSyncs:
         p1, p2, p3 = _process_doubles(sessions, tmux, lambda s: (77.0, 5 << 20))
         legacy.tmux_window = "2"
         with p1, p2, p3:
-            daemon._last_resources_sync = None
+            daemon.cadence.resources.last = None
             daemon._sync_process_resources([legacy], START)
         assert daemon._pending.view(legacy).cpu_percent == 77.0
 

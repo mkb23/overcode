@@ -346,7 +346,7 @@ class TestHousekeepingIsWallClock:
 
     def test_a_test_can_force_a_pass_by_moving_the_stamp_back(self, root):
         daemon = self._daemon(root)
-        daemon._last_housekeeping = START - timedelta(seconds=HOUSEKEEPING_INTERVAL_SECONDS)
+        daemon.cadence.housekeeping.last = START - timedelta(seconds=HOUSEKEEPING_INTERVAL_SECONDS)
         daemon._publish_and_enforce([], [], True, None, START)
         assert self._passes(daemon) == 1
 
@@ -457,6 +457,7 @@ class TestUnattendedTimelineHasNoHoles:
             run_ticks,
             seed_sessions,
             seed_steady_state,
+            set_sync_stamps,
         )
 
         state_dir = root / "home" / ".overcode"
@@ -474,20 +475,10 @@ class TestUnattendedTimelineHasNoHoles:
         detector = ScriptedDetector(script)
         daemon = make_daemon(state_dir, "agents", detector, session_manager=sm, tmux=tmux)
         seed_steady_state(daemon, sessions, START)
-        sync_stamps = (
-            "_last_stats_sync",
-            "_last_session_id_sync",
-            "_last_skills_sync",
-            "_last_sandbox_sync",
-            "_last_resources_sync",
-            "_last_history_rotation_check",
-            "_last_model_metadata_check",
-        )
         intervals = []  # (seconds since START, current_interval, interval_mode) per tick
 
         def after_tick(_i):
-            for name in sync_stamps:
-                setattr(daemon, name, clock.now)
+            set_sync_stamps(daemon, clock.now)
             intervals.append(
                 (
                     (

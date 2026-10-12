@@ -1861,13 +1861,13 @@ class TestMaybeRotateHistory:
             daemon._maybe_rotate_history(now)
 
         mock_rotate.assert_called_once()
-        assert daemon._last_history_rotation_check == now
+        assert daemon.cadence.history_rotation.last == now
 
     def test_skips_when_interval_not_elapsed(self, tmp_path):
         """A second call within the hourly interval should be a no-op."""
         daemon = self._make_daemon(tmp_path)
         first = datetime.now()
-        daemon._last_history_rotation_check = first
+        daemon.cadence.history_rotation.last = first
 
         with patch('overcode.status_history.rotate_and_retain') as mock_rotate:
             daemon._maybe_rotate_history(first + timedelta(minutes=10))
@@ -1878,7 +1878,7 @@ class TestMaybeRotateHistory:
         """Once the interval has passed, the check should run again."""
         daemon = self._make_daemon(tmp_path)
         first = datetime.now()
-        daemon._last_history_rotation_check = first
+        daemon.cadence.history_rotation.last = first
 
         with patch('overcode.status_history.rotate_and_retain',
                    return_value={"archived": None, "deleted": []}) as mock_rotate:
@@ -2020,7 +2020,7 @@ class TestMaybeRefreshModelMetadata:
     def test_hourly_throttle(self):
         daemon = self._make_daemon()
         first = datetime.now()
-        daemon._last_model_metadata_check = first
+        daemon.cadence.model_metadata.last = first
         with patch('overcode.config.get_model_metadata_config') as mock_cfg:
             daemon._maybe_refresh_model_metadata(first + timedelta(minutes=10))
         mock_cfg.assert_not_called()

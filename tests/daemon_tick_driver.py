@@ -178,6 +178,7 @@ def run_scenario(root: Path, ticks: int = TICKS, counters=None) -> Dict[str, obj
         ScriptedDetector,
         make_daemon,
         run_ticks,
+        set_sync_stamps,
     )
 
     sm, sessions = seed_scenario(root)
@@ -191,16 +192,7 @@ def run_scenario(root: Path, ticks: int = TICKS, counters=None) -> Dict[str, obj
         root / "home" / ".overcode", TMUX_SESSION, detector, session_manager=sm, tmux=tmux
     )
     # A real first loop: every periodic sync is due
-    for name in (
-        "_last_stats_sync",
-        "_last_session_id_sync",
-        "_last_skills_sync",
-        "_last_sandbox_sync",
-        "_last_resources_sync",
-        "_last_history_rotation_check",
-        "_last_model_metadata_check",
-    ):
-        setattr(daemon, name, None)
+    set_sync_stamps(daemon, None)
 
     def between(tick: int) -> None:
         if tick == 1:

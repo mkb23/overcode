@@ -22,18 +22,10 @@ from tests.daemon_tick_harness import (
     run_ticks,
     seed_sessions,
     seed_steady_state,
+    set_sync_stamps,
 )
 
 START = datetime(2026, 9, 23, 12, 0, 0)
-SYNC_STAMPS = (
-    "_last_stats_sync",
-    "_last_session_id_sync",
-    "_last_skills_sync",
-    "_last_sandbox_sync",
-    "_last_resources_sync",
-    "_last_history_rotation_check",
-    "_last_model_metadata_check",
-)
 
 
 @pytest.fixture
@@ -72,8 +64,7 @@ class _Fleet:
 
     def run(self, ticks, clock, first_tick=0):
         def keep_syncs_quiet(_tick):
-            for name in SYNC_STAMPS:
-                setattr(self.daemon, name, clock.now)
+            set_sync_stamps(self.daemon, clock.now)
 
         self.detector.tick = first_tick
         run_ticks(self.daemon, self.detector, clock, ticks, between_ticks=keep_syncs_quiet)

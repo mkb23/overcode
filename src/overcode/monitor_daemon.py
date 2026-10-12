@@ -83,13 +83,13 @@ from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
 from .pricing import calculate_cost_estimate
+from .daemon_cadence import Cadence, DaemonCadences
 from .monitor_daemon_core import (
     UNOBSERVED_GAP_SECONDS,
     calculate_time_accumulation,
     calculate_total_tokens,
     calculate_median,
     elapsed_seconds,
-    should_sync_stats,
     parse_datetime_safe,
     is_heartbeat_eligible,
     is_heartbeat_due,
@@ -586,8 +586,6 @@ class MonitorDaemon:
         # attended-only syncs (see _sync_git, _sync_burn)
         self._git_by_dir: Dict[str, tuple] = {}
         self._burn_by_session: Dict[str, dict] = {}
-        self._last_git_sync: Optional[datetime] = None
-        self._last_burn_sync: Optional[datetime] = None
 
         # Everything a tick wants persisted to sessions.json is staged here
         # and written once at the end of the tick (audit R5); see
@@ -604,38 +602,39 @@ class MonitorDaemon:
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
         self._last_commands: Dict[str, str] = {}  # session_id → last user prompt
 
-        # Stats sync throttling - None forces immediate sync on first loop
-        self._last_stats_sync: Optional[datetime] = None
+        # The periodic syncs, each due when its interval has passed since it
+        # last ran (never run: due on the first tick)
+        self.cadence = DaemonCadences(
+            # Transcript stats: STATS_SYNC_ATTENDED_SECONDS or, unattended,
+            # STATS_SYNC_UNATTENDED_SECONDS (see _sync_session_stats)
+            stats=Cadence(STATS_SYNC_ATTENDED_SECONDS),
+            # Session ID detection runs more frequently than full stats (#116)
+            session_ids=Cadence(10),
+            # Available skills sync (#252) — infrequent, skills rarely change
+            skills=Cadence(60),
+            # Sandbox state sync (#451) — detect /sandbox toggle via claude PID listeners
+            sandbox=Cadence(15),
+            # Per-agent CPU / RSS sampling (from `ps`, summed over the agent
+            # process tree). Slow enough to avoid adding load, fast enough to
+            # flag runaway agents that are dominating the machine.
+            resources=Cadence(5),
+            git=Cadence(GIT_SYNC_SECONDS),
+            burn=Cadence(BURN_SYNC_SECONDS),
+            # agent_status_history.csv rotation/retention check (#465, #468) —
+            # a cheap stat()-then-maybe-rewrite, but still only worth doing hourly.
+            history_rotation=Cadence(3600),
+            # models.dev catalog auto-refresh (#473) — opt-in via config.yaml
+            # model_metadata.auto_refresh; the hourly check itself is a stat().
+            model_metadata=Cadence(3600),
+            # Housekeeping is wall-clock: first pass HOUSEKEEPING_INTERVAL_SECONDS
+            # after the first tick (loop 60 at 2 s used to be 2 minutes in),
+            # then every interval, whatever the loop length.
+            housekeeping=Cadence(HOUSEKEEPING_INTERVAL_SECONDS),
+        )
 
-        # Session ID detection runs more frequently than full stats (#116)
-        self._last_session_id_sync: Optional[datetime] = None
-        self._session_id_sync_interval = 10  # seconds
-
-        # Available skills sync (#252) — infrequent, skills rarely change
-        self._last_skills_sync: Optional[datetime] = None
-        self._skills_sync_interval = 60  # seconds
-
-        # Sandbox state sync (#451) — detect /sandbox toggle via claude PID listeners
-        self._last_sandbox_sync: Optional[datetime] = None
-        self._sandbox_sync_interval = 15  # seconds
-
-        # Per-agent CPU / RSS sampling (from `ps`, summed over the agent process tree).
-        # Slow enough to avoid adding load, fast enough to flag runaway agents
-        # that are dominating the machine.
-        self._last_resources_sync: Optional[datetime] = None
-        self._resources_sync_interval = 5  # seconds
-
-        # agent_status_history.csv rotation/retention check (#465, #468) —
-        # a cheap stat()-then-maybe-rewrite, but still only worth doing hourly.
-        self._last_history_rotation_check: Optional[datetime] = None
-        self._history_rotation_check_interval = 3600  # seconds
-
-        # models.dev catalog auto-refresh (#473) — opt-in via config.yaml
-        # model_metadata.auto_refresh; the hourly check itself is a stat().
-        # The fetch runs on a background thread so a packet-dropping network
-        # can never stall the loop, and a failure backs off for hours.
-        self._last_model_metadata_check: Optional[datetime] = None
-        self._model_metadata_check_interval = 3600  # seconds
+        # The models.dev fetch runs on a background thread so a
+        # packet-dropping network can never stall the loop, and a failure
+        # backs off for hours.
         self._model_metadata_thread: Optional[threading.Thread] = None
         self._model_metadata_backoff_until: Optional[datetime] = None
         self._model_metadata_failure_backoff = 6 * 3600  # seconds
@@ -643,10 +642,6 @@ class MonitorDaemon:
         # Loop interval while nobody is watching
         self._interval_unattended: int = interval_unattended
 
-        # Housekeeping is wall-clock: first pass HOUSEKEEPING_INTERVAL_SECONDS
-        # after the first tick (loop 60 at 2 s used to be 2 minutes in), then
-        # every interval, whatever the loop length.
-        self._last_housekeeping: Optional[datetime] = None
         # Finished-job pruning: monotonic time of the last pass (hourly)
         self._last_job_prune: Optional[float] = None
 
@@ -1396,14 +1391,14 @@ class MonitorDaemon:
         The first tick starts the clock (the loop-count rule first fired
         two minutes in, not on loop 1); after that every
         HOUSEKEEPING_INTERVAL_SECONDS, at the 2 s loop and the unattended
-        one alike. Tests move ``_last_housekeeping`` back to force a pass.
+        one alike. Tests move ``cadence.housekeeping.last`` back to force a pass.
         """
-        last = self._last_housekeeping
-        if last is None:
-            self._last_housekeeping = now
+        cadence = self.cadence.housekeeping
+        if cadence.last is None:
+            cadence.mark(now)
             return False
-        if elapsed_seconds(last, now) >= HOUSEKEEPING_INTERVAL_SECONDS:
-            self._last_housekeeping = now
+        if cadence.due(now):
+            cadence.mark(now)
             return True
         return False
 
@@ -1819,10 +1814,9 @@ class MonitorDaemon:
         """Git diff/untracked per distinct directory, every GIT_SYNC_SECONDS while attended."""
         if self.state.interval_mode == "unattended":
             return
-        last = self._last_git_sync
-        if last is not None and elapsed_seconds(last, now) < GIT_SYNC_SECONDS:
+        if not self.cadence.git.due(now):
             return
-        self._last_git_sync = now
+        self.cadence.git.mark(now)
         from concurrent.futures import ThreadPoolExecutor
 
         from .tui_helpers import effective_git_directory, get_git_diff_stats, get_git_untracked_count
@@ -1849,10 +1843,9 @@ class MonitorDaemon:
         if not windows or self.state.interval_mode == "unattended":
             self._burn_by_session = {}
             return
-        last = self._last_burn_sync
-        if last is not None and elapsed_seconds(last, now) < BURN_SYNC_SECONDS:
+        if not self.cadence.burn.due(now):
             return
-        self._last_burn_sync = now
+        self.cadence.burn.mark(now)
         from .tui_logic import compute_window_burn
 
         asleep = {s.id for s in sessions if getattr(s, "is_asleep", False)}
@@ -2038,11 +2031,9 @@ class MonitorDaemon:
         Runs at most hourly — a size/age stat check is cheap, but there's no
         reason to do even that on every 2-30s tick.
         """
-        if not should_sync_stats(
-            self._last_history_rotation_check, now, self._history_rotation_check_interval
-        ):
+        if not self.cadence.history_rotation.due(now):
             return
-        self._last_history_rotation_check = now
+        self.cadence.history_rotation.mark(now)
         try:
             from .config import get_history_retention_config
             from .status_history import rotate_and_retain
@@ -2075,11 +2066,9 @@ class MonitorDaemon:
         stall nor an hourly log line. Lookups keep working off whatever
         catalog is already on disk throughout.
         """
-        if not should_sync_stats(
-            self._last_model_metadata_check, now, self._model_metadata_check_interval
-        ):
+        if not self.cadence.model_metadata.due(now):
             return
-        self._last_model_metadata_check = now
+        self.cadence.model_metadata.mark(now)
         thread = self._model_metadata_thread
         if thread is not None and thread.is_alive():
             return
@@ -2133,10 +2122,10 @@ class MonitorDaemon:
 
         Ensures active_agent_session_id updates promptly after /clear.
         """
-        if should_sync_stats(self._last_session_id_sync, now, self._session_id_sync_interval):
+        if self.cadence.session_ids.due(now):
             for session in sessions:
                 self.sync_session_id(session)
-            self._last_session_id_sync = now
+            self.cadence.session_ids.mark(now)
 
     def _sync_session_stats(self, sessions: list, now: datetime) -> None:
         """Full transcript stats sync every 60s (heavier I/O).
@@ -2145,20 +2134,20 @@ class MonitorDaemon:
         """
         interval = (STATS_SYNC_UNATTENDED_SECONDS if self.state.interval_mode == "unattended"
                     else STATS_SYNC_ATTENDED_SECONDS)
-        if should_sync_stats(self._last_stats_sync, now, interval):
+        if self.cadence.stats.due(now, interval):
             for session in sessions:
                 self.sync_agent_stats(session)
-            self._last_stats_sync = now
+            self.cadence.stats.mark(now)
 
     def _sync_available_skills(self, sessions: list, now: datetime) -> None:
         """Scan installed skill directories every 60s (#252)."""
-        if should_sync_stats(self._last_skills_sync, now, self._skills_sync_interval):
+        if self.cadence.skills.due(now):
             from .bundled_skills import get_available_skills
             for session in sessions:
                 available = get_available_skills(session.start_directory)
                 if available != session.available_skills:
                     self._pending.update_session(session.id, available_skills=available)
-            self._last_skills_sync = now
+            self.cadence.skills.mark(now)
 
     def _panes_at(self, now: datetime) -> Optional[Dict[str, PaneInfo]]:
         """This tmux session's panes, listed once per ``now`` (one tmux command).
@@ -2193,9 +2182,7 @@ class MonitorDaemon:
         every descendant. Tools spawned under a bash call (e.g. a runaway
         `tsc --watch`) therefore show up on the parent agent's row.
         """
-        if not should_sync_stats(
-            self._last_resources_sync, now, self._resources_sync_interval
-        ):
+        if not self.cadence.resources.due(now):
             return
         from .doctor import (
             find_agent_process, session_process_argv_markers,
@@ -2207,7 +2194,7 @@ class MonitorDaemon:
 
         snapshot = snapshot_processes()
         if not snapshot:
-            self._last_resources_sync = now
+            self.cadence.resources.mark(now)
             return
         # build_children_index walks the whole snapshot, so the argv_by_pid
         # shape doctor expects is derived on the fly.
@@ -2242,11 +2229,11 @@ class MonitorDaemon:
                 self._pending.update_session(
                     session.id, cpu_percent=cpu, rss_bytes=rss,
                 )
-        self._last_resources_sync = now
+        self.cadence.resources.mark(now)
 
     def _sync_sandbox_state(self, sessions: list, now: datetime) -> None:
         """Detect /sandbox toggle state from claude process listeners (#451)."""
-        if not should_sync_stats(self._last_sandbox_sync, now, self._sandbox_sync_interval):
+        if not self.cadence.sandbox.due(now):
             return
         from .doctor import (
             _snapshot_process_table, _build_child_index, find_agent_process,
@@ -2256,7 +2243,7 @@ class MonitorDaemon:
 
         rows = _snapshot_process_table()
         if not rows:
-            self._last_sandbox_sync = now
+            self.cadence.sandbox.mark(now)
             return
         children, argv_by_pid = _build_child_index(rows)
         panes = self._panes_at(now) or {}
@@ -2285,7 +2272,7 @@ class MonitorDaemon:
             detected = states.get(session_pids[session.id])
             if detected != session.sandbox_enabled:
                 self._pending.update_session(session.id, sandbox_enabled=detected)
-        self._last_sandbox_sync = now
+        self.cadence.sandbox.mark(now)
 
     def _dispatch_heartbeats(self, sessions: list) -> None:
         """Send heartbeats before status detection (#171)."""
