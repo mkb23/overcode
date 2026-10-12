@@ -334,3 +334,29 @@ def _launcher_waits_are_instant(monkeypatch):
     from overcode.launcher import AgentLauncher
 
     monkeypatch.setattr(AgentLauncher, "sleep", staticmethod(lambda seconds: None))
+
+
+@pytest.fixture(autouse=True)
+def _stop_presence_loggers(monkeypatch):
+    """Stop every presence logger a test started.
+
+    Tests that build a real MonitorDaemon start its PresenceLogger thread and
+    never stop it. Dozens leaked across a run; on a two-core CI runner they
+    starved slow tests into the 120 s timeout.
+    """
+    from overcode import presence_logger
+
+    started = []
+    original = presence_logger.PresenceLogger.start
+
+    def start(self):
+        started.append(self)
+        return original(self)
+
+    monkeypatch.setattr(presence_logger.PresenceLogger, "start", start)
+    yield
+    for logger in started:
+        try:
+            logger.stop(timeout=1.0)
+        except Exception:
+            pass
