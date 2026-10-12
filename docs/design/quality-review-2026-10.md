@@ -286,6 +286,8 @@ move-only commits.
 | 24 state file every tick | done: on change plus a 10 s liveness rewrite, compact | 3ebd582 |
 | 25 one status rule table | done: `TickContext` → named rules → `Verdict`; legacy enum from one table; phase names the rule; one `now` (part of 34). A scheduled-only agent stays waiting (c4f48a3) | (see log) |
 | 32 Session model | part: canonical names only on write, aliases gone; old files still load | (see log) |
+| 36 shared pilot harness | done: `make_tui` (tests/tui_harness.py), no timers unless asked, an in-memory engine connected from mount; 17 files moved onto it | (see log) |
+| 38 less mocking | part: `test_tui_actions_session` builds real `Session`s | (see log) |
 | Dead code | done (the confirmed list) | c7c2284 |
 
 Found while doing these: libtmux 0.55+ broke every tmux call on a fresh
@@ -294,4 +296,4 @@ tests' timing budgets needed a factor for CI runners (fc7598a); a socket
 test only failed on Linux (9bb2a07); `sleep 1m` read as one second
 (4048242).
 
-Still open: 20, 21, 23 (in progress), 26–31, 33–40, the rest of 10 and 32.
+Still open: 20, 21, 23 (in progress), 26–31, 33–35, 37, 39, 40, the rest of 10, 32 and 38.
