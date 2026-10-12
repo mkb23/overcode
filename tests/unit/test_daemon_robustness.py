@@ -489,3 +489,44 @@ class TestDaylightSavingEnds:
         now = datetime.fromtimestamp(last.timestamp() + 600)  # 01:05 GMT
         assert is_heartbeat_due(last.isoformat(), None, 300, now)
 
+
+
+class TestStateFileWrittenOnChange:
+    """engine-0.6.md: the state file is written when something changed, plus a
+    liveness rewrite, not fsync'd on every 2 s tick (review item 24)."""
+
+    def _daemon(self, tmp_path):
+        d = TestStateFileFailure()._daemon(tmp_path)
+        d._last_state_save = 0.0
+        return d
+
+    def test_a_quiet_fleet_is_not_rewritten_every_tick(self, tmp_path):
+        from overcode.monitor_daemon_state import SessionDaemonState
+
+        d = self._daemon(tmp_path)
+        states = [SessionDaemonState(session_id="s1", name="a", current_status="running")]
+        with patch.object(type(d.state), "save") as save:
+            d._publish_state(states)
+            d._publish_state(states)
+            d._publish_state(states)
+        assert save.call_count == 1  # the first; nothing changed since
+        assert d._engine.publish.call_count == 3  # the views still get every tick
+
+    def test_a_change_is_written_at_once(self, tmp_path):
+        from overcode.monitor_daemon_state import SessionDaemonState
+
+        d = self._daemon(tmp_path)
+        with patch.object(type(d.state), "save") as save:
+            d._publish_state([SessionDaemonState(session_id="s1", name="a", current_status="running")])
+            d._publish_state([SessionDaemonState(session_id="s1", name="a", current_status="waiting_user")])
+        assert save.call_count == 2
+
+    def test_a_quiet_file_is_still_rewritten_for_liveness(self, tmp_path):
+        from overcode import monitor_daemon
+
+        d = self._daemon(tmp_path)
+        with patch.object(type(d.state), "save") as save:
+            d._publish_state([])
+            d._last_state_save -= monitor_daemon.STATE_FILE_LIVENESS_SECONDS + 1
+            d._publish_state([])
+        assert save.call_count == 2

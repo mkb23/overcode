@@ -419,7 +419,7 @@ class MonitorDaemonState:
         fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix='.tmp')
         try:
             with os.fdopen(fd, 'w') as f:
-                json.dump(self.to_dict(), f, indent=2)
+                json.dump(self.to_dict(), f, separators=(",", ":"))
                 f.flush()
                 os.fsync(f.fileno())
             Path(tmp_path).rename(path)

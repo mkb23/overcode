@@ -1055,7 +1055,8 @@ class SupervisorTUI(
             if widget.session.is_remote:
                 continue
             view = agents.get(widget.session.id)
-            if view is None or (view == widget.engine and not force):
+            # `is` first: an agent the delta didn't touch keeps its dict
+            if view is None or ((view is widget.engine or view == widget.engine) and not force):
                 continue
             old_status = widget.detected_status
             if widget.apply_engine(view, hours, self._visited_here.get(widget.session.id)):

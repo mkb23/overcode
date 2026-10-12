@@ -162,6 +162,10 @@ BURN_SYNC_SECONDS = 5
 # Between full ticks the state file is rewritten at most this often; views
 # on engine.sock get every change as it happens.
 QUICK_TICK_STATE_SAVE_SECONDS = 1.0
+# The state file is rewritten when what it publishes changed, and otherwise
+# this often, so readers that judge liveness by its last_loop_time (is_stale:
+# the expected gap plus 30 s) never see a quiet daemon as dead.
+STATE_FILE_LIVENESS_SECONDS = 10.0
 # Recorder state (engine_state.json) is written when it changes, and at
 # least this often while agents are observed: each recorder's last
 # observation time must stay well inside UNOBSERVED_GAP_SECONDS on disk, or
@@ -1410,16 +1414,37 @@ class MonitorDaemon:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        if save:
+        snapshot = self.state.to_engine_snapshot(now.timestamp())
+        if save and self._state_file_due(snapshot):
+            error_before = self.state.state_file_error
             self._save_state_file()
+            if self.state.state_file_error != error_before:
+                # The save failed or recovered: the views must hear which
+                snapshot = self.state.to_engine_snapshot(now.timestamp())
+            self._saved_snapshot = snapshot
         # Published whether or not the file could be written: a full disk
         # must not freeze every view's status (the error rides along)
         engine = getattr(self, "_engine", None)
         if engine is not None:
             try:
-                engine.publish(self.state.to_engine_snapshot(now.timestamp()))
+                engine.publish(snapshot)
             except Exception as e:  # a view problem must never stop the tick
                 self.log.warn(f"engine.sock publish failed: {e}")
+
+    def _state_file_due(self, snapshot) -> bool:
+        """Whether to rewrite the state file this tick (engine-0.6.md: on change).
+
+        A quiet fleet changes nothing the views see, so the file (about
+        140 KB at 50 agents, fsync'd) is rewritten only for liveness.
+        """
+        from .engine_protocol import diff
+
+        saved = getattr(self, "_saved_snapshot", None)
+        if saved is None or self.state.state_file_error:
+            return True
+        if time.monotonic() - getattr(self, "_last_state_save", 0.0) >= STATE_FILE_LIVENESS_SECONDS:
+            return True
+        return not diff(saved, snapshot).empty
 
     def _save_state_file(self) -> None:
         """Write the state file; on failure keep going and say so in the state."""

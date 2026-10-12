@@ -163,3 +163,28 @@ class TestViewState:
         state = self._connected()
         assert state.feed({"t": "delta", "seq": 5}) is False
         assert state.snapshot.seq == 5 and not state.needs_resync
+
+
+class TestApplyCopiesOnWrite:
+    """A delta copies only the agents it touches; the rest are shared, so a
+    view can skip an unchanged agent by identity (review item 22)."""
+
+    def test_untouched_agents_are_shared_and_neither_snapshot_mutates(self):
+        from overcode.engine_protocol import Delta, Snapshot, apply
+
+        before = Snapshot(1, {"a": {"x": 1}, "b": {"y": 2, "z": 3}}, {"f": 1})
+        delta = Delta(seq=2, set={"b": {"y": 5}}, unset={"b": ["z"]}, fleet_set={"g": 2})
+        after = apply(before, delta)
+        assert after.agents["a"] is before.agents["a"]
+        assert after.agents["b"] == {"y": 5}
+        assert before.agents["b"] == {"y": 2, "z": 3}  # the old snapshot is intact
+        assert before.fleet == {"f": 1} and after.fleet == {"f": 1, "g": 2}
+        assert after.seq == 2
+
+    def test_new_and_removed_agents(self):
+        from overcode.engine_protocol import Delta, Snapshot, apply
+
+        before = Snapshot(1, {"a": {"x": 1}}, {})
+        after = apply(before, Delta(seq=2, set={"c": {"x": 9}}, removed=["a"]))
+        assert after.agents == {"c": {"x": 9}}
+        assert before.agents == {"a": {"x": 1}}

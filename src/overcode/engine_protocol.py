@@ -82,17 +82,23 @@ def diff(old: Snapshot, new: Snapshot) -> Delta:
 
 
 def apply(snapshot: Snapshot, delta: Delta) -> Snapshot:
-    """``snapshot`` advanced by ``delta``, as a new object."""
-    out = snapshot.copy()
+    """``snapshot`` advanced by ``delta``, as a new object.
+
+    Copy on write: only the agents the delta touches get new dicts; the
+    rest are shared with ``snapshot``, so a view can tell an unchanged
+    agent by identity instead of comparing every field. Neither snapshot
+    is mutated afterwards (views treat them as read-only).
+    """
+    agents = dict(snapshot.agents)
     for aid in delta.removed:
-        out.agents.pop(aid, None)
+        agents.pop(aid, None)
     for aid, fields in delta.set.items():
-        out.agents.setdefault(aid, {}).update(fields)
+        agents[aid] = {**agents.get(aid, {}), **fields}
     for aid, names in delta.unset.items():
-        agent = out.agents.get(aid)
+        agent = agents.get(aid)
         if agent is not None:
-            for name in names:
-                agent.pop(name, None)
+            agents[aid] = {k: v for k, v in agent.items() if k not in names}
+    out = Snapshot(snapshot.seq, agents, dict(snapshot.fleet))
     out.fleet.update(delta.fleet_set)
     for name in delta.fleet_unset:
         out.fleet.pop(name, None)
