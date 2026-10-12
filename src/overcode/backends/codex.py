@@ -438,6 +438,9 @@ class CodexBackend:
     # codex 0.156 draws its input line before the trust dialog over it;
     # the launcher looks again after this long before sending the prompt
     prompt_settle_seconds = 2.0
+    # ...and reads input a few seconds after drawing it: the launcher checks
+    # the initial prompt reached the screen and pastes it again if not
+    confirm_prompt_delivery = True
 
     def startup_dialog_rules(self) -> List[DialogRule]:
         # trust_dialog.txt: "Do you trust the contents of this directory? ...

@@ -807,6 +807,49 @@ class TestSendPromptToWindow:
         call_count = mock_run.call_count
         assert call_count > 2  # At least some batches plus final Enter
 
+    def _codex_launcher(self, tmp_path):
+        tmux_manager = TmuxManager("agents", tmux=MockTmux())
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
+        return launcher, launcher.launch(name="test-agent").tmux_window
+
+    def test_a_dropped_initial_prompt_is_pasted_again(self, tmp_path):
+        """codex 0.156 drops a paste made just after its trust dialog."""
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch.object(launcher, "_pane_shows", side_effect=[False, True]) as shows, \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
+            assert launcher._send_prompt_to_window(
+                window, "Reply pong\nplease", backend=get_backend("codex"))
+        assert send.call_count == 2
+        assert shows.call_args.args[1] == "Reply pong"
+
+    def test_a_delivered_prompt_is_not_pasted_twice(self, tmp_path):
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch.object(launcher, "_pane_shows", return_value=True), \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
+            assert launcher._send_prompt_to_window(
+                window, "Reply pong", backend=get_backend("codex"))
+        assert send.call_count == 1
+
+    def test_claude_prompt_delivery_is_not_checked(self, tmp_path):
+        """Claude folds a long paste into "[Pasted text]": its words never show."""
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch.object(launcher, "_pane_shows") as shows, \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
+            launcher._send_prompt_to_window(
+                window, "Reply pong", backend=get_backend("claude-code"))
+        shows.assert_not_called()
+        assert send.call_count == 1
+
     def test_handles_single_line_prompt(self, tmp_path):
         """Single line prompts work correctly"""
         mock_tmux = MockTmux()

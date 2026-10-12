@@ -62,6 +62,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -438,6 +439,15 @@ class TestLiveBackend:
     def _pane(self) -> str:
         return get_tmux_pane_content(TEST_TMUX_SOCKET, self.session, self._window(), lines=80)
 
+    def _pane_shows(self, text: str, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while True:
+            if text in (self._pane() or ""):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.5)
+
     def _hook_state_path(self) -> Path:
         return Path(self.live["state_dir"]) / self.session / f"hook_state_{self.name}.json"
 
@@ -573,6 +583,15 @@ class TestLiveBackend:
             t1 = time.time()
             result = self._cli("send", self.name, spec.permission_prompt)
             assert result.returncode == 0, result.stderr
+            # opencode's TUI now and then drops typed input while it redraws
+            # (seen with its "Update failed" toast up): the prompt never
+            # reaches the box. That is the CLI's, not overcode's send path;
+            # send once more rather than fail the tier on it.
+            probe = "junkdir_a" if "junkdir_a" in spec.permission_prompt else "live_probe"
+            if not self._pane_shows(probe, timeout=10):
+                warnings.warn(f"{spec.backend}: permission prompt not in the pane, sent again")
+                result = self._cli("send", self.name, spec.permission_prompt)
+                assert result.returncode == 0, result.stderr
             state = self._wait_hook_event("PermissionRequest", after=t1)
             # Two independent verdicts on the same real dialog: the polling
             # patterns must recognise today's chrome as a permission prompt,

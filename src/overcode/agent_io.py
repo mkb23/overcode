@@ -152,13 +152,27 @@ class AgentIOMixin:
         """
         if self._wait_for_prompt(window_name, backend=backend):
             # Prompt detected — send immediately, no delay needed
-            return send_text_to_tmux_window(
+            sent = send_text_to_tmux_window(
                 self.tmux.session_name,
                 window_name,
                 prompt,
                 send_enter=True,
                 startup_delay=0,
             )
+            # codex 0.156 draws its input line a few seconds before it reads
+            # input after the trust dialog, and drops a paste in between:
+            # such a backend has the prompt's first words checked on screen
+            first = prompt.strip().split("\n")[0].strip()[:20]
+            backend = backend or get_backend()
+            if sent and first and getattr(backend, "confirm_prompt_delivery", False):
+                for _ in range(3):
+                    if self._pane_shows(window_name, first, timeout=3.0):
+                        break
+                    sent = send_text_to_tmux_window(
+                        self.tmux.session_name, window_name, prompt,
+                        send_enter=True, startup_delay=0,
+                    )
+            return sent
         # Fallback: prompt not detected, use original delay
         return send_text_to_tmux_window(
             self.tmux.session_name,
