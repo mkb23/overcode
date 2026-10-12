@@ -291,6 +291,8 @@ move-only commits.
 | 26 split monitor_daemon | done: 2,754 → 1,875 lines; cadence, presence, housekeeping, stats sync, process probe (one `ps`), recorders, wake, `git_stats`/`burn`; `for_test()` replaces `__new__` | (see log) |
 | 27 split tui.py | done: 4,921 → 2,578 lines; `tui_timers` (one scheduler), `tui_engine_link`, `tui_split` (every tmux side effect; a null one outside the split), action groups; workers take their inputs | (see log) |
 | 28 split session_manager / launcher | done: 1,790 → 1,052 and 1,585 → 887 lines; `LaunchError` (a refused launch exits 1; the TUI shows the reason); `resolve_launch_settings` | (see log) |
+| 29 paths.py | done: one module builds every path; per-agent file names from one table (`paths.agent_file`); `OVERCODE_DIR` / `OVERCODE_STATE_DIR` honoured everywhere, opencode plugins included; one stat-gated config parse | f2388f4 |
+| 30 backend sharing | done: `StatusPatterns` one NEVER and pane windows as fields; `AgentBackendBase` defaults instead of getattr probes; hook dialects (each hook command names its backend); unmapped events to the log only; opencode v1 plugin on the shared core | d872562, 9079c56, 7c6bae1, ba64634, dde2f95 |
 | 31 summary_columns | done: metadata on each column; plain text by default; `mono()` gone; one `FleetFlags` for the TUI and `overcode list`; the `overcode.columns` package behind a facade | (see log) |
 | 32 Session model | part: canonical names only on write, aliases gone; old files still load | (see log) |
 | 33 tmux layers | done: TmuxManager a bounded facade over RealTmux; `MockTmux` moved to tests; a libtmux pin-safety test; `RealTmux.resize_window` fixed (it called a method that never existed) | (see log) |
@@ -309,9 +311,38 @@ test only failed on Linux (9bb2a07); `sleep 1m` read as one second
 Also: the 250 ms tick no longer queries the DOM to keep focus (dba2254); a
 flaky test counted other threads' sleeps (see log).
 
-Still open: 29 (paths.py), 30 (rest of the backend sharing: StatusPatterns
-fields, `_NEVER`, AgentBackendBase, hook dialects), 34 (one clock beyond the
-detector), 35 (files keyed by session id: needs a migration), 37
+Still open: 34 (one clock beyond the
+detector), 35 (files keyed by session id: designed with billing codes and
+bounded storage, see below), 37
 (work-counting tests beyond the row cache and status bar), and the rest of
 32 (cpu/rss/sandbox into daemon state, sister-only fields) and 38
 (test_cli's mocking).
+
+### The local e2e tiers, first recordings (2026-10-12)
+
+Running the live tiers against today's CLIs found real bugs, not only test
+drift:
+
+- Claude Code 2.1.29x hands a long paste to the model inside
+  `<pasted_content>`, which it is told not to obey: a pasted launch prompt
+  was looked at, not acted on. The launch prompt now goes on the command
+  line (e39fd58) and a multi-line `overcode send` is typed (06ad288).
+- Under bypass permissions an AskUserQuestion fires only PreToolUse, and
+  read green while the agent waited on a person (024b076).
+- opencode 1.18's "Update Available" modal ate every key sent to an agent;
+  agents run with autoupdate off (see log).
+- Claude 2.1.296 quits on Enter over the trust dialog's preselected "No,
+  exit"; codex 0.156 reworded its trust dialog and draws its input line
+  before it, and drops a paste for a few seconds after (2a1709e, 4b3a3aa).
+
+### Scale: 15K sessions a quarter (2026-10-12)
+
+A heavy fan-out user runs about 15K sessions a quarter. Fixed now: "auto"
+detection no longer lists every hook file each tick, finished agents cost
+the per-tick syncs and history nothing (661bc9c), and children that stopped
+without a report are archived once their window is gone (fa4cdaa). Next,
+with item 35: per-agent directories by session id for live agents only,
+finished agents packed into compressed day bundles kept for good (the
+owner's call: permanent retention), a slim monthly archive, and a spend
+ledger by billing code.
+
