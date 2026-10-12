@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from overcode.paths import overcode_dir
 from overcode.presence_logger import (
     infer_sleep,
     classify_state,
@@ -167,7 +168,7 @@ class TestPresenceLoggerConfig:
     def test_log_path_defaults_if_empty(self):
         """Empty log_path gets default in __post_init__"""
         config = PresenceLoggerConfig(log_path="")
-        assert ".overcode" in config.log_path
+        assert config.log_path == str(overcode_dir() / "presence_log.csv")
         assert "presence_log.csv" in config.log_path
 
 
@@ -179,7 +180,7 @@ class TestHelperFunctions:
         from overcode.presence_logger import default_log_path
 
         path = default_log_path()
-        assert ".overcode" in path
+        assert path == str(overcode_dir() / "presence_log.csv")
         assert "presence_log.csv" in path
 
     def test_is_presence_running(self, tmp_path, monkeypatch):

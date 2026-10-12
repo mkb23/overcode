@@ -20,6 +20,8 @@ import stat
 from pathlib import Path
 from typing import Optional
 
+from .paths import overcode_dir
+
 
 # ── bundled wrapper content ──────────────────────────────────────────────
 # The one source of the shipped wrapper scripts. Auto-installed to
@@ -194,7 +196,7 @@ docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 # live here — no code, no credentials.
 # ---------------------------------------------------------------------------
 TMUX_SESSION="${OVERCODE_TMUX_SESSION:-agents}"
-STATE_EXCHANGE="${HOME}/.overcode/sessions/${TMUX_SESSION}"
+STATE_EXCHANGE="${OVERCODE_STATE_DIR:-${OVERCODE_DIR:-${HOME}/.overcode}/sessions}/${TMUX_SESSION}"
 mkdir -p "$STATE_EXCHANGE"
 CONTAINER_STATE_DIR="/overcode-state"
 
@@ -336,9 +338,8 @@ exec docker exec -it \\
 # ── helpers ──────────────────────────────────────────────────────────────
 
 def _wrappers_dir() -> Path:
-    """Return the global wrappers directory (~/.overcode/wrappers/)."""
-    base = os.environ.get("OVERCODE_DIR", str(Path.home() / ".overcode"))
-    return Path(base) / "wrappers"
+    """Return the global wrappers directory ($OVERCODE_DIR/wrappers/)."""
+    return overcode_dir() / "wrappers"
 
 
 def _is_executable(path: Path) -> bool:

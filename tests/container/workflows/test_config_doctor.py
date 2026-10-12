@@ -1,7 +1,7 @@
 """Config init/show/path and doctor diagnostics (coverage matrix rows 1 & 14).
 
-Note: user config resolves under HOME (~/.overcode/config.yaml), which the
-harness isolates per test — it does NOT follow OVERCODE_DIR.
+Note: user config resolves to $OVERCODE_DIR/config.yaml, which the harness
+isolates per test.
 """
 
 import pytest

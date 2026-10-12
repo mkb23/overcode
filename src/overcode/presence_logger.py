@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .paths import overcode_dir
 from .pid_utils import (
     acquire_daemon_lock,
     get_process_pid,
@@ -60,10 +61,15 @@ except ImportError:
 
 # ---- config -----------------------------------------------------------------
 
-OVERCODE_DIR = Path.home() / ".overcode"
-PRESENCE_PID_FILE = OVERCODE_DIR / "presence.pid"
+# A test points this at its own file; None means $OVERCODE_DIR/presence.pid.
+PRESENCE_PID_FILE: Optional[Path] = None
 DEFAULT_SAMPLE_INTERVAL = 60  # seconds
 DEFAULT_IDLE_THRESHOLD = 60   # seconds
+
+
+def presence_pid_file() -> Path:
+    """The presence logger's PID file."""
+    return PRESENCE_PID_FILE if PRESENCE_PID_FILE is not None else overcode_dir() / "presence.pid"
 
 
 def is_presence_running() -> bool:
@@ -71,18 +77,19 @@ def is_presence_running() -> bool:
 
     Returns True if PID file exists and process is alive.
     """
-    return is_process_running(PRESENCE_PID_FILE)
+    return is_process_running(presence_pid_file())
 
 
 def get_presence_pid() -> Optional[int]:
     """Get the presence logger PID if running, None otherwise."""
-    return get_process_pid(PRESENCE_PID_FILE)
+    return get_process_pid(presence_pid_file())
 
 
 def default_log_path() -> str:
-    """Return default CSV path under ~/.overcode/."""
-    OVERCODE_DIR.mkdir(parents=True, exist_ok=True)
-    return str(OVERCODE_DIR / "presence_log.csv")
+    """Return the default CSV path, in the overcode directory."""
+    directory = overcode_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    return str(directory / "presence_log.csv")
 
 
 @dataclass
@@ -529,7 +536,7 @@ def main() -> int:
         print()
 
     # Take the lock (held until exit) and write the PID file, unless running
-    acquired, pid = acquire_daemon_lock(PRESENCE_PID_FILE)
+    acquired, pid = acquire_daemon_lock(presence_pid_file())
     if not acquired:
         print(f"Presence logger already running (PID: {pid})")
         return 1
@@ -553,7 +560,7 @@ def main() -> int:
         print("\nStopping logger...")
         logger.stop()
     finally:
-        remove_pid_file(PRESENCE_PID_FILE, os.getpid())
+        remove_pid_file(presence_pid_file(), os.getpid())
 
     return 0
 

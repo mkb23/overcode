@@ -1085,7 +1085,6 @@ def patched_environment(paths: FixturePaths) -> Iterator[None]:
             if new != defaults:
                 saved_defaults.append((fn, defaults))
                 fn.__defaults__ = new
-        patch(presence_logger, "OVERCODE_DIR", paths.overcode_dir)
         patch(presence_logger, "PRESENCE_PID_FILE", paths.overcode_dir / "presence.pid")
         patch(config, "CONFIG_PATH", paths.overcode_dir / "config.yaml")
         patch(settings.PATHS, "base_dir", paths.overcode_dir)

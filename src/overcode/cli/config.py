@@ -81,8 +81,9 @@ def config_init(
     Creates ~/.overcode/config.yaml with all options commented out.
     Use --force to overwrite an existing config file.
     """
-    from ..config import CONFIG_PATH
+    from ..config import config_path
 
+    CONFIG_PATH = config_path()
     # Ensure directory exists
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -104,7 +105,9 @@ def config_show():
 
 def _config_show():
     """Internal function to display current config."""
-    from ..config import CONFIG_PATH, load_config
+    from ..config import config_path, load_config
+
+    CONFIG_PATH = config_path()
 
     if not CONFIG_PATH.exists():
         rprint(f"[dim]No config file found at {CONFIG_PATH}[/dim]")
@@ -153,8 +156,8 @@ def _config_show():
 @config_app.command("path")
 def config_path():
     """Show the config file path."""
-    from ..config import CONFIG_PATH
-    print(CONFIG_PATH)
+    from ..config import config_path
+    print(config_path())
 
 
 @config_app.command("tmux")

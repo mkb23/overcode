@@ -40,15 +40,20 @@ from ._shared import app, SessionOption
 from ..tmux_utils import _build_tmux_cmd, get_pane_base_index
 
 
+def _setup_lock_path() -> Path:
+    """The lockfile serialising `overcode tmux` setups."""
+    from ..paths import overcode_dir
+    return overcode_dir() / "tmux-setup.lock"
+
+
 def _acquire_setup_lock() -> bool:
     """Acquire an exclusive lock to prevent concurrent `overcode tmux` runs.
 
-    Uses a lockfile in ~/.overcode/. Returns True if lock acquired,
+    Uses a lockfile in the overcode directory. Returns True if lock acquired,
     False if another instance is already setting up.
     """
-    lock_dir = Path.home() / ".overcode"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_dir / "tmux-setup.lock"
+    lock_path = _setup_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         # O_CREAT | O_EXCL: atomic create-if-not-exists
         fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -82,7 +87,7 @@ def _release_setup_lock() -> None:
     `overcode tmux` may have acquired the lock; unlinking unconditionally
     would delete *its* lock and let a third invocation run setup concurrently.
     """
-    lock_path = Path.home() / ".overcode" / "tmux-setup.lock"
+    lock_path = _setup_lock_path()
     try:
         holder = lock_path.read_text().strip()
     except FileNotFoundError:

@@ -598,8 +598,8 @@ def shutdown(
             get_web_server_port_path(ts).unlink(missing_ok=True)
     if not services_only:
         if shared:
-            from .presence_logger import PRESENCE_PID_FILE
-            stop_pid("daemons", "presence logger", PRESENCE_PID_FILE)
+            from .presence_logger import presence_pid_file
+            stop_pid("daemons", "presence logger", presence_pid_file())
         else:
             add("daemons", "presence logger", "skipped",
                 f"still used by {', '.join(others_alive)}")

@@ -10,7 +10,6 @@ the split-window parsers, the split-window unzoom, and the resize-ratio cycle.
 import os
 import shutil
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +20,7 @@ from overcode.cli import split as split_mod
 class TestAcquireSetupLock:
 
     def test_fresh_acquire(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         assert split_mod._acquire_setup_lock() is True
         lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
         assert lock_path.exists()
@@ -29,13 +28,13 @@ class TestAcquireSetupLock:
         assert lock_path.read_text().strip() == str(os.getpid())
 
     def test_second_acquire_blocked_when_holder_alive(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         split_mod._acquire_setup_lock()
         # Current process is alive → second acquire should refuse.
         assert split_mod._acquire_setup_lock() is False
 
     def test_stale_lock_is_reclaimed(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         # PID 1 exists but we'll force-trigger the stale path by writing a
@@ -51,18 +50,18 @@ class TestAcquireSetupLock:
         assert lock_path.read_text().strip() == str(os.getpid())
 
     def test_release_removes_lock(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         split_mod._acquire_setup_lock()
         split_mod._release_setup_lock()
         assert not (tmp_path / ".overcode" / "tmux-setup.lock").exists()
 
     def test_release_idempotent_when_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         # No lock to begin with — release should not raise.
         split_mod._release_setup_lock()
 
     def test_release_leaves_foreign_lock_alone(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         other_pid = str(os.getpid() + 1)
@@ -77,7 +76,7 @@ class TestExecTmuxAttach:
         """Regression: exec replaces the process, so the lock must be
         released *before* it. Otherwise the lock outlives setup and pins the
         PID of the attached tmux client, blocking later `overcode tmux`."""
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
         lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
         assert split_mod._acquire_setup_lock() is True
@@ -105,7 +104,7 @@ class TestExecTmuxAttach:
         `_tmux_layout`'s `finally:` releases a second time. If another
         `overcode tmux` acquired the lock in between, that second release
         must leave it in place."""
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
         lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
         other_pid = str(os.getpid() + 1)
@@ -125,7 +124,7 @@ class TestExecTmuxAttach:
         assert lock_path.read_text() == other_pid
 
     def test_respects_tmux_socket_env(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         monkeypatch.setenv("OVERCODE_TMUX_SOCKET", "oc-test")
         seen = {}
 

@@ -17,8 +17,7 @@ from pathlib import Path
 # OVERCODE_* variable: HOME and every tool home overcode reads move into
 # the run dir, and bare `tmux` calls reach a private server, never the
 # user's. Done at import, before test modules import overcode, so
-# module-level paths (config.CONFIG_PATH, presence_logger.OVERCODE_DIR)
-# resolve inside the run dir too.
+# paths built from HOME resolve inside the run dir too.
 RUN_DIR = Path(os.environ["OVERCODE_DIR"]).parent
 REAL_HOME = Path.home()
 _FAKE_HOME = RUN_DIR / "home"

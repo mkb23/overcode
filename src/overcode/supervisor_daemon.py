@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from . import paths
 from .daemon_logging import SupervisorDaemonLogger
 from .daemon_utils import create_daemon_helpers
 from .monitor_daemon_state import (
@@ -494,11 +495,10 @@ class SupervisorDaemon:
     def _sync_daemon_claude_tokens(self) -> None:
         """Sync token usage from daemon claude's Claude Code history.
 
-        Reads token usage from Claude Code's session files for the ~/.overcode/
+        Reads token usage from Claude Code's session files for the overcode
         working directory and updates the persistent supervisor stats.
         """
-        overcode_dir = Path.home() / ".overcode"
-        encoded_path = encode_project_path(str(overcode_dir))
+        encoded_path = encode_project_path(str(paths.overcode_dir()))
         projects_dir = Path.home() / ".claude" / "projects" / encoded_path
 
         if not projects_dir.exists():
@@ -658,7 +658,7 @@ class SupervisorDaemon:
         # Create window
         window_name = self.tmux.create_window(
             self.DAEMON_CLAUDE_WINDOW_NAME,
-            str(Path.home() / '.overcode')
+            str(paths.overcode_dir())
         )
         if window_name is None:
             self.log.error("Failed to create daemon claude window")

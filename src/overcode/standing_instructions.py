@@ -11,7 +11,15 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, Dict
 
-PRESETS_PATH = Path.home() / ".overcode" / "presets.json"
+from .paths import overcode_dir
+
+# A test points this at its own file; None means $OVERCODE_DIR/presets.json.
+PRESETS_PATH: Optional[Path] = None
+
+
+def presets_path() -> Path:
+    """The presets file (``presets.json`` in the overcode directory)."""
+    return PRESETS_PATH if PRESETS_PATH is not None else overcode_dir() / "presets.json"
 
 
 @dataclass
@@ -138,12 +146,12 @@ DEFAULT_PRESETS: Dict[str, InstructionPreset] = {
 
 def _ensure_presets_dir() -> None:
     """Ensure the presets directory exists."""
-    PRESETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    presets_path().parent.mkdir(parents=True, exist_ok=True)
 
 
 def _ensure_presets_file() -> None:
     """Create presets.json with defaults if it doesn't exist."""
-    if PRESETS_PATH.exists():
+    if presets_path().exists():
         return
 
     _ensure_presets_dir()
@@ -153,7 +161,7 @@ def _ensure_presets_file() -> None:
         name: asdict(preset)
         for name, preset in DEFAULT_PRESETS.items()
     }
-    with open(PRESETS_PATH, 'w') as f:
+    with open(presets_path(), 'w') as f:
         json.dump(presets_data, f, indent=2)
 
 
@@ -168,7 +176,7 @@ def load_presets() -> Dict[str, InstructionPreset]:
     _ensure_presets_file()
 
     try:
-        with open(PRESETS_PATH, 'r') as f:
+        with open(presets_path(), 'r') as f:
             data = json.load(f)
 
         presets = {}

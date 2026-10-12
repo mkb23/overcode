@@ -1,7 +1,8 @@
 """
 Configuration loading for overcode.
 
-Config file location: ~/.overcode/config.yaml
+Config file location: ~/.overcode/config.yaml ($OVERCODE_DIR/config.yaml;
+see paths.config_file).
 
 Example config:
     default_standing_instructions: "Approve file read/write permission requests"
@@ -18,8 +19,16 @@ from pathlib import Path
 from typing import List, Optional
 import yaml
 
+from . import paths
 
-CONFIG_PATH = Path.home() / ".overcode" / "config.yaml"
+
+# A test points this at its own file; None means paths.config_file().
+CONFIG_PATH: Optional[Path] = None
+
+
+def config_path() -> Path:
+    """The config.yaml this process reads and writes."""
+    return CONFIG_PATH if CONFIG_PATH is not None else paths.config_file()
 
 # TTL-based config cache to avoid file I/O + YAML parse on every access
 _config_cache: dict | None = None
@@ -109,19 +118,20 @@ def save_config(config: dict) -> None:
     replaced atomically, so a crash never leaves a half-written config.
     """
     global _config_cache, _config_cache_time, _config_cache_mtime
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        old_text = CONFIG_PATH.read_text()
+        old_text = path.read_text()
     except FileNotFoundError:
         old_text = ""
     new_text = _merge_into_text(old_text, config)
-    fd, tmp = tempfile.mkstemp(dir=CONFIG_PATH.parent, prefix=".config.", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
             f.write(new_text)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, CONFIG_PATH)
+        os.replace(tmp, path)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -149,19 +159,20 @@ def _cached_config() -> dict:
     if _config_cache is not None and (now - _config_cache_time) < _CONFIG_CACHE_TTL:
         return _config_cache
 
-    if not CONFIG_PATH.exists():
+    path = config_path()
+    if not path.exists():
         _config_cache = {}
         _config_cache_time = now
         return _config_cache
 
     try:
-        mtime = CONFIG_PATH.stat().st_mtime
+        mtime = path.stat().st_mtime
         # If file hasn't changed since last parse, reuse cached result
         if _config_cache is not None and mtime == _config_cache_mtime:
             _config_cache_time = now
             return _config_cache
 
-        with open(CONFIG_PATH) as f:
+        with open(path) as f:
             config = yaml.safe_load(f)
             _config_cache = config if isinstance(config, dict) else {}
             _config_cache_time = now

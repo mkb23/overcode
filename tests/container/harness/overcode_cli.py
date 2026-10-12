@@ -181,8 +181,8 @@ class OvercodeCLI:
 
     @property
     def config_file(self) -> Path:
-        """User config lives under HOME (config.py), not OVERCODE_DIR."""
-        path = self.home / ".overcode" / "config.yaml"
+        """The user config: config.yaml in OVERCODE_DIR (paths.config_file)."""
+        path = self.overcode_dir / "config.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
