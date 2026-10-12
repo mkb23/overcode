@@ -11,7 +11,7 @@ These tests verify that:
 from overcode.protocols import (
     TmuxInterface,
 )
-from overcode.mocks import (
+from tests.tmux_doubles import (
     MockTmux,
 )
 from overcode.implementations import (
@@ -26,6 +26,15 @@ class TestMockTmux:
         """MockTmux should implement TmuxInterface."""
         mock = MockTmux()
         assert isinstance(mock, TmuxInterface)
+
+    def test_the_test_daemons_null_tmux_implements_protocol(self):
+        from overcode.monitor_daemon import NullTmux
+
+        tmux = NullTmux()
+        assert isinstance(tmux, TmuxInterface)
+        assert tmux.has_session("agents") is False
+        assert tmux.list_windows("agents") == []
+        assert tmux.list_panes("agents") is None
 
     def test_set_and_capture_pane_content(self):
         """Should be able to set and retrieve pane content."""

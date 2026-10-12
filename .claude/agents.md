@@ -73,8 +73,11 @@ add an entry when something bites.
 
 - Bundled wrapper scripts live only in `wrapper.BUNDLED_WRAPPERS`.
 - Pricing lives in `pricing.py`; import from there.
-- Tmux interfaces: `protocols.py` (Protocols), `implementations.py` (real),
-  `mocks.py` (test doubles).
+- Tmux interfaces: `protocols.py` (`TmuxInterface`), `implementations.py`
+  (`RealTmux`, bounded by `command_timeout`), `tmux_manager.py` (one
+  session's facade over a client; bounded by default). The test double
+  `MockTmux` lives in `tests/tmux_doubles.py`, outside the wheel: src
+  never imports it (`MonitorDaemon.for_test` defaults to `NullTmux`).
 
 ## Git
 

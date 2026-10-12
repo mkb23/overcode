@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from overcode.implementations import RealTmux, _command_timeout
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from overcode.protocols import TmuxTimeoutError
 
 pytestmark = pytest.mark.unit

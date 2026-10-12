@@ -449,7 +449,6 @@ Replace the four separate files (daemon state JSON, sessions JSON, status histor
 | `bundled_skills.py` | 175 | Claude |
 | `daemon_panel.py` | 169 | TUI |
 | `summary_config_modal.py` | 165 | TUI |
-| `mocks.py` | 156 | Tmux |
 | `notifier.py` | 145 | Infra |
 | `daemon_logging.py` | 144 | Infra |
 | `summary_groups.py` | 141 | TUI |

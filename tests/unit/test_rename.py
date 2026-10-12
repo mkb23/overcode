@@ -28,7 +28,7 @@ import pytest
 
 from overcode.exceptions import AgentBusyError
 from overcode.launcher import AgentLauncher
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from overcode.session_manager import SessionManager, rename_notice
 from overcode.tmux_manager import TmuxManager
 

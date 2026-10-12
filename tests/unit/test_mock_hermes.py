@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import mock_hermes
 from overcode.backends.hermes import HERMES_PATTERNS
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_WAITING_APPROVAL
 from overcode.status_detector import PollingStatusDetector
 from tests.fixtures import create_mock_session

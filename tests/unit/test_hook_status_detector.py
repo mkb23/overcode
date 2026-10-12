@@ -38,7 +38,7 @@ from overcode.status_constants import (
     STATUS_COLOR_YELLOW,
     STATUS_COLOR_RED,
 )
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
 
 

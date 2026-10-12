@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from overcode.status_detector_factory import create_status_detector, StatusDetectorDispatcher
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 
 
 class TestCreateStatusDetector:

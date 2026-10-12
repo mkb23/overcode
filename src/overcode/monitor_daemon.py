@@ -182,6 +182,63 @@ class MemoryLogger(BaseDaemonLogger):
         self.lines.append(f"[DEBUG] {message}")
 
 
+class NullTmux:
+    """A tmux server with no sessions, for ``MonitorDaemon.for_test``.
+
+    Every read is empty and every write fails, so a test daemon touches
+    no real tmux. Tests that need panes pass their own double.
+    """
+
+    def capture_pane(self, session, window, lines=100):
+        return None
+
+    def send_keys(self, session, window, keys, enter=True):
+        return False
+
+    def has_session(self, session):
+        return False
+
+    def new_session(self, session):
+        return False
+
+    def new_window(self, session, name, command=None, cwd=None, *,
+                   wait_for_prompt=False, options=None):
+        return None
+
+    def kill_window(self, session, window):
+        return False
+
+    def kill_windows(self, session, match):
+        return []
+
+    def rename_window(self, session, window, new_name):
+        return False
+
+    def kill_session(self, session):
+        return False
+
+    def list_windows(self, session):
+        return []
+
+    def attach(self, session, window=None, bare=False):
+        return None
+
+    def get_pane_pid(self, session, window):
+        return None
+
+    def list_panes(self, session):
+        return None
+
+    def select_window(self, session, window):
+        return False
+
+    def ensure_empty_placeholder_window(self, session, window_name, message):
+        return False
+
+    def resize_window(self, session, window, width, height):
+        return False
+
+
 class MonitorDaemon:
     """Monitor Daemon - single source of truth for all session metrics.
 
@@ -256,16 +313,15 @@ class MonitorDaemon:
         """A daemon whose files live in ``state_dir``, for tests.
 
         No presence thread (``presence`` defaults to one that reports
-        nothing), no real tmux (``tmux`` defaults to a ``MockTmux``), a log
-        kept in memory, and a ``SessionManager`` on ``state_dir`` unless one
-        is given. ``detector`` replaces the status detector dispatcher.
-        Nothing here reads the environment's session directory.
+        nothing), no real tmux (``tmux`` defaults to a ``NullTmux``, a
+        server with no sessions), a log kept in memory, and a
+        ``SessionManager`` on ``state_dir`` unless one is given.
+        ``detector`` replaces the status detector dispatcher. Nothing here
+        reads the environment's session directory.
         """
-        from .mocks import MockTmux
-
         state_dir = Path(state_dir)
         state_dir.mkdir(parents=True, exist_ok=True)
-        tmux = tmux if tmux is not None else MockTmux()
+        tmux = tmux if tmux is not None else NullTmux()
         daemon = cls.__new__(cls)
         daemon._setup(
             tmux_session,

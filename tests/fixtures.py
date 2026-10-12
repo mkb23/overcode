@@ -254,7 +254,7 @@ def create_mock_tmux_with_content(session: str, window: str, content: str):
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_WAITING_USER)
         detector = PollingStatusDetector("agents", tmux=mock_tmux)
     """
-    from overcode.mocks import MockTmux
+    from tests.tmux_doubles import MockTmux
 
     mock = MockTmux()
     mock.new_session(session)

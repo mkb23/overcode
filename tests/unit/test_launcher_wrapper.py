@@ -18,7 +18,7 @@ from overcode.exceptions import LaunchError
 from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 
 
 @pytest.fixture(autouse=True)

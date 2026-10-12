@@ -242,7 +242,7 @@ class TestSupervisor:
 class TestLaunch:
     def _launcher(self, tmp_path):
         from overcode.launcher import AgentLauncher
-        from overcode.mocks import MockTmux
+        from tests.tmux_doubles import MockTmux
         from overcode.session_manager import SessionManager
         from overcode.tmux_manager import TmuxManager
 

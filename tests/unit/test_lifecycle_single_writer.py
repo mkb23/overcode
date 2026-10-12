@@ -55,7 +55,7 @@ def _report(name, status="success"):
 class TestListSessionsIsReadOnly:
     def test_no_write_with_gone_windows_and_stopped_children(self, root, capsys):
         from overcode.launcher import AgentLauncher
-        from overcode.mocks import MockTmux
+        from tests.tmux_doubles import MockTmux
         from overcode.tmux_manager import TmuxManager
 
         sm = SessionManager(state_dir=root / "home" / ".overcode" / "sessions",
@@ -220,7 +220,7 @@ class TestDaemonSettlesLifecycleOnce:
 class TestReconcileLifecycle:
     def test_settles_once_and_reports(self, root):
         from overcode.launcher import AgentLauncher
-        from overcode.mocks import MockTmux
+        from tests.tmux_doubles import MockTmux
         from overcode.tmux_manager import TmuxManager
 
         sm = SessionManager(state_dir=root / "home" / ".overcode" / "sessions",

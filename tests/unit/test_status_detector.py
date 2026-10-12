@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.status_detector import PollingStatusDetector
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from overcode.status_constants import STATUS_BUSY_SLEEPING, STATUS_RUNNING, STATUS_WAITING_USER, STATUS_WAITING_APPROVAL, STATUS_TERMINATED, STATUS_ERROR
 from tests.fixtures import (
     create_mock_session,

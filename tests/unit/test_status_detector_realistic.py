@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.status_detector import PollingStatusDetector
 from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_TERMINATED, STATUS_WAITING_APPROVAL
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from tests.fixtures import create_mock_session
 from tests.fixtures_realistic import (
     REALISTIC_AUTOCOMPLETE_IDLE,

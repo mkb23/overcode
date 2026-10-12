@@ -34,7 +34,7 @@ Overcode has a well-designed abstraction layer with three tiers:
 
 - **Protocol** (`protocols.py`): `TmuxInterface` defines the contract — `capture_pane`, `send_keys`, `has_session`, `new_session`, `new_window`, `kill_window`, `kill_session`, `list_windows`, `attach`, `get_pane_pid`, `select_window`.
 - **Implementation** (`implementations.py`): `RealTmux` wraps libtmux with caching (30s TTL).
-- **Mock** (`mocks.py`): `MockTmux` enables full unit testing without real tmux.
+- **Mock** (`tests/tmux_doubles.py`): `MockTmux` enables full unit testing without real tmux.
 - **Manager** (`tmux_manager.py`): High-level API supporting dependency injection.
 
 ### Raw tmux CLI Usage (Outside the Abstraction)

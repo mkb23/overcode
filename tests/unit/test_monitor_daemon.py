@@ -1761,7 +1761,7 @@ class TestCountUntrackedWindows:
         non-existent ``session_exists`` method passed these tests while
         raising AttributeError (swallowed, count 0) against ``RealTmux``.
         """
-        from overcode.mocks import MockTmux
+        from tests.tmux_doubles import MockTmux
 
         daemon = self._make_daemon()
         tmux = MockTmux()
@@ -1776,7 +1776,7 @@ class TestCountUntrackedWindows:
         assert daemon.housekeeping.count_untracked_windows([session], tmux=tmux) == 1
 
     def test_fake_tmux_without_the_session_returns_zero(self):
-        from overcode.mocks import MockTmux
+        from tests.tmux_doubles import MockTmux
 
         daemon = self._make_daemon()
         assert daemon.housekeeping.count_untracked_windows([], tmux=MockTmux()) == 0
@@ -1787,7 +1787,7 @@ class TestCountUntrackedWindows:
         the supervisor daemon's claude window or an SSH proxy window — none
         of which is tracked in sessions.json.
         """
-        from overcode.mocks import MockTmux
+        from tests.tmux_doubles import MockTmux
         from overcode.tmux_utils import (
             DAEMON_CLAUDE_WINDOW_NAME,
             EMPTY_PLACEHOLDER_WINDOW,

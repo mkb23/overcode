@@ -24,7 +24,7 @@ class MockTmux:
 
     def _check_responsive(self) -> None:
         if self.unresponsive:
-            from .protocols import TmuxTimeoutError
+            from overcode.protocols import TmuxTimeoutError
 
             raise TmuxTimeoutError("mock tmux server not responding")
 
@@ -126,7 +126,7 @@ class MockTmux:
         ``window_activity`` / ``history_size`` / cursor all move with
         output — so a ``set_pane_content`` shows up as a changed signature.
         """
-        from .tmux_utils import PaneInfo
+        from overcode.tmux_utils import PaneInfo
 
         if self.unresponsive or session not in self.sessions:
             return None

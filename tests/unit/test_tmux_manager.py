@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.tmux_manager import TmuxManager
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 
 
 class TestTmuxManagerSession:

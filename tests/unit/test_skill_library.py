@@ -12,7 +12,7 @@ from overcode.backends.base import LaunchSpec
 from overcode.backends.claude_code import ClaudeCodeBackend
 from overcode.backends.opencode import OpencodeBackend
 from overcode.launcher import AgentLauncher
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from overcode.session_manager import SessionManager
 from overcode.tmux_manager import TmuxManager
 

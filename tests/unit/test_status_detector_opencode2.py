@@ -23,7 +23,7 @@ from overcode.backends import get_backend
 from overcode.backends.opencode import OPENCODE_PATTERNS
 from overcode.backends.opencode2 import Opencode2Backend
 from overcode.backends.opencode2_patterns import OPENCODE2_PATTERNS
-from overcode.mocks import MockTmux
+from tests.tmux_doubles import MockTmux
 from overcode.status_constants import (
     STATUS_WAITING_APPROVAL,
     STATUS_RUNNING,
