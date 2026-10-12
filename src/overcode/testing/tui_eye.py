@@ -18,7 +18,6 @@ from typing import Annotated
 import typer
 
 from .tmux_driver import TUIDriver
-from .renderer import render_terminal_to_png
 
 app = typer.Typer(
     name="tui-eye",
@@ -103,6 +102,8 @@ def screenshot(
     content = driver.capture(with_ansi=True)
 
     # Render to PNG
+    from .renderer import render_terminal_to_png  # pyte, Pillow: dev extras
+
     output_path = render_terminal_to_png(
         content,
         output,
@@ -178,6 +179,20 @@ def status() -> None:
 def main() -> None:
     """Main entry point."""
     app()
+
+
+def cli() -> None:
+    """The ``tui-eye`` console script: say what to install rather than crash.
+
+    Its renderer needs pyte and Pillow, which only the dev extras install.
+    """
+    try:
+        import pyte  # noqa: F401
+        import PIL  # noqa: F401
+    except ImportError as e:
+        raise SystemExit(f"tui-eye needs the dev extras ({e.name} is missing): "
+                         "pip install 'overcode[dev]'")
+    main()
 
 
 if __name__ == "__main__":

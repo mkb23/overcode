@@ -38,7 +38,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: pip install -e ".[dev]"
       - name: Unit tests with coverage
-        run: pytest tests/unit -q -p no:cacheprovider --cov=src/overcode --cov-report=term:skip-covered --cov-fail-under=75
+        run: pytest tests/unit -q -p no:cacheprovider --timeout=120 --cov=src/overcode --cov-report=term:skip-covered --cov-fail-under=75
         env:
           NO_COLOR: "1"
 

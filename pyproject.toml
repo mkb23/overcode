@@ -62,7 +62,7 @@ export = [
 
 [project.scripts]
 overcode = "overcode.entrypoint:main"
-tui-eye = "overcode.testing.tui_eye:main"
+tui-eye = "overcode.testing.tui_eye:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

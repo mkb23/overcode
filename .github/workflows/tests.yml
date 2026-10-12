@@ -30,7 +30,7 @@ jobs:
           NO_COLOR: "1"
         # The floor ratchets up as coverage improves (docs/design/quality-review-2026-10.md)
         run: |
-          pytest tests/unit/ -q -p no:cacheprovider \
+          pytest tests/unit/ -q -p no:cacheprovider --timeout=120 \
             --cov=src/overcode \
             --cov-report=xml \
             --cov-report=term:skip-covered \

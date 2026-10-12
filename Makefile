@@ -32,8 +32,8 @@ help:
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean              Remove build artifacts and caches"
-	@echo "  make clean-sessions     Kill test sessions and cleanup state (safe)"
-	@echo "  make emergency-cleanup  Nuclear option - kill ALL Claude processes (dangerous!)"
+	@echo "  make clean-sessions     Remove leftovers of interrupted test runs (safe)"
+	@echo "  make emergency-cleanup  Kill ALL Claude processes, delete sessions.json (CONFIRM=1)"
 	@echo ""
 
 install:
@@ -56,7 +56,7 @@ test-live:
 	pytest -m e2e -rsx tests/e2e/test_live_backends.py
 
 test-unit:
-	pytest -q tests/unit -p no:cacheprovider
+	pytest -q tests/unit -p no:cacheprovider --timeout=120
 
 test-quick:
 	@echo "Running E2E test directly (faster for development)..."
@@ -94,7 +94,7 @@ format:
 # Branch + thread coverage of the unit suite (.coveragerc); report and htmlcov/
 coverage:
 	rm -f .coverage .coverage.*
-	coverage run -m pytest -q tests/unit -p no:cacheprovider
+	coverage run -m pytest -q tests/unit -p no:cacheprovider --timeout=120
 	coverage combine -q
 	coverage report --sort=cover --skip-covered | tail -40
 	coverage html -q
@@ -117,19 +117,20 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
+# Test runs isolate themselves (tests/conftest.py: a temp state dir and a
+# private tmux server, removed at the end), so this only clears what an
+# interrupted run left behind. It never touches real agents or ~/.overcode.
 clean-sessions:
-	@echo "Cleaning up test sessions..."
-	-pkill -9 claude 2>/dev/null || true
-	-tmux kill-session -t overcode-e2e-test 2>/dev/null || true
-	-rm -rf /tmp/overcode_e2e_test
-	@python3 -c "import json; from pathlib import Path; \
-		state_file = Path.home() / '.overcode' / 'sessions' / 'sessions.json'; \
-		state = json.load(open(state_file)) if state_file.exists() else {}; \
-		updated = {k: v for k, v in state.items() if not v.get('name', '').startswith('test-')}; \
-		json.dump(updated, open(state_file, 'w'), indent=2) if state_file.exists() else None" 2>/dev/null || true
-	@echo "✓ Test sessions cleaned"
+	@echo "Cleaning up leftovers from interrupted test runs..."
+	-@for s in $$(ls $${TMUX_TMPDIR:-/tmp}/tmux-$$(id -u) 2>/dev/null | grep -E '^(overcode-pytest-|overcode-test|oc-rename-)'); do \
+		tmux -L "$$s" kill-server 2>/dev/null || true; done
+	-rm -rf /tmp/overcode_e2e_test $${TMPDIR:-/tmp}/overcode-pytest-* /tmp/ocpt-*
+	@echo "✓ Test leftovers cleaned"
 
+# Destructive: kills EVERY Claude process (your live agents included) and
+# deletes ~/.overcode/sessions/sessions.json. Requires CONFIRM=1.
 emergency-cleanup:
+	@test "$(CONFIRM)" = "1" || (echo "This kills every Claude process and deletes sessions.json. Run: make emergency-cleanup CONFIRM=1"; exit 2)
 	@echo "🚨 EMERGENCY CLEANUP - Killing all Claude processes..."
 	-pkill -9 claude
 	-tmux kill-session -t overcode-e2e-test
