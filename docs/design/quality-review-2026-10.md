@@ -268,16 +268,30 @@ move-only commits.
 | 3 failed save froze views | done: publish always, `state_file_error` shown | c028790 |
 | 4 PID file over the lock | done: the lock decides; stale PIDs never signalled | c96a994 |
 | 5 idle check vs reworded marker | done: trusted only once the marker has been seen | ccd8a32 |
-| 6 non-Claude wrong-session ids | done: shared ownership-aware lookup, `_stats_common` | (cherry-picked 61e5163) |
+| 6 non-Claude wrong-session ids | done: shared ownership-aware lookup, `_stats_common` | b13d90c |
 | 7 polling: prose read as running | done: idle prompt first (P8b) | 62bc219 |
-| 8 polling: permission red | done: orange; hermes tip and answered-dialog false matches fixed | 62bc219 |
-| 9 TUI writes lifecycle | done: `list_sessions` read-only, daemon is the single writer, new rows within a tick | (cherry-picked 7da8982) |
-| 14 values that don't hold still | done: absolute badge `eta_at`, subtree cost over the fleet | (this batch) |
-| 15 snapshot applied twice | done | (this batch) |
+| 8 polling: permission red | done: orange; hermes tip and answered-dialog false matches fixed | 62bc219, 971e37b |
+| 9 TUI writes lifecycle | done: `list_sessions` read-only, daemon is the single writer, new rows within a tick | 54e734b |
+| 10 tmux hangs outside the daemon | part: `overcode tmux` and the resize API bounded; TmuxManager's libtmux path goes with 33 | 5b8b332 |
+| 11 supervisor dies on an exception | done: each pass isolated and logged | (see log) |
+| 12 config.yaml loses comments | done: only changed entries rewritten, atomic, copies from the cache | 918ef10 |
+| 13 grok stale-turn race | done: checked under the lock; idle_prompt guarded | (see log) |
+| 14 values that don't hold still | done: absolute badge `eta_at`, subtree cost over the fleet, quiet-fleet flake | b385d82 |
+| 15 snapshot applied twice | done | b385d82 |
+| 16 job retention never applied | done: hourly prune in the daemon | (see log) |
+| 17 unpriced models | done: doctor flags a budget on an unpriced model | 0777ba5 |
 | 18 build and CI traps | done: CI gates, `test-unit`, safe `clean-sessions`, unit timeouts, `tui-eye` | 3d9d7a5, baa7e4b |
-| 25 one status rule table | done: `TickContext` → named `RULES` → `Verdict`; legacy enum from one table; phase names the rule; one `now` per tick (part of 34) | (this branch) |
+| 19 row clock rebuilds every row | done: cached non-ticking cells; 40 idle agents 4.2% → 2.3% CPU | (see log) |
+| 22 delta copies every agent | done: copy on write, identity check in the TUI | 3ebd582 |
+| 24 state file every tick | done: on change plus a 10 s liveness rewrite, compact | 3ebd582 |
+| 25 one status rule table | done: `TickContext` → named rules → `Verdict`; legacy enum from one table; phase names the rule; one `now` (part of 34). A scheduled-only agent stays waiting (c4f48a3) | (see log) |
+| 32 Session model | part: canonical names only on write, aliases gone; old files still load | (see log) |
+| Dead code | done (the confirmed list) | c7c2284 |
 
 Found while doing these: libtmux 0.55+ broke every tmux call on a fresh
 install (e31452a); ruff's defaults changed under CI (4d75f85); the scale
 tests' timing budgets needed a factor for CI runners (fc7598a); a socket
-test only failed on Linux (9bb2a07).
+test only failed on Linux (9bb2a07); `sleep 1m` read as one second
+(4048242).
+
+Still open: 20, 21, 23 (in progress), 26–31, 33–40, the rest of 10 and 32.
