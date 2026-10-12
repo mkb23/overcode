@@ -516,6 +516,18 @@ class TestAttachBare:
         assert len(ran) == 2
         execlp.assert_not_called()
 
+    def test_a_wedged_server_ends_the_attach_instead_of_hanging(self):
+        from overcode.tmux_utils import attach_bare
+
+        def run(cmd, **kwargs):
+            assert kwargs.get("timeout")
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        with patch("overcode.tmux_utils.subprocess.run", run), \
+                patch("overcode.tmux_utils.os.execlp") as execlp:
+            attach_bare("agents", "w")
+        execlp.assert_not_called()
+
 
 class _RecordingPane:
     """A pane that records what it is sent, into a shared timeline."""

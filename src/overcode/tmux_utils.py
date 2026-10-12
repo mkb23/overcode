@@ -300,6 +300,10 @@ def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:
         pane.send_keys('', enter=True)
 
 
+# How long attach_bare waits for each tmux command before its exec
+ATTACH_TMUX_TIMEOUT_SECONDS = 5.0
+
+
 def attach_bare(session_name: str, window_name: str, socket_path: str = None) -> None:
     """Attach to a tmux window in bare mode (no chrome).
 
@@ -314,30 +318,26 @@ def attach_bare(session_name: str, window_name: str, socket_path: str = None) ->
     if socket_path:
         tmux_cmd = ["tmux", "-L", socket_path]
 
+    def run(*args: str) -> int:
+        # bounded: a wedged server must not hang the attach before it starts
+        try:
+            return subprocess.run(tmux_cmd + list(args), capture_output=True,
+                                  timeout=ATTACH_TMUX_TIMEOUT_SECONDS).returncode
+        except subprocess.TimeoutExpired:
+            return 1
+
     # Kill any stale bare session with the same name
-    subprocess.run(
-        tmux_cmd + ["kill-session", "-t", bare_session],
-        capture_output=True,
-    )
+    run("kill-session", "-t", bare_session)
 
     # Create linked session sharing the same window group
-    result = subprocess.run(
-        tmux_cmd + ["new-session", "-d", "-s", bare_session, "-t", session_name],
-        capture_output=True,
-    )
-    if result.returncode != 0:
+    if run("new-session", "-d", "-s", bare_session, "-t", session_name) != 0:
         return
 
     # Configure the linked session (isolated from main session)
-    target = tmux_window_target(bare_session, window_name)
-    for cmd in [
-        tmux_cmd + ["set", "-t", bare_session, "status", "off"],
-        tmux_cmd + ["set", "-t", bare_session, "mouse", "off"],
-        tmux_cmd + ["set-hook", "-t", bare_session, "client-attached",
-         "set destroy-unattached on"],
-        tmux_cmd + ["select-window", "-t", target],
-    ]:
-        subprocess.run(cmd, capture_output=True)
+    run("set", "-t", bare_session, "status", "off")
+    run("set", "-t", bare_session, "mouse", "off")
+    run("set-hook", "-t", bare_session, "client-attached", "set destroy-unattached on")
+    run("select-window", "-t", tmux_window_target(bare_session, window_name))
 
     # Attach (replaces process)
     os.execlp(tmux_cmd[0], *tmux_cmd, "attach-session", "-t", bare_session)
