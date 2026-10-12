@@ -173,7 +173,9 @@ _SUBAGENT_STALE_SECONDS = 3600.0
 
 
 # A foreground sleep: the command is ``sleep N``, perhaps after a ``cd``
-_FOREGROUND_SLEEP_RE = re.compile(r"^\s*(?:cd\s+\S+\s*&&\s*)?sleep\s+(\d+)(?![.\d])")
+_FOREGROUND_SLEEP_RE = re.compile(
+    r"^\s*(?:cd\s+\S+\s*&&\s*)?sleep\s+(\d+(?:\.\d+)?)([smhd]?)(?![\w.])")
+_SLEEP_UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 # A sleep still "in flight" this long past its end did not end the usual way
 # (an Esc, a crash): stop calling it sleeping and let the other checks speak
 _SLEEP_OVERRUN_SECONDS = 30.0
@@ -239,7 +241,7 @@ def _foreground_sleep_seconds(hook_state: dict, now: float) -> Optional[int]:
     m = _FOREGROUND_SLEEP_RE.match(command) if isinstance(command, str) else None
     if m is None:
         return None
-    dur = int(m.group(1))
+    dur = max(1, round(float(m.group(1)) * _SLEEP_UNIT_SECONDS[m.group(2)]))
     try:
         started = float(hook_state.get("timestamp", 0))
     except (TypeError, ValueError):

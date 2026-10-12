@@ -1660,6 +1660,23 @@ class TestForegroundSleepEnds:
         assert self._status(tmp_path, monkeypatch, "PreToolUse", "cd /tmp && sleep 30", 1)[0] \
             == STATUS_BUSY_SLEEPING
 
+    def test_sleep_units_and_decimals(self):
+        """`sleep 1m` was read as 1 s, so a minute's sleep stopped counting
+        after ~31 s; `sleep 0.5` wasn't a sleep at all."""
+        from overcode.hook_status_detector import _FOREGROUND_SLEEP_RE, _SLEEP_UNIT_SECONDS
+
+        def secs(cmd):
+            m = _FOREGROUND_SLEEP_RE.match(cmd)
+            return max(1, round(float(m.group(1)) * _SLEEP_UNIT_SECONDS[m.group(2)])) if m else None
+
+        assert secs("sleep 30") == 30
+        assert secs("sleep 1m") == 60
+        assert secs("sleep 1.5m") == 90
+        assert secs("sleep 2h") == 7200
+        assert secs("sleep 0.5") == 1
+        assert secs("cd /x && sleep 5s") == 5
+        assert secs("sleep 5x") is None
+
     def test_an_esc_during_a_sleep_ends_it(self, tmp_path, monkeypatch):
 
         state_dir = tmp_path / "sessions" / "agents"
