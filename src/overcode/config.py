@@ -8,7 +8,11 @@ Example config:
     tmux_session: "agents"
 """
 
+import copy
+import os
+import re
 import socket
+import tempfile
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -32,22 +36,113 @@ def _clear_config_cache() -> None:
     _config_cache_mtime = 0.0
 
 
+_TOP_LEVEL_KEY = re.compile(r"^([^\s#][^:]*):")
+
+
+def _top_level_blocks(lines: List[str]) -> dict:
+    """{key: (start, end)} line ranges of each top-level mapping entry.
+
+    A block is the key's line plus the indented (and interior blank) lines
+    under it; column-0 comments between blocks belong to no block, so an
+    edit never touches them.
+    """
+    blocks: dict = {}
+    i = 0
+    while i < len(lines):
+        m = _TOP_LEVEL_KEY.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        start, i = i, i + 1
+        while i < len(lines):
+            line = lines[i]
+            if line[:1] in (" ", "\t"):
+                i += 1
+            elif not line.strip():
+                nxt = next((ln for ln in lines[i:] if ln.strip()), "")
+                if nxt[:1] in (" ", "\t"):
+                    i += 1
+                else:
+                    break
+            else:
+                break
+        blocks[m.group(1).strip().strip("'\"")] = (start, i)
+    return blocks
+
+
+def _merge_into_text(text: str, config: dict) -> str:
+    """``text`` (the current config.yaml) with ``config``'s changes applied.
+
+    Only the top-level entries whose values changed are rewritten; every
+    other line, comments included, is kept as the person wrote it.
+    """
+    try:
+        current = yaml.safe_load(text) if text.strip() else {}
+    except yaml.YAMLError:
+        current = None
+    if not isinstance(current, dict):
+        return yaml.dump(config, default_flow_style=False, sort_keys=False)
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    blocks = _top_level_blocks(lines)
+    # Edit from the bottom up so earlier line numbers stay valid
+    edits = []
+    for key in set(current) | set(config):
+        if key in config and current.get(key) == config[key] and key in current:
+            continue
+        rendered = (yaml.dump({key: config[key]}, default_flow_style=False, sort_keys=False)
+                    if key in config else "")
+        if key in blocks:
+            edits.append((blocks[key], rendered))
+        elif key in config:
+            edits.append(((len(lines), len(lines)), rendered))
+    for (start, end), rendered in sorted(edits, key=lambda e: e[0], reverse=True):
+        lines[start:end] = [rendered] if rendered else []
+    return "".join(lines)
+
+
 def save_config(config: dict) -> None:
-    """Save configuration dict to ~/.overcode/config.yaml."""
+    """Save ``config`` to ~/.overcode/config.yaml, keeping the person's comments.
+
+    Only the top-level entries that changed are rewritten, and the file is
+    replaced atomically, so a crash never leaves a half-written config.
+    """
     global _config_cache, _config_cache_time, _config_cache_mtime
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+    try:
+        old_text = CONFIG_PATH.read_text()
+    except FileNotFoundError:
+        old_text = ""
+    new_text = _merge_into_text(old_text, config)
+    fd, tmp = tempfile.mkstemp(dir=CONFIG_PATH.parent, prefix=".config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(new_text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CONFIG_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     # Invalidate cache so next read picks up the write
     _config_cache = None
     _config_cache_time = 0.0
 
 
 def load_config() -> dict:
-    """Load configuration from ~/.overcode/config.yaml.
+    """Load configuration from ~/.overcode/config.yaml, as a copy to change and save.
 
     Returns empty dict if file doesn't exist or is invalid.
-    Uses a TTL + mtime cache to avoid repeated file I/O.
     """
+    return copy.deepcopy(_cached_config())
+
+
+def _cached_config() -> dict:
+    """The parsed config, shared: read-only. A TTL + mtime cache keeps it cheap."""
     global _config_cache, _config_cache_time, _config_cache_mtime
 
     now = time.monotonic()
@@ -84,7 +179,7 @@ def _get_config_value(key_path: str, default=None):
     Example: _get_config_value("web.api_key") loads config["web"]["api_key"].
     Returns default if any key is missing or intermediate value isn't a dict.
     """
-    config = load_config()
+    config = _cached_config()
     keys = key_path.split(".")
     value = config
     for key in keys:

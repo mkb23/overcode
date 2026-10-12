@@ -804,3 +804,70 @@ class TestModelMetadataConfig:
         config_file.write_text("model_metadata:\n  auto_refresh: true\n  max_age_days: soon\n")
         monkeypatch.setattr(config, "CONFIG_PATH", config_file)
         assert config.get_model_metadata_config()["max_age_days"] == 7.0
+
+
+class TestSaveKeepsComments:
+    """Saving from the app rewrote config.yaml with yaml.dump, deleting the
+    person's comments (quality review item 12)."""
+
+    TEXT = (
+        "# My overcode settings\n"
+        "tmux_session: agents  # the default session\n"
+        "\n"
+        "# Sister machines\n"
+        "sisters:\n"
+        "  - name: laptop   # my laptop\n"
+        "    url: http://laptop:8080\n"
+        "\n"
+        "web:\n"
+        "  port: 8080\n"
+    )
+
+    def test_only_changed_entries_are_rewritten(self):
+        from overcode.config import _merge_into_text
+        import yaml
+
+        config = yaml.safe_load(self.TEXT)
+        config["web"]["port"] = 9090
+        out = _merge_into_text(self.TEXT, config)
+        assert "# My overcode settings" in out
+        assert "tmux_session: agents  # the default session" in out
+        assert "# Sister machines" in out and "# my laptop" in out
+        assert yaml.safe_load(out) == config
+
+    def test_new_and_removed_entries(self):
+        from overcode.config import _merge_into_text
+        import yaml
+
+        config = yaml.safe_load(self.TEXT)
+        del config["web"]
+        config["keys"] = {"toggle": "C-o"}
+        out = _merge_into_text(self.TEXT, config)
+        assert "web:" not in out and "port: 8080" not in out
+        assert "# Sister machines" in out
+        assert yaml.safe_load(out) == config
+
+    def test_an_unreadable_file_is_replaced_whole(self):
+        from overcode.config import _merge_into_text
+        import yaml
+
+        out = _merge_into_text("this: [is: not yaml", {"a": 1})
+        assert yaml.safe_load(out) == {"a": 1}
+
+    def test_save_is_atomic_and_load_hands_out_a_copy(self, tmp_path, monkeypatch):
+        from overcode import config as cfg
+
+        path = tmp_path / "config.yaml"
+        path.write_text(self.TEXT)
+        monkeypatch.setattr(cfg, "CONFIG_PATH", path)
+        cfg._clear_config_cache()
+        loaded = cfg.load_config()
+        loaded["web"]["port"] = 1  # not saved: the shared cache must not see it
+        assert cfg.load_config()["web"]["port"] == 8080
+        loaded["web"]["port"] = 9090
+        monkeypatch.setattr(cfg.os, "replace", lambda *a: (_ for _ in ()).throw(OSError("disk")))
+        import pytest
+        with pytest.raises(OSError):
+            cfg.save_config(loaded)
+        assert path.read_text() == self.TEXT  # untouched
+        assert not list(tmp_path.glob(".config.*.tmp"))
