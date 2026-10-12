@@ -502,8 +502,35 @@ class TestLauncherSendToSession:
 class TestLauncherCleanup:
     """Test stale session cleanup"""
 
-    def test_list_sessions_detects_terminated(self, tmp_path):
-        """list_sessions detects and marks terminated sessions"""
+    def test_list_sessions_writes_nothing(self, tmp_path):
+        """list_sessions is read-only: a gone window is not marked terminated"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+        session = launcher.launch(name="orphan")
+        mock_tmux.kill_window("agents", session.tmux_window)
+        before = session_manager.state_file.read_bytes()
+        mtime = session_manager.state_file.stat().st_mtime_ns
+
+        with patch.object(session_manager, "update_session_status") as status, \
+                patch.object(session_manager, "update_session") as update, \
+                patch.object(session_manager, "reclaim_budget") as refund:
+            sessions = launcher.list_sessions()
+
+        assert [s.status for s in sessions] == ["running"]
+        status.assert_not_called()
+        update.assert_not_called()
+        refund.assert_not_called()
+        assert session_manager.state_file.read_bytes() == before
+        assert session_manager.state_file.stat().st_mtime_ns == mtime
+
+    def test_reconcile_lifecycle_detects_terminated(self, tmp_path):
+        """reconcile_lifecycle (no daemon) marks a gone window terminated"""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -519,10 +546,13 @@ class TestLauncherCleanup:
         assert session.status == "running"
         mock_tmux.kill_window("agents", session.tmux_window)
 
-        # list_sessions detects terminated session and marks it
+        result = launcher.reconcile_lifecycle()
+        assert result.terminated == ["orphan"]
         sessions = launcher.list_sessions()
         assert len(sessions) == 1
         assert sessions[0].status == "terminated"
+        # Once: a second pass finds nothing new
+        assert launcher.reconcile_lifecycle().terminated == []
 
         # Session is still in state file but marked terminated
         reloaded = session_manager.get_session_by_name("orphan")
@@ -546,7 +576,7 @@ class TestLauncherCleanup:
         mock_tmux.kill_window("agents", session2.tmux_window)
 
         # Detect terminated session
-        launcher.list_sessions()
+        launcher.reconcile_lifecycle()
 
         # Cleanup removes only terminated sessions
         count = launcher.cleanup_terminated_sessions()
@@ -790,10 +820,10 @@ class TestSendPromptToWindow:
 
 
 class TestListSessionsKillUntracked:
-    """Test list_sessions with kill_untracked option"""
+    """Test kill_untracked_windows (#344)"""
 
-    def test_list_sessions_with_kill_untracked_flag(self, tmp_path):
-        """kill_untracked=True should be accepted as parameter"""
+    def test_kill_untracked_keeps_tracked_agent(self, tmp_path):
+        """A tracked agent's window survives kill_untracked_windows"""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -807,9 +837,10 @@ class TestListSessionsKillUntracked:
         # Launch a tracked session
         launcher.launch(name="tracked-agent")
 
-        # List with kill_untracked=True should work without error
-        sessions = launcher.list_sessions(kill_untracked=True)
+        killed = launcher.kill_untracked_windows()
+        sessions = launcher.list_sessions()
 
+        assert killed == []
         assert len(sessions) == 1
         assert sessions[0].name == "tracked-agent"
 
@@ -841,7 +872,7 @@ class TestListSessionsKillUntracked:
         for name in (EMPTY_PLACEHOLDER_WINDOW, DAEMON_CLAUDE_WINDOW_NAME, proxy, "rogue"):
             mock_tmux.new_window("agents", name)
 
-        launcher.list_sessions(kill_untracked=True)
+        assert launcher.kill_untracked_windows() == ["rogue"]
 
         remaining = set(mock_tmux.sessions["agents"])
         assert "rogue" not in remaining

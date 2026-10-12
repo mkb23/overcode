@@ -1819,8 +1819,10 @@ class MonitorDaemon:
         self._sync_git(sessions, now)
         self._sync_burn(sessions, now)
         self._dispatch_heartbeats(sessions)
+        newly_done: list = []
         try:
             self._apply_visits()
+            newly_done = self._settle_children(sessions)
             session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
             self._cleanup_stale(sessions)
             self._publish_and_enforce(sessions, session_states, all_waiting, index, now)
@@ -1830,6 +1832,7 @@ class MonitorDaemon:
             # was staged before the failure lands, as it did when each
             # change was written as it was found.
             self._flush_pending_writes()
+            self._refund_done_children(newly_done)
         self._maybe_rotate_history(now)
         self._maybe_refresh_model_metadata(now)
 
@@ -2115,6 +2118,51 @@ class MonitorDaemon:
         # Track pending heartbeat starts for timeline marker
         self._heartbeat_start_pending.update(self._heartbeat_triggered_sessions)
 
+    def _settle_children(self, sessions: list) -> list:
+        """Stage done / waiting_oversight for children whose Stop hook fired.
+
+        The rule is ``child_lifecycle.settled_child_status``: a stopped child
+        with a report is done, one without is waiting for oversight, window
+        or no window. Staged before detection, so ``_detect_and_enrich``
+        sees a done child as done and does not mark a stopped child whose
+        window is gone terminated (``_is_waiting_on_oversight``). The
+        daemon is the one writer of this; the TUI and ``overcode list``
+        only read it. Returns the ids of children that became done this
+        tick, for ``_refund_done_children`` once the status is written.
+        """
+        from .child_lifecycle import settled_child_status
+
+        newly_done = []
+        for snapshot in sessions:
+            if snapshot.parent_session_id is None:
+                continue  # no file reads for a top-level agent
+            session = self._pending.view(snapshot)
+            new_status = settled_child_status(session, stopped=self._hook_stopped(session))
+            if new_status is None:
+                continue
+            self._pending.update_session_status(session.id, new_status)
+            self.log.info(f"[{session.name}] stopped: {new_status}")
+            if new_status == "done":
+                newly_done.append(session.id)
+        return newly_done
+
+    def _refund_done_children(self, child_ids: list) -> None:
+        """Refund the unused budget of children that just became done (#432).
+
+        Runs after the tick's write, so the child's spend is this tick's.
+        Once per child: a done child is never settled again, and
+        ``reclaim_budget`` caps the child's budget at its spend, so a
+        repeated call refunds nothing.
+        """
+        for child_id in child_ids:
+            try:
+                refunded = self.session_manager.reclaim_budget(child_id)
+            except Exception as e:
+                self.log.error(f"budget refund for {child_id} failed: {e}")
+                continue
+            if refunded and refunded > 0:
+                self.log.info(f"Refunded ${refunded:.4f} from child {child_id} to its parent")
+
     def _detect_and_enrich(
         self, sessions: list, now: datetime, index: Optional[SessionIndex] = None
     ) -> tuple:
@@ -2390,18 +2438,27 @@ class MonitorDaemon:
     def _is_waiting_on_oversight(self, session) -> bool:
         """A child parked in waiting_oversight whose Stop hook has fired.
 
-        Its window is gone, so detection says terminated — but the TUI's
-        ``AgentLauncher.list_sessions`` re-asserts waiting_oversight for
-        exactly this case (parent set, Stop hook, no report) on its next
-        pass, and the two used to rewrite sessions.json in turn every 10 s
-        for as long as the child sat there (audit R5). The persisted status
-        stays waiting_oversight; the published status is terminated either
-        way, and the oversight timeout keeps applying to it.
+        Its window is gone, so detection says terminated — but
+        ``_settle_children`` keeps exactly this case (parent set, Stop hook,
+        no report) waiting_oversight, and the two would rewrite
+        sessions.json in turn every tick for as long as the child sat there
+        (audit R5). The persisted status stays waiting_oversight; the
+        published status is terminated either way, and the oversight
+        timeout keeps applying to it.
         """
         if session.status != STATUS_WAITING_OVERSIGHT or session.parent_session_id is None:
             return False
+        # The same read _settle_children decided with, so the two agree
+        return self._hook_stopped(session)
+
+    def _hook_stopped(self, session) -> bool:
+        """Whether ``session``'s last hook event is Stop, read as detection reads it."""
+        read = getattr(getattr(self.detector, "hooks", None), "_read_hook_state", None)
+        if read is None:
+            from .child_lifecycle import hook_stopped
+            return hook_stopped(session.tmux_session, session.name)
         try:
-            hook_state = self.detector.hooks._read_hook_state(session.name)
+            hook_state = read(session.name)
         except Exception:
             return False
         return isinstance(hook_state, dict) and hook_state.get("event") == "Stop"

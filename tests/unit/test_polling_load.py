@@ -110,7 +110,7 @@ class TestListSessionsUsesOneWindowList:
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         return AgentLauncher(tmux_session="agents", tmux_manager=tm, session_manager=sm), tm, sm
 
-    def test_one_list_windows_no_per_session_exists(self, tmp_path):
+    def test_list_sessions_makes_no_tmux_call(self, tmp_path):
         launcher, tm, sm = self._launcher(tmp_path)
         for i in range(5):
             launcher.launch(name=f"agent{i}")
@@ -119,17 +119,29 @@ class TestListSessionsUsesOneWindowList:
         sessions = launcher.list_sessions()
 
         assert len(sessions) == 5
+        assert tm.list_calls == 0
+        assert tm.exists_calls == 0
+
+    def test_reconcile_one_list_windows_no_per_session_exists(self, tmp_path):
+        launcher, tm, sm = self._launcher(tmp_path)
+        for i in range(5):
+            launcher.launch(name=f"agent{i}")
+        tm.list_calls = tm.exists_calls = 0
+
+        launcher.reconcile_lifecycle()
+
         assert tm.list_calls == 1
         assert tm.exists_calls == 0
-        assert all(s.status != "terminated" for s in sessions)
+        assert all(s.status != "terminated" for s in launcher.list_sessions())
 
-    def test_still_detects_terminated(self, tmp_path):
+    def test_reconcile_detects_terminated(self, tmp_path):
         launcher, tm, sm = self._launcher(tmp_path)
         launcher.launch(name="alive")
         launcher.launch(name="dead")
         dead = sm.get_session_by_name("dead")
         tm.kill_window(dead.tmux_window)
 
+        launcher.reconcile_lifecycle()
         by_name = {s.name: s for s in launcher.list_sessions()}
         assert by_name["dead"].status == "terminated"
         assert by_name["alive"].status != "terminated"

@@ -21,12 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from .status_constants import STATUS_TERMINATED, STATUS_WAITING_OVERSIGHT
-
-# Statuses of an agent whose process is gone but whose record is kept.
-# waiting_oversight is a child that stopped without reporting; after a
-# reboot its window is gone like any other.
-REVIVABLE_STATUSES = frozenset({STATUS_TERMINATED, STATUS_WAITING_OVERSIGHT})
+from .status_constants import STATUS_TERMINATED
 
 JOBS_TMUX_SESSION = "jobs"
 SPLIT_TMUX_SESSION = "overcode"  # cli/split.py: the split layout's own session
@@ -70,9 +65,9 @@ def _has_report(session) -> bool:
     """A child that reported is finished work (done, or auto-archived done)."""
     if session.parent_session_id is None:
         return False
-    from .follow_mode import _check_report
+    from .child_lifecycle import read_report
     try:
-        return _check_report(session.tmux_session, session.name) is not None
+        return read_report(session.tmux_session, session.name) is not None
     except Exception:
         return False
 
@@ -80,9 +75,11 @@ def _has_report(session) -> bool:
 def find_dead_agents(launcher) -> list:
     """Agents in the launcher's tmux session whose window is gone, parents first.
 
-    Refreshes terminated detection first (``list_sessions``). Skips done
-    children and children that filed a report — auto-archived done agents
-    are marked terminated too, and are finished, not dead.
+    Read-only: an agent is dead when its window is gone, whatever status
+    sessions.json has caught up to (the daemon may not have marked it
+    terminated yet, or may not be running). Skips done children and
+    children that filed a report — auto-archived done agents are marked
+    terminated too, and are finished, not dead.
     """
     from .launcher import window_in_lookup, window_lookup
 
@@ -90,7 +87,7 @@ def find_dead_agents(launcher) -> list:
     existing = window_lookup(launcher._list_tmux_windows_cheap())
     dead = [
         s for s in sessions
-        if s.status in REVIVABLE_STATUSES
+        if s.status != "done"
         and not window_in_lookup(s.tmux_window, existing)
         and not _has_report(s)
     ]

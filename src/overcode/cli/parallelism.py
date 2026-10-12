@@ -67,7 +67,7 @@ def parallelism(
 
     launcher = AgentLauncher(session)
     sessions = [
-        s for s in launcher.list_sessions(detect_terminated=False)
+        s for s in launcher.list_sessions()
         if s.status not in ("terminated", "done")
     ]
 

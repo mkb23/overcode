@@ -1829,7 +1829,7 @@ class TestCountUntrackedWindows:
             monitor_daemon.MonitorDaemon._count_untracked_windows
         )
         assert "untracked_window_names(" in inspect.getsource(
-            launcher.AgentLauncher.list_sessions
+            launcher.AgentLauncher.kill_untracked_windows
         )
 
     def test_tmux_interface_has_no_session_exists(self):

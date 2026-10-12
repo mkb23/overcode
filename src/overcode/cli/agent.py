@@ -151,6 +151,27 @@ def _compute_cross_session_flags(sessions, daemon_state, use_daemon: bool) -> di
     }
 
 
+def _reconcile_without_daemon(launcher, tmux_session: str) -> None:
+    """Settle lifecycle once when no monitor daemon is running to have done it.
+
+    The daemon is the one writer of terminated / done / waiting_oversight
+    (and the #432 refund on done); with it running, a CLI listing only
+    reads. Without it nothing would ever mark a gone window terminated, so
+    ``list`` and ``cleanup`` apply the same rule once
+    (``AgentLauncher.reconcile_lifecycle``) and say what they found.
+    """
+    from ..monitor_daemon import is_monitor_daemon_running
+
+    if is_monitor_daemon_running(tmux_session):
+        return
+    result = launcher.reconcile_lifecycle()
+    for name, refunded in result.refunds:
+        print(f"  Refunded ${refunded:.4f} from '{name}' to its parent")
+    if result.terminated:
+        print(f"Detected {len(result.terminated)} terminated session(s): "
+              f"{', '.join(result.terminated)}")
+
+
 def _get_sessions_to_cleanup(launcher, done: bool) -> tuple[int, int]:
     """Returns (terminated_count, done_count) after performing cleanup."""
     terminated_count = launcher.cleanup_terminated_sessions()
@@ -545,6 +566,7 @@ def list_agents(
         detail = "full"
 
     launcher = AgentLauncher(session)
+    _reconcile_without_daemon(launcher, session)
     sessions = launcher.list_sessions()
 
     # Merge sister sessions if --sisters flag
@@ -1096,11 +1118,16 @@ def cleanup(
     Use --untracked to kill tmux windows that exist but aren't tracked by any agent.
     """
     launcher = AgentLauncher(session)
+    _reconcile_without_daemon(launcher, session)
     count, done_count = _get_sessions_to_cleanup(launcher, done)
 
     # Kill untracked tmux windows (#344)
     if untracked:
-        launcher.list_sessions(kill_untracked=True)
+        killed = launcher.kill_untracked_windows()
+        for w_name in killed:
+            print(f"Killing untracked window {w_name}")
+        if killed:
+            print(f"Killed {len(killed)} untracked window(s)")
 
     total = count + done_count
     if total > 0:

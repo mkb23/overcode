@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -115,6 +116,16 @@ def validate_session_name(name: str) -> None:
         raise InvalidSessionNameError(name, "name cannot be empty")
     if not SESSION_NAME_PATTERN.match(name):
         raise InvalidSessionNameError(name)
+
+
+@dataclass
+class LifecycleReconcile:
+    """What ``AgentLauncher.reconcile_lifecycle`` changed (agent names)."""
+
+    terminated: List[str] = field(default_factory=list)
+    done: List[str] = field(default_factory=list)
+    waiting_oversight: List[str] = field(default_factory=list)
+    refunds: List[Tuple[str, float]] = field(default_factory=list)
 
 
 class AgentLauncher:
@@ -1246,108 +1257,87 @@ class AgentLauncher:
 
         self.tmux.attach_session(window=window, bare=bare)
 
-    def list_sessions(self, detect_terminated: bool = True, kill_untracked: bool = False) -> List[Session]:
+    def list_sessions(self) -> List[Session]:
+        """Every registered session in this tmux session, as sessions.json has them.
+
+        Read-only: no tmux call, no status write, no output. The lifecycle
+        (terminated, a child's done / waiting_oversight, the #432 budget
+        refund) is decided by the monitor daemon's tick; a CLI command that
+        must see it settled with no daemon running calls
+        ``reconcile_lifecycle`` first. The ``Session`` objects are the
+        manager's shared snapshot: read, never mutate.
         """
-        List all registered sessions, detecting terminated ones.
+        return [s for s in self.sessions.list_sessions()
+                if s.tmux_session == self.tmux.session_name]
 
-        Args:
-            detect_terminated: If True (default), check tmux and mark sessions as
-                             "terminated" if their window no longer exists
-            kill_untracked: If True, kill tmux windows that aren't tracked in sessions.json
+    def reconcile_lifecycle(self) -> "LifecycleReconcile":
+        """Settle every agent's lifecycle once, for a CLI run with no daemon.
 
-        Returns:
-            List of all Session objects (including terminated ones)
+        The monitor daemon does this every tick (``MonitorDaemon._settle_children``
+        and its terminated detection); this is the same rule applied once,
+        for ``overcode list`` / ``cleanup`` when no daemon is running to
+        have done it. Never call it while the daemon runs: there must be one
+        writer of lifecycle state.
+
+        - A legacy digit window id is resolved to the window's name.
+        - A child whose Stop hook fired becomes done (with a report) or
+          waiting_oversight (without), whether or not its window is there.
+        - Any other agent whose window is gone becomes terminated.
+        - A child that just became done has its unused budget refunded to
+          its parent (#432; idempotent, ``reclaim_budget`` caps the child).
+
+        Writes sessions.json, prints nothing; returns what changed.
         """
-        all_sessions = self.sessions.list_sessions()
+        from .child_lifecycle import hook_stopped, settled_child_status
 
-        # Filter to only sessions belonging to this tmux session
-        my_sessions = [s for s in all_sessions if s.tmux_session == self.tmux.session_name]
-
-        # One tmux round-trip for the whole call: the window list serves both
-        # the legacy-index migration and the existence checks below. The old
-        # per-session window_exists() cost two tmux commands per agent, and
-        # the TUI calls this every 10s.
+        result = LifecycleReconcile()
+        my_sessions = self.list_sessions()
         tmux_windows = self._list_tmux_windows_cheap()
-
-        # Migrate legacy digit-string tmux_window values to actual window names.
-        # Pre-name-based sessions stored window index (e.g. 4 → "4") but the new
-        # code expects the window name (e.g. "overcode2"). Resolve via tmux.
         self._migrate_legacy_window_ids(my_sessions, tmux_windows)
-
-        # Detect terminated sessions (tmux window gone but session still tracked)
-        if detect_terminated:
-            from .follow_mode import _check_hook_stop, _check_report
-            from .status_constants import STATUS_WAITING_OVERSIGHT
-
-            existing = window_lookup(tmux_windows)
-            newly_terminated = []
-            newly_done: list[str] = []  # session ids of children that just flipped to done (#432)
-            for session in my_sessions:
-                # Only check non-terminated sessions
-                if session.status not in ("terminated", "done"):
-                    if not window_in_lookup(session.tmux_window, existing):
-                        # Child agents with Stop hook: check for report first
-                        if (session.parent_session_id is not None
-                                and _check_hook_stop(self.tmux.session_name, session.name)):
-                            report = _check_report(self.tmux.session_name, session.name)
-                            if report:
-                                self.sessions.update_session_status(session.id, "done")
-                                session.status = "done"
-                                newly_done.append(session.id)
-                            else:
-                                self.sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
-                                session.status = STATUS_WAITING_OVERSIGHT
-                        else:
-                            self.sessions.update_session_status(session.id, "terminated")
-                            session.status = "terminated"
-                            newly_terminated.append(session.name)
-
-            # Detect child agents with Stop hook but no report → waiting_oversight (#244)
-            # Also handle children that already have reports → done
-            for session in my_sessions:
-                if (session.status in ("running", "terminated", STATUS_WAITING_OVERSIGHT)
-                        and session.parent_session_id is not None
-                        and _check_hook_stop(self.tmux.session_name, session.name)):
-                    report = _check_report(self.tmux.session_name, session.name)
-                    if report:
-                        prev_status = session.status
-                        self.sessions.update_session_status(session.id, "done")
-                        session.status = "done"
-                        if prev_status != "done":
-                            newly_done.append(session.id)
-                    elif session.status != STATUS_WAITING_OVERSIGHT:
-                        self.sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
-                        session.status = STATUS_WAITING_OVERSIGHT
-
-            # Auto-refund unused budget on done children (#432). Idempotent —
-            # reclaim_budget caps the child's budget at the spent amount, so a
-            # later list_sessions call won't double-refund.
-            for child_id in newly_done:
-                refunded = self.sessions.reclaim_budget(child_id)
+        existing = window_lookup(tmux_windows)
+        for snapshot in my_sessions:
+            session = self.sessions.get_session(snapshot.id) or snapshot
+            if session.status == "done":
+                continue
+            stopped_child = (session.parent_session_id is not None
+                             and hook_stopped(session.tmux_session, session.name))
+            new_status = settled_child_status(session, stopped=stopped_child)
+            # A stopped child is settled above, never terminated: its window
+            # going is how a finished child ends (the daemon's
+            # _is_waiting_on_oversight guard)
+            if (new_status is None and not stopped_child
+                    and session.status != "terminated"
+                    and not window_in_lookup(session.tmux_window, existing)):
+                new_status = "terminated"
+            if new_status is None:
+                continue
+            self.sessions.update_session_status(session.id, new_status)
+            if new_status == "terminated":
+                result.terminated.append(session.name)
+            elif new_status == "done":
+                result.done.append(session.name)
+                refunded = self.sessions.reclaim_budget(session.id)
                 if refunded and refunded > 0:
-                    print(f"  Refunded ${refunded:.4f} from child to parent")
+                    result.refunds.append((session.name, refunded))
+            else:
+                result.waiting_oversight.append(session.name)
+        return result
 
-            if newly_terminated:
-                print(f"Detected {len(newly_terminated)} terminated session(s): {', '.join(newly_terminated)}")
+    def kill_untracked_windows(self) -> List[str]:
+        """Kill this tmux session's windows no live agent is tracked in; their names.
 
-        # Kill untracked windows (tmux windows exist but not tracked)
-        if kill_untracked and self.tmux.session_exists():
-            active_sessions = [s for s in my_sessions if s.status != "terminated"]
-            tracked_windows = {s.tmux_window for s in active_sessions}
-            # The same predicate the monitor daemon counts with (#344), so
-            # what it reports as untracked is exactly what this kills:
-            # never window 0 (default shell), a live agent's window, or
-            # one of overcode's own (placeholder #457, supervisor claude,
-            # SSH proxies).
-            untracked = untracked_window_names(self.tmux.list_windows(), tracked_windows)
-            for w_name in untracked:
-                print(f"Killing untracked window {w_name}")
-                self.tmux.kill_window(w_name)
-
-            if untracked:
-                print(f"Killed {len(untracked)} untracked window(s)")
-
-        return my_sessions
+        The same predicate the monitor daemon counts with (#344), so what it
+        reports as untracked is exactly what this kills: never window 0
+        (default shell), a live agent's window, or one of overcode's own
+        (placeholder #457, supervisor claude, SSH proxies).
+        """
+        if not self.tmux.session_exists():
+            return []
+        tracked_windows = {s.tmux_window for s in self.list_sessions() if s.status != "terminated"}
+        untracked = untracked_window_names(self.tmux.list_windows(), tracked_windows)
+        for w_name in untracked:
+            self.tmux.kill_window(w_name)
+        return list(untracked)
 
     def cleanup_terminated_sessions(self) -> int:
         """Remove all terminated sessions from state.
@@ -1554,9 +1544,10 @@ class AgentLauncher:
 
         for session in sessions:
             if session.tmux_window.isdigit() and session.tmux_window in index_to_name:
-                new_name = index_to_name[session.tmux_window]
-                session.tmux_window = new_name
-                self.sessions.update_session(session.id, tmux_window=new_name)
+                # Written, not set on ``session``: it is the shared snapshot
+                self.sessions.update_session(
+                    session.id, tmux_window=index_to_name[session.tmux_window]
+                )
 
     def get_session_output(self, name: str, lines: int = 50) -> Optional[str]:
         """Get recent output from a session.

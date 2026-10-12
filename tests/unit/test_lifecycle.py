@@ -79,7 +79,7 @@ class TestFindDeadAgents:
         _kill_all_windows(launcher, sm)
         grandchild = sm.get_session_by_name("grandchild")
         sm.update_session_status(grandchild.id, "done")
-        with patch("overcode.follow_mode._check_report",
+        with patch("overcode.child_lifecycle.read_report",
                    side_effect=lambda ts, name: {"status": "success"} if name == "child" else None):
             names = [s.name for s in find_dead_agents(launcher)]
         assert names == ["parent"]
@@ -126,10 +126,12 @@ class TestReviveAll:
     def test_dry_run_changes_nothing(self, fleet):
         launcher, mock_tmux, sm = fleet
         _kill_all_windows(launcher, sm)
+        before = {s.id: s.status for s in sm.list_sessions()}
         results = revive_all(launcher, dry_run=True)
         assert [r.ok for r in results] == [None, None, None]
         assert mock_tmux.sent_keys == []
-        assert all(s.status == "terminated" for s in sm.list_sessions())
+        # Finding the dead is read-only: no status written either
+        assert {s.id: s.status for s in sm.list_sessions()} == before
 
     def test_fresh(self, fleet):
         launcher, mock_tmux, sm = fleet

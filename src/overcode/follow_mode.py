@@ -6,7 +6,6 @@ a blocking, subprocess-like experience while the child remains a first-class
 tmux citizen that humans can observe and intervene in.
 """
 
-import json
 import signal
 import subprocess
 import sys
@@ -17,7 +16,7 @@ from typing import Optional
 
 from .session_manager import Session, SessionManager, rename_notice
 from .status_patterns import strip_ansi
-from .settings import get_session_dir
+from .child_lifecycle import hook_stopped, read_report
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_WAITING_OVERSIGHT
 from .tmux_utils import tmux_window_target, _build_tmux_cmd
 
@@ -45,42 +44,9 @@ def _capture_pane(tmux_session: str, window_name: str, lines: int = DEFAULT_CAPT
         return None
 
 
-def _check_hook_stop(tmux_session: str, agent_name: str) -> bool:
-    """Check if hook state file shows a Stop event for this agent."""
-    session_dir = get_session_dir(tmux_session)
-    hook_state_file = session_dir / f"hook_state_{agent_name}.json"
-
-    if not hook_state_file.exists():
-        return False
-
-    try:
-        with open(hook_state_file) as f:
-            data = json.load(f)
-        return data.get("event") == "Stop"
-    except (json.JSONDecodeError, IOError):
-        return False
-
-
-def _check_report(tmux_session: str, agent_name: str) -> Optional[dict]:
-    """Check if a report file exists for this agent.
-
-    Returns:
-        Parsed report dict with 'status', 'reason', 'timestamp', or None.
-    """
-    session_dir = get_session_dir(tmux_session)
-    report_file = session_dir / f"report_{agent_name}.json"
-
-    if not report_file.exists():
-        return None
-
-    try:
-        with open(report_file) as f:
-            data = json.load(f)
-        if "status" in data:
-            return data
-        return None
-    except (json.JSONDecodeError, IOError):
-        return None
+# The read side lives with the lifecycle rule; follow uses it under these names.
+_check_hook_stop = hook_stopped
+_check_report = read_report
 
 
 def _check_session_terminated(

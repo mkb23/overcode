@@ -95,9 +95,7 @@ class TestOpencode2Backend:
         deadline = time.time() + timeout
         last = None
         while time.time() < deadline:
-            sessions = launcher.list_sessions(
-                detect_terminated=False, kill_untracked=False
-            )
+            sessions = launcher.list_sessions()
             session = next(
                 (s for s in sessions if s.name == name), None
             )
@@ -285,9 +283,7 @@ class TestOpencode2Backend:
             f"Window survived kill. Windows: {tmux_result.stdout}"
 
         launcher = AgentLauncher(self.session)
-        sessions = launcher.list_sessions(
-            detect_terminated=False, kill_untracked=False
-        )
+        sessions = launcher.list_sessions()
         assert not any(s.name == "oc2-kill" for s in sessions), \
             "Session survived kill in state"
 

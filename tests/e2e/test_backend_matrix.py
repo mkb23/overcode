@@ -251,9 +251,7 @@ class TestBackendMatrix:
         deadline = time.time() + timeout
         last = None
         while time.time() < deadline:
-            sessions = launcher.list_sessions(
-                detect_terminated=False, kill_untracked=False
-            )
+            sessions = launcher.list_sessions()
             session = next((s for s in sessions if s.name == name), None)
             if session is None:
                 raise AssertionError(f"agent {name!r} not in state")
@@ -281,9 +279,7 @@ class TestBackendMatrix:
 
         # The session record carries the backend, so every later
         # per-session dispatch (detector, gestures, stats) resolves to it.
-        sessions = AgentLauncher(self.session).list_sessions(
-            detect_terminated=False, kill_untracked=False
-        )
+        sessions = AgentLauncher(self.session).list_sessions()
         session = next(s for s in sessions if s.name == name)
         assert session.backend == self.spec.backend
 
@@ -377,9 +373,7 @@ class TestBackendMatrix:
         ).stdout
         assert name not in windows, f"Window survived kill. Windows: {windows}"
 
-        sessions = AgentLauncher(self.session).list_sessions(
-            detect_terminated=False, kill_untracked=False
-        )
+        sessions = AgentLauncher(self.session).list_sessions()
         assert not any(s.name == name for s in sessions), \
             "Session survived kill in state"
 

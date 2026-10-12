@@ -32,7 +32,7 @@ class TestCheckHookStop:
         hook_state = tmp_path / "hook_state_my-agent.json"
         hook_state.write_text(json.dumps({"event": "Stop"}))
 
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_hook_stop("agents", "my-agent")
 
         assert result is True
@@ -42,14 +42,14 @@ class TestCheckHookStop:
         hook_state = tmp_path / "hook_state_my-agent.json"
         hook_state.write_text(json.dumps({"event": "UserPromptSubmit"}))
 
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_hook_stop("agents", "my-agent")
 
         assert result is False
 
     def test_returns_false_when_file_missing(self, tmp_path):
         """Should return False when hook state file doesn't exist."""
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_hook_stop("agents", "my-agent")
 
         assert result is False
@@ -59,7 +59,7 @@ class TestCheckHookStop:
         hook_state = tmp_path / "hook_state_my-agent.json"
         hook_state.write_text("not valid json")
 
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_hook_stop("agents", "my-agent")
 
         assert result is False
@@ -140,14 +140,14 @@ class TestCheckReport:
         report_file = tmp_path / "report_my-agent.json"
         report_file.write_text(json.dumps(report))
 
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_report("agents", "my-agent")
 
         assert result is not None
         assert result["status"] == "success"
 
     def test_returns_none_when_file_missing(self, tmp_path):
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_report("agents", "my-agent")
 
         assert result is None
@@ -156,7 +156,7 @@ class TestCheckReport:
         report_file = tmp_path / "report_my-agent.json"
         report_file.write_text("not json")
 
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_report("agents", "my-agent")
 
         assert result is None
@@ -165,7 +165,7 @@ class TestCheckReport:
         report_file = tmp_path / "report_my-agent.json"
         report_file.write_text(json.dumps({"reason": "done"}))
 
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_report("agents", "my-agent")
 
         assert result is None
@@ -175,7 +175,7 @@ class TestCheckReport:
         report_file = tmp_path / "report_my-agent.json"
         report_file.write_text(json.dumps(report))
 
-        with patch("overcode.follow_mode.get_session_dir", return_value=tmp_path):
+        with patch("overcode.child_lifecycle.get_session_dir", return_value=tmp_path):
             result = _check_report("agents", "my-agent")
 
         assert result["status"] == "failure"

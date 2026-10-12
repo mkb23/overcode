@@ -474,9 +474,7 @@ class TestLiveBackend:
         raise AssertionError(f"pane never showed {markers!r}:\n{content}")
 
     def _session(self):
-        sessions = AgentLauncher(self.session).list_sessions(
-            detect_terminated=False, kill_untracked=False
-        )
+        sessions = AgentLauncher(self.session).list_sessions()
         return next((s for s in sessions if s.name == self.name), None)
 
     def _status(self) -> Tuple[str, str]:

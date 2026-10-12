@@ -112,6 +112,21 @@ from .tui_actions.mentor import MentorMixin
 # was disabled, because _mark_event kept appending with no flush scheduled.
 HEARTBEAT_LOG_MAX_ENTRIES = 10_000
 
+def session_row_key(sessions) -> tuple:
+    """What decides the session list's rows and their order, per agent.
+
+    Membership, and the fields row filtering and sorting read (status,
+    asleep, tags, parent, name). Two lists with the same key show the same
+    rows, so the focused-pane tick re-applies the list only when it moves.
+    """
+    return tuple(
+        (s.id, getattr(s, "name", None), getattr(s, "status", None),
+         bool(getattr(s, "is_asleep", False)),
+         tuple(getattr(s, "tags", None) or ()), getattr(s, "parent_session_id", None))
+        for s in sessions
+    )
+
+
 # Periodic timer cadences (seconds). These are the product's freshness
 # contract and are never changed to save CPU. Since 0.6.0 the TUI is a view
 # of the engine (docs/design/engine-0.6.md): statuses, stats, git and burn
@@ -537,6 +552,9 @@ class SupervisorTUI(
         self._notifier = MacNotifier(mode=self._prefs.notifications)
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
+        # session_row_key of the local session list last applied: the
+        # focused-pane tick applies a new list when this no longer matches
+        self._session_row_key: tuple = ()
         self._terminated_times: dict[str, float] = {}  # session_id -> monotonic time
         self._TERMINATED_GC_SECONDS: float = 600.0  # 10 minutes
 
@@ -1283,8 +1301,10 @@ class SupervisorTUI(
         The capture feeds the focused row's pane-derived columns (and the
         preview); the rest of the row, and every other row, is the engine's.
         The same worker re-reads the session table (a stat while
-        sessions.json is unchanged). The clock repaints a row only if it
-        would now draw differently (a duration or countdown moved).
+        sessions.json is unchanged), so an agent added, removed or settled
+        (terminated, done) gets or loses its row within a tick. The clock
+        repaints a row only if it would now draw differently (a duration or
+        countdown moved).
         """
         if not self._focused_capture_in_flight:
             widget = self._get_focused_widget()
@@ -1317,19 +1337,35 @@ class SupervisorTUI(
 
         The session table is a stat while sessions.json is unchanged; a
         changed one (a rename, standing orders, a value) reaches the rows
-        within a tick.
+        within a tick, and so does a new or removed agent (``local``, this
+        tmux session's agents, read-only).
         """
         try:
             content = (self.detector.get_pane_content(window) or "") if window else None
             fresh = {s.id: s for s in self.session_manager.list_sessions()}
-            self.call_from_thread(self._apply_focused_capture, session_id, content, fresh)
+            local = self.launcher.list_sessions()
+            # The key is built here, off the main thread; the main thread compares
+            self.call_from_thread(self._apply_focused_capture, session_id, content, fresh,
+                                  local, session_row_key(local))
         finally:
             self._focused_capture_in_flight = False
 
     def _apply_focused_capture(self, session_id: Optional[str], content: Optional[str],
-                               fresh: dict) -> None:
-        """Main thread: the focused row's pane, and fresh session metadata for every row."""
+                               fresh: dict, local: Optional[list] = None,
+                               local_key: Optional[tuple] = None) -> None:
+        """Main thread: the focused row's pane, and fresh session metadata for every row.
+
+        ``local`` is the session list ``refresh_sessions`` would apply; when
+        its row set differs from what is shown (an agent launched, killed,
+        terminated or done since), it is applied now rather than on the
+        next 10 s refresh.
+        """
         self._mark_event("apply_focused_start")
+        if local is not None:
+            if local_key is None:
+                local_key = session_row_key(local)
+            if local_key != self._session_row_key:
+                self._apply_sessions(local)
         changed = []
         focused_id = self._selected_session_id()
         for widget in self.query(SessionSummary):
@@ -1574,8 +1610,10 @@ class SupervisorTUI(
     def refresh_sessions(self) -> None:
         """Refresh session list (kicks off background worker).
 
-        Uses launcher.list_sessions() to detect terminated sessions
-        (tmux windows that no longer exist, e.g., after machine reboot).
+        Reads ``launcher.list_sessions()``, which writes nothing: the
+        monitor daemon decides terminated / done / waiting_oversight and
+        the TUI shows what it wrote. New and removed agents also arrive
+        through the focused-pane tick (``_apply_focused_capture``).
         """
         self._fetch_sessions_async()
 
@@ -1588,6 +1626,7 @@ class SupervisorTUI(
 
     def _apply_sessions(self, sessions: list) -> None:
         """Apply refreshed session list on main thread (no I/O)."""
+        self._session_row_key = session_row_key(sessions)
         self._gc_terminated_sessions()
         # Detect new sessions for timeline refresh (#244)
         old_names = {s.name for s in self.sessions}

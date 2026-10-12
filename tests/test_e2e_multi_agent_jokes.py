@@ -306,7 +306,7 @@ class E2ETestHelper:
         try:
             # Kill all registered sessions
             launcher = AgentLauncher(self.tmux_session)
-            sessions = launcher.list_sessions(detect_terminated=False, kill_untracked=False)
+            sessions = launcher.list_sessions()
 
             for session in sessions:
                 print(f"  Killing session: {session.name}")
@@ -368,9 +368,7 @@ class E2ETestHelper:
         start_time = time.time()
 
         # Get the session to find its window
-        sessions = AgentLauncher(self.tmux_session).list_sessions(
-            detect_terminated=False, kill_untracked=False
-        )
+        sessions = AgentLauncher(self.tmux_session).list_sessions()
         session = next((s for s in sessions if s.name == session_name), None)
         if not session:
             print(f"    ✗ Session not found: {session_name}")
@@ -397,9 +395,7 @@ class E2ETestHelper:
         print(f"  Sending to session '{session_name}': {text[:50]}...")
 
         # Get the session window
-        sessions = AgentLauncher(self.tmux_session).list_sessions(
-            detect_terminated=False, kill_untracked=False
-        )
+        sessions = AgentLauncher(self.tmux_session).list_sessions()
         session = next((s for s in sessions if s.name == session_name), None)
         if not session:
             print(f"    ✗ Session not found: {session_name}")
@@ -442,9 +438,7 @@ class E2ETestHelper:
         """
         print(f"  Accepting bypass permissions dialog for '{session_name}'...")
 
-        sessions = AgentLauncher(self.tmux_session).list_sessions(
-            detect_terminated=False, kill_untracked=False
-        )
+        sessions = AgentLauncher(self.tmux_session).list_sessions()
         session = next((s for s in sessions if s.name == session_name), None)
         if not session:
             print(f"    ✗ Session not found: {session_name}")
@@ -568,7 +562,7 @@ def test_e2e_multi_agent_jokes_with_feedback(test_helper: E2ETestHelper):
 
     # Step 1: Verify clean slate (only check sessions in our test tmux session)
     print("\n[Step 1] Verifying clean slate...")
-    all_sessions = launcher.list_sessions(detect_terminated=False, kill_untracked=False)
+    all_sessions = launcher.list_sessions()
     sessions = [s for s in all_sessions if s.tmux_session == TEST_TMUX_SESSION]
     assert len(sessions) == 0, f"Expected 0 sessions in {TEST_TMUX_SESSION}, found {len(sessions)}"
     print("  ✓ No existing sessions")
@@ -711,7 +705,7 @@ def test_e2e_multi_agent_jokes_with_feedback(test_helper: E2ETestHelper):
 
     # Step 9: Verify sessions are in a good state
     print("\n[Step 9] Verifying final session state...")
-    final_sessions = launcher.list_sessions(detect_terminated=False, kill_untracked=False)
+    final_sessions = launcher.list_sessions()
     assert len(final_sessions) == 2, f"Expected 2 sessions, found {len(final_sessions)}"
     print("  ✓ Both sessions still active")
 

@@ -57,8 +57,8 @@ def doctor(
     from ..monitor_daemon import is_monitor_daemon_running
 
     launcher = AgentLauncher(session)
-    # detect_terminated=False — doctor inspects running state, doesn't mutate
-    sessions = [s for s in launcher.list_sessions(detect_terminated=False)
+    # list_sessions is read-only: doctor inspects, never mutates
+    sessions = [s for s in launcher.list_sessions()
                 if s.status != "terminated"]
 
     # Global, and independent of agents: the TUI's keys vs the terminal it
