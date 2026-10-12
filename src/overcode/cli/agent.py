@@ -759,7 +759,6 @@ def list_agents(
             any_has_effort=any_has_effort,
             any_has_provider=any_has_provider,
             mixed_backends=mixed_backends,
-            monochrome=False,
             summary_detail=detail,
             has_sisters=has_sisters,
             local_hostname=local_hostname,

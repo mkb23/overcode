@@ -118,7 +118,6 @@ class SessionSummary(Static, can_focus=True):
         # AI-generated summaries (from daemon's SummarizerComponent)
         self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
-        self.monochrome: bool = False  # Legacy, kept for compatibility but no longer used for summaries
         self.emoji_free: bool = False  # ASCII fallbacks for emoji (#315)
         self.show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
         self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
@@ -502,7 +501,6 @@ class SessionSummary(Static, can_focus=True):
             status_symbol=status_symbol,
             status_color=status_color,
             bg=bg,
-            monochrome=self.monochrome,
             emoji_free=self.emoji_free,
             summary_detail=self.summary_detail,
             show_cost=self.show_cost,
@@ -589,7 +587,7 @@ class SessionSummary(Static, can_focus=True):
     def _render_content_area(self, content: Text, ctx: ColumnContext, term_width: int) -> None:
         """Render the collapsed content area after the | separator."""
         s = ctx.session
-        content.append(" │ ", style=ctx.mono(f"bold dim{ctx.bg}", "dim"))
+        content.append(" │ ", style=f"bold dim{ctx.bg}")
         current_len = len(content.plain)
         remaining = max(20, term_width - current_len - 2)
 
@@ -613,12 +611,12 @@ class SessionSummary(Static, can_focus=True):
 
         # Map style categories to Rich styles
         style_map = {
-            "bold": ctx.mono(f"bold italic{ctx.bg}", "bold"),
-            "dim": ctx.mono(f"dim italic{ctx.bg}", "dim"),
-            "bold_green": ctx.mono(f"bold green{ctx.bg}", "bold"),
-            "bold_cyan": ctx.mono(f"bold cyan{ctx.bg}", "bold"),
-            "bold_yellow": ctx.mono(f"bold italic yellow{ctx.bg}", "bold"),
-            "bold_magenta": ctx.mono(f"bold magenta{ctx.bg}", "bold"),
+            "bold": f"bold italic{ctx.bg}",
+            "dim": f"dim italic{ctx.bg}",
+            "bold_green": f"bold green{ctx.bg}",
+            "bold_cyan": f"bold cyan{ctx.bg}",
+            "bold_yellow": f"bold italic yellow{ctx.bg}",
+            "bold_magenta": f"bold magenta{ctx.bg}",
         }
         content.append(text, style=style_map.get(style_cat, style_map["dim"]))
 
@@ -707,7 +705,7 @@ class SessionSummary(Static, can_focus=True):
 
     def _compose_line(self, ctx: ColumnContext, cells: list, column_widths, width: int) -> Text:
         """The line: cells padded to the aligned widths, the content area, fill."""
-        pad_style = ctx.mono(f"{ctx.bg}", "") if ctx.bg else ""
+        pad_style = ctx.bg
         if column_widths:
             content = pad_and_join_cells(cells, column_widths, pad_style=pad_style)
         else:
@@ -720,7 +718,7 @@ class SessionSummary(Static, can_focus=True):
         # Pad to fill the row
         current_len = len(content.plain)
         if current_len < width:
-            content.append(" " * (width - current_len), style=ctx.mono(f"{ctx.bg}", ""))
+            content.append(" " * (width - current_len), style=ctx.bg)
         return content
 
     def _render_row(self) -> Text:

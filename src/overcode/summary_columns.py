@@ -164,7 +164,6 @@ class ColumnContext:
     status_symbol: str
     status_color: str
     bg: str  # background style suffix, e.g. " on #0d2137" or ""
-    monochrome: bool
     emoji_free: bool
     summary_detail: str
     show_cost: str  # "tokens", "cost", "joules"
@@ -268,10 +267,6 @@ class ColumnContext:
     window_burn: Optional[object] = None  # Optional[WindowBurnStats]
     any_has_burn: bool = False  # True if any agent has a non-zero burn rate
 
-    def mono(self, colored: str, simple: str = "bold") -> str:
-        """Return colored style (monochrome only applies to preview pane, not summaries)."""
-        return colored
-
     def e(self, char: str) -> str:
         """Return ASCII fallback if emoji_free mode is active (#315),
         otherwise route through the VS16-stripping safety net so
@@ -362,7 +357,6 @@ def _make_simple_render(
     formatter: Optional[Callable] = None,
     format_str: str = "{v}",
     colored_style: str = "bold",
-    mono_style: str = "bold",
 ) -> Callable[[ColumnContext], ColumnOutput]:
     """Factory for single-segment render functions.
 
@@ -370,14 +364,13 @@ def _make_simple_render(
         field: Attribute path on ColumnContext (dot-notation for nested)
         formatter: Optional callable to transform the raw value
         format_str: Format string with {v} placeholder for the formatted value
-        colored_style: Rich style when not monochrome (bg suffix added automatically)
-        mono_style: Rich style when monochrome
+        colored_style: Rich style (bg suffix added automatically)
     """
     def render(ctx: ColumnContext) -> ColumnOutput:
         val = _get_field(ctx, field)
         if formatter is not None:
             val = formatter(val)
-        return [(format_str.format(v=val), ctx.mono(f"{colored_style}{ctx.bg}", mono_style))]
+        return [(format_str.format(v=val), f"{colored_style}{ctx.bg}")]
     return render
 
 
@@ -419,9 +412,9 @@ def render_status_symbol(ctx: ColumnContext) -> ColumnOutput:
 
 def render_unvisited_alert(ctx: ColumnContext) -> ColumnOutput:
     if ctx.is_unvisited_stalled:
-        return [(ctx.e("🔔"), ctx.mono(f"bold blink red{ctx.bg}", "bold"))]
+        return [(ctx.e("🔔"), f"bold blink red{ctx.bg}")]
     else:
-        return [("  ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("  ", f"dim{ctx.bg}")]
 
 
 def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
@@ -435,7 +428,7 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
         elapsed = (datetime.now() - state_start).total_seconds()
         return [(f"{format_duration(elapsed):>5} ", ctx.status_color)]
     else:
-        return [("    - ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("    - ", f"dim{ctx.bg}")]
 
 
 _STATUS_COLOR_TO_STYLE: dict[str, str] = {
@@ -473,7 +466,7 @@ def _render_status_detail(ctx: "ColumnContext", detail: StatusDetail) -> ColumnO
     tight. Overflow is signalled with a trailing '+'.
     """
     color = _STATUS_COLOR_TO_STYLE.get(detail.color, "yellow")
-    style = ctx.mono(f"{color}{ctx.bg}", "bold")
+    style = f"{color}{ctx.bg}"
 
     badges = detail.badges
     if not badges:
@@ -544,7 +537,7 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
     # Legacy fallback (#289)
     if ctx.sleep_wake_estimate is not None:
         remaining = max(0, (ctx.sleep_wake_estimate - datetime.now()).total_seconds())
-        return [(f" {ctx.e('⏰')}{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('⏰')}{format_duration(remaining):>5} ", f"yellow{ctx.bg}")]
     return None
 
 
@@ -556,10 +549,8 @@ def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
 
 
 _render_plain_agent_name = _make_simple_render("display_name", colored_style="bold cyan")
-# The overagent's name stands out from every agent's (#484): its own colour,
-# underlined in monochrome where colour isn't available.
-_render_overagent_name = _make_simple_render("display_name", colored_style="bold #ff87ff",
-                                             mono_style="bold underline")
+# The overagent's name stands out from every agent's (#484): its own colour.
+_render_overagent_name = _make_simple_render("display_name", colored_style="bold #ff87ff")
 
 def render_agent_name(ctx: ColumnContext) -> ColumnOutput:
     if getattr(ctx.session, "backend", None) == "overagent":
@@ -571,13 +562,13 @@ def render_repo_name(ctx: ColumnContext) -> ColumnOutput:
     if ctx.all_names_match_repos:
         return None
     w = ctx.max_repo_width
-    return [(f" {ctx.repo_name:<{w}}", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
+    return [(f" {ctx.repo_name:<{w}}", f"bold dim{ctx.bg}")]
 
 
 def render_branch(ctx: ColumnContext) -> ColumnOutput:
     w = ctx.max_branch_width
     sep = ":" if not ctx.all_names_match_repos else " "
-    return [(f"{sep}{ctx.branch:<{w}} ", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
+    return [(f"{sep}{ctx.branch:<{w}} ", f"bold dim{ctx.bg}")]
 
 
 render_uptime = _make_simple_render("uptime", format_str=" ↑{v:>5}", colored_style="bold white")
@@ -586,28 +577,28 @@ render_uptime = _make_simple_render("uptime", format_str=" ↑{v:>5}", colored_s
 render_running_time = _make_simple_render("green_time", format_duration, " ▶{v:>5}", "bold green")
 
 
-render_stalled_time = _make_simple_render("non_green_time", format_duration, " ⏸{v:>5}", "bold red", "dim")
+render_stalled_time = _make_simple_render("non_green_time", format_duration, " ⏸{v:>5}", "bold red")
 
 
 def render_sleep_time(ctx: ColumnContext) -> ColumnOutput:
     sleep_str = format_duration(ctx.sleep_time) if ctx.sleep_time > 0 else "-"
     sleep_col = f" 💤{sleep_str:>5}"
-    style = ctx.mono(f"bold cyan{ctx.bg}", "bold") if ctx.sleep_time > 0 else ctx.mono(f"dim cyan{ctx.bg}", "dim")
+    style = f"bold cyan{ctx.bg}" if ctx.sleep_time > 0 else f"dim cyan{ctx.bg}"
     return [(sleep_col, style)]
 
 
 def render_active_pct(ctx: ColumnContext) -> ColumnOutput:
     active_time = ctx.green_time + ctx.non_green_time
     pct = (ctx.green_time / active_time * 100) if active_time > 0 else 0
-    return [(f" {pct:>3.0f}%", ctx.mono(f"bold green{ctx.bg}" if pct >= 50 else f"bold red{ctx.bg}", "bold"))]
+    return [(f" {pct:>3.0f}%", f"bold green{ctx.bg}" if pct >= 50 else f"bold red{ctx.bg}")]
 
 
 def render_token_count(ctx: ColumnContext) -> ColumnOutput:
     """Token count (Σ123K)."""
     if ctx.claude_stats is not None:
-        return [(f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
+        return [(f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", f"bold orange1{ctx.bg}")]
     else:
-        return [("       -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [("       -", f"dim orange1{ctx.bg}")]
 
 
 def render_model(ctx: ColumnContext) -> ColumnOutput:
@@ -618,10 +609,10 @@ def render_model(ctx: ColumnContext) -> ColumnOutput:
     untruncated across a four-backend fleet.
     """
     if not ctx.model:
-        return [("       -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("       -", f"dim{ctx.bg}")]
     from .history_reader import model_short_name
     display = model_short_name(ctx.model)[:7]
-    return [(f" {display:>7}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+    return [(f" {display:>7}", f"bold magenta{ctx.bg}")]
 
 
 def render_model_plain(ctx: ColumnContext) -> Optional[str]:
@@ -652,7 +643,7 @@ def render_effort(ctx: ColumnContext) -> ColumnOutput:
     Brightness climbs with the level so a fleet's heavy thinkers stand out.
     """
     if not ctx.effort:
-        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("     -", f"dim{ctx.bg}")]
     level = ctx.effort.strip().lower()
     rank = EFFORT_LEVELS.index(level) if level in EFFORT_LEVELS else -1
     if rank >= EFFORT_LEVELS.index("xhigh"):
@@ -663,7 +654,7 @@ def render_effort(ctx: ColumnContext) -> ColumnOutput:
         style = f"cyan{ctx.bg}"
     else:
         style = f"dim cyan{ctx.bg}"
-    return [(f" {effort_short_name(ctx.effort):>5}", ctx.mono(style, "bold"))]
+    return [(f" {effort_short_name(ctx.effort):>5}", style)]
 
 
 def render_effort_plain(ctx: ColumnContext) -> Optional[str]:
@@ -683,8 +674,8 @@ def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
         max_context = ctx.claude_stats.max_context_tokens
         if max_context:
             ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-            return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
-    return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+            return [(f" 📚{ctx_pct:>3.0f}%", f"bold orange1{ctx.bg}")]
+    return [(" 📚  -%", f"dim orange1{ctx.bg}")]
 
 
 def render_cost(ctx: ColumnContext) -> ColumnOutput:
@@ -695,16 +686,16 @@ def render_cost(ctx: ColumnContext) -> ColumnOutput:
         budget = s.cost_budget_usd
         if budget > 0:
             if cost >= budget:
-                style = ctx.mono(f"bold red{ctx.bg}", "bold")
+                style = f"bold red{ctx.bg}"
             elif cost >= budget * 0.8:
-                style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+                style = f"bold yellow{ctx.bg}"
             else:
-                style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
+                style = f"bold orange1{ctx.bg}"
         else:
-            style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
+            style = f"bold orange1{ctx.bg}"
         return [(f" {format_cost(cost):>6}", style)]
     else:
-        return [("      -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [("      -", f"dim orange1{ctx.bg}")]
 
 
 def render_joules(ctx: ColumnContext) -> ColumnOutput:
@@ -712,24 +703,24 @@ def render_joules(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     if ctx.claude_stats is not None:
         joules = s.stats.estimated_energy_j
-        style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
+        style = f"bold orange1{ctx.bg}"
         return [(f" ⚡{format_joules(joules)}", style)]
     else:
-        return [("      -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [("      -", f"dim orange1{ctx.bg}")]
 
 
 def render_budget(ctx: ColumnContext) -> ColumnOutput:
     """Budget amount. Visibility gated by column's visible callback."""
     s = ctx.session
     if s.cost_budget_usd > 0:
-        return [(f"/{format_cost(s.cost_budget_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [(f"/{format_cost(s.cost_budget_usd):>6}", f"dim orange1{ctx.bg}")]
     return None
 
 
 def render_subtree_cost(ctx: ColumnContext) -> ColumnOutput:
     """Subtree cost (self + descendants). Visibility gated by column's visible callback."""
     if ctx.subtree_cost_usd > 0:
-        return [(f" Σ{format_cost(ctx.subtree_cost_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [(f" Σ{format_cost(ctx.subtree_cost_usd):>6}", f"dim orange1{ctx.bg}")]
     return None
 
 
@@ -800,24 +791,24 @@ def render_burn_rate(ctx: ColumnContext) -> ColumnOutput:
     """
     burn = ctx.window_burn
     if burn is None or burn.window_hours <= 0:
-        return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
+        return [("        -", f"dim red{ctx.bg}")]
 
     color = burn_color_for_rate(burn.cost_per_hour)
     if ctx.show_cost == "cost":
         rate = burn.cost_per_hour
         if rate <= 0:
-            return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
-        return [(f" 🔥{format_cost(rate):>5}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
+            return [("        -", f"dim red{ctx.bg}")]
+        return [(f" 🔥{format_cost(rate):>5}/h", f"bold {color}{ctx.bg}")]
     elif ctx.show_cost == "joules":
         # Energy mode shows power: estimated watts over the window (#521)
         if burn.watts <= 0:
-            return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
-        return [(f" 🔥{format_watts(burn.watts)}  ", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
+            return [("        -", f"dim red{ctx.bg}")]
+        return [(f" 🔥{format_watts(burn.watts)}  ", f"bold {color}{ctx.bg}")]
     else:
         rate = burn.tokens_per_hour
         if rate <= 0:
-            return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
-        return [(f" 🔥{format_tokens(int(rate)):>5}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
+            return [("        -", f"dim red{ctx.bg}")]
+        return [(f" 🔥{format_tokens(int(rate)):>5}/h", f"bold {color}{ctx.bg}")]
 
 
 
@@ -827,18 +818,18 @@ def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
         files, ins, dels = ctx.git_diff_stats
         if ctx.summary_detail in ("full", "high"):
             return [
-                (f" Δ{files:>2}", ctx.mono(f"bold magenta{ctx.bg}", "bold")),
-                (f" +{format_line_count(ins):>5}", ctx.mono(f"bold green{ctx.bg}", "bold")),
-                (f" -{format_line_count(dels):>5}", ctx.mono(f"bold red{ctx.bg}", "dim")),
+                (f" Δ{files:>2}", f"bold magenta{ctx.bg}"),
+                (f" +{format_line_count(ins):>5}", f"bold green{ctx.bg}"),
+                (f" -{format_line_count(dels):>5}", f"bold red{ctx.bg}"),
             ]
         else:
             has_changes = files > 0
-            return [(f" Δ{files:>2}", ctx.mono(f"bold magenta{ctx.bg}" if has_changes else f"dim{ctx.bg}", "bold" if has_changes else "dim"))]
+            return [(f" Δ{files:>2}", f"bold magenta{ctx.bg}" if has_changes else f"dim{ctx.bg}")]
     else:
         if ctx.summary_detail in ("full", "high"):
-            return [(" Δ - +    - -    -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+            return [(" Δ - +    - -    -", f"dim{ctx.bg}")]
         else:
-            return [(" Δ -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+            return [(" Δ -", f"dim{ctx.bg}")]
 
 
 def render_git_untracked(ctx: ColumnContext) -> ColumnOutput:
@@ -846,10 +837,10 @@ def render_git_untracked(ctx: ColumnContext) -> ColumnOutput:
     so a 0-line diff doesn't hide work an agent has yet to commit."""
     n = ctx.git_untracked_count
     if n is None:
-        return [(" U  -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(" U  -", f"dim{ctx.bg}")]
     if n > 0:
-        return [(f" U{n:>3}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
-    return [(" U  0", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" U{n:>3}", f"bold yellow{ctx.bg}")]
+    return [(" U  0", f"dim{ctx.bg}")]
 
 
 def render_git_untracked_plain(ctx: ColumnContext) -> Optional[str]:
@@ -862,17 +853,17 @@ def render_git_untracked_plain(ctx: ColumnContext) -> Optional[str]:
 def render_pr_number(ctx: ColumnContext) -> ColumnOutput:
     pr = ctx.pr_number
     if pr is not None:
-        return [(f" PR#{pr}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+        return [(f" PR#{pr}", f"bold cyan{ctx.bg}")]
     return None
 
 
 def render_median_work_time(ctx: ColumnContext) -> ColumnOutput:
     """Median work-cycle time. Dashed when the backend reports no stats."""
     if ctx.claude_stats is None:
-        return [(f" ⏱{'-':>5}", ctx.mono(f"dim blue{ctx.bg}", "dim"))]
+        return [(f" ⏱{'-':>5}", f"dim blue{ctx.bg}")]
     return [(
         f" ⏱{format_duration(ctx.median_work):>5}",
-        ctx.mono(f"bold blue{ctx.bg}", "bold"),
+        f"bold blue{ctx.bg}",
     )]
 
 
@@ -891,15 +882,15 @@ def render_cpu_pct(ctx: ColumnContext) -> ColumnOutput:
     via visible=any_has_cpu."""
     cpu = getattr(ctx.session, 'cpu_percent', 0.0) or 0.0
     if cpu < 1.0:
-        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("     -", f"dim{ctx.bg}")]
     if cpu >= 200.0:
-        style = ctx.mono(f"bold red{ctx.bg}", "bold")
+        style = f"bold red{ctx.bg}"
     elif cpu >= 100.0:
-        style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+        style = f"bold yellow{ctx.bg}"
     elif cpu >= 50.0:
-        style = ctx.mono(f"bold{ctx.bg}", "bold")
+        style = f"bold{ctx.bg}"
     else:
-        style = ctx.mono(f"dim{ctx.bg}", "dim")
+        style = f"dim{ctx.bg}"
     return [(f" {cpu:>4.0f}%", style)]
 
 
@@ -907,45 +898,45 @@ def render_ram(ctx: ColumnContext) -> ColumnOutput:
     """Resident memory for the claude process tree, human-readable."""
     rss = getattr(ctx.session, 'rss_bytes', 0) or 0
     if rss <= 0:
-        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("     -", f"dim{ctx.bg}")]
     # Colour heavy consumers (>4 GB) for parity with CPU highlighting.
     gib = rss / (1024 * 1024 * 1024)
     if gib >= 8.0:
-        style = ctx.mono(f"bold red{ctx.bg}", "bold")
+        style = f"bold red{ctx.bg}"
     elif gib >= 4.0:
-        style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+        style = f"bold yellow{ctx.bg}"
     elif gib >= 1.0:
-        style = ctx.mono(f"bold{ctx.bg}", "bold")
+        style = f"bold{ctx.bg}"
     else:
-        style = ctx.mono(f"dim{ctx.bg}", "dim")
+        style = f"dim{ctx.bg}"
     return [(f" {_format_rss(rss)}", style)]
 
 
 def render_subagent_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.live_subagent_count
-    style = ctx.mono(f"bold purple{ctx.bg}", "bold") if count > 0 else ctx.mono(f"dim{ctx.bg}", "dim")
+    style = f"bold purple{ctx.bg}" if count > 0 else f"dim{ctx.bg}"
     return [(f" {ctx.e('🤿')}{count:>2}", style)]
 
 
 def render_bash_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.background_bash_count
-    style = ctx.mono(f"bold yellow{ctx.bg}", "bold") if count > 0 else ctx.mono(f"dim{ctx.bg}", "dim")
+    style = f"bold yellow{ctx.bg}" if count > 0 else f"dim{ctx.bg}"
     return [(f" {ctx.e('🐚')}{count:>2}", style)]
 
 
 def render_child_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.child_count
     if count == 0:
-        return [(f" {ctx.e('👶')} 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
-    style = ctx.mono(f"bold cyan{ctx.bg}", "bold")
+        return [(f" {ctx.e('👶')} 0", f"dim{ctx.bg}")]
+    style = f"bold cyan{ctx.bg}"
     return [(f" {ctx.e('👶')}{count:>2}", style)]
 
 
 def render_job_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.job_count
     if count == 0:
-        return [(f" {ctx.e('🚜')} 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
-    return [(f" {ctx.e('🚜')}{count:>2}", ctx.mono(f"bold green{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('🚜')} 0", f"dim{ctx.bg}")]
+    return [(f" {ctx.e('🚜')}{count:>2}", f"bold green{ctx.bg}")]
 
 
 render_permission_mode = _make_simple_render("perm_emoji", format_str=" {v}", colored_style="bold white")
@@ -953,7 +944,7 @@ render_permission_mode = _make_simple_render("perm_emoji", format_str=" {v}", co
 
 def render_agent_teams(ctx: ColumnContext) -> ColumnOutput:
     if ctx.session.agent_teams:
-        return [(f" {ctx.e('🤝')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('🤝')}", f"bold cyan{ctx.bg}")]
     return None
 
 
@@ -967,7 +958,7 @@ def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
     emojis = _tool_emojis(ctx.session.allowed_tools, emoji_free=ctx.emoji_free)
     if not emojis:
         return None
-    return [(f" {emojis}", ctx.mono(f"white{ctx.bg}", ""))]
+    return [(f" {emojis}", f"white{ctx.bg}")]
 
 
 def render_loaded_skills(ctx: ColumnContext) -> ColumnOutput:
@@ -978,7 +969,7 @@ def render_loaded_skills(ctx: ColumnContext) -> ColumnOutput:
     emojis = [emoji_or_ascii(get_skill_emoji().get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
     sep = " " if ctx.emoji_free else ""
     text = sep.join(emojis)
-    return [(f" {text}", ctx.mono(f"white{ctx.bg}", ""))]
+    return [(f" {text}", f"white{ctx.bg}")]
 
 
 def render_skills_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1001,9 +992,9 @@ def render_skill_profile(ctx: ColumnContext) -> ColumnOutput:
     if not profile:
         return None
     if ctx.emoji_free:
-        return [(f" {profile}", ctx.mono(f"cyan{ctx.bg}", ""))]
+        return [(f" {profile}", f"cyan{ctx.bg}")]
     from .skill_library import profile_emoji
-    return [(f" {ctx.e(profile_emoji(profile))}", ctx.mono(f"cyan{ctx.bg}", ""))]
+    return [(f" {ctx.e(profile_emoji(profile))}", f"cyan{ctx.bg}")]
 
 
 def render_skill_profile_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1022,7 +1013,7 @@ def render_available_skills(ctx: ColumnContext) -> ColumnOutput:
     emojis = [emoji_or_ascii(get_skill_emoji().get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
     sep = " " if ctx.emoji_free else ""
     text = sep.join(emojis)
-    return [(f" {text}", ctx.mono(f"dim white{ctx.bg}", "dim"))]
+    return [(f" {text}", f"dim white{ctx.bg}")]
 
 
 def render_available_skills_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1035,9 +1026,9 @@ def render_available_skills_plain(ctx: ColumnContext) -> Optional[str]:
 
 def render_enhanced_context(ctx: ColumnContext) -> ColumnOutput:
     if ctx.session.enhanced_context_enabled:
-        return [(f" {ctx.e('🎣')}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('🎣')}", f"bold white{ctx.bg}")]
     else:
-        return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("  ·", f"dim{ctx.bg}")]
 
 
 def render_wrapper(ctx: ColumnContext) -> ColumnOutput:
@@ -1052,7 +1043,7 @@ def render_wrapper(ctx: ColumnContext) -> ColumnOutput:
         badges += ctx.e(get_wrapper_emoji().get(name, WRAPPER_EMOJI_DEFAULT))
     if sandbox_on:
         badges += ctx.e(SANDBOX_EMOJI)
-    return [(f" {badges}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+    return [(f" {badges}", f"bold yellow{ctx.bg}")]
 
 
 def render_wrapper_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1069,28 +1060,28 @@ def render_wrapper_plain(ctx: ColumnContext) -> Optional[str]:
 def render_human_count(ctx: ColumnContext) -> ColumnOutput:
     if ctx.claude_stats is not None:
         human_count = max(0, ctx.claude_stats.interaction_count - ctx.stats.steers_count)
-        return [(f" {ctx.e('👤')}{human_count:>3}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('👤')}{human_count:>3}", f"bold yellow{ctx.bg}")]
     else:
-        return [(f" {ctx.e('👤')}  -", ctx.mono(f"dim yellow{ctx.bg}", "dim"))]
+        return [(f" {ctx.e('👤')}  -", f"dim yellow{ctx.bg}")]
 
 
 def render_robot_count(ctx: ColumnContext) -> ColumnOutput:
     v = ctx.stats.steers_count
-    return [(f" {ctx.e('🤖')}{v:>3}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+    return [(f" {ctx.e('🤖')}{v:>3}", f"bold cyan{ctx.bg}")]
 
 
 def render_standing_orders(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     if s.standing_instructions:
         if s.standing_orders_complete:
-            return [(f" {ctx.e('✓')}", ctx.mono(f"bold green{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('✓')}", f"bold green{ctx.bg}")]
         elif s.standing_instructions_preset:
             preset_display = f" {s.standing_instructions_preset[:8]}"
-            return [(preset_display, ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+            return [(preset_display, f"bold cyan{ctx.bg}")]
         else:
-            return [(f" {ctx.e('📋')}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('📋')}", f"bold yellow{ctx.bg}")]
     else:
-        return [(" ➖", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
+        return [(" ➖", f"bold dim{ctx.bg}")]
 
 
 def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
@@ -1108,14 +1099,14 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
     deadline_str = ctx.oversight_deadline
     if not deadline_str:
         hg = ctx.e("⏳")
-        return [(f" {hg} --:--", ctx.mono(f"yellow{ctx.bg}", "dim"))]
+        return [(f" {hg} --:--", f"yellow{ctx.bg}")]
 
     try:
         hg = ctx.e("⏳")
         deadline = datetime.fromisoformat(deadline_str)
         remaining = (deadline - datetime.now()).total_seconds()
         if remaining <= 0:
-            return [(f" {hg} 0s  ", ctx.mono(f"bold blink red{ctx.bg}", "bold"))]
+            return [(f" {hg} 0s  ", f"bold blink red{ctx.bg}")]
 
         if remaining < 60:
             text = f" {hg} {remaining:>3.0f}s"
@@ -1129,14 +1120,14 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
             text = f" {hg}{hrs:>2}h{mins:02d}m"
 
         if remaining < 30:
-            style = ctx.mono(f"bold blink red{ctx.bg}", "bold")
+            style = f"bold blink red{ctx.bg}"
         elif remaining < 60:
-            style = ctx.mono(f"bold red{ctx.bg}", "bold")
+            style = f"bold red{ctx.bg}"
         else:
-            style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+            style = f"bold yellow{ctx.bg}"
         return [(text, style)]
     except (ValueError, TypeError):
-        return [(f" {hg} --:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" {hg} --:--", f"dim{ctx.bg}")]
 
 
 def _compute_next_heartbeat(session) -> Optional[str]:
@@ -1169,34 +1160,34 @@ def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
     hb = ctx.e("💓")
     if s.heartbeat_enabled and not s.heartbeat_paused:
         freq_str = format_duration(s.heartbeat_frequency_seconds)
-        segments = [(f" {hb}{freq_str:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+        segments = [(f" {hb}{freq_str:>5}", f"bold magenta{ctx.bg}")]
         next_time_str = _compute_next_heartbeat(s)
         if next_time_str:
-            segments.append((f" @{next_time_str}", ctx.mono(f"bold cyan{ctx.bg}", "bold")))
+            segments.append((f" @{next_time_str}", f"bold cyan{ctx.bg}"))
         else:
-            segments.append((" @--:--", ctx.mono(f"dim{ctx.bg}", "dim")))
+            segments.append((" @--:--", f"dim{ctx.bg}"))
         return segments
     elif s.heartbeat_enabled and s.heartbeat_paused:
         freq_str = format_duration(s.heartbeat_frequency_seconds)
         return [
-            (f" {hb}{freq_str:>5}", ctx.mono(f"dim{ctx.bg}", "dim")),
-            ("     ⏸ ", ctx.mono(f"bold yellow{ctx.bg}", "bold")),
+            (f" {hb}{freq_str:>5}", f"dim{ctx.bg}"),
+            ("     ⏸ ", f"bold yellow{ctx.bg}"),
         ]
     else:
-        return [(f" {hb}    - @--:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" {hb}    - @--:--", f"dim{ctx.bg}")]
 
 
 def render_agent_value(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     if ctx.summary_detail in ("full", "high"):
-        return [(f" {ctx.e('💰')}{s.agent_value:>4}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('💰')}{s.agent_value:>4}", f"bold magenta{ctx.bg}")]
     else:
         if s.agent_value > 1000:
-            return [(f" {ctx.e('⏫️')}", ctx.mono(f"bold red{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('⏫️')}", f"bold red{ctx.bg}")]
         elif s.agent_value < 1000:
-            return [(f" {ctx.e('⏬️')}", ctx.mono(f"bold blue{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('⏬️')}", f"bold blue{ctx.bg}")]
         else:
-            return [(f" {ctx.e('⏹️')} ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+            return [(f" {ctx.e('⏹️')} ", f"dim{ctx.bg}")]
 
 
 # ---------------------------------------------------------------------------
@@ -1339,8 +1330,8 @@ def render_provider(ctx: ColumnContext) -> ColumnOutput:
     """API provider: 🧱 bedrock, · web. Hidden when all agents use web."""
     provider = getattr(ctx.session, 'provider', 'web') or 'web'
     if provider == 'bedrock':
-        return [(f" {ctx.e('🧱')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
-    return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" {ctx.e('🧱')}", f"bold cyan{ctx.bg}")]
+    return [("  ·", f"dim{ctx.bg}")]
 
 
 def render_provider_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1374,8 +1365,8 @@ def render_backend(ctx: ColumnContext) -> ColumnOutput:
     name = session_backend_name(ctx.session)
     badge = _backend_badge(name)
     if name == DEFAULT_BACKEND:
-        return [(f" {badge}", ctx.mono(f"dim{ctx.bg}", "dim"))]
-    return [(f" {badge}", ctx.mono(f"bold green{ctx.bg}", "bold"))]
+        return [(f" {badge}", f"dim{ctx.bg}")]
+    return [(f" {badge}", f"bold green{ctx.bg}")]
 
 
 def render_backend_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1395,9 +1386,9 @@ def render_host(ctx: ColumnContext) -> ColumnOutput:
     width = 14
     label = " " + host[:width].ljust(width)
     if ctx.is_remote:
-        return [(label, ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+        return [(label, f"bold magenta{ctx.bg}")]
     else:
-        return [(label, ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(label, f"dim{ctx.bg}")]
 
 
 def render_host_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1907,7 +1898,7 @@ def build_cli_context(
     any_has_provider: bool = False,
     mixed_backends: bool = False,
     any_has_cpu: bool = False, any_has_ram: bool = False,
-    monochrome: bool = True, emoji_free: bool = False, summary_detail: str = "full",
+    emoji_free: bool = False, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
     max_name_width: int = 16, max_repo_width: int = 10,
     max_branch_width: int = 10, all_names_match_repos: bool = False,
@@ -1954,7 +1945,6 @@ def build_cli_context(
         status_symbol=status_symbol,
         status_color="bold",
         bg="",
-        monochrome=monochrome,
         emoji_free=emoji_free,
         summary_detail=summary_detail,
         show_cost="cost",
@@ -2091,7 +2081,7 @@ def cell_segments(col: SummaryColumn, ctx: ColumnContext) -> list:
     if segments:
         return segments
     if col.placeholder_width > 0:
-        return [(" " * col.placeholder_width, ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(" " * col.placeholder_width, f"dim{ctx.bg}")]
     return []
 
 

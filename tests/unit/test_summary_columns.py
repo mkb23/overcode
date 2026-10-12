@@ -84,7 +84,6 @@ def _make_ctx(**overrides) -> ColumnContext:
         status_symbol="🟢",
         status_color="bold green on #0d2137",
         bg=" on #0d2137",
-        monochrome=False,
         emoji_free=False,
         summary_detail="full",
         show_cost="tokens",
@@ -194,23 +193,6 @@ class TestColumnStructure:
 # ===========================================================================
 # ColumnContext tests
 # ===========================================================================
-
-class TestColumnContext:
-    """Tests for ColumnContext."""
-
-    def test_mono_returns_colored_when_not_monochrome(self):
-        ctx = _make_ctx(monochrome=False)
-        assert ctx.mono("bold green on #0d2137", "bold") == "bold green on #0d2137"
-
-    def test_mono_always_returns_colored_even_when_monochrome(self):
-        """Summary lines always render full color (#345); monochrome only affects preview pane."""
-        ctx = _make_ctx(monochrome=True)
-        assert ctx.mono("bold green on #0d2137", "bold") == "bold green on #0d2137"
-
-    def test_mono_default_simple_is_ignored(self):
-        ctx = _make_ctx(monochrome=True)
-        assert ctx.mono("bold green") == "bold green"
-
 
 # ===========================================================================
 # Column loop gating tests
@@ -330,7 +312,7 @@ class TestRenderSleepCountdown:
     def test_style_is_yellow(self):
         """Should use yellow style."""
         wake_time = datetime.now() + timedelta(seconds=120)
-        ctx = _make_ctx(sleep_wake_estimate=wake_time, any_is_sleeping=True, monochrome=False)
+        ctx = _make_ctx(sleep_wake_estimate=wake_time, any_is_sleeping=True)
         result = render_sleep_countdown(ctx)
         assert "yellow" in result[0][1]
 
@@ -755,7 +737,7 @@ class TestRenderCost:
         session = _make_session(cost_budget_usd=5.0)
         session.stats.estimated_cost_usd = 6.0
         ctx = _make_ctx(claude_stats=stats, show_cost="cost", session=session,
-                        any_has_budget=True, monochrome=False)
+                        any_has_budget=True)
         result = render_cost(ctx)
         assert "red" in result[0][1]
 
@@ -765,7 +747,7 @@ class TestRenderCost:
         session = _make_session(cost_budget_usd=5.0)
         session.stats.estimated_cost_usd = 4.5  # 90%
         ctx = _make_ctx(claude_stats=stats, show_cost="cost", session=session,
-                        any_has_budget=True, monochrome=False)
+                        any_has_budget=True)
         result = render_cost(ctx)
         assert "yellow" in result[0][1]
 
@@ -1368,11 +1350,6 @@ class TestBuildCliContext:
         stats = session.stats
         ctx = build_cli_context(session, stats, None, None, "running", 0, 0)
         assert isinstance(ctx, ColumnContext)
-
-    def test_monochrome_is_true(self):
-        session = _make_session()
-        ctx = build_cli_context(session, session.stats, None, None, "running", 0, 0)
-        assert ctx.monochrome is True
 
     def test_passes_budget_flag(self):
         session = _make_session()

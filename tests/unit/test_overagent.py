@@ -210,11 +210,10 @@ class TestOpenOveragentKey:
 
 
 class TestNameColumn:
-    def _ctx(self, backend, monochrome=False):
+    def _ctx(self, backend):
         from types import SimpleNamespace
         return SimpleNamespace(
-            session=SimpleNamespace(backend=backend), display_name="overagent  ", bg="",
-            mono=lambda colored, simple="bold": simple if monochrome else colored)
+            session=SimpleNamespace(backend=backend), display_name="overagent  ", bg="")
 
     def test_overagent_name_has_its_own_colour(self):
         from overcode.summary_columns import render_agent_name
@@ -222,11 +221,6 @@ class TestNameColumn:
         assert text == "overagent  " and "#ff87ff" in style
         (_, normal), = render_agent_name(self._ctx("claude-code"))
         assert "cyan" in normal
-
-    def test_monochrome_underlines_it(self):
-        from overcode.summary_columns import render_agent_name
-        (_, style), = render_agent_name(self._ctx("overagent", monochrome=True))
-        assert "underline" in style
 
     def test_default_name(self):
         assert DEFAULT_NAME == "overagent"
