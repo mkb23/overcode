@@ -296,6 +296,17 @@ class TestLaunchAgent:
             launch_agent("agents", "/tmp", "agent", permissions="invalid")
         assert exc_info.value.status == 400
 
+    @patch(LAUNCHER_PATH)
+    @patch(SM_PATH)
+    def test_a_refused_launch_reports_its_reason(self, MockSM, MockLauncher, tmp_path):
+        from overcode.exceptions import LaunchError
+        MockLauncher.return_value.launch.side_effect = LaunchError("invalid provider 'x'")
+
+        with pytest.raises(ControlError) as exc_info:
+            launch_agent("agents", str(tmp_path), "agent")
+        assert exc_info.value.status == 500
+        assert str(exc_info.value) == "Cannot launch: invalid provider 'x'"
+
 
 class TestSetStandingOrders:
     """Tests for set_standing_orders handler."""

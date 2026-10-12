@@ -194,8 +194,7 @@ def launch_agent(
     provider: Optional[str] = None,
 ) -> dict:
     """Launch a new agent."""
-    import io
-    import contextlib
+    from .exceptions import LaunchError
     from .launcher import AgentLauncher
     from .session_manager import SessionManager
 
@@ -227,9 +226,7 @@ def launch_agent(
     sm = SessionManager()
     launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
 
-    # Capture print() output from launcher so failure reasons propagate to caller
-    capture = io.StringIO()
-    with contextlib.redirect_stdout(capture):
+    try:
         session = launcher.launch(
             name=name,
             start_directory=directory,
@@ -238,18 +235,16 @@ def launch_agent(
             dangerously_skip_permissions=dangerously_skip,
             provider=provider,
         )
-
-    if session:
-        return {"ok": True, "session_id": session.id}
-
-    detail = capture.getvalue().strip()
-    raise ControlError(detail or "Failed to launch agent", status=500)
+    except LaunchError as e:
+        raise ControlError(str(e), status=500) from e
+    return {"ok": True, "session_id": session.id}
 
 
 def fork_agent(
     tmux_session: str, name: str, fork_name: str, prompt: Optional[str] = None
 ) -> dict:
     """Fork an agent into a new child with the same conversation context."""
+    from .exceptions import LaunchError
     from .launcher import AgentLauncher
     from .session_manager import SessionManager
 
@@ -272,10 +267,11 @@ def fork_agent(
         )
 
     launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
-    session = launcher.launch_fork(fork_name, source, initial_prompt=prompt)
-    if session:
-        return {"ok": True, "session_id": session.id}
-    raise ControlError("Failed to fork agent", status=500)
+    try:
+        session = launcher.launch_fork(fork_name, source, initial_prompt=prompt)
+    except LaunchError as e:
+        raise ControlError(str(e), status=500) from e
+    return {"ok": True, "session_id": session.id}
 
 
 # ---------------------------------------------------------------------------

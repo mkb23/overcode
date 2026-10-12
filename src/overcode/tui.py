@@ -3750,6 +3750,7 @@ class SupervisorTUI(
                 self.notify(f"Remote launch failed: {result.error}", severity="error")
         else:
             # Launch locally
+            from .exceptions import LaunchError
             launcher = AgentLauncher(
                 tmux_session=self.tmux_session,
                 session_manager=self.session_manager,
@@ -3774,6 +3775,8 @@ class SupervisorTUI(
                     parts.append(f"skills: {message.skill_profile}")
                 self.notify(" ".join(parts), severity="information")
                 self.refresh_sessions()
+            except LaunchError as e:
+                self.notify(str(e), severity="error")
             except Exception as e:
                 self.notify(f"Failed to create agent: {e}", severity="error")
 
@@ -3885,21 +3888,21 @@ class SupervisorTUI(
                 self.notify(f"Failed to fork remote agent: {e}", severity="error")
             return
 
+        from .exceptions import LaunchError
         launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
 
         try:
-            result = launcher.launch_fork(
+            launcher.launch_fork(
                 name=fork_name,
                 source_session=source_session,
             )
-            if result:
-                self.notify(f"Forked '{source_session.name}' → '{fork_name}'", severity="information")
-                self.refresh_sessions()
-            else:
-                self.notify(f"Failed to fork '{source_session.name}'", severity="error")
+            self.notify(f"Forked '{source_session.name}' → '{fork_name}'", severity="information")
+            self.refresh_sessions()
+        except LaunchError as e:
+            self.notify(str(e), severity="error")
         except Exception as e:
             self.notify(f"Failed to fork: {e}", severity="error")
 

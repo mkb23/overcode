@@ -13,7 +13,7 @@ from unittest.mock import ANY, patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.exceptions import InvalidSessionNameError
+from overcode.exceptions import InvalidSessionNameError, LaunchError
 from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
@@ -147,7 +147,7 @@ class TestDependencyCheckOverrideFailure:
     check actually validates the override.
     """
 
-    def test_launch_returns_none_and_creates_no_session(self, tmp_path, capsys):
+    def test_launch_raises_and_creates_no_session(self, tmp_path):
         from overcode.dependency_check import require_agent_cli as real_require_agent_cli
 
         mock_tmux = MockTmux()
@@ -160,16 +160,15 @@ class TestDependencyCheckOverrideFailure:
         )
 
         with patch("overcode.launcher.require_agent_cli", side_effect=real_require_agent_cli), \
-             patch.dict(os.environ, {"CLAUDE_COMMAND": "/nonexistent/definitely-not-claude"}):
-            session = launcher.launch(name="bad-override")
+             patch.dict(os.environ, {"CLAUDE_COMMAND": "/nonexistent/definitely-not-claude"}), \
+             pytest.raises(LaunchError) as exc:
+            launcher.launch(name="bad-override")
 
-        assert session is None
         assert session_manager.get_session_by_name("bad-override") is None
         # The dependency check fails before any tmux window/keys are sent.
         assert mock_tmux.sent_keys == []
-        captured = capsys.readouterr()
-        assert "Cannot launch" in captured.out
-        assert "Claude Code CLI is required but not found" in captured.out
+        assert str(exc.value).startswith("Cannot launch: ")
+        assert "Claude Code CLI is required but not found" in exc.value.reason
 
 
 class TestLauncherDuplicates:
@@ -633,8 +632,8 @@ class TestSessionNameValidation:
             "A" * 65,              # too long
         ]
         for name in invalid_names:
-            session = launcher.launch(name=name)
-            assert session is None, f"Name '{name}' should be invalid"
+            with pytest.raises(LaunchError, match="Invalid session name"):
+                launcher.launch(name=name)
 
 
 class TestWaitForPrompt:
@@ -1100,10 +1099,8 @@ class TestLauncherHierarchy:
             session_manager=session_manager,
         )
 
-        child = launcher.launch(name="child-agent", parent_name="nonexistent")
-        assert child is None
-        captured = capsys.readouterr()
-        assert "not found" in captured.out
+        with pytest.raises(LaunchError, match="not found"):
+            launcher.launch(name="child-agent", parent_name="nonexistent")
 
     def test_auto_detect_parent_from_env(self, tmp_path):
         """Auto-detects parent from OVERCODE_SESSION_NAME env var."""
@@ -1151,8 +1148,8 @@ class TestLauncherHierarchy:
         launcher.launch(name="worker")
 
         with patch.dict("os.environ", {"OVERCODE_SESSION_NAME": "worker"}):
-            assert launcher.launch(name="escapee", no_parent=True) is None
-        assert "only the overagent" in capsys.readouterr().out
+            with pytest.raises(LaunchError, match="only the overagent"):
+                launcher.launch(name="escapee", no_parent=True)
 
     def test_no_parent_outside_any_agent_is_allowed(self, tmp_path):
         """A person at a plain terminal is already top-level."""
@@ -1176,8 +1173,8 @@ class TestLauncherHierarchy:
     def test_no_parent_with_parent_is_refused(self, tmp_path, capsys):
         launcher, _ = self._launcher(tmp_path)
         launcher.launch(name="p")
-        assert launcher.launch(name="c", parent_name="p", no_parent=True) is None
-        assert "mutually exclusive" in capsys.readouterr().out
+        with pytest.raises(LaunchError, match="mutually exclusive"):
+            launcher.launch(name="c", parent_name="p", no_parent=True)
 
     def test_depth_limit_enforced(self, tmp_path, capsys):
         """Launch fails when max depth would be exceeded."""
@@ -1198,13 +1195,11 @@ class TestLauncherHierarchy:
             assert child is not None, f"Should succeed at depth {i}"
 
         # One more should fail
-        too_deep = launcher.launch(
-            name="too-deep",
-            parent_name=f"level-{AgentLauncher.MAX_HIERARCHY_DEPTH - 1}",
-        )
-        assert too_deep is None
-        captured = capsys.readouterr()
-        assert "depth" in captured.out.lower()
+        with pytest.raises(LaunchError, match="depth"):
+            launcher.launch(
+                name="too-deep",
+                parent_name=f"level-{AgentLauncher.MAX_HIERARCHY_DEPTH - 1}",
+            )
 
     def test_parent_env_vars_propagated(self, tmp_path):
         """Parent env vars are included in the command sent to tmux."""
@@ -1389,10 +1384,8 @@ class TestParentSettingsInheritance:
     def test_invalid_provider_rejected(self, tmp_path, capsys):
         launcher, _ = self._make_launcher(tmp_path)
 
-        session = launcher.launch(name="bad", provider="azure")
-        assert session is None
-        captured = capsys.readouterr()
-        assert "invalid provider" in captured.out.lower()
+        with pytest.raises(LaunchError, match="invalid provider"):
+            launcher.launch(name="bad", provider="azure")
 
 
 class TestCascadeKill:
@@ -1708,8 +1701,8 @@ class TestBudgetAtLaunch:
         parent = launcher.launch(name="parent", budget_usd=2.00)
         assert parent is not None
 
-        result = launcher.launch(name="child", parent_name="parent", budget_usd=5.00)
-        assert result is None  # Should fail
+        with pytest.raises(LaunchError, match="insufficient budget"):
+            launcher.launch(name="child", parent_name="parent", budget_usd=5.00)
         # Parent budget unchanged
         parent_reloaded = session_manager.get_session(parent.id)
         assert parent_reloaded.cost_budget_usd == 2.00
@@ -1829,8 +1822,8 @@ class TestLaunchFork:
         session_manager.update_session(source.id, active_agent_session_id=None)
         source = session_manager.get_session(source.id)
 
-        forked = launcher.launch_fork(name="fork-fail", source_session=source)
-        assert forked is None
+        with pytest.raises(LaunchError, match="^Cannot fork: .*no active agent session ID"):
+            launcher.launch_fork(name="fork-fail", source_session=source)
 
     def test_fork_inherits_standing_instructions(self, tmp_path):
         """Fork inherits the source's standing instructions."""
@@ -1864,8 +1857,8 @@ class TestLaunchFork:
         # Try to fork the deepest child — should fail
         deepest = session_manager.get_session_by_name(f"child-{launcher.MAX_HIERARCHY_DEPTH - 2}")
         deepest = session_manager.get_session(deepest.id)  # reload with active_agent_session_id
-        forked = launcher.launch_fork(name="too-deep", source_session=deepest)
-        assert forked is None
+        with pytest.raises(LaunchError, match="depth"):
+            launcher.launch_fork(name="too-deep", source_session=deepest)
 
     def test_fork_with_initial_prompt(self, tmp_path):
         """Fork can send an initial prompt."""

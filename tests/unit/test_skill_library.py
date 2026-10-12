@@ -239,11 +239,11 @@ class TestLauncher:
         assert "--plugin-dir" in sent
         assert "skillOverrides" in sent
 
-    def test_unknown_profile_refuses_to_launch(self, home, tmp_path, capsys):
+    def test_unknown_profile_refuses_to_launch(self, home, tmp_path):
+        from overcode.exceptions import LaunchError
         launcher, tmux = self._launcher(tmp_path)
-        assert launcher.launch(name="a", start_directory=str(tmp_path),
-                               skill_profile="nope") is None
-        assert "skill profile 'nope' not found" in capsys.readouterr().out
+        with pytest.raises(LaunchError, match="skill profile 'nope' not found"):
+            launcher.launch(name="a", start_directory=str(tmp_path), skill_profile="nope")
 
     def test_child_inherits_and_folder_pin_applies(self, home, tmp_path, monkeypatch):
         sl.save_profile("research", [])

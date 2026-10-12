@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from overcode.exceptions import LaunchError
 from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
@@ -115,24 +116,22 @@ class TestLaunchWithWrapper:
         assert session is not None
         assert session.wrapper is None
 
-    def test_invalid_wrapper_returns_none(self, tmp_path):
+    def test_invalid_wrapper_is_refused(self, tmp_path):
         """Launch fails gracefully when wrapper doesn't exist."""
         launcher, _ = _make_launcher(tmp_path)
 
-        session = launcher.launch(name="bad-wrapper", wrapper="/nonexistent/wrapper.sh")
+        with pytest.raises(LaunchError, match="not found or not executable"):
+            launcher.launch(name="bad-wrapper", wrapper="/nonexistent/wrapper.sh")
 
-        assert session is None
-
-    def test_non_executable_wrapper_returns_none(self, tmp_path):
+    def test_non_executable_wrapper_is_refused(self, tmp_path):
         """Launch fails when wrapper exists but isn't executable."""
         launcher, _ = _make_launcher(tmp_path)
         script = tmp_path / "noexec.sh"
         script.write_text("#!/bin/bash\nexec \"$@\"")
         # Don't make it executable
 
-        session = launcher.launch(name="bad-wrapper", wrapper=str(script))
-
-        assert session is None
+        with pytest.raises(LaunchError, match="not found or not executable"):
+            launcher.launch(name="bad-wrapper", wrapper=str(script))
 
     def test_wrapper_with_permissions(self, tmp_path):
         """Wrapper works with skip_permissions flag."""

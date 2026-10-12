@@ -699,6 +699,16 @@ class TestLaunchExtended:
                     oversight_timeout_seconds=300.0,
                 )
 
+    def test_a_refused_launch_prints_why_and_exits_1(self):
+        from overcode.exceptions import LaunchError
+        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
+            mock_cls.return_value.launch.side_effect = LaunchError("wrapper 'w' not found or not executable")
+
+            result = runner.invoke(app, ["launch", "--name", "child"])
+            assert result.exit_code == 1
+            assert "Cannot launch: wrapper 'w' not found" in result.output
+            assert "launched" not in result.output
+
     def test_launch_invalid_oversight_timeout(self):
         """Launch with invalid --oversight-timeout errors."""
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:

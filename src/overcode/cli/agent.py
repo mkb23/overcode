@@ -8,6 +8,7 @@ from typing import Annotated, Optional, List
 import typer
 from rich import print as rprint
 
+from ..exceptions import LaunchError
 from ..launcher import AgentLauncher
 from ._shared import app, SessionOption, _parse_duration, find_agent
 
@@ -380,26 +381,30 @@ def launch(
 
     launcher = AgentLauncher(session)
 
-    result = launcher.launch(
-        name=name,
-        start_directory=working_dir,
-        initial_prompt=prompt,
-        skip_permissions=skip_permissions,
-        dangerously_skip_permissions=bypass_permissions,
-        parent_name=parent,
-        allowed_tools=allowed_tools,
-        extra_cli_args=backend_args,
-        agent_teams=teams,
-        budget_usd=budget,
-        agent_persona=agent,
-        model=model,
-        provider=provider,
-        backend=backend,
-        wrapper=wrapper,
-        inherit_parent_settings=not no_inherit,
-        no_parent=no_parent,
-        skill_profile=skills,
-    )
+    try:
+        result = launcher.launch(
+            name=name,
+            start_directory=working_dir,
+            initial_prompt=prompt,
+            skip_permissions=skip_permissions,
+            dangerously_skip_permissions=bypass_permissions,
+            parent_name=parent,
+            allowed_tools=allowed_tools,
+            extra_cli_args=backend_args,
+            agent_teams=teams,
+            budget_usd=budget,
+            agent_persona=agent,
+            model=model,
+            provider=provider,
+            backend=backend,
+            wrapper=wrapper,
+            inherit_parent_settings=not no_inherit,
+            no_parent=no_parent,
+            skill_profile=skills,
+        )
+    except LaunchError as e:
+        print(e)
+        raise typer.Exit(code=1)
 
     if result:
         rprint(f"\n[green]✓[/green] Agent '[bold]{name}[/bold]' launched")
@@ -490,23 +495,24 @@ def fork(
     fork_name = name if name else f"{source}-fork"
 
     launcher = AgentLauncher(session)
-    result = launcher.launch_fork(
-        name=fork_name,
-        source_session=source_session,
-        initial_prompt=prompt,
-    )
-
-    if result:
-        rprint(f"\n[green]✓[/green] Forked '[bold]{source}[/bold]' → '[bold]{fork_name}[/bold]'")
-        rprint(f"  Directory: {result.start_directory}")
-        if result.agent_persona:
-            rprint(f"  Agent: {result.agent_persona}")
-        if prompt:
-            rprint("  Initial prompt sent")
-        rprint(f"\nTo view: [bold]overcode attach {fork_name}[/bold]")
-    else:
+    try:
+        result = launcher.launch_fork(
+            name=fork_name,
+            source_session=source_session,
+            initial_prompt=prompt,
+        )
+    except LaunchError as e:
+        print(e)
         rprint(f"[red]Error: Failed to fork '{source}'[/red]")
         raise typer.Exit(code=1)
+
+    rprint(f"\n[green]✓[/green] Forked '[bold]{source}[/bold]' → '[bold]{fork_name}[/bold]'")
+    rprint(f"  Directory: {result.start_directory}")
+    if result.agent_persona:
+        rprint(f"  Agent: {result.agent_persona}")
+    if prompt:
+        rprint("  Initial prompt sent")
+    rprint(f"\nTo view: [bold]overcode attach {fork_name}[/bold]")
 
 
 @app.command("list")

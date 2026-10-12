@@ -47,7 +47,8 @@ from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
 from .dependency_check import require_tmux, require_agent_cli
 from .exceptions import (
-    AgentBusyError, AgentCliNotFoundError, InvalidSessionNameError, TmuxNotFoundError,
+    AgentBusyError, AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
+    TmuxNotFoundError,
 )
 from .status_constants import GREEN_STATUSES, STATUS_WAITING_APPROVAL
 
@@ -301,7 +302,7 @@ class AgentLauncher:
         backend: Optional[str] = None,
         no_parent: bool = False,
         skill_profile: Optional[str] = None,
-    ) -> Optional[Session]:
+    ) -> Session:
         """
         Launch an interactive Claude Code session in a tmux window.
 
@@ -333,34 +334,30 @@ class AgentLauncher:
                 person will drive themselves.
 
         Returns:
-            Session object if successful, None otherwise
+            The new Session, or the existing one if an agent called ``name``
+            still has its window.
+
+        Raises:
+            LaunchError: the agent could not be launched; ``reason`` says why.
         """
         # Validate session name
         try:
             validate_session_name(name)
-        except InvalidSessionNameError as e:
-            print(f"Cannot launch: {e}")
-            return None
-
-        try:
             require_tmux()
-        except TmuxNotFoundError as e:
-            print(f"Cannot launch: {e}")
-            return None
+        except (InvalidSessionNameError, TmuxNotFoundError) as e:
+            raise LaunchError(str(e)) from e
 
         # Auto-detect parent from env var if not explicitly set (#244)
         parent_session = None
         if no_parent:
             if parent_name is not None:
-                print("Cannot launch: --no-parent and --parent are mutually exclusive")
-                return None
+                raise LaunchError("--no-parent and --parent are mutually exclusive")
             caller_name = os.environ.get("OVERCODE_SESSION_NAME")
             if caller_name:
                 from .overagent import OVERAGENT_BACKEND
                 caller = self._resolve(caller_name)
                 if caller is None or caller.backend != OVERAGENT_BACKEND:
-                    print("Cannot launch: only the overagent may launch with --no-parent")
-                    return None
+                    raise LaunchError("only the overagent may launch with --no-parent")
         elif parent_name is None:
             env_parent_name = os.environ.get("OVERCODE_SESSION_NAME")
             if env_parent_name:
@@ -369,14 +366,13 @@ class AgentLauncher:
         if parent_name:
             parent_session = self._resolve(parent_name)
             if not parent_session:
-                print(f"Parent agent '{parent_name}' not found")
-                return None
+                raise LaunchError(f"parent agent '{parent_name}' not found")
 
             # Enforce depth limit
             parent_depth = self.sessions.compute_depth(parent_session)
             if parent_depth + 1 >= self.MAX_HIERARCHY_DEPTH:
-                print(f"Cannot launch: maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
-                return None
+                raise LaunchError(
+                    f"maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
 
         # Settings resolution (#433): explicit arg > parent setting > config
         # default > built-in default. Children inherit the parent's provider,
@@ -430,9 +426,8 @@ class AgentLauncher:
             agent_defaults.get("skill_profile"),
         )
         if skill_profile and skill_profile not in skill_library.get_profiles():
-            print(f"Cannot launch: skill profile '{skill_profile}' not found "
-                  f"(see `overcode skills profile list`)")
-            return None
+            raise LaunchError(f"skill profile '{skill_profile}' not found "
+                              f"(see `overcode skills profile list`)")
 
         # Backend resolution is complete (explicit > parent > config >
         # built-in), so the CLI dependency check can finally target the
@@ -440,18 +435,15 @@ class AgentLauncher:
         try:
             agent_backend = get_backend(backend)
         except UnknownBackendError as e:
-            print(f"Cannot launch: {e}")
-            return None
+            raise LaunchError(str(e)) from e
 
         try:
             require_agent_cli(agent_backend)
         except (AgentCliNotFoundError, agent_backend.not_found_error) as e:
-            print(f"Cannot launch: {e}")
-            return None
+            raise LaunchError(str(e)) from e
 
         if provider not in ("web", "bedrock"):
-            print(f"Cannot launch: invalid provider '{provider}'. Use: web, bedrock")
-            return None
+            raise LaunchError(f"invalid provider '{provider}'. Use: web, bedrock")
 
         # A plain shell (#496) has no agent CLI to wrap — a wrapper, whether
         # passed, inherited from a parent or a config default, would be
@@ -466,8 +458,7 @@ class AgentLauncher:
             from .wrapper import resolve_wrapper as _resolve_wrapper
             resolved_wrapper = _resolve_wrapper(wrapper)
             if resolved_wrapper is None:
-                print(f"Cannot launch: wrapper '{wrapper}' not found or not executable")
-                return None
+                raise LaunchError(f"wrapper '{wrapper}' not found or not executable")
 
         # Check if a session with this name already exists
         existing = self.sessions.get_session_by_name(name)
@@ -482,8 +473,7 @@ class AgentLauncher:
 
         # Ensure tmux session exists
         if not self.tmux.ensure_session():
-            print(f"Failed to create tmux session '{self.tmux.session_name}'")
-            return None
+            raise LaunchError(f"failed to create tmux session '{self.tmux.session_name}'")
 
         # Generate session_id FIRST so we can use it in the window name
         session_id = str(uuid.uuid4())
@@ -492,8 +482,7 @@ class AgentLauncher:
         # Create window
         window_name = self.tmux.create_window(window_name, start_directory)
         if window_name is None:
-            print(f"Failed to create tmux window '{name}'")
-            return None
+            raise LaunchError(f"failed to create tmux window '{name}'")
 
         if dangerously_skip_permissions:
             perm_mode = "bypass"
@@ -529,10 +518,9 @@ class AgentLauncher:
         # fresh=True triggers the helper's "prescribe a new --session-id" branch
         # (#373), giving us the Claude session ID upfront without PID discovery.
         if not self._send_launch_for_session(session, window_name, fresh=True):
-            print(f"Failed to send command to window {window_name}")
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
-            return None
+            raise LaunchError(f"failed to send command to window {window_name}")
 
         # Reload so caller sees the active_agent_session_id / command set by the helper.
         session = self.sessions.get_session(session.id)
@@ -543,10 +531,10 @@ class AgentLauncher:
                 # transfer_budget handles unlimited parent (budget=0) correctly
                 success = self.sessions.transfer_budget(parent_session.id, session.id, budget_usd)
                 if not success:
-                    print(f"Cannot launch: parent has insufficient budget for ${budget_usd:.2f}")
                     self.tmux.kill_window(window_name)
                     self.sessions.delete_session(session.id)
-                    return None
+                    raise LaunchError(
+                        f"parent has insufficient budget for ${budget_usd:.2f}")
             else:
                 self.sessions.set_cost_budget(session.id, budget_usd)
 
@@ -655,7 +643,7 @@ class AgentLauncher:
         name: str,
         source_session: Session,
         initial_prompt: Optional[str] = None,
-    ) -> Optional[Session]:
+    ) -> Session:
         """Launch a forked agent from an existing session's context.
 
         Uses `claude --resume <session-id> --fork-session` to create a new
@@ -672,41 +660,39 @@ class AgentLauncher:
             initial_prompt: Optional prompt to send after the fork starts
 
         Returns:
-            Session object if successful, None otherwise
+            The new Session, or the existing one if an agent called ``name``
+            still has its window.
+
+        Raises:
+            LaunchError: the fork could not be launched; ``reason`` says why.
         """
         # Validate
         try:
             validate_session_name(name)
-        except InvalidSessionNameError as e:
-            print(f"Cannot fork: {e}")
-            return None
-
-        try:
             agent_backend = self.backend_for(source_session)
-        except UnknownBackendError as e:
-            print(f"Cannot fork: {e}")
-            return None
+        except (InvalidSessionNameError, UnknownBackendError) as e:
+            raise LaunchError(str(e), "fork") from e
 
         if not supports(agent_backend, BackendCapability.FORK):
-            print(f"Cannot fork: backend '{agent_backend.name}' does not support fork")
-            return None
+            raise LaunchError(
+                f"backend '{agent_backend.name}' does not support fork", "fork")
 
         try:
             require_tmux()
             require_agent_cli(agent_backend)
         except (TmuxNotFoundError, AgentCliNotFoundError, agent_backend.not_found_error) as e:
-            print(f"Cannot fork: {e}")
-            return None
+            raise LaunchError(str(e), "fork") from e
 
         if not source_session.active_agent_session_id:
-            print(f"Cannot fork: source agent '{source_session.name}' has no active agent session ID")
-            return None
+            raise LaunchError(
+                f"source agent '{source_session.name}' has no active agent session ID",
+                "fork")
 
         # Enforce depth limit
         source_depth = self.sessions.compute_depth(source_session)
         if source_depth + 1 >= self.MAX_HIERARCHY_DEPTH:
-            print(f"Cannot fork: maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
-            return None
+            raise LaunchError(
+                f"maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded", "fork")
 
         # Check for name collision
         existing = self.sessions.get_session_by_name(name)
@@ -719,16 +705,15 @@ class AgentLauncher:
 
         # Ensure tmux session exists
         if not self.tmux.ensure_session():
-            print(f"Failed to create tmux session '{self.tmux.session_name}'")
-            return None
+            raise LaunchError(
+                f"failed to create tmux session '{self.tmux.session_name}'", "fork")
 
         # Create tmux window in source's directory
         session_id = str(uuid.uuid4())
         window_name = f"{name}-{session_id[:4]}"
         window_name = self.tmux.create_window(window_name, source_session.start_directory)
         if window_name is None:
-            print(f"Failed to create tmux window '{name}'")
-            return None
+            raise LaunchError(f"failed to create tmux window '{name}'", "fork")
 
         perm_mode = source_session.permissiveness_mode or "normal"
 
@@ -764,10 +749,9 @@ class AgentLauncher:
             session, window_name,
             fork_from=source_session.active_agent_session_id,
         ):
-            print(f"Failed to send command to window {window_name}")
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
-            return None
+            raise LaunchError(f"failed to send command to window {window_name}", "fork")
 
         session = self.sessions.get_session(session.id)
 

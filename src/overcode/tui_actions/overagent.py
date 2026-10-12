@@ -68,12 +68,15 @@ class OveragentMixin:
         self._overagent_question = None
 
         def work() -> None:
+            from ..exceptions import LaunchError
             error = None
             session = None
             try:
                 session = self.launcher.launch(name=name, start_directory=directory, backend=backend,
                                                initial_prompt=prompt)
-            except Exception as e:  # launcher raises a variety of errors
+            except LaunchError as e:
+                error = e.reason
+            except Exception as e:  # a bug, not a refused launch: still report it
                 error = str(e)
             self.call_from_thread(self._overagent_launched, session, error)
 

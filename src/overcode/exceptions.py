@@ -94,6 +94,19 @@ class AgentBusyError(SessionError):
         super().__init__(f"Agent '{name}' is busy ({status})")
 
 
+class LaunchError(SessionError):
+    """An agent could not be launched or forked; ``reason`` says why.
+
+    ``str()`` is the whole sentence ("Cannot launch: <reason>"), ready to
+    show a person as is.
+    """
+
+    def __init__(self, reason: str, action: str = "launch"):
+        self.reason = reason
+        self.action = action
+        super().__init__(f"Cannot {action}: {reason}")
+
+
 # =============================================================================
 # Agent CLI Errors
 # =============================================================================
