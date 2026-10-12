@@ -1104,16 +1104,13 @@ class SupervisorTUI(
 
     def _rows_fit_column_widths(self, rows: list) -> bool:
         """True if ``rows``, measured again, leave the aligned widths as they are."""
-        from .summary_columns import render_summary_cells
-
         widths = self.column_widths
         if not widths:
             return False
         measured = []
         for widget in rows:
-            cells = render_summary_cells(widget._build_column_context(),
-                                         column_filter=widget.column_visible)
-            new = [cell_len(c.plain) for c in cells]
+            # The row's own cells: the repaint that follows reuses them
+            new = [cell_len(c.plain) for c in widget.row_cells()]
             old = getattr(widget, "_cell_widths", None)
             if old is None or len(new) != len(widths) or len(old) != len(widths):
                 return False
@@ -1712,7 +1709,7 @@ class SupervisorTUI(
     def _recompute_cell_column_widths(self, force: bool = False) -> None:
         """Recompute per-cell column widths across all visible widgets.
 
-        Collects render_summary_cells() output from every SessionSummary
+        Collects the cells (row_cells(), as rendered) from every SessionSummary
         widget, then computes max visual width per column position. Stored
         as self.column_widths for use by widget render() via pad_and_join_cells().
 
@@ -1725,7 +1722,7 @@ class SupervisorTUI(
         """
         if not force and not self._column_widths_dirty:
             return
-        from .summary_columns import render_summary_cells, compute_column_widths
+        from .summary_columns import compute_column_widths
         widgets = list(self.query(SessionSummary))
         if not widgets:
             self.column_widths = []
@@ -1733,8 +1730,7 @@ class SupervisorTUI(
             return
         all_cells = []
         for w in widgets:
-            ctx = w._build_column_context()
-            cells = render_summary_cells(ctx, column_filter=w.column_visible)
+            cells = w.row_cells()
             all_cells.append(cells)
             w._cell_widths = [cell_len(c.plain) for c in cells]
         self.column_widths = compute_column_widths(all_cells)

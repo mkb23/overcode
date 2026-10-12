@@ -392,42 +392,65 @@ class TestScrapedRecapFromStats:
         assert _scraped_recap_from_stats(_make_stats(current_task="  Wrote file.py  ")) == "Wrote file.py"
 
 
-class TestRefreshIfChanged:
-    """#486: the 250 ms tick refreshes only rows that would draw differently."""
+class TestRowInputs:
+    """The row keeps its built cells until one of its inputs changes
+    (quality review item 19; the whole path is in test_row_cache)."""
 
     @staticmethod
-    def _widget(row_text):
-        from rich.text import Text
-        widget = _make_bare_widget(_last_rendered=None)
-        widget.refresh = MagicMock()
-        widget._render_row = MagicMock(side_effect=lambda: Text(row_text[0]))
+    def _built_widget(**attrs):
+        widget = _make_bare_widget(**attrs)
+        widget._built = object()  # stands for the cells as last built
+        widget._visible = ()
         return widget
 
-    def test_first_tick_refreshes(self):
-        widget = self._widget(["row"])
-        assert widget.refresh_if_changed() is True
-        widget.refresh.assert_called_once()
+    def test_a_changed_input_drops_the_built_row(self):
+        widget = self._built_widget()
+        widget.detected_status = "waiting_user"
+        assert widget._built is None
+        assert widget._visible == ()  # which columns show did not move
 
-    def test_unchanged_row_is_skipped(self):
-        widget = self._widget(["row"])
-        widget.render()  # what is on screen
-        assert widget.refresh_if_changed() is False
-        widget.refresh.assert_not_called()
+    def test_the_same_value_again_keeps_it(self):
+        # The 10 s session sync assigns every flag again
+        widget = self._built_widget(any_has_pr=False, job_count=0)
+        built = widget._built
+        widget.any_has_pr = False
+        widget.job_count = 0
+        widget.session = widget.session
+        assert widget._built is built
 
-    def test_changed_row_refreshes(self):
-        text = ["  7s working"]
-        widget = self._widget(text)
-        widget.render()
-        text[0] = "  8s working"
-        assert widget.refresh_if_changed() is True
-        widget.refresh.assert_called_once()
+    def test_an_equal_value_of_another_type_is_a_change(self):
+        widget = self._built_widget(subtree_cost_usd=0.0)
+        widget.subtree_cost_usd = 0  # 0 and 0.0 can format differently
+        assert widget._built is None
 
-    def test_compares_against_what_render_last_drew(self):
-        # A refresh from elsewhere (focus, resize) redraws the row; the
-        # next tick compares against that drawing
-        text = ["a"]
-        widget = self._widget(text)
-        widget.render()
-        text[0] = "b"
-        widget.render()
-        assert widget.refresh_if_changed() is False
+    def test_private_state_is_not_an_input(self):
+        widget = self._built_widget()
+        built = widget._built
+        widget._hover_column = "model"
+        assert widget._built is built
+
+    def test_the_state_start_is_an_input(self):
+        widget = self._built_widget()
+        widget._status_changed_at = datetime(2026, 10, 7, 12, 0)
+        assert widget._built is None
+
+    def test_column_inputs_always_work_the_columns_out_again(self):
+        # The override dicts are updated in place and assigned again
+        overrides = {}
+        widget = self._built_widget(column_overrides=overrides)
+        widget._built = object()
+        widget._visible = ()
+        overrides["model"] = True
+        widget.column_overrides = overrides
+        assert widget._built is None and widget._visible is None
+
+    def test_visible_columns_are_worked_out_once(self):
+        from overcode.summary_columns import SUMMARY_COLUMNS
+
+        widget = _make_bare_widget(column_overrides={})
+        with patch("overcode.tui_widgets.session_summary.resolve_column_visible",
+                   return_value=True) as resolve:
+            cols = widget.visible_columns()
+            assert widget.visible_columns() is cols
+            assert all(widget.column_visible(c) for c in SUMMARY_COLUMNS)
+        assert resolve.call_count == len(SUMMARY_COLUMNS)

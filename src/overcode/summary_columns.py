@@ -8,6 +8,12 @@ columns whose detail level or group is not active.
 
 Plain-text rendering for CLI: each column can optionally provide a
 ``label`` and ``render_plain`` function for use by ``overcode show``.
+
+A column whose cell reads the clock (a duration, a countdown, an "at
+HH:MM") is marked ``ticks=True``. The TUI keeps each row's other cells
+until one of the row's inputs changes and, on its 250 ms clock, redraws
+only the ticking cells; a clock-reading column left unmarked would freeze
+between deltas (test_row_cache checks every column an hour apart).
 """
 
 import unicodedata
@@ -308,6 +314,10 @@ class SummaryColumn:
     # Popup for a row's cell, naming what its emoji stand for; set from
     # COLUMN_HOVER below. None = no popup.
     hover: Optional[Callable[[ColumnContext], Optional["Text"]]] = None  # noqa: F821
+    # Reads the clock: its cell can change with nothing else changing (a
+    # duration or countdown). The TUI's 250 ms row clock redraws only these
+    # cells; every other cell is rebuilt only when the row's inputs change.
+    ticks: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1401,9 +1411,9 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Status", render_plain=render_status_plain, name="Status"),
     SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert,
                   name="Alert"),
-    SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state,
+    SummaryColumn(id="time_in_state", ticks=True, group="identity", detail_levels=ALL, render=render_time_in_state,
                   header="ST", name="Time in State"),
-    SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown,
+    SummaryColumn(id="sleep_countdown", ticks=True, group="identity", detail_levels=ALL, render=render_sleep_countdown,
                   visible=lambda ctx: ctx.any_is_sleeping or ctx.any_has_status_detail,
                   header="DTL", name="Status Detail"),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
@@ -1428,18 +1438,18 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   visible=lambda ctx: ctx.any_has_pr, placeholder_width=8, header="PR", name="PR Number"),
 
     # Time group — uptime, running, stalled, sleep, active%
-    SummaryColumn(id="uptime", group="time", detail_levels=MED_PLUS, render=render_uptime,
+    SummaryColumn(id="uptime", ticks=True, group="time", detail_levels=MED_PLUS, render=render_uptime,
                   label="Uptime", render_plain=render_uptime_plain, header="UPT", name="Uptime"),
-    SummaryColumn(id="running_time", group="time", detail_levels=MED_PLUS, render=render_running_time,
+    SummaryColumn(id="running_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_running_time,
                   header="RUN", name="Running Time"),
-    SummaryColumn(id="stalled_time", group="time", detail_levels=MED_PLUS, render=render_stalled_time,
+    SummaryColumn(id="stalled_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_stalled_time,
                   header="STL", name="Stalled Time"),
-    SummaryColumn(id="sleep_time", group="time", detail_levels=MED_PLUS, render=render_sleep_time,
+    SummaryColumn(id="sleep_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_sleep_time,
                   header="ZZZ", name="Sleep Time"),
-    SummaryColumn(id="active_pct", group="time", detail_levels=HIGH_PLUS, render=render_active_pct,
+    SummaryColumn(id="active_pct", ticks=True, group="time", detail_levels=HIGH_PLUS, render=render_active_pct,
                   header="ACT", name="Active %"),
     # Synthetic CLI-only: combined time line
-    SummaryColumn(id="time_combined", group="time", detail_levels=set(), render=lambda ctx: None,
+    SummaryColumn(id="time_combined", ticks=True, group="time", detail_levels=set(), render=lambda ctx: None,
                   label="Time", render_plain=render_time_plain, cli_only=True),
 
     # LLM usage group — TOK, ENRG, $, BDG, SUB$ (energy before cost for readability)
@@ -1538,9 +1548,9 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="R#", name="Robot Count"),
     SummaryColumn(id="standing_orders", group="supervision", detail_levels=ALL, render=render_standing_orders,
                   label="Orders", render_plain=render_orders_plain, header="ORD", name="Standing Orders"),
-    SummaryColumn(id="heartbeat", group="supervision", detail_levels=ALL, render=render_heartbeat,
+    SummaryColumn(id="heartbeat", ticks=True, group="supervision", detail_levels=ALL, render=render_heartbeat,
                   label="Heartbeat", render_plain=render_heartbeat_plain, header="HB", name="Heartbeat"),
-    SummaryColumn(id="oversight_countdown", group="supervision", detail_levels=ALL, render=render_oversight_countdown,
+    SummaryColumn(id="oversight_countdown", ticks=True, group="supervision", detail_levels=ALL, render=render_oversight_countdown,
                   visible=lambda ctx: ctx.any_has_oversight_timeout, placeholder_width=8,
                   header="OVR", name="Oversight Countdown"),
 
@@ -2045,7 +2055,6 @@ def render_summary_cells(
         group_filter: Legacy callback to check group visibility. Ignored when
             column_filter is provided.
     """
-    from rich.text import Text
     cells = []
     for col in SUMMARY_COLUMNS:
         if column_filter is not None:
@@ -2056,20 +2065,36 @@ def render_summary_cells(
                 continue
             if group_filter is not None and not group_filter(col.group):
                 continue
-        cell = Text()
-        if col.visible is not None and not col.visible(ctx):
-            if col.placeholder_width > 0:
-                cell.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
-            cells.append(cell)
-            continue
-        segments = col.render(ctx)
-        if segments:
-            for text, style in segments:
-                cell.append(text, style=style)
-        elif col.placeholder_width > 0:
-            cell.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
-        cells.append(cell)
+        cells.append(render_cell(col, ctx))
     return cells
+
+
+def cell_segments(col: SummaryColumn, ctx: ColumnContext) -> list:
+    """One column's (text, style) segments for one row, its placeholder
+    included; [] for an empty cell."""
+    if col.visible is not None and not col.visible(ctx):
+        segments = None
+    else:
+        segments = col.render(ctx)
+    if segments:
+        return segments
+    if col.placeholder_width > 0:
+        return [(" " * col.placeholder_width, ctx.mono(f"dim{ctx.bg}", "dim"))]
+    return []
+
+
+def cell_text(segments: list) -> "Text":
+    """A cell's Text from its segments."""
+    from rich.text import Text
+    cell = Text()
+    for text, style in segments:
+        cell.append(text, style=style)
+    return cell
+
+
+def render_cell(col: SummaryColumn, ctx: ColumnContext) -> "Text":
+    """One column's cell for one row: its segments, or its placeholder."""
+    return cell_text(cell_segments(col, ctx))
 
 
 def render_summary_line(

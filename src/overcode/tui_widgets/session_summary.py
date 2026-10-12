@@ -25,7 +25,7 @@ from ..tui_helpers import (
 )
 from ..summary_columns import (
     COLUMNS_BY_ID, ColumnContext, SummaryColumn, SUMMARY_COLUMNS, column_at,
-    render_summary_cells, resolve_column_visible, pad_and_join_cells,
+    cell_segments, cell_text, render_cell, resolve_column_visible, pad_and_join_cells,
 )
 
 
@@ -45,8 +45,59 @@ def _scraped_recap_from_stats(stats) -> Optional[str]:
     return task
 
 
+# Assigning any public attribute of a row may change what it draws, so it
+# drops the row's built cells (SessionSummary.__setattr__); these do not.
+_NOT_ROW_INPUTS = frozenset({"tooltip"})
+# Private attributes the row draws from
+_PRIVATE_ROW_INPUTS = frozenset({"_status_changed_at"})
+# The attributes that decide which columns show
+_VISIBILITY_INPUTS = frozenset({"summary_detail", "column_overrides", "uniform_columns"})
+_UNSET = object()
+
+
+class _BuiltRow:
+    """A row's cells as last built, and the line made from them.
+
+    ``cells_key`` is what the cells read from outside the row (focus, the
+    app's name widths, sisters); ``widths``/``width`` are what the line was
+    padded to. Assigning one of the row's own inputs drops the whole thing.
+    """
+
+    __slots__ = ("cells_key", "ctx", "columns", "segments", "cells", "ticking",
+                 "widths", "width", "text")
+
+    def __init__(self, cells_key, ctx, columns):
+        self.cells_key = cells_key
+        self.ctx = ctx
+        self.columns = columns
+        self.segments = [cell_segments(c, ctx) for c in columns]
+        self.cells = [cell_text(segs) for segs in self.segments]
+        self.ticking = tuple(i for i, col in enumerate(columns) if col.ticks)
+        self.widths = None
+        self.width = None
+        self.text: Optional[Text] = None
+
+
 class SessionSummary(Static, can_focus=True):
-    """Widget displaying single-line session summary"""
+    """Widget displaying single-line session summary
+
+    The 250 ms row clock (``refresh_if_changed``) must stay cheap for a
+    fleet of rows: each row keeps its cells (``_BuiltRow``) and the tick
+    redraws only the cells of ``ticks`` columns, repainting only if one
+    moved. The cells are built again when anything they read changes:
+    assigning a row input (any public attribute, see ``__setattr__``), a
+    ``refresh()`` from outside (the convention after changing a session in
+    place), focus or selection, or the app's name widths. ``_render_row``
+    is the uncached render the cache must always equal.
+    """
+
+    # Class defaults, so a row built without __init__ (tests) has them
+    _built: Optional[_BuiltRow] = None
+    _visible: Optional[tuple] = None
+    _visible_ids: frozenset = frozenset()
+    _pending: bool = False  # the tick built the line the next render() draws
+    _full_builds: int = 0  # times the cells were built from scratch (tests)
+    _last_rendered: Optional[Text] = None
 
     summary_detail: reactive[str] = reactive("low")  # low, med, full
     summary_content_mode: reactive[str] = reactive("ai_short")  # ai_short, ai_long, orders, annotation (#74)
@@ -134,15 +185,72 @@ class SessionSummary(Static, can_focus=True):
         self.add_class("list-mode")
         self._hover_column: Optional[str] = None  # column whose popup is showing
 
+    def __setattr__(self, name: str, value) -> None:
+        """A row input assigned a new value: build the cells again on the
+        next draw. The same value again (the 10 s session sync re-assigns
+        every flag) is no change; whoever changes an object in place calls
+        refresh(), as the actions do."""
+        if name[0] == "_":
+            if name not in _PRIVATE_ROW_INPUTS:
+                super().__setattr__(name, value)
+                return
+        elif name in _NOT_ROW_INPUTS:
+            super().__setattr__(name, value)
+            return
+        elif name in _VISIBILITY_INPUTS:
+            # Rare, and the override dicts are updated in place and assigned
+            # again: always work the columns out afresh
+            super().__setattr__(name, value)
+            d = self.__dict__
+            d["_built"] = None
+            d["_visible"] = None
+            return
+        try:
+            old = getattr(self, name)
+        except Exception:
+            old = _UNSET
+        super().__setattr__(name, value)
+        if old is value:
+            return
+        if old is not _UNSET and type(old) is type(value):
+            try:
+                if old == value:
+                    return
+            except Exception:
+                pass
+        self.__dict__["_built"] = None
+
+    def refresh(self, *args, **kwargs):
+        """Redraw. Whoever asks may have changed a session or the column
+        overrides in place, so the row is worked out again (the row clock
+        repaints through Static.refresh)."""
+        d = self.__dict__
+        d["_built"] = None
+        d["_visible"] = None
+        return super().refresh(*args, **kwargs)
+
     @property
     def status_detail(self):
         """The engine's 4-colour detail (badge countdowns as of now), or None."""
         return tui_engine.status_detail(self.engine, time.time()) if self.engine else None
 
+    def visible_columns(self) -> tuple:
+        """The columns this row shows, worked out again only when the detail
+        level, the overrides or the uniform columns are assigned."""
+        cols = self._visible
+        if cols is None:
+            cols = tuple(c for c in SUMMARY_COLUMNS
+                         if resolve_column_visible(c, self.summary_detail, self.column_overrides,
+                                                   self.uniform_columns))
+            d = self.__dict__
+            d["_visible"] = cols
+            d["_visible_ids"] = frozenset(c.id for c in cols)
+        return cols
+
     def column_visible(self, col: SummaryColumn) -> bool:
         """Check if a column is visible at the current detail level with overrides."""
-        return resolve_column_visible(col, self.summary_detail, self.column_overrides,
-                                      self.uniform_columns)
+        self.visible_columns()
+        return col.id in self._visible_ids
 
     def column_under(self, event: events.MouseEvent) -> Optional[SummaryColumn]:
         """The column under the pointer, from the same widths the row is
@@ -151,7 +259,7 @@ class SessionSummary(Static, can_focus=True):
         offset = event.get_content_offset(self)
         if not widths or offset is None:
             return None
-        ids = [c.id for c in SUMMARY_COLUMNS if self.column_visible(c)]
+        ids = [c.id for c in self.visible_columns()]
         return COLUMNS_BY_ID.get(column_at(offset.x, ids, widths))
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
@@ -329,11 +437,7 @@ class SessionSummary(Static, can_focus=True):
         """Build the ColumnContext with all pre-computed data for column rendering."""
         s = self.rendered_session()
 
-        # Pre-compute times
-        uptime = calculate_uptime(s.start_time)
-        green_time, non_green_time, sleep_time = get_current_state_times(
-            s.stats, is_asleep=s.is_asleep
-        )
+        uptime, green_time, non_green_time, sleep_time = self._clock_times(s)
         median_work = self.claude_stats.median_work_time if self.claude_stats else 0.0
 
         # Status styling
@@ -383,7 +487,7 @@ class SessionSummary(Static, can_focus=True):
         # The engine publishes the detail already bridged from the legacy
         # heartbeat statuses; a sister's agent gets the bridge here.
         if self.engine:
-            effective_detail = tui_engine.status_detail(self.engine, time.time())
+            effective_detail = self.status_detail
         else:
             from ..hook_status_detector import augment_with_legacy_heartbeat
             effective_detail = augment_with_legacy_heartbeat(None, self.detected_status)
@@ -466,6 +570,22 @@ class SessionSummary(Static, can_focus=True):
             local_hostname=getattr(self.app, 'local_hostname', ''),
         )
 
+    @staticmethod
+    def _clock_times(s: Session) -> tuple:
+        """The context's values that move with the clock: uptime, and the
+        running / stalled / asleep totals up to now."""
+        green_time, non_green_time, sleep_time = get_current_state_times(
+            s.stats, is_asleep=s.is_asleep
+        )
+        return calculate_uptime(s.start_time), green_time, non_green_time, sleep_time
+
+    def _tick_context(self, ctx: ColumnContext) -> None:
+        """Move ``ctx``'s clock values to now (the badge ETAs included)."""
+        ctx.uptime, ctx.green_time, ctx.non_green_time, ctx.sleep_time = \
+            self._clock_times(ctx.session)
+        if self.engine:
+            ctx.status_detail = self.status_detail
+
     def _render_content_area(self, content: Text, ctx: ColumnContext, term_width: int) -> None:
         """Render the collapsed content area after the | separator."""
         s = ctx.session
@@ -502,47 +622,113 @@ class SessionSummary(Static, can_focus=True):
         }
         content.append(text, style=style_map.get(style_cat, style_map["dim"]))
 
+    # ── Drawing the row ────────────────────────────────────────────────
+
+    def _cells_key(self) -> tuple:
+        """What the cells read from outside the row's own attributes."""
+        app = self.app
+        return (self.has_focus, "selected" in self.classes,
+                getattr(app, 'max_name_width', None), getattr(app, 'max_repo_width', 10),
+                getattr(app, 'max_branch_width', 10), getattr(app, 'all_names_match_repos', False),
+                getattr(app, 'has_sisters', False), getattr(app, 'local_hostname', ''))
+
+    def _row_width(self) -> int:
+        """The width the line fills: the row's own (the app's before layout)."""
+        width = self.outer_size.width or self.app.size.width
+        if not width:
+            import shutil
+            width = shutil.get_terminal_size().columns
+        return width
+
+    def _current_row(self, tick: bool = True) -> _BuiltRow:
+        """The row's cells, up to date: built again if an input changed,
+        otherwise only the ticking cells redrawn (when ``tick``)."""
+        key = self._cells_key()
+        row = self._built
+        if row is None or row.cells_key != key:
+            self.__dict__["_full_builds"] = self._full_builds + 1
+            ctx = self._build_column_context()
+            columns = self.visible_columns()
+            row = _BuiltRow(key, ctx, columns)
+            self.__dict__["_built"] = row
+        elif tick and row.ticking:
+            ctx = row.ctx
+            self._tick_context(ctx)
+            segments = row.segments
+            for i in row.ticking:
+                segs = cell_segments(row.columns[i], ctx)
+                if segs != segments[i]:
+                    segments[i] = segs
+                    row.cells[i] = cell_text(segs)
+                    row.text = None
+        return row
+
+    def row_cells(self) -> list:
+        """This row's cells as drawn now (for aligning the columns)."""
+        return self._current_row().cells
+
+    def _row_text(self, tick: bool = True) -> Text:
+        """The line from the built cells; padded again only if a cell, the
+        column widths or the row's width moved."""
+        row = self._current_row(tick)
+        widths = getattr(self.app, 'column_widths', None)
+        width = self._row_width()
+        if row.text is None or row.widths != widths or row.width != width:
+            row.text = self._compose_line(row.ctx, row.cells, widths, width)
+            row.widths = list(widths) if widths else widths
+            row.width = width
+        return row.text
+
     def render(self) -> Text:
         """Render single-line session summary."""
-        text = self._render_row()
+        # A row the clock just found changed draws the line the clock built
+        text = self._row_text(tick=not self._pending)
+        self.__dict__["_pending"] = False
         self._last_rendered = text
         return text
 
     def refresh_if_changed(self) -> bool:
         """Refresh only if the row would now draw differently.
 
-        Building the row's Text is ~40% of a refresh; Textual turning it into
-        strips and compositing is the rest, so an unchanged row (most of them,
-        most ticks) skips that. Comparing against what render() last returned
-        means whatever changed the row — status, a ticking duration, focus,
-        width — still shows on the same tick.
+        The row clock calls this on every row 4 times a second. Only the
+        ticking cells are redrawn (the rest are kept until an input
+        changes), and Textual's strips and compositing run only for a row
+        that changed. Comparing against what render() last returned means
+        whatever changed the row (status, a ticking duration, focus,
+        width) still shows on the same tick.
         """
-        if self._last_rendered is not None and self._render_row() == self._last_rendered:
+        text = self._row_text()
+        last = self._last_rendered
+        if last is not None and (text is last or text == last):
             return False
-        self.refresh()
+        self.__dict__["_pending"] = True
+        super().refresh()
         return True
 
-    def _render_row(self) -> Text:
-        import shutil
-        term_width = shutil.get_terminal_size().columns
-        ctx = self._build_column_context()
-
-        # Render columns via shared canonical loop with auto-alignment
-        cells = render_summary_cells(ctx, column_filter=self.column_visible)
-        column_widths = getattr(self.app, 'column_widths', None)
+    def _compose_line(self, ctx: ColumnContext, cells: list, column_widths, width: int) -> Text:
+        """The line: cells padded to the aligned widths, the content area, fill."""
         pad_style = ctx.mono(f"{ctx.bg}", "") if ctx.bg else ""
         if column_widths:
             content = pad_and_join_cells(cells, column_widths, pad_style=pad_style)
         else:
             # Fallback: no alignment data yet (first render before batch update)
-            from rich.text import Text
             content = Text()
             for cell in cells:
                 content.append_text(cell)
 
-        self._render_content_area(content, ctx, term_width)
-        # Pad to fill terminal width
+        self._render_content_area(content, ctx, width)
+        # Pad to fill the row
         current_len = len(content.plain)
-        if current_len < term_width:
-            content.append(" " * (term_width - current_len), style=ctx.mono(f"{ctx.bg}", ""))
+        if current_len < width:
+            content.append(" " * (width - current_len), style=ctx.mono(f"{ctx.bg}", ""))
         return content
+
+    def _render_row(self) -> Text:
+        """The row rendered from scratch, bypassing every cache: what the
+        cached line must always equal."""
+        ctx = self._build_column_context()
+        cells = [render_cell(c, ctx) for c in SUMMARY_COLUMNS
+                 if resolve_column_visible(c, self.summary_detail, self.column_overrides,
+                                           self.uniform_columns)]
+        return self._compose_line(ctx, cells, getattr(self.app, 'column_widths', None),
+                                  self._row_width())
