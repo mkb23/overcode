@@ -16,6 +16,8 @@ import os
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import threading
+
 import pytest
 
 from overcode import config
@@ -262,8 +264,16 @@ class TestPublishedMode:
         daemon.state.interval_mode = "unattended"
         daemon.state.save = MagicMock()
         slept = []
+        me = threading.current_thread()
+
+        def sleep(seconds):
+            # time is one shared module: only this thread's sleeps count
+            # (a presence thread left by another test sleeps through it too)
+            if threading.current_thread() is me:
+                slept.append(seconds)
+
         with (
-            patch("overcode.monitor_daemon.time.sleep", slept.append),
+            patch("overcode.monitor_daemon.time.sleep", sleep),
             patch("overcode.engine_wake.check_activity_signal", return_value=True),
         ):
             daemon.wake.sleep(INTERVAL_UNATTENDED)
