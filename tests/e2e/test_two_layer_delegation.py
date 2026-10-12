@@ -270,8 +270,12 @@ def _find_report_files(state_dir: str) -> dict:
     return reports
 
 
-def _check_for_cheating_files(project_root: str) -> list:
-    """Scan project root for suspicious data-sync files agents might create."""
+def _check_for_cheating_files(project_root: str, since: float) -> list:
+    """Suspicious data-sync files agents wrote under the project root.
+
+    Only files modified since the run started count: the checkout has its
+    own (e.g. `make metrics` writes build/metrics/summary.json).
+    """
     suspicious_patterns = [
         "jokes*.md", "jokes*.txt", "jokes*.json",
         "results*.json", "results*.txt", "results*.md",
@@ -287,7 +291,7 @@ def _check_for_cheating_files(project_root: str) -> list:
         for path in glob_mod.glob(os.path.join(project_root, "**", pat), recursive=True):
             if "overcode-2layer-test" not in path and "node_modules" not in path:
                 found.append(path)
-    return list(set(found))
+    return [p for p in set(found) if os.path.getmtime(p) >= since]
 
 
 def _judge_outputs(
@@ -453,6 +457,7 @@ class TestTwoLayerDelegation:
         project_root = os.path.dirname(
             os.path.dirname(os.path.dirname(__file__))
         )
+        run_started = time.time()
         launch_result = subprocess.run(
             [
                 "python", "-m", "overcode.cli", "launch",
@@ -770,7 +775,7 @@ class TestTwoLayerDelegation:
             else:
                 print(f"    {name}: ERROR — {data}")
 
-        cheating_files = _check_for_cheating_files(project_root)
+        cheating_files = _check_for_cheating_files(project_root, run_started)
         if cheating_files:
             print(f"  WARNING: Suspicious data files found: {cheating_files}")
         else:

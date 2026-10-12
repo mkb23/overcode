@@ -322,7 +322,14 @@ class TestHookStatusDetection:
         assert _wait_for_agent_in_daemon(state_dir, session, "hook-test", timeout=30), \
             "Agent 'hook-test' never appeared in daemon state"
 
-        # 3. Poll daemon state, collecting observations until waiting_user
+        # 3. Poll daemon state, collecting observations until waiting_user.
+        # Until Claude's first hook the status comes from the pane, and a
+        # pane still showing the launch command reads waiting_user: start
+        # watching once telemetry has spoken.
+        deadline = time.time() + 60
+        while _read_hook_state_file(state_dir, session, "hook-test") is None:
+            assert time.time() < deadline, "Claude never fired a hook"
+            time.sleep(0.25)
         print("\n--- Polling daemon state for status transitions ---")
         observations = _wait_for_daemon_status(
             state_dir, session, "hook-test",
