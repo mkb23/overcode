@@ -11,6 +11,7 @@ An in-memory engine (tests/tui_harness.py) publishes to a real TUI
 and moved by hand, and the test does the 250 ms tick's work itself.
 """
 
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
@@ -101,11 +102,24 @@ def clock():
         def now(cls, tz=None):
             return datetime.fromtimestamp(c.t, tz)
 
-    with patch("overcode.summary_columns.datetime", Frozen), \
-            patch("overcode.tui_helpers.datetime", Frozen), \
-            patch("overcode.tui_widgets.session_summary.time",
-                  SimpleNamespace(time=lambda: c.t)):
+    # Every column module that reads the clock (a new one is covered too)
+    with ExitStack() as stack:
+        for mod in _column_modules():
+            if hasattr(mod, "datetime"):
+                stack.enter_context(patch.object(mod, "datetime", Frozen))
+        stack.enter_context(patch("overcode.tui_helpers.datetime", Frozen))
+        stack.enter_context(patch("overcode.tui_widgets.session_summary.time",
+                                  SimpleNamespace(time=lambda: c.t)))
         yield c
+
+
+def _column_modules():
+    import importlib
+    import pkgutil
+
+    import overcode.columns as pkg
+    return [importlib.import_module(f"{pkg.__name__}.{m.name}")
+            for m in pkgutil.iter_modules(pkg.__path__)]
 
 
 @pytest.fixture
