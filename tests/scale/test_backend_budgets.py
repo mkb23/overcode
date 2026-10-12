@@ -25,6 +25,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.scale.budget import budget
+
 import bench_backends
 
 pytestmark = [pytest.mark.scale, pytest.mark.timeout(900)]
@@ -102,7 +104,7 @@ def test_cliff_fleet_polls_past_the_old_row_cache_cap(fleets):
 @pytest.mark.parametrize("name", ["opencode", "opencode2"])
 def test_opencode_fleet_within_budget(cadence, name):
     # today: ~25-29 ms/s. Before #517: ~95-116 ms/s (window rescanned every second)
-    assert cadence[name].ms_per_second < FLEET_BUDGET_MS_PER_S, cadence[name].line()
+    assert cadence[name].ms_per_second < budget(FLEET_BUDGET_MS_PER_S), cadence[name].line()
 
 
 @pytest.mark.parametrize("name", ["opencode", "opencode2"])
@@ -111,25 +113,25 @@ def test_opencode_burn_rate_reuses_the_stats_scan(cadence, name):
 
     today: ~9 ms/s. Before #517: ~79-97 ms/s.
     """
-    assert cadence[name].window_ms_per_second < 25.0, cadence[name].line()
+    assert cadence[name].window_ms_per_second < budget(25.0), cadence[name].line()
 
 
 def test_codex_fleet_within_budget(cadence):
     # today: ~5 ms/s, nearly all of it locating the rollout file; the fold
     # itself is one stat per call. Before #524: ~407 ms/s (the whole rollout
     # re-read every 5 s and every second)
-    assert cadence["codex"].ms_per_second < FLEET_BUDGET_MS_PER_S, cadence["codex"].line()
+    assert cadence["codex"].ms_per_second < budget(FLEET_BUDGET_MS_PER_S), cadence["codex"].line()
 
 
 def test_grok_fleet_within_budget(cadence):
     # today: ~1 ms/s. Before #525: ~412 ms/s (the whole updates.jsonl
     # re-read every 5 s and every second)
-    assert cadence["grok"].ms_per_second < FLEET_BUDGET_MS_PER_S, cadence["grok"].line()
+    assert cadence["grok"].ms_per_second < budget(FLEET_BUDGET_MS_PER_S), cadence["grok"].line()
 
 
 def test_hermes_fleet_within_budget(cadence):
     # today: ~21-26 ms/s (~33 before #527); 80 leaves room for slower boxes
-    assert cadence["hermes"].ms_per_second < 80.0, cadence["hermes"].line()
+    assert cadence["hermes"].ms_per_second < budget(80.0), cadence["hermes"].line()
 
 
 def test_hermes_warm_sweep_parses_no_config(fleets):

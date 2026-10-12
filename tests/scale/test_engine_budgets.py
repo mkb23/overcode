@@ -14,6 +14,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.scale.budget import budget
+
 from overcode.monitor_daemon import WAKE_SCAN_ATTENDED_SECONDS, WAKE_SCAN_UNATTENDED_SECONDS
 from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
 
@@ -50,11 +52,11 @@ def test_unattended_wake_scan_of_an_idle_fleet_is_nearly_free(daemon):
     per_scan = _scan_ms(daemon)
     share_of_core = per_scan / 1000 / WAKE_SCAN_UNATTENDED_SECONDS
     # today: ~0.2 ms per scan of 50 agents -> ~0.01% of a core
-    assert share_of_core <= 0.005, f"{per_scan:.3f} ms per scan"
+    assert share_of_core <= budget(0.005), f"{per_scan:.3f} ms per scan"
 
 
 def test_attended_wake_scan_stays_cheap(daemon):
     per_scan = _scan_ms(daemon)
     share_of_core = per_scan / 1000 / WAKE_SCAN_ATTENDED_SECONDS
     # today: ~0.2 ms per scan -> ~0.08% of a core at 4 scans a second
-    assert share_of_core <= 0.01, f"{per_scan:.3f} ms per scan"
+    assert share_of_core <= budget(0.01), f"{per_scan:.3f} ms per scan"

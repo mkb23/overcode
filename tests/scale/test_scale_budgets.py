@@ -17,6 +17,8 @@ Run with ``OVERCODE_SCALE_TESTS=1 uv run pytest tests/scale -q``.
 
 import pytest
 
+from tests.scale.budget import budget
+
 import bench_scaling
 
 pytestmark = [pytest.mark.scale, pytest.mark.timeout(900)]
@@ -139,24 +141,24 @@ class TestSharedFileReads:
     def test_list_sessions_warm_is_a_stat(self, list_sessions_rows):
         # was: 73 ms per call at 2,000 entries (11.7 MB), called ~6x/s by the TUI;
         # fixed (R4): one os.stat while sessions.json is unchanged, ~0.01 ms
-        assert list_sessions_rows["list_sessions (warm, unchanged file)"].ms_per_call < 2.0
+        assert list_sessions_rows["list_sessions (warm, unchanged file)"].ms_per_call < budget(2.0)
 
     def test_daemon_state_load_warm_is_a_stat(self, daemon_state_rows):
         # was: 1.1 ms per load at 50 sessions, called ~5x/s by the TUI. The
         # brief's 1 ms budget is within 10% of that number, so the budget is
         # the stat-gated cost instead; fixed (R4): ~0.01 ms per load.
-        assert daemon_state_rows["daemon-state load (warm, unchanged file)"].ms_per_call < 0.25
+        assert daemon_state_rows["daemon-state load (warm, unchanged file)"].ms_per_call < budget(0.25)
 
 
 class TestStatusBarWorker:
     def test_window_burn_warm_is_incremental(self, window_burn_rows):
         # was: 117 ms per pass over 50 MB, once a second (every transcript re-parsed);
         # fixed (R1): one stat per file, appended bytes only, ~4 ms
-        assert window_burn_rows["compute_window_burn (warm, no file changed)"].ms_per_call < 20.0
+        assert window_burn_rows["compute_window_burn (warm, no file changed)"].ms_per_call < budget(20.0)
 
     def test_status_history_warm_read_is_cheap(self, status_history_rows):
         # today: 1.7 ms (a copy of the ~99k rows in the window)
-        assert status_history_rows["status-history read (warm, unchanged)"].ms_per_call < 5.0
+        assert status_history_rows["status-history read (warm, unchanged)"].ms_per_call < budget(5.0)
 
     def test_status_history_incremental_read_is_cheap(self, status_history_rows):
         # today: 6 ms after one daemon tick's rows are appended
@@ -164,14 +166,14 @@ class TestStatusBarWorker:
             status_history_rows[
                 "status-history read (incremental, one daemon tick appended)"
             ].ms_per_call
-            < 20.0
+            < budget(20.0)
         )
 
     def test_mean_spin_is_cheap(self, status_history_rows):
         # was: 22 ms over ~99k rows (a row per agent per 2 s) x 48 agents, once a
         # second; fixed (R10): the daemon writes rows on change plus a keepalive,
         # so the window holds ~4k rows, and the time-weighted mean is one pass
-        assert status_history_rows["calculate_mean_spin_from_history"].ms_per_call < 10.0
+        assert status_history_rows["calculate_mean_spin_from_history"].ms_per_call < budget(10.0)
 
 
 # ── The engine's 5 s stats sweep ───────────────────────────────────────
@@ -181,14 +183,14 @@ class TestStatsSweep:
     def test_sweep_warm_is_cheap(self, stats_sweep_rows):
         # was: 53 ms per sweep with nothing changed (fresh HistoryFile + O(H) per session);
         # fixed (R3/R8): shared HistoryFile, indexed lookups, incremental transcripts, ~6 ms
-        assert stats_sweep_rows["stats sweep get_stats (warm, nothing changed)"].ms_per_tick < 20.0
+        assert stats_sweep_rows["stats sweep get_stats (warm, nothing changed)"].ms_per_tick < budget(20.0)
 
     def test_sweep_with_one_appended_transcript_is_cheap(self, stats_sweep_rows):
         # was: 55 ms; fixed (R3/R8): the history parse is gated and only the appended
         # bytes of the touched transcript are read, ~6 ms
         assert (
             stats_sweep_rows["stats sweep get_stats (warm, one transcript appended)"].ms_per_tick
-            < 25.0
+            < budget(25.0)
         )
 
 
@@ -197,12 +199,12 @@ class TestStatsSweep:
 
 class TestTimeline:
     def test_presence_warm_read_is_a_cache_hit(self, presence_rows):
-        assert presence_rows["presence read (warm, unchanged)"].ms_per_call < 1.0
+        assert presence_rows["presence read (warm, unchanged)"].ms_per_call < budget(1.0)
 
     def test_presence_read_after_append_is_incremental(self, presence_rows):
         # was: 29 ms (43k rows re-parsed) every minute the daemon appends a row;
         # fixed (R13): the reader seeks to the window and parses its ~180 rows
-        assert presence_rows["presence read (one row appended)"].ms_per_call < 5.0
+        assert presence_rows["presence read (one row appended)"].ms_per_call < budget(5.0)
 
     def test_timeline_slot_build_is_cheap(self, timeline_rows):
         # was: 57 ms per render for 50 agents over ~270k rows (a row per agent
@@ -219,7 +221,7 @@ class TestSessionIdDiscovery:
     def test_discover_warm_is_cheap(self, discover_rows):
         # was: 42 ms per zero-token agent every 10 s at 20k history lines;
         # fixed (R8): memoised per session on history's stat signature, ~0.02 ms
-        assert discover_rows["discover_session_ids (warm, history unchanged)"].ms_per_call < 5.0
+        assert discover_rows["discover_session_ids (warm, history unchanged)"].ms_per_call < budget(5.0)
 
 
 # ── daemon 2 s tick body ──────────────────────────────────────────────────
@@ -241,7 +243,7 @@ class TestDaemonTick:
     def test_tick_body_fits_the_interval(self, daemon_rows):
         # was: 27.5 s per 2 s tick for 50 agents at 2,000 entries; fixed (R5): ~310 ms,
         # most of it the one parse + dump of the 11.7 MB file
-        assert daemon_rows[self.SITE].ms_per_tick < 500.0
+        assert daemon_rows[self.SITE].ms_per_tick < budget(500.0)
 
     def test_first_loop_issues_at_most_one_capture_per_agent_plus_the_listing(self, daemon_rows):
         # the first loop captures every pane once, after one list-panes for the session
@@ -261,7 +263,7 @@ class TestDaemonTick:
     def test_publish_state_is_cheap(self, daemon_rows):
         # Measured 23-24.5 ms on an M-series Mac (2026-09); 30 leaves room
         # for load without hiding a real regression.
-        assert daemon_rows["daemon _publish_state"].ms_per_call < 30.0
+        assert daemon_rows["daemon _publish_state"].ms_per_call < budget(30.0)
 
 
 class TestDaemonPeriodicSyncs:
@@ -300,7 +302,7 @@ class TestActivityLogBudget:
             rec.record_key("j", "j", "list", True)
         per_call_us = (time.perf_counter() - start) / n * 1e6
         # Measured ~0.9 µs on an M-series Mac (2026-09).
-        assert per_call_us < 20.0
+        assert per_call_us < budget(20.0)
 
     def test_flush_of_a_busy_second_is_cheap(self, tmp_path):
         import time
@@ -312,7 +314,7 @@ class TestActivityLogBudget:
         start = time.perf_counter()
         rec.flush()
         ms = (time.perf_counter() - start) * 1000
-        assert ms < 5.0
+        assert ms < budget(5.0)
 
     def test_a_year_of_heavy_use_reads_quickly_in_little_memory(self, tmp_path):
         """365 day summaries + 14 raw days at 2,000 records a day (#483 rollup).
@@ -344,5 +346,5 @@ class TestActivityLogBudget:
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
         assert s.records == 380 * 2000
-        assert ms < 1500
+        assert ms < budget(1500)
         assert peak < 20_000_000

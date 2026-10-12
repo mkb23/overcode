@@ -10,9 +10,9 @@ name: Full suite
 # releases. Also nightly on main: a nightly failure opens (or comments on)
 # one issue labelled `nightly` instead of gating anything.
 #
-# Timing budgets in tests/scale were calibrated on an M-series Mac; a hosted
-# runner is slower. A scale failure is a prompt to look, not proof of a
-# regression: compare with `python scripts/bench_backends.py` locally.
+# Timing budgets in tests/scale were calibrated on an M-series Mac and are
+# scaled here (OVERCODE_SCALE_TIME_FACTOR); count budgets are not. A timing
+# failure is a prompt to look: compare with `python scripts/bench_backends.py`.
 
 on:
   push:
@@ -64,6 +64,8 @@ jobs:
       - run: pytest tests/scale -q -p no:cacheprovider -rxX
         env:
           OVERCODE_SCALE_TESTS: "1"
+          # Time budgets are calibrated on an M-series Mac; this runner is ~3x slower
+          OVERCODE_SCALE_TIME_FACTOR: "3"
           NO_COLOR: "1"
 
   backend-matrix:
