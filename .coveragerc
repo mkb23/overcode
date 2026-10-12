@@ -4,8 +4,10 @@ source = overcode
 branch = True
 # Enable subprocess coverage collection
 parallel = True
-# Include subprocesses that call python -m
-concurrency = multiprocessing
+# Include subprocesses that call python -m, and threads: without
+# "thread" here, code on background threads (the engine socket, the
+# watchdog, the TUI's @work workers) is never measured
+concurrency = multiprocessing,thread
 
 [paths]
 # Map paths from subprocess to parent process view

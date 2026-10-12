@@ -73,6 +73,18 @@ lint:
 format:
 	black src/ tests/
 
+# Branch + thread coverage of the unit suite (.coveragerc); report and htmlcov/
+coverage:
+	rm -f .coverage .coverage.*
+	coverage run -m pytest -q tests/unit -p no:cacheprovider
+	coverage combine -q
+	coverage report --sort=cover --skip-covered | tail -40
+	coverage html -q
+	@echo "HTML report: htmlcov/index.html"
+
+metrics:
+	python scripts/quality_metrics.py
+
 format-check:
 	black --check src/ tests/
 
@@ -82,6 +94,8 @@ clean:
 	rm -rf *.egg-info
 	rm -rf .pytest_cache/
 	rm -rf .mypy_cache/
+	rm -rf htmlcov/ build/metrics/
+	rm -f .coverage .coverage.*
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
