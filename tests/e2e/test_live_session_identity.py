@@ -42,7 +42,7 @@ def test_a_second_claude_in_the_repo_is_not_adopted(spec, live_env):
 
     def record():
         try:
-            rows = json.loads((state_dir / "sessions" / "sessions.json").read_text()).values()
+            rows = json.loads((state_dir / "sessions.json").read_text()).values()
         except (OSError, ValueError):
             return {}
         return next((r for r in rows if isinstance(r, dict) and r.get("name") == NAME), {})

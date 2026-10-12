@@ -105,3 +105,32 @@ def test_imports_nothing_from_overcode():
     """The hook handler imports it on every agent event: keep it light."""
     source = Path(paths.__file__).read_text()
     assert "from ." not in source and "import overcode" not in source
+
+
+class TestManagersUseThem:
+    @pytest.fixture
+    def env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "state"))
+        return tmp_path
+
+    def test_session_manager_writes_at_the_root(self, env):
+        from overcode.session_manager import SessionManager
+        sm = SessionManager(skip_git_detection=True)
+        assert sm.state_file == env / "state" / "sessions.json"
+
+    def test_session_manager_reads_an_older_tree(self, env):
+        from overcode.session_manager import SessionManager
+        old = SessionManager(state_dir=env / "state" / "sessions", skip_git_detection=True)
+        old.create_session(name="a", tmux_session="agents", tmux_window="a-1",
+                           command=["claude"])
+        sm = SessionManager(skip_git_detection=True)
+        assert [s.name for s in sm.list_sessions()] == ["a"]
+
+    def test_job_files_live_together(self, env):
+        from overcode.job_launcher import JobLauncher
+        from overcode.job_manager import JobManager
+        jobs = JobManager()
+        assert jobs.state_file == env / "oc" / "jobs" / "jobs.json"
+        launcher = JobLauncher(tmux_manager=object(), job_manager=jobs)
+        assert launcher._exit_code_path("j1") == env / "oc" / "jobs" / "exit-j1"

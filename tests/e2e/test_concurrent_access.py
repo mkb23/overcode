@@ -52,7 +52,7 @@ class TestConcurrentAccess:
 
         time.sleep(1)
 
-        state_file = self.state_dir / "sessions" / "sessions.json"
+        state_file = self.state_dir / "sessions.json"
         errors = []
 
         def read_state(iteration):
@@ -94,7 +94,7 @@ class TestConcurrentAccess:
 
         time.sleep(1)
 
-        state_file = self.state_dir / "sessions" / "sessions.json"
+        state_file = self.state_dir / "sessions.json"
 
         # Multiple reads
         for i in range(10):

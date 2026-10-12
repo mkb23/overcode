@@ -503,7 +503,7 @@ class TestLiveBackend:
         Read from the daemon-written ``stats.current_state`` in the session
         store — the same field the TUI's status column renders.
         """
-        store = Path(self.live["state_dir"]) / "sessions" / "sessions.json"
+        store = Path(self.live["state_dir"]) / "sessions.json"
         deadline = time.monotonic() + timeout
         last = None
         while time.monotonic() < deadline:

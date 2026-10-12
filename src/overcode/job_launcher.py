@@ -189,12 +189,9 @@ class JobLauncher:
 
         self.tmux.attach_session(window=job.tmux_window, bare=bare)
 
-    @staticmethod
-    def _exit_code_path(job_id: str) -> Path:
-        """Path to the exit code file for a job."""
-        env_state_dir = os.environ.get("OVERCODE_STATE_DIR")
-        base = Path(env_state_dir) / "jobs" if env_state_dir else Path.home() / ".overcode" / "jobs"
-        return base / f"exit-{job_id}"
+    def _exit_code_path(self, job_id: str) -> Path:
+        """Path to the exit code file for a job, beside jobs.json."""
+        return self.jobs.state_dir / f"exit-{job_id}"
 
     def _read_exit_code(self, job_id: str) -> int:
         """Read exit code from file, defaulting to 0 if missing/unreadable."""

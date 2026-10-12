@@ -193,7 +193,7 @@ class Driver:
 
     def daemon_state(self, agent=AGENT):
         try:
-            rows = json.loads((self.state_dir / "sessions" / "sessions.json").read_text())
+            rows = json.loads((self.state_dir / "sessions.json").read_text())
         except (OSError, ValueError):
             return None
         rows = rows.values() if isinstance(rows, dict) else rows

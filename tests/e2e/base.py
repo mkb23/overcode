@@ -198,7 +198,7 @@ class E2ETestBase:
         Returns:
             Session state as dict
         """
-        state_file = self.state_dir / "sessions" / "sessions.json"
+        state_file = self.state_dir / "sessions.json"
         with open(state_file) as f:
             return json.load(f)
 

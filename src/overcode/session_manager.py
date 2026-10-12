@@ -2,7 +2,6 @@
 Session state management for Overcode.
 """
 
-import os
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -10,6 +9,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields, replace
 import uuid
 
+from . import paths
 from .exceptions import StateWriteError
 from .json_store import JsonStore, Transaction
 from .git_context import GitContextMixin, read_git_context_from_disk  # noqa: F401  (re-export)
@@ -461,16 +461,12 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         """Initialize the session manager.
 
         Args:
-            state_dir: Directory for state files (defaults to ~/.overcode/sessions)
+            state_dir: Directory for state files (defaults to
+                paths.sessions_registry_dir(): the sessions root)
             skip_git_detection: If True, skip git repo/branch detection (for testing)
         """
         if state_dir is None:
-            # Support OVERCODE_STATE_DIR env var for testing
-            env_state_dir = os.environ.get("OVERCODE_STATE_DIR")
-            if env_state_dir:
-                state_dir = Path(env_state_dir) / "sessions"
-            else:
-                state_dir = Path.home() / ".overcode" / "sessions"
+            state_dir = paths.sessions_registry_dir()
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / "sessions.json"

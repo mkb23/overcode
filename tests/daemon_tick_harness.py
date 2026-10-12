@@ -378,7 +378,7 @@ def make_daemon(
     from overcode.status_detector import PollingStatusDetector
 
     sm = session_manager or SessionManager(
-        state_dir=state_dir / "sessions", skip_git_detection=True
+        state_dir=state_dir, skip_git_detection=True
     )
     tmux = tmux if tmux is not None else FakeTmux(tmux_session, {})
     if hasattr(monitor_daemon.MonitorDaemon, "for_test"):

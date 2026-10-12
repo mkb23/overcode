@@ -73,7 +73,7 @@ def test_corrupt_sessions_json_handled(oc, oc_wait):
     oc.launch("victim", scenario="startup_idle")
     oc_wait(lambda: oc.agent("victim"), desc="agent in registry")
 
-    registry = oc.state_dir / "sessions" / "sessions.json"
+    registry = oc.state_dir / "sessions.json"
     registry.write_text("{ this is not json")
 
     result = oc.run("list", timeout=15)

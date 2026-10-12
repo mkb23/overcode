@@ -95,7 +95,7 @@ class TestErrorRecovery:
         time.sleep(1)
 
         # Verify in state
-        state_file = self.state_dir / "sessions" / "sessions.json"
+        state_file = self.state_dir / "sessions.json"
         assert state_file.exists(), "State file not created"
 
         with open(state_file) as f:

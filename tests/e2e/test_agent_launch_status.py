@@ -87,7 +87,7 @@ class TestAgentLaunchAndStatus:
         time.sleep(1)
 
         # Check state file
-        state_file = self.state_dir / "sessions" / "sessions.json"
+        state_file = self.state_dir / "sessions.json"
         assert state_file.exists(), f"State file not created at {state_file}"
 
         with open(state_file) as f:

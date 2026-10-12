@@ -471,7 +471,7 @@ class TestUnattendedTimelineHasNoHoles:
         )
 
         state_dir = root / "home" / ".overcode"
-        sm = SessionManager(state_dir=state_dir / "sessions", skip_git_detection=True)
+        sm = SessionManager(state_dir=state_dir, skip_git_detection=True)
         sessions = seed_sessions(sm, self.N, "agents", root / "work", START)
         tmux = FakeTmux("agents", {s.tmux_window: "pane" for s in sessions})
         tmux.attached = 1

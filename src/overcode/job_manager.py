@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from . import paths
 from .json_store import JsonStore
 
 
@@ -98,17 +99,13 @@ class Job:
 class JobManager:
     """Manages job state persistence.
 
-    State file: ~/.overcode/jobs/jobs.json
+    State file: jobs.json in paths.jobs_dir() (~/.overcode/jobs by default)
     Read and written through :class:`~overcode.json_store.JsonStore`.
     """
 
     def __init__(self, state_dir: Optional[Path] = None):
         if state_dir is None:
-            env_state_dir = os.environ.get("OVERCODE_STATE_DIR")
-            if env_state_dir:
-                state_dir = Path(env_state_dir) / "jobs"
-            else:
-                state_dir = Path.home() / ".overcode" / "jobs"
+            state_dir = paths.jobs_dir()
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / "jobs.json"

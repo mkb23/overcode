@@ -1209,7 +1209,7 @@ class TestAgentSessionIdSync:
             writes["n"] += 1
             return real_fsync(fd)
 
-        monkeypatch.setattr("overcode.session_manager.os.fsync", counting_fsync)
+        monkeypatch.setattr("overcode.json_store.os.fsync", counting_fsync)
         return writes
 
     def test_events_without_a_transcript_stop_touching_the_store(self, monkeypatch, tmp_path):

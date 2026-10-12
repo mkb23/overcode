@@ -1,7 +1,7 @@
 """Driver for running overcode CLI commands inside the sandbox.
 
 State layout (with OVERCODE_STATE_DIR=$state_dir):
-  $state_dir/sessions/sessions.json      session registry (SessionManager)
+  $state_dir/sessions.json               session registry (SessionManager)
   $state_dir/<tmux-session>/...          per-session daemon state/pids/logs
 """
 
@@ -116,7 +116,7 @@ class OvercodeCLI:
 
         sessions.json is a dict keyed by session id (SessionManager._save_state).
         """
-        registry = self.state_dir / "sessions" / "sessions.json"
+        registry = self.state_dir / "sessions.json"
         if not registry.exists():
             return []
         try:
