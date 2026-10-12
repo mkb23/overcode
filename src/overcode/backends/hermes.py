@@ -660,20 +660,6 @@ class HermesBackend:
             KeyPress("/quit", enter=True),
         ]
 
-    def clear_conversation_keys(self) -> List[KeyPress]:
-        # /new opens a confirmation box ("⚠️ /new — destroys conversation
-        # state", options "[1] Approve Once / [2] Always Approve / [3]
-        # Cancel", new_confirm.txt) under the default
-        # ``tools.slash_confirm.destructive_slash_confirm: true`` —
-        # option 1 is the one-time confirm. Sending "1" when the box has
-        # been disabled in config would land in the input line as a stray
-        # "1"; the extra keypress is the lesser evil vs. a /new that never
-        # completes.
-        return [
-            KeyPress("/new", enter=True, delay_after=1.0),
-            KeyPress("1", enter=True),
-        ]
-
     def approve_keys(self) -> List[KeyPress]:
         # permission_required.txt: "❯ 1. Allow once" is pre-selected but
         # a bare Enter is *not* enough on its own reliably — the dialog

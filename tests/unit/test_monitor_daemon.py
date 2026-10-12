@@ -394,7 +394,7 @@ class TestCreateMonitorLogger:
 
 
 class TestSyncClaudeCodeStats:
-    """Test sync_claude_code_stats method."""
+    """Test sync_agent_stats method."""
 
     def _make_daemon(self, tmp_path, monkeypatch):
         """Helper to create a minimal MonitorDaemon for testing."""
@@ -447,7 +447,7 @@ class TestSyncClaudeCodeStats:
             lambda d, s: "claude-sess-abc"
         )
 
-        # Mock get_user_config - it's imported lazily inside sync_claude_code_stats
+        # Mock get_user_config - it's imported lazily inside sync_agent_stats
         mock_config = Mock()
         mock_config.price_input = 15.0
         mock_config.price_output = 75.0
@@ -460,7 +460,7 @@ class TestSyncClaudeCodeStats:
         )
         mock_session.model = None
 
-        daemon.sync_claude_code_stats(mock_session)
+        daemon.sync_agent_stats(mock_session)
 
         # Verify add_agent_session_id was called
         daemon.session_manager.add_agent_session_id.assert_called_once_with(
@@ -498,7 +498,7 @@ class TestSyncClaudeCodeStats:
             lambda d, s: None
         )
 
-        daemon.sync_claude_code_stats(mock_session)
+        daemon.sync_agent_stats(mock_session)
 
         # Nothing is written or staged when stats are None
         daemon.session_manager.update_stats.assert_not_called()
@@ -524,7 +524,7 @@ class TestSyncClaudeCodeStats:
         )
 
         # Should not raise
-        daemon.sync_claude_code_stats(mock_session)
+        daemon.sync_agent_stats(mock_session)
 
     def test_skips_session_id_capture_without_start_directory(self, tmp_path, monkeypatch):
         """Should skip add_agent_session_id when session has no start_directory."""
@@ -541,7 +541,7 @@ class TestSyncClaudeCodeStats:
             lambda s: None
         )
 
-        daemon.sync_claude_code_stats(mock_session)
+        daemon.sync_agent_stats(mock_session)
 
         # add_agent_session_id should not be called
         daemon.session_manager.add_agent_session_id.assert_not_called()

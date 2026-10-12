@@ -394,10 +394,6 @@ class TestGestures:
             ("/exit", True, 0.0),
         ]
 
-    def test_clear_conversation(self, backend):
-        presses = backend.clear_conversation_keys()
-        assert [(p.keys, p.enter) for p in presses] == [("/clear", True)]
-
     def test_approve_and_reject(self, backend):
         assert [(p.keys, p.enter) for p in backend.approve_keys()] == [("", True)]
         assert [(p.keys, p.enter) for p in backend.reject_keys()] == [("Escape", False)]

@@ -292,10 +292,6 @@ class TestGestures:
         assert presses[-1].enter is True
         assert not any(p.keys == "C-c" for p in presses)
 
-    def test_clear_conversation(self, backend):
-        presses = backend.clear_conversation_keys()
-        assert [(p.keys, p.enter) for p in presses] == [("/new", True)]
-
     def test_approve_is_digit_two_no_enter(self, backend):
         # Option 1 is default-selected but means "always-approve mode" — a
         # one-time approve must target option 2 explicitly.

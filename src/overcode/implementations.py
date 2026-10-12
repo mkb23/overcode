@@ -11,7 +11,6 @@ import subprocess
 import threading
 import time
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator, Optional, List, Dict, Any
 
 import libtmux
@@ -475,47 +474,3 @@ class RealTmux:
         except Exception:
             return False
 
-
-class RealFileSystem:
-    """Production implementation of FileSystemInterface"""
-
-    def exists(self, path: Path) -> bool:
-        return path.exists()
-
-    def mkdir(self, path: Path, parents: bool = True) -> bool:
-        try:
-            path.mkdir(parents=parents, exist_ok=True)
-            return True
-        except IOError:
-            return False
-
-    def read_text(self, path: Path) -> Optional[str]:
-        try:
-            return path.read_text()
-        except IOError:
-            return None
-
-    def write_text(self, path: Path, content: str) -> bool:
-        try:
-            path.write_text(content)
-            return True
-        except IOError:
-            return False
-
-
-class RealSubprocess:
-    """Production implementation of SubprocessInterface"""
-
-    def run(self, cmd: List[str], timeout: Optional[int] = None,
-            capture_output: bool = True) -> Optional[Dict[str, Any]]:
-        try:
-            result = subprocess.run(
-                cmd, timeout=timeout, capture_output=capture_output, text=True
-            )
-            return {
-                'returncode': result.returncode,
-                'stdout': result.stdout if capture_output else '',
-                'stderr': result.stderr if capture_output else ''
-            }
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            return None

@@ -355,10 +355,6 @@ class TestGestures:
         assert presses[-1].enter is True
         assert not any(p.keys == "C-c" for p in presses)
 
-    def test_clear_conversation(self, backend):
-        presses = backend.clear_conversation_keys()
-        assert [(p.keys, p.enter) for p in presses] == [("/new", True)]
-
     def test_approve_is_enter_on_yes_proceed(self, backend):
         presses = backend.approve_keys()
         assert [(p.keys, p.enter) for p in presses] == [("", True)]

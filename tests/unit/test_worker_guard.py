@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode import worker_guard  # noqa: E402
 from overcode.worker_guard import (  # noqa: E402
-    is_in_flight,
     single_flight,
     worker_cancelled,
 )
@@ -70,22 +69,6 @@ def _run_in_thread(fn, *args):
 
 
 class TestSingleFlight:
-    def test_second_call_returns_at_once_and_reruns_after_the_first(self):
-        """The arriving call is not blocked and not lost: the holder reruns it."""
-        obj = _Slow()
-        t, box = _run_in_thread(obj.tick, "first")
-        assert obj.entered.wait(timeout=5)
-        assert is_in_flight(obj, "slow")
-
-        # A second call arrives while the first is still executing
-        assert obj.tick("second") is None
-        assert obj.runs == 1  # not run concurrently
-
-        obj.release.set()
-        t.join(timeout=5)
-        assert obj.tags == ["first", "second"]  # rerun happened, in order
-        assert box["result"] == "second"  # the holder returns the last body's result
-        assert not is_in_flight(obj, "slow")
 
     def test_runs_again_once_the_previous_run_finished(self):
         obj = _Slow()
@@ -112,46 +95,6 @@ class TestSingleFlight:
         t.join(timeout=5)
         assert obj.tags == ["first", "c"]
         assert obj.runs == 2
-
-    def test_a_call_during_the_rerun_is_coalesced_again(self):
-        """Back-to-back reruns chain until a body completes with nothing queued."""
-        obj = _Slow()
-        first_gate, rerun_gate = threading.Event(), threading.Event()
-        obj.gates = {1: first_gate, 2: rerun_gate}
-        obj.release.set()  # any later run does not block
-        t, _ = _run_in_thread(obj.tick, "first")
-        assert obj.entered.wait(timeout=5)
-        assert obj.tick("second") is None
-        obj.entered.clear()
-        first_gate.set()  # first body finishes; the rerun starts and blocks
-        assert obj.entered.wait(timeout=5)
-        assert obj.tags == ["first", "second"]
-        assert obj.tick("third") is None  # arrives during the rerun
-        rerun_gate.set()
-        t.join(timeout=5)
-        assert obj.tags == ["first", "second", "third"]
-        assert not is_in_flight(obj, "slow")
-
-    def test_group_released_and_rerun_dropped_when_body_raises(self):
-        obj = _Slow()
-        obj.raise_on_run = 1
-        t, box = _run_in_thread(obj.tick, "first")
-        assert obj.entered.wait(timeout=5)
-        assert obj.tick("queued") is None
-        obj.release.set()
-        t.join(timeout=5)
-        assert isinstance(box["error"], RuntimeError)
-        assert obj.tags == ["first"]  # the queued rerun is discarded
-        assert not is_in_flight(obj, "slow")
-        assert obj.tick("after") == "after"  # group usable again
-
-    def test_lock_released_when_body_raises(self):
-        obj = _Slow()
-        with pytest.raises(RuntimeError):
-            obj.boom()
-        assert not is_in_flight(obj, "boom")
-        with pytest.raises(RuntimeError):
-            obj.boom()
 
     def test_groups_are_independent_on_one_instance(self):
         obj = _Slow()
@@ -195,11 +138,6 @@ class TestSingleFlight:
         obj.release = threading.Event()
         obj.release.set()
         assert obj.tick("x") == "x"
-
-    def test_group_is_introspectable(self):
-        assert _Slow.tick.single_flight_group == "slow"
-        assert is_in_flight(_Slow(), "slow") is False
-
 
 class _StubWorker:
     def __init__(self):

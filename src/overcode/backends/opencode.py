@@ -568,10 +568,6 @@ class OpencodeBackend:
             KeyPress("/exit", enter=True),
         ]
 
-    def clear_conversation_keys(self) -> List[KeyPress]:
-        # "/new  New session" — verified to reset the pane to the banner.
-        return [KeyPress("/new", enter=True)]
-
     def approve_keys(self) -> List[KeyPress]:
         # "Allow once" is preselected; Enter confirms it.
         return [KeyPress("", enter=True)]

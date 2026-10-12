@@ -247,29 +247,6 @@ class TestDaemonSettings:
         assert settings.default_tmux_session == "agents"
 
 
-class TestPresenceSettings:
-    """Test PresenceSettings dataclass."""
-
-    def test_default_intervals(self):
-        """PresenceSettings should have sensible defaults."""
-        from overcode.settings import PresenceSettings
-
-        settings = PresenceSettings()
-        assert settings.sample_interval == 60
-        assert settings.idle_threshold == 60
-
-
-class TestTUISettings:
-    """Test TUISettings dataclass."""
-
-    def test_has_refresh_interval(self):
-        """TUISettings should have refresh_interval."""
-        from overcode.settings import TUISettings
-
-        settings = TUISettings()
-        assert hasattr(settings, 'refresh_interval')
-
-
 class TestSessionHelpers:
     """Test session-related helper functions."""
 

@@ -664,11 +664,6 @@ class GrokBackend:
             KeyPress("/quit", enter=True),
         ]
 
-    def clear_conversation_keys(self) -> List[KeyPress]:
-        # "/new  Start a new session" — verified present in the `/` command
-        # menu (command_menu.txt). There is no literal "/clear".
-        return [KeyPress("/new", enter=True)]
-
     def approve_keys(self) -> List[KeyPress]:
         # permission_required.txt: option 1 ("Yes, and don't ask again for
         # anything") is default-selected, but that's grok's always-approve

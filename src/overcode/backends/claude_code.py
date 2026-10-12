@@ -226,9 +226,6 @@ class ClaudeCodeBackend:
             KeyPress("/exit", enter=True),
         ]
 
-    def clear_conversation_keys(self) -> List[KeyPress]:
-        return [KeyPress("/clear", enter=True)]
-
     def approve_keys(self) -> List[KeyPress]:
         return [KeyPress("", enter=True)]
 

@@ -7,22 +7,15 @@ These tests verify that:
 3. Protocol type checking works correctly
 """
 
-from pathlib import Path
 
 from overcode.protocols import (
     TmuxInterface,
-    FileSystemInterface,
-    SubprocessInterface,
 )
 from overcode.mocks import (
     MockTmux,
-    MockFileSystem,
-    MockSubprocess,
 )
 from overcode.implementations import (
     RealTmux,
-    RealFileSystem,
-    RealSubprocess,
 )
 
 
@@ -155,93 +148,6 @@ class TestMockTmux:
         mock.attach("test-session")
 
 
-class TestMockFileSystem:
-    """Test MockFileSystem implementation."""
-
-    def test_implements_protocol(self):
-        """MockFileSystem should implement FileSystemInterface."""
-        mock = MockFileSystem()
-        assert isinstance(mock, FileSystemInterface)
-
-    def test_write_and_read_text(self):
-        """Should be able to write and read text."""
-        mock = MockFileSystem()
-        path = Path("/test/file.txt")
-
-        result = mock.write_text(path, "Hello World")
-        assert result is True
-
-        content = mock.read_text(path)
-        assert content == "Hello World"
-
-    def test_read_text_nonexistent(self):
-        """read_text should return None for nonexistent file."""
-        mock = MockFileSystem()
-        assert mock.read_text(Path("/nonexistent.txt")) is None
-
-    def test_exists(self):
-        """exists should return True for files and directories."""
-        mock = MockFileSystem()
-
-        assert not mock.exists(Path("/test"))
-        assert not mock.exists(Path("/test/file.txt"))
-
-        mock.mkdir(Path("/test"))
-        mock.write_text(Path("/test/file.txt"), "content")
-
-        assert mock.exists(Path("/test"))
-        assert mock.exists(Path("/test/file.txt"))
-
-    def test_mkdir(self):
-        """mkdir should create directories."""
-        mock = MockFileSystem()
-        path = Path("/new/nested/dir")
-
-        result = mock.mkdir(path, parents=True)
-        assert result is True
-        assert mock.exists(path)
-
-
-class TestMockSubprocess:
-    """Test MockSubprocess implementation."""
-
-    def test_implements_protocol(self):
-        """MockSubprocess should implement SubprocessInterface."""
-        mock = MockSubprocess()
-        assert isinstance(mock, SubprocessInterface)
-
-    def test_run_default_response(self):
-        """run should return default success response."""
-        mock = MockSubprocess()
-
-        result = mock.run(["echo", "hello"])
-        assert result is not None
-        assert result["returncode"] == 0
-        assert result["stdout"] == ""
-        assert result["stderr"] == ""
-
-    def test_run_custom_response(self):
-        """run should return custom response when set."""
-        mock = MockSubprocess()
-        mock.set_response("git", returncode=0, stdout="main", stderr="")
-
-        result = mock.run(["git", "branch"])
-        assert result is not None
-        assert result["returncode"] == 0
-        assert result["stdout"] == "main"
-
-    def test_run_records_commands(self):
-        """run should record all executed commands."""
-        mock = MockSubprocess()
-
-        mock.run(["cmd1", "arg1"])
-        mock.run(["cmd2", "arg2", "arg3"])
-
-        assert len(mock.commands) == 2
-        assert mock.commands[0] == ["cmd1", "arg1"]
-        assert mock.commands[1] == ["cmd2", "arg2", "arg3"]
-
-
 class TestRealImplementationsProtocol:
     """Verify real implementations satisfy protocols."""
 
@@ -249,13 +155,3 @@ class TestRealImplementationsProtocol:
         """RealTmux should implement TmuxInterface."""
         real = RealTmux()
         assert isinstance(real, TmuxInterface)
-
-    def test_real_filesystem_implements_protocol(self):
-        """RealFileSystem should implement FileSystemInterface."""
-        real = RealFileSystem()
-        assert isinstance(real, FileSystemInterface)
-
-    def test_real_subprocess_implements_protocol(self):
-        """RealSubprocess should implement SubprocessInterface."""
-        real = RealSubprocess()
-        assert isinstance(real, SubprocessInterface)

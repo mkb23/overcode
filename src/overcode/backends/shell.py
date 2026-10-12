@@ -220,9 +220,6 @@ class ShellBackend:
         # the relaunch's `exec` then replaces the shell in place.
         return [KeyPress("C-c", enter=False, delay_after=0.3)]
 
-    def clear_conversation_keys(self) -> List[KeyPress]:
-        return [KeyPress("clear", enter=True)]
-
     def approve_keys(self) -> List[KeyPress]:
         return []
 

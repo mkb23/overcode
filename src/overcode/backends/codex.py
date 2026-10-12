@@ -426,11 +426,6 @@ class CodexBackend:
             KeyPress("/quit", enter=True),
         ]
 
-    def clear_conversation_keys(self) -> List[KeyPress]:
-        # "/new  start a new chat during a conversation" — verified present
-        # in the `/` command menu (exited_shell.txt's capture conditions).
-        return [KeyPress("/new", enter=True)]
-
     def approve_keys(self) -> List[KeyPress]:
         # "1. Yes, proceed (y)" is default-selected; Enter confirms it.
         return [KeyPress("", enter=True)]

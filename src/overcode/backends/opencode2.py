@@ -166,16 +166,6 @@ class Opencode2Backend:
             KeyPress("", enter=True, delay_after=0.3),
         ]
 
-    def clear_conversation_keys(self) -> List[KeyPress]:
-        # "/new  New session" resets the pane to the banner + empty input
-        # box — verified against v0.0.0-dev-19272, Sep 15 2026. Same
-        # autocomplete quirk as /exit: the first Enter accepts the
-        # highlighted row, the trailing bare Enter runs it.
-        return [
-            KeyPress("/new", enter=True, delay_after=0.5),
-            KeyPress("", enter=True, delay_after=0.3),
-        ]
-
     def approve_keys(self) -> List[KeyPress]:
         # "Allow once" is preselected; Enter confirms it.
         return [KeyPress("", enter=True)]

@@ -79,10 +79,6 @@ class PaneChangeTracker:
         self._records[key] = _Record(signature, extra, now, follow_up)
         return True
 
-    def last_captured_at(self, key: str) -> Optional[float]:
-        record = self._records.get(key)
-        return None if record is None else record.captured_at
-
     def forget(self, keep: Container[str]) -> None:
         """Drop the records of keys not in ``keep`` (sessions no longer present)."""
         for key in [k for k in self._records if k not in keep]:

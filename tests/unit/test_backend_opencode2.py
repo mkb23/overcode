@@ -93,19 +93,6 @@ def test_reject_keys_nonempty():
     assert [(k.keys, k.enter) for k in keys] == [("Escape", False)]
 
 
-def test_clear_conversation_keys_shape():
-    # /new has the same autocomplete quirk as /exit (verified against
-    # v0.0.0-dev-19272, Sep 15 2026): the first Enter accepts the
-    # highlighted row, the trailing bare Enter runs it and resets the
-    # pane to the banner + empty input box.
-    keys = Opencode2Backend().clear_conversation_keys()
-    assert all(k.delay_after is not None and k.delay_after > 0 for k in keys)
-    assert [(k.keys, k.enter) for k in keys] == [
-        ("/new", True),
-        ("", True),
-    ]
-
-
 def test_bypass_env_unset_no_override_verified():
     # No env blob (v2 or v1 grammar) overrides a v2 project deny —
     # `--auto` is the whole bypass. The branch must therefore leave

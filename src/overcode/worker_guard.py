@@ -138,13 +138,6 @@ def single_flight(group: str) -> Callable[[F], F]:
     return decorator
 
 
-def is_in_flight(instance: object, group: str) -> bool:
-    """Whether a ``single_flight`` call in ``group`` is currently running on ``instance``."""
-    states = instance.__dict__.get(_STATE_ATTR) or {}
-    state = states.get(group)
-    return bool(state is not None and state.running)
-
-
 def worker_cancelled() -> bool:
     """True when the current Textual worker was cancelled; False outside a worker.
 

@@ -197,32 +197,14 @@ DAEMON = DaemonSettings()
 # Presence Logger Settings
 # =============================================================================
 
-@dataclass
-class PresenceSettings:
-    """Settings for the presence logger."""
-
-    sample_interval: int = 60   # Seconds between samples
-    idle_threshold: int = 60    # Seconds before considered idle
-
-
 # Global presence settings
-PRESENCE = PresenceSettings()
 
 
 # =============================================================================
 # TUI Settings
 # =============================================================================
 
-@dataclass
-class TUISettings:
-    """Settings for the TUI monitor."""
-
-    default_timeline_width: int = 60
-    refresh_interval: float = 1.0  # Seconds
-
-
 # Global TUI settings
-TUI = TUISettings()
 
 
 # =============================================================================

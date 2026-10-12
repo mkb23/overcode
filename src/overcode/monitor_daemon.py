@@ -468,7 +468,6 @@ class MonitorDaemon:
 
         # Stats sync throttling - None forces immediate sync on first loop
         self._last_stats_sync: Optional[datetime] = None
-        self._stats_sync_interval = 60  # seconds
 
         # Session ID detection runs more frequently than full stats (#116)
         self._last_session_id_sync: Optional[datetime] = None
@@ -1144,7 +1143,6 @@ class MonitorDaemon:
             self.log.warn(f"Failed to sync stats for {session.name}: {e}")
 
     # Pre-backend name, kept until the Phase 6 rename sweep.
-    sync_claude_code_stats = sync_agent_stats
 
     def _note_stats_view(self, session, stats: Optional[AgentSessionStats]) -> None:
         """Keep the transcript-derived values views render, from one sync.

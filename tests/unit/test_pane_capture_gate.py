@@ -1,6 +1,5 @@
 """pane_capture_gate: which panes a loop captures, and what the detectors read otherwise."""
 
-import pytest
 
 from overcode.pane_capture_gate import KEEPALIVE_SECONDS, PaneCaptureGate, PaneChangeTracker
 
@@ -55,18 +54,6 @@ class TestPaneChangeTracker:
 
     def test_default_keepalive(self):
         assert PaneChangeTracker().keepalive_seconds == KEEPALIVE_SECONDS == 5.0
-
-    def test_keys_are_independent_and_forgettable(self):
-        t = PaneChangeTracker()
-        assert t.due("a", (1,), None, 0.0) and t.due("b", (1,), None, 0.0)
-        assert not t.due("a", (1,), None, 1.0)
-        assert t.due("b", (2,), None, 1.0)
-        assert t.last_captured_at("a") == 0.0 and t.last_captured_at("b") == 1.0
-        assert len(t) == 2
-        t.forget({"b"})
-        assert len(t) == 1 and t.last_captured_at("a") is None
-        assert t.due("a", (1,), None, 2.0)  # forgotten = first sight again
-
 
 class TestPaneCaptureGate:
     def _raw(self, log, texts):

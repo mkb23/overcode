@@ -249,10 +249,6 @@ class TestGestures:
         # A second C-c within 2s force-exits Hermes — never two.
         assert sum(p.keys == "C-c" for p in presses) == 1
 
-    def test_clear_conversation_confirms_new(self, backend):
-        presses = backend.clear_conversation_keys()
-        assert [(p.keys, p.enter) for p in presses] == [("/new", True), ("1", True)]
-
     def test_approve_is_1_then_enter(self, backend):
         assert [(p.keys, p.enter) for p in backend.approve_keys()] == [("1", True)]
 

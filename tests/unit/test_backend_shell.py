@@ -106,9 +106,6 @@ class TestGestures:
         assert backend.reject_keys() == []
         assert backend.startup_dialog_rules() == []
 
-    def test_clear_clears_the_screen(self, backend):
-        assert [p.keys for p in backend.clear_conversation_keys()] == ["clear"]
-
     def test_initial_prompt_is_typed_ahead(self, backend):
         assert backend.prompt_ready_line("$ OVERCODE_SESSION_NAME=x exec /bin/zsh")
         assert not backend.prompt_ready_line("")

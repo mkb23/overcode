@@ -5,7 +5,6 @@ These mocks allow unit tests to run without real tmux sessions,
 file system access, or subprocess calls.
 """
 
-from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 
@@ -143,57 +142,3 @@ class MockTmux:
         windows.setdefault(window_name, {"name": window_name, "placeholder": True})
         return True
 
-
-class MockFileSystem:
-    """Mock implementation of FileSystemInterface for testing"""
-
-    def __init__(self):
-        self.files: Dict[str, Any] = {}  # path_str -> content
-        self.dirs: set = set()
-
-    def exists(self, path: Path) -> bool:
-        return str(path) in self.files or str(path) in self.dirs
-
-    def mkdir(self, path: Path, parents: bool = True) -> bool:
-        self.dirs.add(str(path))
-        return True
-
-    def read_text(self, path: Path) -> Optional[str]:
-        content = self.files.get(str(path))
-        if content is None:
-            return None
-        return str(content)
-
-    def write_text(self, path: Path, content: str) -> bool:
-        self.files[str(path)] = content
-        return True
-
-
-class MockSubprocess:
-    """Mock implementation of SubprocessInterface for testing"""
-
-    def __init__(self):
-        self.commands: List[List[str]] = []  # Record of run commands
-        self.responses: Dict[str, Dict[str, Any]] = {}  # cmd_key -> response
-
-    def set_response(self, cmd_prefix: str, returncode: int = 0,
-                     stdout: str = "", stderr: str = ""):
-        """Set up a mock response for commands starting with prefix"""
-        self.responses[cmd_prefix] = {
-            'returncode': returncode,
-            'stdout': stdout,
-            'stderr': stderr
-        }
-
-    def run(self, cmd: List[str], timeout: Optional[int] = None,
-            capture_output: bool = True) -> Optional[Dict[str, Any]]:
-        self.commands.append(cmd)
-        cmd_str = ' '.join(cmd)
-
-        # Check for matching response
-        for prefix, response in self.responses.items():
-            if cmd_str.startswith(prefix):
-                return response
-
-        # Default response
-        return {'returncode': 0, 'stdout': '', 'stderr': ''}

@@ -7,7 +7,6 @@ mock implementations in tests.
 """
 
 from typing import Protocol, Optional, List, Dict, Any, Tuple, runtime_checkable, TYPE_CHECKING
-from pathlib import Path
 
 if TYPE_CHECKING:
     from .session_manager import Session
@@ -183,42 +182,3 @@ class StatusDetectorProtocol(Protocol):
         """Get the last N meaningful lines from a tmux pane."""
         ...
 
-
-@runtime_checkable
-class FileSystemInterface(Protocol):
-    """Interface for file system operations"""
-
-    def exists(self, path: Path) -> bool:
-        """Check if a path exists."""
-        ...
-
-    def mkdir(self, path: Path, parents: bool = True) -> bool:
-        """Create a directory."""
-        ...
-
-    def read_text(self, path: Path) -> Optional[str]:
-        """Read text from a file."""
-        ...
-
-    def write_text(self, path: Path, content: str) -> bool:
-        """Write text to a file."""
-        ...
-
-
-@runtime_checkable
-class SubprocessInterface(Protocol):
-    """Interface for subprocess operations (non-tmux)"""
-
-    def run(self, cmd: List[str], timeout: Optional[int] = None,
-            capture_output: bool = True) -> Optional[Dict[str, Any]]:
-        """Run a subprocess command.
-
-        Args:
-            cmd: command and arguments
-            timeout: timeout in seconds
-            capture_output: whether to capture stdout/stderr
-
-        Returns:
-            Dict with 'returncode', 'stdout', 'stderr', or None on failure
-        """
-        ...
