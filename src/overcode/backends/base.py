@@ -117,6 +117,10 @@ class LaunchSpec:
     skill_dir: Optional[str] = None
     hidden_skills: List[str] = field(default_factory=list)
 
+    # A file holding the first prompt, for a backend that takes it on the
+    # command line (``prompt_as_argument``); the launcher writes it.
+    initial_prompt_file: Optional[str] = None
+
 
 class AgentBackend(Protocol):
     """Adapter for one agent CLI."""

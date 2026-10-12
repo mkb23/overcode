@@ -3050,3 +3050,49 @@ class TestRename:
         names = [w["name"] for w in launcher.tmux.list_windows()]
         assert sess.tmux_window in names
         assert sm.get_session(sess.id).name == "oldname"
+
+
+class TestClaudePromptOnTheCommandLine:
+    """Claude 2.1.29x hands a long paste to the model as <pasted_content>,
+    which it is told not to obey: a launch prompt goes on the command line."""
+
+    def _launcher(self, tmp_path):
+        tmux = MockTmux()
+        launcher = AgentLauncher("agents", TmuxManager("agents", tmux=tmux),
+                                 SessionManager(state_dir=tmp_path, skip_git_detection=True))
+        return launcher, tmux
+
+    def test_the_prompt_is_read_from_a_file_by_the_shell(self, tmp_path):
+        launcher, tmux = self._launcher(tmp_path)
+        seen = {}
+
+        def wait(window, backend=None):
+            # The shell has read it by the time the dialogs are answered
+            line = tmux.sent_keys[-1][2]
+            path = line.rsplit('"$(cat ', 1)[1].rstrip(')"')
+            seen["text"] = Path(path.strip("'")).read_text()
+            seen["path"] = path.strip("'")
+            return True
+
+        with patch.object(launcher, "_wait_for_prompt", side_effect=wait), \
+                patch.object(launcher, "_send_prompt_to_window") as paste:
+            session = launcher.launch(name="kid", initial_prompt="Line one\nLine two")
+        paste.assert_not_called()
+        assert seen["text"] == "Line one\nLine two"
+        assert not Path(seen["path"]).exists()  # removed once read
+        # A restart relaunches from the stored command: no prompt in it
+        assert not any("$(cat" in part or "Line one" in part for part in session.command)
+
+    def test_a_prompt_that_looks_like_an_option_is_pasted(self, tmp_path):
+        launcher, tmux = self._launcher(tmp_path)
+        with patch.object(launcher, "_send_prompt_to_window") as paste:
+            launcher.launch(name="kid", initial_prompt="--help me")
+        paste.assert_called_once()
+        assert "$(cat" not in tmux.sent_keys[-1][2]
+
+    def test_other_backends_paste(self, tmp_path):
+        launcher, tmux = self._launcher(tmp_path)
+        with patch.object(launcher, "_send_prompt_to_window") as paste:
+            launcher.launch(name="kid", initial_prompt="hello", backend="opencode")
+        paste.assert_called_once()
+        assert "$(cat" not in tmux.sent_keys[-1][2]

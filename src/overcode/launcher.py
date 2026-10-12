@@ -254,13 +254,17 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             env["OVERCODE_WRAPPER_DIR"] = shlex.quote(spec.start_directory)
 
         env_prefix = " ".join(f"{k}={v}" for k, v in env.items())
+        # The shell reads the prompt from its file: the text itself never
+        # rides on the typed line (quoting, length)
+        prompt_arg = (f' "$(cat {shlex.quote(spec.initial_prompt_file)})"'
+                      if spec.initial_prompt_file else "")
 
         if spec.mock_scenario:
             return f"MOCK_SCENARIO={spec.mock_scenario} {env_prefix} python {shlex.join(agent_cmd)}"
         elif spec.wrapper:
-            return f"{env_prefix} {shlex.quote(spec.wrapper)} {shlex.join(agent_cmd)}"
+            return f"{env_prefix} {shlex.quote(spec.wrapper)} {shlex.join(agent_cmd)}{prompt_arg}"
         else:
-            return f"{env_prefix} {shlex.join(agent_cmd)}"
+            return f"{env_prefix} {shlex.join(agent_cmd)}{prompt_arg}"
 
     def launch(
         self,
@@ -456,9 +460,13 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             self.sessions.update_session(session.id, parent_session_id=parent_session.id)
             session = self.sessions.get_session(session.id)
 
+        prompt_file = self._initial_prompt_file(agent_backend, session, initial_prompt)
+
         # fresh=True triggers the helper's "prescribe a new --session-id" branch
         # (#373), giving us the Claude session ID upfront without PID discovery.
-        if not self._send_launch_for_session(session, window_name, fresh=True):
+        if not self._send_launch_for_session(session, window_name, fresh=True,
+                                             initial_prompt_file=prompt_file):
+            self._remove_prompt_file(prompt_file)
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
             raise LaunchError(f"failed to send command to window {window_name}")
@@ -482,10 +490,45 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         print(f"✓ Launched '{name}' in tmux window {window_name}")
 
         # Send initial prompt if provided (after Claude starts)
-        if initial_prompt:
+        if prompt_file:
+            # On the command line already: only answer the startup dialogs
+            self._wait_for_prompt(window_name, backend=agent_backend)
+            self._remove_prompt_file(prompt_file)
+        elif initial_prompt:
             self._send_prompt_to_window(window_name, initial_prompt, backend=agent_backend)
 
         return session
+
+    def _initial_prompt_file(self, backend: AgentBackend, session: Session,
+                             prompt: Optional[str]) -> Optional[str]:
+        """Write the first prompt for a backend that takes it as an argument.
+
+        None (paste it once the agent is up) for other backends, the mock
+        harness, and a prompt starting with "-", which the CLI would read
+        as an option.
+        """
+        if (not prompt or not getattr(backend, "prompt_as_argument", False)
+                or os.environ.get("MOCK_SCENARIO") or prompt.lstrip().startswith("-")):
+            return None
+        from .settings import get_session_dir
+        folder = get_session_dir(self.tmux.session_name) / "prompts"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{session.id}.txt"
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(prompt)
+        except OSError:
+            return None
+        return str(path)
+
+    @staticmethod
+    def _remove_prompt_file(path: Optional[str]) -> None:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     def launch_fork(
         self,
@@ -619,6 +662,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         *,
         fresh: bool = False,
         fork_from: Optional[str] = None,
+        initial_prompt_file: Optional[str] = None,
     ) -> bool:
         """Rebuild the full launch command from a Session and send it to a window.
 
@@ -718,6 +762,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             start_directory=session.start_directory,
             wrapper=session.wrapper,
             mock_scenario=os.environ.get("MOCK_SCENARIO"),
+            initial_prompt_file=initial_prompt_file,
         )
         self._apply_skill_profile(backend, session, spec)
 

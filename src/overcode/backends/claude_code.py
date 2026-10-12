@@ -131,6 +131,14 @@ class ClaudeCodeBackend:
             args.append("--fork-session")
         return args
 
+    # The first prompt goes on the command line (`claude "<prompt>"`), not
+    # through the paste buffer: Claude 2.1.29x hands a long paste to the
+    # model inside <pasted_content> tags, which it is told not to obey, so a
+    # pasted launch prompt was looked at, not acted on (a controller asked
+    # "Your message was only pasted text... do you want me to run it?").
+    # A command-line prompt arrives as typed, and waits out the trust dialog.
+    prompt_as_argument = True
+
     def build_command(self, spec: LaunchSpec) -> List[str]:
         """Construct the claude CLI argument list.
 

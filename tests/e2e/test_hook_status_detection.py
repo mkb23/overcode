@@ -209,10 +209,13 @@ def _wait_for_daemon_status(
     agent_name: str,
     expected_status: str,
     timeout: float = 30,
+    until=None,
 ) -> list[tuple[str, str]]:
     """Poll daemon state until agent reaches expected status.
 
-    Returns all observed (status, activity) tuples.
+    With ``until`` (a callable), the expected status only ends the wait
+    once ``until()`` is true too: a status read before then is an earlier
+    tick's. Returns all observed (status, activity) tuples.
     """
     observations: list[tuple[str, str]] = []
     start = time.time()
@@ -226,7 +229,7 @@ def _wait_for_daemon_status(
                 observations.append(obs)
                 elapsed = time.time() - start
                 print(f"  [{elapsed:5.1f}s] {agent_name}: {status} — {activity}")
-            if status == expected_status:
+            if status == expected_status and (until is None or until()):
                 return observations
         time.sleep(POLL_INTERVAL)
     return observations
@@ -322,19 +325,15 @@ class TestHookStatusDetection:
         assert _wait_for_agent_in_daemon(state_dir, session, "hook-test", timeout=30), \
             "Agent 'hook-test' never appeared in daemon state"
 
-        # 3. Poll daemon state, collecting observations until waiting_user.
-        # Until Claude's first hook the status comes from the pane, and a
-        # pane still showing the launch command reads waiting_user: start
-        # watching once telemetry has spoken.
-        deadline = time.time() + 60
-        while _read_hook_state_file(state_dir, session, "hook-test") is None:
-            assert time.time() < deadline, "Claude never fired a hook"
-            time.sleep(0.25)
+        # 3. Poll daemon state, collecting observations until the turn's
+        # Stop has been read as waiting_user. A waiting_user before that is
+        # the agent still starting (its pane shows the launch command).
         print("\n--- Polling daemon state for status transitions ---")
         observations = _wait_for_daemon_status(
             state_dir, session, "hook-test",
             expected_status="waiting_user",
             timeout=120,
+            until=lambda: (_read_hook_state_file(state_dir, session, "hook-test") or {}).get("event") == "Stop",
         )
 
         # 4. Assertions
