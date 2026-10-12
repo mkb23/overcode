@@ -180,3 +180,12 @@ class TestSnapshotPricing:
         from overcode.pricing import snapshot_pricing
         assert snapshot_pricing("acme-internal-model-x1") is None
         assert snapshot_pricing(None) is None
+
+
+def test_is_priced_tells_a_known_model_from_the_zero_fallback():
+    from overcode.pricing import is_priced, lookup_pricing
+
+    assert is_priced("claude-sonnet-4-6")
+    assert not is_priced("acme-unknown-model-9")
+    assert not is_priced("")
+    assert lookup_pricing("acme-unknown-model-9").input == 0.0

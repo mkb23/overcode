@@ -648,6 +648,27 @@ class TestGatherDataFindings:
         stats = _FakeStats(model=None)
         assert FINDING_MODEL_DRIFT not in _codes(gather_data_findings(sess, stats))
 
+    # ---- unpriced model with a budget (review item 17) --------------------
+
+    def test_a_budget_on_an_unpriced_model_is_flagged(self):
+        from overcode.doctor import FINDING_UNPRICED_BUDGET
+
+        sess = _make_session(model=None)
+        sess.cost_budget_usd = 5.0
+        stats = _FakeStats(model="acme-unknown-model-9")
+        assert FINDING_UNPRICED_BUDGET in _codes(gather_data_findings(sess, stats))
+
+    def test_a_priced_model_or_no_budget_is_fine(self):
+        from overcode.doctor import FINDING_UNPRICED_BUDGET
+
+        sess = _make_session(model=None)
+        sess.cost_budget_usd = 5.0
+        assert FINDING_UNPRICED_BUDGET not in _codes(
+            gather_data_findings(sess, _FakeStats(model="claude-sonnet-4-6")))
+        sess.cost_budget_usd = 0.0
+        assert FINDING_UNPRICED_BUDGET not in _codes(
+            gather_data_findings(sess, _FakeStats(model="acme-unknown-model-9")))
+
 
 class TestInspectAgentFindings:
     def test_findings_attached_to_healthy_agent(self):

@@ -139,6 +139,16 @@ def lookup_pricing(model: str) -> ModelPricing:
     return ModelPricing(input=0.0, output=0.0)
 
 
+def is_priced(model: str) -> bool:
+    """Whether ``model`` has a known price (lookup_pricing falls back to $0)."""
+    model_lower = (model or "").lower()
+    if not model_lower:
+        return False
+    if any(key in model_lower for key in MODEL_PRICING):
+        return True
+    return snapshot_pricing(model) is not None
+
+
 def calculate_cost_estimate(
     input_tokens: int,
     output_tokens: int,

@@ -52,6 +52,7 @@ FINDING_HEARTBEAT_OVERDUE = "heartbeat_overdue"
 FINDING_BUDGET_EXCEEDED = "budget_exceeded"
 FINDING_SIDS_EMPTY = "sids_empty_with_interactions"
 FINDING_MODEL_DRIFT = "model_drift"
+FINDING_UNPRICED_BUDGET = "unpriced_model_with_budget"
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -507,6 +508,21 @@ def gather_data_findings(
             message=(
                 f"launched with model '{session.model}' but Claude Code "
                 f"session reports '{live_stats.model}'"
+            ),
+        ))
+
+    # An unknown model is priced at $0, so a cost budget on it never trips
+    from .pricing import is_priced
+
+    model = (getattr(live_stats, "model", None) if live_stats is not None else None) \
+        or getattr(session, "transcript_model", None) or session.model
+    if getattr(session, "cost_budget_usd", 0) and model and not is_priced(model):
+        findings.append(Finding(
+            code=FINDING_UNPRICED_BUDGET,
+            severity=SEVERITY_WARNING,
+            message=(
+                f"has a ${session.cost_budget_usd:.2f} budget but model '{model}' "
+                f"has no known price: its cost reads $0, so the budget can't trip"
             ),
         ))
 
