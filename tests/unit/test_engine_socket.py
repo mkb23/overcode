@@ -245,9 +245,11 @@ class TestResilience:
         stuck.connect(str(sock_path))
         try:
             assert wait_for(lambda: server.view_count == 1)
-            big = "x" * 2000
+            # Each delta carries a changed 2 KB field: ~4 MB in all, far past
+            # the 64 KB queue limit plus any kernel socket buffer (Linux's
+            # AF_UNIX buffer is ~200 KB; a delta of only "n" never filled it)
             for i in range(2000):
-                server.publish(snap(a={"n": i, "pad": big}))
+                server.publish(snap(a={"n": i, "pad": f"{i:06d}" + "x" * 2000}))
             assert wait_for(lambda: server.view_count == 0)
             assert server.dropped == 1
         finally:
