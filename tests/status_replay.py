@@ -9,7 +9,7 @@ detector when the fleet runs in polling mode) on a fixed cadence against a
 fake clock, so a scenario exercises everything from hook-state writes and
 obligation tracking to the sticky-green window and pane scraping.
 
-Two telemetry paths are supported:
+Three telemetry paths are supported:
 
 * **Claude Code** (``ev`` steps): each payload goes through
   ``hook_handler.handle_hook_event``, stdin JSON and all. Events overcode
@@ -17,7 +17,15 @@ Two telemetry paths are supported:
   ``Notification``, ...) are dropped before delivery, exactly as Claude
   Code would never call the hook for them. Scenarios still list them, so
   registering a new event later makes it flow through with no scenario
-  edit.
+  edit. **codex** and **grok** use the same path with their own payload
+  shapes (``codex_ev``: Claude's snake_case plus codex's own fields;
+  ``grok_ev``: the camelCase dialect with snake_case event names), filtered
+  by the events each backend registers (``CODEX_HOOK_EVENTS``;
+  ``GROK_HOOK_EVENTS`` plus ``GROK_NOTIFICATION_MATCHERS``).
+* **hermes** (``hermes`` steps): each is one Hermes observer hook and its
+  kwargs, handed to the REAL bundled plugin (``overcode.hermes_plugin``),
+  which translates it and pipes the Claude-shaped payload to the hook
+  handler; only the pipe is replaced, by an in-process call.
 * **opencode / opencode2** (``rec`` steps): each record is a plugin-hook
   invocation in the spy-capture format of ``tests/fixtures_opencode_events``.
   Before sampling, every record is run through the REAL bundled plugin
@@ -29,8 +37,12 @@ Two telemetry paths are supported:
   writes its hook files from inside the plugin — there is no hook handler
   process — so this is the whole of its telemetry path.
 
-Claude scenarios are synthetic: their shapes follow live captures of Claude
-Code 2.1.286 (Oct 2026), but every command, path and name is made up.
+Claude, codex, grok and hermes scenarios are synthetic: their shapes follow
+live captures (Claude Code 2.1.286, Oct 2026; codex and grok in
+``docs/design/agent-backends-codex-grok.md`` and
+``tests/unit/test_grok_hooks.py``; Hermes kwargs in
+``tests/unit/test_hermes_plugin.py``), but every command, path and name is
+made up.
 opencode scenarios reuse the verbatim live captures in
 ``tests/fixtures_opencode_events`` and ``tests/fixtures_opencode_panes``.
 """
@@ -69,6 +81,8 @@ EPOCH = 1_800_000_000.0  # fake-clock origin; scenario times are offsets from it
 
 REGISTERED_EVENTS = frozenset(e for e, _ in hook_handler.OVERCODE_HOOKS)
 RESET_SOURCES = frozenset(hook_handler.CLAUDE_SESSION_START_MATCHER.split("|"))
+CODEX_EVENTS = frozenset(hook_handler.CODEX_HOOK_EVENTS)
+GROK_EVENTS = frozenset(hook_handler.GROK_HOOK_EVENTS)
 
 # Backends whose telemetry comes from a bundled opencode plugin
 PLUGIN_BACKENDS = ("opencode", "opencode2")
@@ -87,6 +101,7 @@ class Step:
     record: Optional[dict] = None   # an opencode plugin-hook record
     write: Optional[dict] = None    # what the plugin wrote for a record
     busy: Optional[bool] = None     # force the busy marker on/off from here
+    hermes: Optional[tuple] = None  # (hook name, kwargs) for the Hermes plugin
 
 
 def ev(t: float, event: str, tool: str = None, tool_use_id: str = None,
@@ -103,6 +118,65 @@ def ev(t: float, event: str, tool: str = None, tool_use_id: str = None,
     if agent_id is not None:
         payload["agent_id"] = agent_id
     return Step(t, payload=payload)
+
+
+CODEX_SESSION = "0a1b2c3d-0000-7000-8000-00000000c0de"
+
+
+def codex_ev(t: float, event: str, tool: str = None, tool_use_id: str = None,
+             turn: str = "turn-1", **fields) -> Step:
+    """A hook payload as codex sends it: Claude's keys plus its own.
+
+    Shape from the live capture in agent-backends-codex-grok.md §2.3
+    (``session_id``, ``turn_id``, ``transcript_path``, ``cwd``, ``model``,
+    ``permission_mode``). With ``tool``, ``fields`` are its input; without,
+    they are the event's own fields (``prompt``, ``source`` ...).
+    """
+    step = ev(t, event, tool, tool_use_id, **fields)
+    step.payload.update({
+        "session_id": CODEX_SESSION,
+        "turn_id": turn,
+        "transcript_path": f"/tmp/codex/sessions/rollout-{CODEX_SESSION}.jsonl",
+        "cwd": "/tmp/project",
+        "model": "gpt-test",
+        "permission_mode": "default",
+    })
+    return step
+
+
+GROK_SESSION = "0a1b2c3d-0000-7000-8000-00000000960c"
+
+
+def grok_ev(t: float, event: str, tool: str = None, tool_use_id: str = None,
+            prompt_id: str = None, tool_input: dict = None, **fields) -> Step:
+    """A hook payload as grok sends it: camelCase keys, snake_case event names.
+
+    ``event`` is grok's ``hookEventName`` value (``user_prompt_submit``,
+    ``stop_cancelled``, ``notification`` ...) and ``tool`` its own tool name
+    (``run_terminal_command``). ``fields`` are further camelCase keys
+    (``reason``, ``notificationType``, ``toolResult`` ...).
+    """
+    payload: dict = {
+        "hookEventName": event,
+        "sessionId": GROK_SESSION,
+        "cwd": "/tmp/project",
+        "workspaceRoot": "/tmp/project",
+        "permissionMode": "default",
+    }
+    if prompt_id is not None:
+        payload["promptId"] = prompt_id
+    if tool is not None:
+        payload["toolName"] = tool
+        payload["toolInput"] = tool_input or {}
+    if tool_use_id is not None:
+        payload["toolUseId"] = tool_use_id
+    payload.update(fields)
+    return Step(t, payload=payload)
+
+
+def hermes(t: float, hook: str, **kwargs) -> Step:
+    """One Hermes observer hook (``pre_llm_call``, ``post_tool_call`` ...)."""
+    return Step(t, hermes=(hook, kwargs))
 
 
 def rec(t: float, record: dict) -> Step:
@@ -198,7 +272,7 @@ class _Tmux:
     def hear(self, payload: dict) -> None:
         if payload.get("agent_id"):
             return
-        event = payload["hook_event_name"]
+        event = payload.get("hook_event_name")
         if event in _TURN_STARTS:
             self.in_turn = True
         elif event in _TURN_ENDS:
@@ -216,7 +290,16 @@ class _Tmux:
         return "\n".join(out)
 
 
-def _delivered(payload: dict) -> bool:
+def _delivered(payload: dict, backend: str = "claude-code") -> bool:
+    """Whether ``backend`` calls the hook for ``payload`` at all."""
+    if backend == "codex":
+        return payload["hook_event_name"] in CODEX_EVENTS
+    if backend == "grok":
+        # grok matches its registrations on the PascalCase name
+        event = "".join(w.capitalize() for w in payload["hookEventName"].split("_"))
+        if event == "Notification":
+            return payload.get("notificationType") in hook_handler.GROK_NOTIFICATION_MATCHERS
+        return event in GROK_EVENTS
     event = payload["hook_event_name"]
     if event == "SessionStart":
         return payload.get("source") in RESET_SOURCES
@@ -352,7 +435,9 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
                     tmux.pinned = step.busy
                 elif step.write is not None:
                     _apply_write(state_dir, step.write)
-                elif step.payload is not None and _delivered(step.payload):
+                elif step.hermes is not None:
+                    _deliver_hermes(*step.hermes)
+                elif step.payload is not None and _delivered(step.payload, scenario.backend):
                     _deliver(step.payload)
                     tmux.hear(step.payload)
                 i += 1
@@ -371,6 +456,21 @@ def _deliver(payload: dict) -> None:
     with patch("sys.stdin", io.StringIO(json.dumps(payload))), \
             redirect_stdout(io.StringIO()):
         hook_handler.handle_hook_event()
+
+
+def _deliver_hermes(hook: str, kwargs: dict) -> None:
+    """One Hermes hook through the real plugin; its pipe to the handler runs in-process."""
+    from overcode import hermes_plugin
+
+    def deliver(payload, *, wait_for_output=False):
+        out = io.StringIO()
+        with patch("sys.stdin", io.StringIO(json.dumps(payload, default=str))), \
+                redirect_stdout(out):
+            hook_handler.handle_hook_event()
+        return out.getvalue().strip() if wait_for_output else None
+
+    with patch.object(hermes_plugin, "deliver", deliver):
+        hermes_plugin.handle(hook, dict(kwargs))
 
 
 # ---------------------------------------------------------------------------
