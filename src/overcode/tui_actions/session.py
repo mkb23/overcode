@@ -791,3 +791,133 @@ class SessionActionsMixin:
                 self.call_from_thread(self.exit)
 
         self.run_worker(work, thread=True, group="shutdown", exclusive=True)
+
+    def _execute_kill(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
+        """Execute the actual kill operation after confirmation."""
+        # Save a copy of the session for showing when show_terminated is True
+        session_copy = focused.session
+        # Mark it as terminated for display purposes
+        from dataclasses import replace
+        terminated_session = replace(session_copy, status="terminated")
+
+        # Use launcher to kill the session
+        from ..launcher import AgentLauncher
+        launcher = AgentLauncher(
+            tmux_session=self.tmux_session,
+            session_manager=self.session_manager
+        )
+
+        if launcher.kill_session(session_name):
+            self.notify(f"Killed agent: {session_name}", severity="information")
+
+            # Store in terminated sessions cache for ghost mode
+            import time as _time
+            self._terminated_sessions[session_id] = terminated_session
+            self._terminated_times[session_id] = _time.monotonic()
+
+            # Remove from self.sessions so j/k ordering stays consistent
+            self.sessions = [s for s in self.sessions if s.id != session_id]
+
+            # Remove the widget (will be re-added if show_terminated is True)
+            focused.remove()
+            # Reconcile widgets immediately — Textual's Widget.remove() is async,
+            # and without this kicker the row could linger until the next 10 s
+            # refresh_sessions tick (#456). update_session_widgets diffs DOM vs
+            # display_sessions and force-removes anything stale, *and* re-adds
+            # the row from _terminated_sessions when show_terminated is True.
+            self.update_session_widgets()
+
+            # Focus next available agent (uses session order for j/k consistency)
+            widgets = self._get_widgets_in_session_order()
+            if widgets:
+                self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+                # Watcher handles .focus(), preview update, and tmux sync
+        else:
+            self.notify(f"Failed to kill agent: {session_name}", severity="error")
+
+    def _execute_cleanup(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
+        """Clean up a terminated/done agent: archive and remove from display."""
+        self.session_manager.delete_session(session_id)
+
+        self.notify(f"Cleaned up agent: {session_name}", severity="information")
+
+        # Remove from self.sessions so j/k ordering stays consistent
+        self.sessions = [s for s in self.sessions if s.id != session_id]
+
+        # Remove from caches
+        if session_id in self._terminated_sessions:
+            del self._terminated_sessions[session_id]
+        self._terminated_times.pop(session_id, None)
+        # Remove the widget
+        focused.remove()
+        # Same reconciliation as _execute_kill (#456) — force a diff so the row
+        # disappears immediately rather than waiting for the next refresh tick.
+        self.update_session_widgets()
+
+        # Focus next available agent (uses session order for j/k consistency)
+        widgets = self._get_widgets_in_session_order()
+        if widgets:
+            self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+            # Watcher handles .focus(), preview update, and tmux sync
+
+    def _execute_restart(self, focused: "SessionSummary") -> None:
+        """Execute the actual restart operation after confirmation (#133).
+
+        Delegates to AgentLauncher.restart, which rebuilds the full launch
+        environment (hooks/permissions --settings, wrapper, env prefix,
+        model, persona, allowed tools, extra args) from the stored Session
+        and relaunches in the existing tmux window, resuming the prior
+        Claude conversation.
+
+        If the tmux window is gone (terminated agent), delegates to
+        _execute_revive.
+        """
+        from ..launcher import AgentLauncher
+        from ..tmux_manager import TmuxManager
+        session = focused.session
+        session_name = session.name
+        tmux = TmuxManager(self.tmux_session)
+
+        if not tmux.window_exists(session.tmux_window):
+            self._execute_revive(focused, tmux)
+            return
+
+        launcher = AgentLauncher(
+            self.tmux_session,
+            tmux_manager=tmux,
+            session_manager=self.session_manager,
+        )
+        if launcher.restart(session):
+            self.notify(f"Restarted agent: {session_name}", severity="information")
+        else:
+            self.notify(f"Failed to restart agent: {session_name}", severity="error")
+
+    def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:  # noqa: F821
+        """Revive a terminated agent by creating a new tmux window and relaunching.
+
+        Delegates to AgentLauncher.revive, which rebuilds the full launch
+        environment from the stored Session (hooks/permissions --settings,
+        wrapper, env prefix, model, persona, allowed tools, extra args) and
+        resumes the prior Claude conversation when available.
+        """
+        from ..launcher import AgentLauncher
+        session = focused.session
+        session_name = session.name
+
+        launcher = AgentLauncher(
+            self.tmux_session,
+            tmux_manager=tmux,
+            session_manager=self.session_manager,
+        )
+        if not launcher.revive(session):
+            self.notify(f"Failed to revive agent: {session_name}", severity="error")
+            return
+
+        # Remove from terminated cache
+        if session.id in self._terminated_sessions:
+            del self._terminated_sessions[session.id]
+        self._terminated_times.pop(session.id, None)
+
+        resume_info = " (resuming session)" if session.active_agent_session_id else ""
+        self.notify(f"Revived agent: {session_name}{resume_info}", severity="information")
+        self.refresh_sessions()

@@ -39,7 +39,7 @@ def _notes(app):
 class TestNewAgentDialog:
     def test_a_refused_launch_is_an_error_with_its_reason(self):
         app = _app()
-        with patch("overcode.tui.AgentLauncher") as cls:
+        with patch("overcode.tui_actions.dialogs.AgentLauncher") as cls:
             cls.return_value.launch.side_effect = LaunchError("wrapper 'w' not found or not executable")
             SupervisorTUI.on_new_agent_modal_launch_requested(app, _launch_message())
 
@@ -51,7 +51,7 @@ class TestNewAgentDialog:
 
     def test_a_launch_says_created(self):
         app = _app()
-        with patch("overcode.tui.AgentLauncher"):
+        with patch("overcode.tui_actions.dialogs.AgentLauncher"):
             SupervisorTUI.on_new_agent_modal_launch_requested(app, _launch_message())
 
         assert _notes(app) == [("Created agent: worker", "information")]
@@ -63,7 +63,7 @@ class TestFork:
         app = _app()
         source = SimpleNamespace(name="src", is_remote=False)
         message = SimpleNamespace(source_session=source, fork_name="src-fork")
-        with patch("overcode.tui.AgentLauncher") as cls:
+        with patch("overcode.tui_actions.command_bar.AgentLauncher") as cls:
             cls.return_value.launch_fork.side_effect = LaunchError(
                 "backend 'shell' does not support fork", "fork")
             SupervisorTUI.on_command_bar_fork_requested(app, message)
@@ -75,7 +75,7 @@ class TestFork:
         app = _app()
         source = SimpleNamespace(name="src", is_remote=False)
         message = SimpleNamespace(source_session=source, fork_name="src-fork")
-        with patch("overcode.tui.AgentLauncher"):
+        with patch("overcode.tui_actions.command_bar.AgentLauncher"):
             SupervisorTUI.on_command_bar_fork_requested(app, message)
 
         assert _notes(app) == [("Forked 'src' → 'src-fork'", "information")]
