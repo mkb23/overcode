@@ -272,7 +272,7 @@ move-only commits.
 | 7 polling: prose read as running | done: idle prompt first (P8b) | 62bc219 |
 | 8 polling: permission red | done: orange; hermes tip and answered-dialog false matches fixed | 62bc219, 971e37b |
 | 9 TUI writes lifecycle | done: `list_sessions` read-only, daemon is the single writer, new rows within a tick | 54e734b |
-| 10 tmux hangs outside the daemon | part: `overcode tmux` and the resize API bounded; TmuxManager's libtmux path goes with 33 | 5b8b332 |
+| 10 tmux hangs outside the daemon | done: `overcode tmux`, the resize API, TmuxManager, `attach_bare` and every default client bounded | 5b8b332, c353daa |
 | 11 supervisor dies on an exception | done: each pass isolated and logged | (see log) |
 | 12 config.yaml loses comments | done: only changed entries rewritten, atomic, copies from the cache | 918ef10 |
 | 13 grok stale-turn race | done: checked under the lock; idle_prompt guarded | (see log) |
@@ -289,10 +289,14 @@ move-only commits.
 | 24 state file every tick | done: on change plus a 10 s liveness rewrite, compact | 3ebd582 |
 | 25 one status rule table | done: `TickContext` → named rules → `Verdict`; legacy enum from one table; phase names the rule; one `now` (part of 34). A scheduled-only agent stays waiting (c4f48a3) | (see log) |
 | 26 split monitor_daemon | done: 2,754 → 1,875 lines; cadence, presence, housekeeping, stats sync, process probe (one `ps`), recorders, wake, `git_stats`/`burn`; `for_test()` replaces `__new__` | (see log) |
+| 27 split tui.py | done: 4,921 → 2,578 lines; `tui_timers` (one scheduler), `tui_engine_link`, `tui_split` (every tmux side effect; a null one outside the split), action groups; workers take their inputs | (see log) |
 | 28 split session_manager / launcher | done: 1,790 → 1,052 and 1,585 → 887 lines; `LaunchError` (a refused launch exits 1; the TUI shows the reason); `resolve_launch_settings` | (see log) |
+| 31 summary_columns | done: metadata on each column; plain text by default; `mono()` gone; one `FleetFlags` for the TUI and `overcode list`; the `overcode.columns` package behind a facade | (see log) |
 | 32 Session model | part: canonical names only on write, aliases gone; old files still load | (see log) |
+| 33 tmux layers | done: TmuxManager a bounded facade over RealTmux; `MockTmux` moved to tests; a libtmux pin-safety test; `RealTmux.resize_window` fixed (it called a method that never existed) | (see log) |
 | 36 shared pilot harness | done: `make_tui` (tests/tui_harness.py), no timers unless asked, an in-memory engine connected from mount; 17 files moved onto it | (see log) |
 | 38 less mocking | part: `test_tui_actions_session` builds real `Session`s | (see log) |
+| 39 test speed | done: launcher waits injectable (26 s → 15 s); leaked presence threads stopped (CI unit 937 s timeout → 420 s) | 37c83f3, c217e74 |
 | 40 coverage targets | done: codex, grok and hermes replay scenarios (17); the polling-prose, PID-reuse, disk-full and phase-label tests landed with their fixes | 6132d3d and earlier |
 | Dead code | done (the confirmed list) | c7c2284 |
 
@@ -305,8 +309,9 @@ test only failed on Linux (9bb2a07); `sleep 1m` read as one second
 Also: the 250 ms tick no longer queries the DOM to keep focus (dba2254); a
 flaky test counted other threads' sleeps (see log).
 
-Still open: 27 (split tui.py), 29 (paths.py), 30 (rest of the backend
-sharing), 31 (summary_columns), 33 (tmux layers), 34 (one clock beyond the
-detector), 35 (files keyed by session id, needs a migration), 37
-(work-counting tests beyond the row cache), 39 (test speed), and the rest of
-10, 32 and 38.
+Still open: 29 (paths.py), 30 (rest of the backend sharing: StatusPatterns
+fields, `_NEVER`, AgentBackendBase, hook dialects), 34 (one clock beyond the
+detector), 35 (files keyed by session id: needs a migration), 37
+(work-counting tests beyond the row cache and status bar), and the rest of
+32 (cpu/rss/sandbox into daemon state, sister-only fields) and 38
+(test_cli's mocking).
