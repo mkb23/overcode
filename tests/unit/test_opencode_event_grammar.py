@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-from overcode.backends.opencode import bundled_plugin_path
 from tests.opencode_oracle import diff_publishes, describe
 
 REPLAY = Path(__file__).parent.parent / "js" / "opencode_plugin_replay.mjs"
@@ -217,9 +216,8 @@ class StreamGen:
 
 @pytest.fixture(scope="module")
 def plugin_module(tmp_path_factory):
-    target = tmp_path_factory.mktemp("plugin") / "overcode-telemetry.mjs"
-    target.write_text(bundled_plugin_path().read_text(encoding="utf-8"))
-    return target
+    from tests.opencode_plugin_files import copy_v1_plugin
+    return copy_v1_plugin(tmp_path_factory.mktemp("plugin"))
 
 
 def replay(plugin_module, tmp_path, streams):

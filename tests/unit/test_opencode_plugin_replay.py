@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-from overcode.backends.opencode import bundled_plugin_path
 from tests.opencode_oracle import (
     OpencodeOracle,
     diff_publishes,
@@ -46,9 +45,8 @@ def load_fixture(name: str) -> list:
 @pytest.fixture(scope="module")
 def plugin_module(tmp_path_factory):
     """The bundled plugin, copied out as .mjs so node loads it as ESM."""
-    target = tmp_path_factory.mktemp("plugin") / "overcode-telemetry.mjs"
-    target.write_text(bundled_plugin_path().read_text(encoding="utf-8"))
-    return target
+    from tests.opencode_plugin_files import copy_v1_plugin
+    return copy_v1_plugin(tmp_path_factory.mktemp("plugin"))
 
 
 def replay(plugin_module, tmp_path, streams):

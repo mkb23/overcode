@@ -37,9 +37,8 @@ def plugin_module(tmp_path_factory):
     The repo has no package.json, so a bare ``.js`` would be parsed as
     CommonJS and its ``export`` statements would fail.
     """
-    target = tmp_path_factory.mktemp("plugin") / "overcode-telemetry.mjs"
-    target.write_text(bundled_plugin_path().read_text(encoding="utf-8"))
-    return target
+    from tests.opencode_plugin_files import copy_v1_plugin
+    return copy_v1_plugin(tmp_path_factory.mktemp("plugin"))
 
 
 def run_plugin(plugin_module, env, actions):

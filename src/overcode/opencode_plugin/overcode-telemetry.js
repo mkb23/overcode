@@ -83,17 +83,21 @@
  *   anything else from a child session                 → ignored
  */
 
-import fs from "node:fs"
-import os from "node:os"
-import path from "node:path"
-
-// Must match hook_handler._EVENT_LOG_ROTATE_BYTES / _EVENT_LOG_KEEP_LINES.
-const EVENT_LOG_ROTATE_BYTES = 100 * 1024
-const EVENT_LOG_KEEP_LINES = 200
-
-// How many root session ids to remember. The stats reader sums every id it is
-// given, so this bounds a long-lived agent that keeps hitting /new.
-const MAX_SESSION_IDS = 20
+// The hook-file writer (snapshot + event log, obligation carry-over, the
+// session-id cap), the tool-name map and the foreground classifier are
+// shared with the opencode2 plugin. Overcode installs the core at this
+// relative path next to this file; opencode loads only
+// `{plugin,plugins}/*.{ts,js}`, so neither the subdirectory nor the .mjs
+// is ever taken for a plugin of its own. Imported dynamically so a missing
+// core turns telemetry off instead of failing opencode's plugin load.
+let core = null
+try {
+  core = await import("./overcode-telemetry-v2/overcode-telemetry-core.mjs")
+} catch (e) {
+  core = null
+}
+const { MAX_SESSION_IDS, canonicalToolName, createWriter, isOvercodeSession, resolveStateDir } =
+  core || {}
 
 // What each published event means for the agent, mirrored from
 // hook_status_detector._HOOK_STATUS_MAP — the reducer keeps the last one so
@@ -123,50 +127,6 @@ const MAX_ERROR_REASON_CHARS = 200
 // which would otherwise overwrite Stop and pin the agent green.
 const MAX_SEEN_MESSAGES = 200
 
-// opencode names its tools in lowercase; overcode's detector (and the badge
-// vocabulary) speaks Claude's CamelCase. Unmapped names are title-cased so a
-// new opencode tool still renders sensibly instead of vanishing.
-const TOOL_NAME_MAP = {
-  bash: "Bash",
-  edit: "Edit",
-  glob: "Glob",
-  grep: "Grep",
-  list: "List",
-  ls: "List",
-  patch: "Edit",
-  read: "Read",
-  skill: "Skill",
-  task: "Task",
-  todoread: "TodoRead",
-  todowrite: "TodoWrite",
-  webfetch: "WebFetch",
-  websearch: "WebSearch",
-  write: "Write",
-}
-
-// Mirrors hook_handler._BLOCKED_ON_PATTERNS so the status-detail column can
-// say *why* a foreground Bash looks stalled.
-const BLOCKED_ON_PATTERNS = [
-  ["ci", /\b(gh\s+run\s+watch|gh\s+pr\s+checks\s+--watch)\b/],
-  ["process", /\b(tail\s+-[fF]|kubectl\s+wait|docker\s+wait|wait-on)\b/],
-  ["sleep", /^\s*sleep\s+\d/],
-]
-
-function canonicalToolName(name) {
-  if (!name || typeof name !== "string") return null
-  const mapped = TOOL_NAME_MAP[name.toLowerCase()]
-  if (mapped) return mapped
-  return name.charAt(0).toUpperCase() + name.slice(1)
-}
-
-function classifyBlockedOn(command) {
-  if (typeof command !== "string" || !command) return null
-  for (const [kind, pattern] of BLOCKED_ON_PATTERNS) {
-    if (pattern.test(command)) return kind
-  }
-  return null
-}
-
 /**
  * A bounded reason string from a session.error payload, or null.
  *
@@ -191,129 +151,6 @@ function failureReason(err) {
   } else text = String(err)
   if (!text) return null
   return text.length > MAX_ERROR_REASON_CHARS ? text.slice(0, MAX_ERROR_REASON_CHARS) : text
-}
-
-function computeForeground(event, toolName, toolInput) {
-  if (event !== "PreToolUse" || !toolName) return null
-  const fg = { kind: "tool", tool: toolName }
-  if (toolName === "Bash" && toolInput && typeof toolInput === "object") {
-    const blockedOn = classifyBlockedOn(toolInput.command)
-    if (blockedOn) fg.blocked_on = blockedOn
-  }
-  return fg
-}
-
-/**
- * Resolve the hook-state directory the same way overcode's paths.session_dir
- * does: OVERCODE_STATE_DIR when set, else $OVERCODE_DIR/sessions (default
- * ~/.overcode/sessions).
- */
-function resolveStateDir(env, homedir) {
-  const base = env.OVERCODE_STATE_DIR ||
-    path.join(env.OVERCODE_DIR || path.join(homedir, ".overcode"), "sessions")
-  return path.join(base, env.OVERCODE_TMUX_SESSION)
-}
-
-/**
- * The pure-ish writer.
- *
- * `env` needs OVERCODE_SESSION_NAME + OVERCODE_TMUX_SESSION (and optionally
- * OVERCODE_STATE_DIR). `now` is injectable for deterministic tests.
- */
-function createWriter(env, options = {}) {
-  const homedir = options.homedir || os.homedir()
-  const now = options.now || (() => Date.now() / 1000)
-  const dir = resolveStateDir(env, homedir)
-  const agent = env.OVERCODE_SESSION_NAME
-  const statePath = path.join(dir, `hook_state_${agent}.json`)
-  const logPath = path.join(dir, `hook_events_${agent}.jsonl`)
-
-  function readPrevious() {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"))
-      return parsed && typeof parsed === "object" ? parsed : {}
-    } catch (e) {
-      return {}
-    }
-  }
-
-  function writeState(event, detail = {}) {
-    const prev = readPrevious()
-    const timestamp = now()
-
-    let loadedSkills = Array.isArray(prev.loaded_skills) ? prev.loaded_skills.slice() : []
-    if (detail.toolName === "Skill" && detail.toolInput && typeof detail.toolInput === "object") {
-      const skill = detail.toolInput.skill || detail.toolInput.name
-      if (skill && !loadedSkills.includes(skill)) loadedSkills = loadedSkills.concat([skill])
-    }
-
-    const state = { event, timestamp }
-    if (detail.toolName != null) state.tool_name = detail.toolName
-    if (detail.toolInput != null) state.tool_input = detail.toolInput
-    if (detail.toolUseId != null) state.tool_use_id = detail.toolUseId
-    // StopFailure only: the Python detector validates `event` + `timestamp`
-    // and passes the dict through, so the extra field is tolerated.
-    if (detail.error != null) state.error = detail.error
-    if (loadedSkills.length) state.loaded_skills = loadedSkills
-
-    // Obligations are Claude-tool concepts (ScheduleWakeup, CronCreate,
-    // Monitor, background Bash) with no opencode analogue, so the list is only
-    // carried forward — never armed here — and cleared when the session ends.
-    const obligations = event === "SessionEnd"
-      ? []
-      : (Array.isArray(prev.pending_obligations) ? prev.pending_obligations : [])
-    if (obligations.length) state.pending_obligations = obligations
-
-    const foreground = computeForeground(event, detail.toolName, detail.toolInput)
-    if (foreground) state.foreground = foreground
-
-    // opencode mints its own `ses_…` ids; recording them here is what lets the
-    // stats reader find the right SQLite rows without guessing by directory.
-    const ids = Array.isArray(prev.agent_session_ids) ? prev.agent_session_ids.slice() : []
-    if (detail.agentSessionId && !ids.includes(detail.agentSessionId)) {
-      ids.push(detail.agentSessionId)
-      while (ids.length > MAX_SESSION_IDS) ids.shift()
-    }
-    if (ids.length) state.agent_session_ids = ids
-    const activeId = detail.agentSessionId || prev.agent_session_id
-    if (activeId) state.agent_session_id = activeId
-
-    fs.mkdirSync(dir, { recursive: true })
-    const tmp = `${statePath}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(state))
-    fs.renameSync(tmp, statePath)
-    return state
-  }
-
-  function rotateLog() {
-    try {
-      if (fs.statSync(logPath).size <= EVENT_LOG_ROTATE_BYTES) return
-      const lines = fs.readFileSync(logPath, "utf8").split("\n").filter((l) => l !== "")
-      if (lines.length <= EVENT_LOG_KEEP_LINES) return
-      const tmp = `${logPath}.${process.pid}.tmp`
-      fs.writeFileSync(tmp, lines.slice(-EVENT_LOG_KEEP_LINES).join("\n") + "\n")
-      fs.renameSync(tmp, logPath)
-    } catch (e) {
-      /* best-effort, same as hook_handler._rotate_event_log */
-    }
-  }
-
-  function appendEvent(event, detail = {}) {
-    const entry = { event, timestamp: now() }
-    if (detail.toolName != null) entry.tool_name = detail.toolName
-    if (detail.toolInput != null) entry.tool_input = detail.toolInput
-    if (detail.error != null) entry.error = detail.error
-    fs.mkdirSync(dir, { recursive: true })
-    fs.appendFileSync(logPath, JSON.stringify(entry) + "\n")
-    rotateLog()
-  }
-
-  function publish(event, detail = {}) {
-    writeState(event, detail)
-    appendEvent(event, detail)
-  }
-
-  return { dir, statePath, logPath, readPrevious, writeState, appendEvent, publish }
 }
 
 /**
@@ -565,11 +402,6 @@ function createTelemetry(env, options = {}) {
   }
 }
 
-/** True when the environment identifies an overcode-launched agent. */
-function isOvercodeSession(env) {
-  return Boolean(env && env.OVERCODE_SESSION_NAME && env.OVERCODE_TMUX_SESSION)
-}
-
 /**
  * The plugin factory — and the file's ONLY export.
  *
@@ -583,7 +415,7 @@ export const OvercodeTelemetryPlugin = async () => {
   // Registering nothing is the whole safety story: if this file is ever
   // picked up by an opencode session overcode did not launch, it costs one
   // env lookup and adds no hooks at all.
-  if (!isOvercodeSession(process.env)) return {}
+  if (!core || !isOvercodeSession(process.env)) return {}
 
   let telemetry
   try {

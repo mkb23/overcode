@@ -180,9 +180,18 @@ def ensure_plugin_installed(start_directory: Optional[str]) -> Optional[Path]:
     visible to ``git status`` as an untracked file; overcode deliberately does
     not edit the user's ``.gitignore`` (see ``docs/backends.md``).
 
+    The plugin imports the writer it shares with opencode2 from
+    ``overcode-telemetry-v2/overcode-telemetry-core.mjs`` beside it, so the
+    opencode2 plugin directory is ensured first (same semantics; opencode
+    loads only ``plugins/*.{ts,js}``, so the subdirectory is inert here).
+    Without it the plugin would load and do nothing, so nothing is written.
+
     Returns the installed path, or None when nothing could be installed.
     """
     if not start_directory:
+        return None
+    from .opencode2_plugin_install import ensure_plugin_installed as ensure_shared_core
+    if ensure_shared_core(start_directory) is None:
         return None
     source = bundled_plugin_path()
     try:
@@ -213,15 +222,19 @@ def ensure_plugin_installed(start_directory: Optional[str]) -> Optional[Path]:
 
 
 def plugin_installed(start_directory: Optional[str]) -> bool:
-    """True when this project directory carries overcode's telemetry plugin."""
+    """True when this project directory carries overcode's telemetry plugin
+    and the shared core it imports."""
     if not start_directory:
         return False
     try:
-        return PLUGIN_MARKER in project_plugin_path(start_directory).read_text(
+        if PLUGIN_MARKER not in project_plugin_path(start_directory).read_text(
             encoding="utf-8"
-        )
+        ):
+            return False
     except OSError:
         return False
+    from .opencode2_plugin_install import plugin_installed as shared_core_installed
+    return shared_core_installed(start_directory)
 
 
 def opencode_patterns(**fields) -> StatusPatterns:
@@ -605,7 +618,11 @@ class OpencodeBackend(AgentBackendBase):
         )
 
     def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
-        """Remove the project-scoped telemetry plugin (see cli/hooks.py)."""
+        """Remove the project-scoped telemetry plugin (see cli/hooks.py).
+
+        Then the shared core's directory (opencode2's plugin directory,
+        which a later opencode2 launch there reinstalls).
+        """
         if not project_dir:
             return False, (
                 "Error: --dir is required for opencode — its telemetry plugin "
@@ -615,14 +632,23 @@ class OpencodeBackend(AgentBackendBase):
         try:
             existing = path.read_text(encoding="utf-8")
         except OSError:
-            return True, f"No opencode telemetry plugin found at {path}"
-        if PLUGIN_MARKER not in existing:
+            existing = None
+        if existing is not None and PLUGIN_MARKER not in existing:
             return False, f"{path} exists but is not overcode-managed — leaving it alone"
-        try:
-            path.unlink()
-        except OSError as exc:
-            return False, f"could not remove {path}: {exc}"
-        return True, f"Removed {path}"
+        if existing is not None:
+            try:
+                path.unlink()
+            except OSError as exc:
+                return False, f"could not remove {path}: {exc}"
+        from .opencode2 import Opencode2Backend
+        core_ok, core_message = Opencode2Backend().uninstall_telemetry(project_dir)
+        if existing is None:
+            if core_message.startswith("Removed "):
+                return core_ok, core_message
+            return core_ok, f"No opencode telemetry plugin found at {path}"
+        if core_message.startswith("Removed "):
+            return core_ok, f"Removed {path}; {core_message[0].lower()}{core_message[1:]}"
+        return core_ok, f"Removed {path}" + ("" if core_ok else f"; {core_message}")
 
     def doctor_findings(self) -> List[str]:
         """Fleet-level warnings for ``overcode doctor`` (see cli/doctor.py)."""

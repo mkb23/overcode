@@ -317,10 +317,8 @@ def node_available() -> bool:
 def plugin_module(backend: str, scratch: Path) -> tuple[Path, Optional[str]]:
     """The real bundled plugin for ``backend``, loadable by node as ESM."""
     if backend == "opencode":
-        from overcode.backends.opencode import bundled_plugin_path
-        target = scratch / "overcode-telemetry.mjs"
-        target.write_text(bundled_plugin_path().read_text(encoding="utf-8"))
-        return target, None
+        from tests.opencode_plugin_files import copy_v1_plugin
+        return copy_v1_plugin(scratch), None
     if backend == "opencode2":
         from overcode.backends.opencode2_plugin_install import bundled_plugin_dir_v2
         return bundled_plugin_dir_v2() / "overcode-telemetry-core.mjs", "v2"

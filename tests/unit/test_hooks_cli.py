@@ -180,6 +180,8 @@ class TestHooksUninstallBackendOpencode:
         assert result.exit_code == 0
         assert "Removed" in result.output
         assert not installed.exists()
+        # The shared core it imports goes too
+        assert not (installed.parent / "overcode-telemetry-v2").exists()
 
     def test_missing_plugin_is_a_clean_no_op(self, tmp_path):
         result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode", "--dir", str(tmp_path)])

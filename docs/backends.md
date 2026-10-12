@@ -549,6 +549,16 @@ that file to:
 <start_directory>/.opencode/plugins/overcode-telemetry.js
 ```
 
+The hook-file writer (snapshot, event log, obligation carry-over, the
+session-id cap), the tool-name map and the foreground classifier are shared
+with the opencode2 plugin: the v1 plugin imports them from
+`overcode-telemetry-v2/overcode-telemetry-core.mjs` beside it, so the
+launch also installs the opencode2 plugin directory. opencode 1.18 loads
+only `{plugin,plugins}/*.{ts,js}`, so neither the subdirectory nor the
+`.mjs` is taken for a plugin of its own. The import is dynamic: with the
+core missing the plugin registers nothing and status falls back to pane
+polling.
+
 The plugin subscribes to opencode's event bus and writes the *same*
 `hook_state_<agent>.json` / `hook_events_<agent>.jsonl` files Claude Code's
 hooks produce, so `HookStatusDetector` — obligation badges, foreground
@@ -604,11 +614,12 @@ the rules are written out as an executable oracle in
 
 ### Things worth knowing about the footprint
 
-- **The plugin file is visible to git.** It lands in your project as an
-  untracked `.opencode/plugins/overcode-telemetry.js`. Overcode does **not**
+- **The plugin files are visible to git.** They land in your project as an
+  untracked `.opencode/plugins/overcode-telemetry.js` and
+  `.opencode/plugins/overcode-telemetry-v2/`. Overcode does **not**
   edit your `.gitignore` or `.git/info/exclude` — that is your repository's
-  business. Add `.opencode/plugins/overcode-telemetry.js` to either one if
-  you want it hidden. Committing it is also fine.
+  business. Add them to either one if you want them hidden. Committing them
+  is also fine.
 - **It is inert outside overcode.** The plugin registers *no hooks at all*
   unless `OVERCODE_SESSION_NAME` and `OVERCODE_TMUX_SESSION` are both in the
   environment. Your own `opencode` runs in that directory are unaffected.
@@ -1186,7 +1197,7 @@ Each backend's actual footprint, for reference:
 |---|---|---|
 | `claude-code` | none — hooks ride per-launch `--settings` flags | n/a, and **exempt from this knob** (see below) |
 | `codex` | none — hooks ride per-launch `-c 'hooks.<Event>=...'` + `--dangerously-bypass-hook-trust` flags | n/a |
-| `opencode` | `<project>/.opencode/plugins/overcode-telemetry.js`, written by `prepare_launch()` | per-project |
+| `opencode` | `<project>/.opencode/plugins/overcode-telemetry.js` plus the shared core's `overcode-telemetry-v2/` directory, written by `prepare_launch()` | per-project |
 | `opencode2` | `<project>/.opencode/plugins/overcode-telemetry-v2/` (`index.js` + `tui.js` + the shared reducer core — a plugin *subdirectory*, written by `prepare_launch()`) | per-project |
 | `grok` | `~/.grok/hooks/overcode.json`, written by `prepare_launch()` | global (inert outside overcode — see above) |
 

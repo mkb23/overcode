@@ -284,6 +284,31 @@ class TestPluginInstallation:
         backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
         assert list((tmp_path / ".opencode" / "plugins").glob("*.tmp")) == []
 
+    def test_installs_the_shared_core_it_imports(self, backend, tmp_path):
+        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
+        plugins = tmp_path / ".opencode" / "plugins"
+        core = plugins / "overcode-telemetry-v2" / "overcode-telemetry-core.mjs"
+        assert core.is_file()
+        assert '"./overcode-telemetry-v2/overcode-telemetry-core.mjs"' in (
+            plugins / PLUGIN_FILENAME).read_text()
+
+    def test_missing_core_means_not_installed(self, backend, tmp_path):
+        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
+        (tmp_path / ".opencode" / "plugins" / "overcode-telemetry-v2"
+         / "overcode-telemetry-core.mjs").unlink()
+        assert not plugin_installed(str(tmp_path))
+        assert ensure_plugin_installed(str(tmp_path)) is not None
+        assert plugin_installed(str(tmp_path))
+
+    def test_user_owned_core_blocks_the_install(self, tmp_path):
+        core = (tmp_path / ".opencode" / "plugins" / "overcode-telemetry-v2"
+                / "overcode-telemetry-core.mjs")
+        core.parent.mkdir(parents=True)
+        core.write_text("// mine\n")
+        assert ensure_plugin_installed(str(tmp_path)) is None
+        assert not (tmp_path / ".opencode" / "plugins" / PLUGIN_FILENAME).exists()
+        assert core.read_text() == "// mine\n"
+
     def test_claude_backend_stages_nothing(self, tmp_path):
         get_backend("claude-code").prepare_launch(
             LaunchSpec(start_directory=str(tmp_path))

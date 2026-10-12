@@ -10,7 +10,8 @@
  * A plain ESM module holding the telemetry writer/reducer helpers, so
  * the v2 plugin's tui.js can import them — v2's plugin shape forbids
  * arbitrary exports, so the helpers cannot live in the plugin file
- * itself.
+ * itself. The v1 plugin (../overcode-telemetry.js) imports the writer,
+ * the tool-name map and the foreground classifier from here too.
  *
  * Verified live against opencode2 v0.0.0-dev-19272 (Sep 15 2026):
  *
@@ -651,7 +652,10 @@ function isOvercodeSession(env) {
 
 export {
   BLOCKED_ON_PATTERNS,
+  MAX_SESSION_IDS,
   canonicalToolName,
+  classifyBlockedOn,
+  computeForeground,
   createTelemetry,
   createWriter,
   isOvercodeSession,
