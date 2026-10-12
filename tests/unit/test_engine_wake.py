@@ -321,12 +321,12 @@ class TestEngineOwnsTheNumbers:
     def test_git_is_read_once_per_directory_while_attended_only(self, tmp_path, monkeypatch):
         from datetime import timedelta
 
-        from overcode import tui_helpers
+        from overcode import git_stats
 
         calls = []
-        monkeypatch.setattr(tui_helpers, "get_git_diff_stats", lambda d: calls.append(d) or (2, 10, 3))
-        monkeypatch.setattr(tui_helpers, "get_git_untracked_count", lambda d: 4)
-        monkeypatch.setattr(tui_helpers, "effective_git_directory", lambda s: s.dir)
+        monkeypatch.setattr(git_stats, "get_git_diff_stats", lambda d: calls.append(d) or (2, 10, 3))
+        monkeypatch.setattr(git_stats, "get_git_untracked_count", lambda d: 4)
+        monkeypatch.setattr(git_stats, "effective_git_directory", lambda s: s.dir)
         d = _daemon(tmp_path)
         sessions = [SimpleNamespace(id="a", dir="/r1"), SimpleNamespace(id="b", dir="/r1"),
                     SimpleNamespace(id="c", dir="/r2")]
@@ -344,8 +344,8 @@ class TestEngineOwnsTheNumbers:
         assert (state.git_diff, state.git_untracked) == ([2, 10, 3], 4)
 
     def test_burn_is_computed_only_for_windows_visible_views_asked_for(self, tmp_path, monkeypatch):
-        from overcode import tui_logic
-        from overcode.tui_logic import WindowBurnStats
+        from overcode import burn
+        from overcode.burn import WindowBurnStats
 
         asked = []
 
@@ -356,7 +356,7 @@ class TestEngineOwnsTheNumbers:
                                                       cost_usd=0.5, energy_j=7.0)
             return stats
 
-        monkeypatch.setattr(tui_logic, "compute_window_burn", fake_burn)
+        monkeypatch.setattr(burn, "compute_window_burn", fake_burn)
         d = _daemon(tmp_path)
         d.state.interval_mode = "attended"
         d._engine = SimpleNamespace(burn_windows=set())

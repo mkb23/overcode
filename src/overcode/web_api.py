@@ -17,12 +17,11 @@ from .monitor_daemon_state import (
 )
 from .settings import get_agent_history_path
 from .status_history import read_agent_status_history
+from .git_stats import effective_git_directory, get_git_diff_stats, get_git_untracked_count
 from .tui_helpers import (
     format_duration,
     format_tokens,
     calculate_uptime,
-    get_git_diff_stats,
-    get_git_untracked_count,
 )
 from .config import get_hostname
 from .status_constants import (
@@ -237,7 +236,6 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
     from .status_constants import PERMISSIVENESS_EMOJIS
     perm_emoji = PERMISSIVENESS_EMOJIS.get(s.permissiveness_mode, "👮")
 
-    from .tui_helpers import effective_git_directory
     _gdir = effective_git_directory(s)
     git_diff = get_git_diff_stats(_gdir) if _gdir else None
     git_untracked = get_git_untracked_count(_gdir) if _gdir else None

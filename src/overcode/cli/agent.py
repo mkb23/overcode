@@ -72,7 +72,7 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
         extract_auto_accept_mode,
         get_patterns,
     )
-    from ..tui_helpers import (
+    from ..git_stats import (
         get_git_diff_stats,
         get_git_untracked_count,
         effective_git_directory,
@@ -555,9 +555,8 @@ def list_agents(
     With a name, shows that agent + all its descendants.
     """
     from ..stats_reader import stats_reader_for_session
-    from ..tui_helpers import (
-        get_status_symbol, get_git_diff_stats, get_git_untracked_count, effective_git_directory,
-    )
+    from ..git_stats import effective_git_directory, get_git_diff_stats, get_git_untracked_count
+    from ..tui_helpers import get_status_symbol
     from ..monitor_daemon_state import get_monitor_daemon_state
     from ..summary_columns import build_cli_context, render_summary_cells, compute_column_widths, pad_and_join_cells, render_header_cells
     from ..tui_logic import compute_tree_metadata, sort_sessions

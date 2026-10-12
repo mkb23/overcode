@@ -9,7 +9,8 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import Mock
 
-from overcode.tui_helpers import format_interval, format_ago, format_duration, format_tokens, format_cost, format_line_count, calculate_uptime, presence_state_to_char, agent_status_to_char, get_current_state_times, build_timeline_slots, get_status_symbol, get_presence_color, get_agent_timeline_color, truncate_name, get_daemon_status_style, calculate_safe_break_duration, get_git_diff_stats, get_git_untracked_count, get_summary_content_text
+from overcode.tui_helpers import format_interval, format_ago, format_duration, format_tokens, format_cost, format_line_count, calculate_uptime, presence_state_to_char, agent_status_to_char, get_current_state_times, build_timeline_slots, get_status_symbol, get_presence_color, get_agent_timeline_color, truncate_name, get_daemon_status_style, calculate_safe_break_duration, get_summary_content_text
+from overcode.git_stats import get_git_diff_stats, get_git_untracked_count
 
 
 class TestFormatInterval:

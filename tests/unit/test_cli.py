@@ -281,7 +281,7 @@ class TestShowCommandWithMocks:
                 mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
-                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=(3, 120, 45)):
+                    with patch('overcode.git_stats.get_git_diff_stats', return_value=(3, 120, 45)):
                         with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
                             result = runner.invoke(app, ["show", "test-agent"])
 
@@ -324,7 +324,7 @@ class TestShowCommandWithMocks:
                 mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                         with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
                             result = runner.invoke(app, ["show", "test-agent"])
 
@@ -351,7 +351,7 @@ class TestShowCommandWithMocks:
                 mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
-                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                         with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
                             result = runner.invoke(app, ["show", "test-agent"])
 
@@ -1465,7 +1465,7 @@ class TestShowExtended:
                 mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                         with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
                             result = runner.invoke(app, ["show", "test-agent", "--stats-only"])
                             assert result.exit_code == 0
@@ -1483,7 +1483,7 @@ class TestShowExtended:
             mock_cls.return_value = mock_launcher
 
             with patch('overcode.history_reader.get_session_stats', return_value=None):
-                with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                     with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
                         result = runner.invoke(app, ["show", "test-agent"])
                         assert result.exit_code == 0
@@ -1513,7 +1513,7 @@ class TestShowExtended:
                     mock_dispatcher.return_value = mock_d
 
                     with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                             result = runner.invoke(app, ["show", "test-agent"])
                             assert result.exit_code == 0
                             assert "Coding tests" in result.output
@@ -1532,7 +1532,7 @@ class TestShowExtended:
                 mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                         with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
                             result = runner.invoke(app, ["show", "test-agent"])
                             assert result.exit_code == 0
@@ -1548,7 +1548,7 @@ class TestShowExtended:
             mock_cls.return_value = mock_launcher
 
             with patch('overcode.history_reader.get_session_stats', return_value=None):
-                with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                     with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
                         result = runner.invoke(app, ["show", "test-agent"])
                         assert result.exit_code == 0
@@ -2852,7 +2852,7 @@ class TestListExtended:
                     mock_disp_cls.return_value = mock_disp
 
                     with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                             with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
                                 with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
                                     mock_tree.return_value = {
@@ -2879,7 +2879,7 @@ class TestListExtended:
                     mock_disp_cls.return_value = mock_disp
 
                     with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                             with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
                                 with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
                                     mock_tree.return_value = {
@@ -2921,7 +2921,7 @@ class TestListExtended:
                     mock_disp_cls.return_value = mock_disp
 
                     with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                             with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[root, child]):
                                 with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
                                     mock_tree.return_value = {
@@ -2950,7 +2950,7 @@ class TestListExtended:
 
             with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=mock_daemon_state):
                 with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                         with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
                             with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
                                 mock_tree.return_value = {
@@ -2976,7 +2976,7 @@ class TestListExtended:
                     mock_disp_cls.return_value = mock_disp
 
                     with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                             with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[running_session, done_session]):
                                 with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
                                     mock_tree.return_value = {
@@ -3015,7 +3015,7 @@ class TestListExtended:
                     mock_disp_cls.return_value = mock_disp
 
                     with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
                             with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
                                 with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
                                     mock_tree.return_value = {

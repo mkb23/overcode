@@ -996,7 +996,7 @@ class MonitorDaemon:
             self.log.info(f"Fleet detection mode changed to: {current_mode}")
 
     def _attach_git_and_burn(self, session, state: SessionDaemonState) -> None:
-        from .tui_helpers import effective_git_directory
+        from .git_stats import effective_git_directory
 
         git = self._git_by_dir.get(effective_git_directory(session))
         if git is not None:
@@ -1012,7 +1012,7 @@ class MonitorDaemon:
         self.cadence.git.mark(now)
         from concurrent.futures import ThreadPoolExecutor
 
-        from .tui_helpers import effective_git_directory, get_git_diff_stats, get_git_untracked_count
+        from .git_stats import effective_git_directory, get_git_diff_stats, get_git_untracked_count
 
         dirs = sorted({d for d in (effective_git_directory(s) for s in sessions
                                    if not getattr(s, "is_remote", False)) if d})
@@ -1039,7 +1039,7 @@ class MonitorDaemon:
         if not self.cadence.burn.due(now):
             return
         self.cadence.burn.mark(now)
-        from .tui_logic import compute_window_burn
+        from .burn import compute_window_burn
 
         asleep = {s.id for s in sessions if getattr(s, "is_asleep", False)}
         by_session: Dict[str, dict] = {}

@@ -561,7 +561,7 @@ class TestRenderBurnRate:
     """Burn rate column over the timeline window (#174)."""
 
     def _make_burn(self, hours=3.0, tokens=900, cost=0.30):
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
         # Split tokens between input/output so they total to `tokens`
         return WindowBurnStats(
             window_hours=hours,
@@ -591,7 +591,7 @@ class TestRenderBurnRate:
         assert "/h" in result[0][0]
 
     def test_zero_window_hides_rate(self):
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
         ctx = _make_ctx(window_burn=WindowBurnStats(window_hours=0),
                         show_cost="tokens")
         result = render_burn_rate(ctx)

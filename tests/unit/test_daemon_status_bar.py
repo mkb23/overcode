@@ -413,7 +413,7 @@ class TestDaemonStatusBarRenderSpinStats:
 
     def test_burn_rate_in_tokens_mode(self):
         """When burn stats are cached, render shows tokens/h (#174)."""
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
         s1 = _make_session_state(
             session_id="s1", current_status="running",
             input_tokens=1000, output_tokens=500,
@@ -434,7 +434,7 @@ class TestDaemonStatusBarRenderSpinStats:
         assert "/h" in plain
 
     def test_burn_rate_in_cost_mode(self):
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
         s1 = _make_session_state(
             session_id="s1", current_status="running",
             estimated_cost_usd=2.0, input_tokens=1000, output_tokens=500,
@@ -455,7 +455,7 @@ class TestDaemonStatusBarRenderSpinStats:
         assert "/h" in plain
 
     def test_burn_rate_hidden_when_zero(self):
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
         s1 = _make_session_state(session_id="s1", current_status="running")
         state = _make_monitor_state(sessions=[s1])
         widget = _make_bare_status_bar(
@@ -863,7 +863,7 @@ class TestFetchLocalState:
     def test_process_checks_and_no_burn(self):
         bar = _make_bare_status_bar()
         p1, p2, p3, p4 = self._patches()
-        with p1, p2, p3, p4, patch("overcode.tui_logic.compute_window_burn") as burn:
+        with p1, p2, p3, p4, patch("overcode.burn.compute_window_burn") as burn:
             bar.fetch_local_state(baseline_minutes=60, active_session_names=[])
         burn.assert_not_called()
         assert bar._supervisor_running is True

@@ -1380,9 +1380,9 @@ def time_daemon_state_load(paths: FixturePaths, reps: int = 3) -> List[SiteResul
 
 
 def time_window_burn(paths: FixturePaths, hours: float = 1.0, reps: int = 2) -> List[SiteResult]:
-    """``tui_logic.compute_window_burn`` over every live session (status bar, 1 Hz)."""
+    """``burn.compute_window_burn`` over every live session (status bar, 1 Hz)."""
     from overcode import history_reader
-    from overcode.tui_logic import compute_window_burn
+    from overcode.burn import compute_window_burn
 
     sessions = live_sessions(paths)
     asleep = {s.id for s in sessions if s.is_asleep}

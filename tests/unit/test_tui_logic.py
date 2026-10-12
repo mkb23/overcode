@@ -1213,7 +1213,7 @@ class TestComputeWindowBurn:
         return sess
 
     def test_zero_window_returns_empty(self):
-        from overcode.tui_logic import compute_window_burn
+        from overcode.burn import compute_window_burn
         result = compute_window_burn([], set(), hours=0)
         assert result.window_hours == 0
         assert result.total_tokens == 0
@@ -1221,14 +1221,14 @@ class TestComputeWindowBurn:
         assert result.cost_per_hour == 0.0
 
     def test_empty_sessions_returns_empty(self):
-        from overcode.tui_logic import compute_window_burn
+        from overcode.burn import compute_window_burn
         result = compute_window_burn([], set(), hours=1.0)
         assert result.total_tokens == 0
 
     def test_aggregates_tokens_in_window(self, tmp_path, monkeypatch):
         from datetime import timezone
         from overcode import history_reader
-        from overcode.tui_logic import compute_window_burn
+        from overcode.burn import compute_window_burn
 
         # Anchor relative to real wall-clock so timezone math (UTC→local in
         # the reader vs local-naive `since` in compute_window_burn) lines up
@@ -1272,7 +1272,7 @@ class TestComputeWindowBurn:
     def test_skips_asleep_sessions(self, tmp_path, monkeypatch):
         from datetime import timezone
         from overcode import history_reader
-        from overcode.tui_logic import compute_window_burn
+        from overcode.burn import compute_window_burn
 
         inside_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime(
             "%Y-%m-%dT%H:%M:%S.000Z"

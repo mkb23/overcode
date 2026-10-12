@@ -193,7 +193,7 @@ class TestWatts:
         assert format_joules(joules) == text.rjust(5)
 
     def test_window_watts(self):
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
 
         assert WindowBurnStats(window_hours=2.0, energy_j=7_200_000).watts == pytest.approx(1000)
         assert WindowBurnStats(window_hours=0, energy_j=100).watts == 0
@@ -209,7 +209,7 @@ class TestDisplay:
         from rich.cells import cell_len
 
         from overcode.summary_columns import render_burn_rate
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
 
         burn = WindowBurnStats(window_hours=1.0, input_tokens=300, output_tokens=600,
                                cost_usd=1.0, energy_j=3_600_000)
@@ -220,7 +220,7 @@ class TestDisplay:
 
     def test_burn_plain_is_watts(self):
         from overcode.summary_columns import render_burn_rate_plain
-        from overcode.tui_logic import WindowBurnStats
+        from overcode.burn import WindowBurnStats
 
         burn = WindowBurnStats(window_hours=1.0, energy_j=3_600_000)
         assert render_burn_rate_plain(self._ctx(window_burn=burn, show_cost="joules")) == "1.0kW"

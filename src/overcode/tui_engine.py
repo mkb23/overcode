@@ -25,7 +25,7 @@ from .status_constants import (
     StatusBadge,
     StatusDetail,
 )
-from .tui_logic import WindowBurnStats
+from .burn import WindowBurnStats
 
 AgentView = Mapping[str, Any]
 
