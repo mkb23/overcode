@@ -23,6 +23,7 @@ from overcode.backends.hermes import (
 )
 from overcode.mocks import MockTmux
 from overcode.status_constants import (
+    STATUS_WAITING_APPROVAL,
     STATUS_BUSY_SLEEPING,
     STATUS_RUNNING,
     STATUS_TERMINATED,
@@ -114,20 +115,20 @@ class TestCorpus:
         status, _, _ = detect(pane, second_pane=pane + "\nmore streamed text\n")
         assert status == STATUS_RUNNING
 
-    def test_permission_dialog_is_waiting_user_with_permission_detail(self):
+    def test_permission_dialog_is_waiting_approval_with_permission_detail(self):
         status, activity, _ = detect(load_pane("permission_required"))
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         assert activity.startswith("Permission:")
 
     def test_permission_dialog_wins_over_its_own_ticking_countdown(self):
         pane = load_pane("permission_required")
         status, activity, _ = detect(pane, second_pane=pane.replace("(298s)", "(297s)"))
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         assert activity.startswith("Permission:")
 
-    def test_new_confirm_box_is_waiting_user(self):
+    def test_new_confirm_box_is_waiting_approval(self):
         status, _, _ = detect(load_pane("new_confirm"))
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
 
     def test_command_menu_is_waiting_user(self):
         status, _, _ = detect(load_pane("command_menu"))

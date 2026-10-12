@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.status_detector import PollingStatusDetector
-from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_TERMINATED
+from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_TERMINATED, STATUS_WAITING_APPROVAL
 from overcode.mocks import MockTmux
 from tests.fixtures import create_mock_session
 from tests.fixtures_realistic import (
@@ -135,7 +135,7 @@ class TestRealisticCommandMenu:
 class TestRealisticPermissionPrompts:
     """Test permission prompt detection with full captures."""
 
-    def test_web_search_permission_is_waiting_user(self):
+    def test_web_search_permission_is_waiting_approval(self):
         """Web search permission prompt should be WAITING_USER."""
         detector = create_detector_with_content(REALISTIC_PERMISSION_PROMPT)
         session = create_mock_session(
@@ -146,11 +146,11 @@ class TestRealisticPermissionPrompts:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         # Should mention permission in activity
         assert "Permission" in activity or "proceed" in activity.lower()
 
-    def test_bash_permission_is_waiting_user(self):
+    def test_bash_permission_is_waiting_approval(self):
         """Bash command permission prompt should be WAITING_USER."""
         detector = create_detector_with_content(REALISTIC_BASH_PERMISSION)
         session = create_mock_session(
@@ -161,7 +161,7 @@ class TestRealisticPermissionPrompts:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
 
 
 class TestRealisticActiveWork:

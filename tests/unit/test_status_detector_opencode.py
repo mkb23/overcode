@@ -27,6 +27,7 @@ from overcode.backends.opencode import (
 )
 from overcode.mocks import MockTmux
 from overcode.status_constants import (
+    STATUS_WAITING_APPROVAL,
     STATUS_RUNNING,
     STATUS_TERMINATED,
     STATUS_WAITING_USER,
@@ -114,9 +115,9 @@ class TestRealisticCorpus:
         status, _activity, _content = detect(busy, second_pane=busy + "\n")
         assert status == STATUS_RUNNING
 
-    def test_permission_dialog_is_waiting_user(self):
+    def test_permission_dialog_is_waiting_approval(self):
         status, activity, _content = detect(load_pane("permission_required"))
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         assert activity.startswith("Permission:")
 
     def test_settled_response_after_a_turn_beats_content_change(self):
@@ -341,8 +342,8 @@ class TestCorpus1_18_29:
         ("idle_fresh", STATUS_WAITING_USER),
         ("idle_after_response", STATUS_WAITING_USER),
         ("busy", STATUS_RUNNING),
-        ("permission_required", STATUS_WAITING_USER),
-        ("permission_required_subagent", STATUS_WAITING_USER),
+        ("permission_required", STATUS_WAITING_APPROVAL),
+        ("permission_required_subagent", STATUS_WAITING_APPROVAL),
         ("interrupted", STATUS_WAITING_USER),
         ("tool_execution", STATUS_WAITING_USER),
         ("subagent_settled", STATUS_WAITING_USER),

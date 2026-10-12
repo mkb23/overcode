@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from overcode.backends import DEFAULT_BACKEND, register_backend, unregister_backend
 from overcode.mocks import MockTmux
 from overcode.status_constants import (
+    STATUS_WAITING_APPROVAL,
     STATUS_RUNNING,
     STATUS_WAITING_USER,
 )
@@ -122,11 +123,11 @@ class TestAltBackendPolling:
         status, _, _ = detector.detect_status(_session("a", 1))
         assert status == STATUS_RUNNING
 
-    def test_alt_permission_prompt_is_waiting_user(self, hooked_backend):
+    def test_alt_permission_prompt_is_waiting_approval(self, hooked_backend):
         pane = "▸ ls -la\n\n  Permission required\n  Allow once / Reject\n"
         detector = self._detector(pane, get_patterns(hooked_backend))
         status, activity, _ = detector.detect_status(_session("a", 1))
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         assert activity.startswith("Permission:")
 
     def test_alt_status_bar_counts(self, hooked_backend):

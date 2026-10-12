@@ -25,6 +25,7 @@ from overcode.backends.opencode2 import Opencode2Backend
 from overcode.backends.opencode2_patterns import OPENCODE2_PATTERNS
 from overcode.mocks import MockTmux
 from overcode.status_constants import (
+    STATUS_WAITING_APPROVAL,
     STATUS_RUNNING,
     STATUS_TERMINATED,
     STATUS_WAITING_USER,
@@ -44,7 +45,7 @@ CASES = {
     "idle_fresh.txt": STATUS_WAITING_USER,
     "idle_after_response.txt": STATUS_WAITING_USER,
     "busy.txt": STATUS_RUNNING,
-    "permission_required.txt": STATUS_WAITING_USER,
+    "permission_required.txt": STATUS_WAITING_APPROVAL,
     "command_menu.txt": STATUS_WAITING_USER,
     "error_api_key.txt": STATUS_WAITING_USER,
     "interrupted.txt": STATUS_WAITING_USER,

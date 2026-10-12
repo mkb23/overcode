@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import mock_hermes
 from overcode.backends.hermes import HERMES_PATTERNS
 from overcode.mocks import MockTmux
-from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER
+from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_WAITING_APPROVAL
 from overcode.status_detector import PollingStatusDetector
 from tests.fixtures import create_mock_session
 
@@ -84,9 +84,9 @@ class TestDetectorAgreesWithTheMock:
         status, _, _ = detect(render("hm_simple_response", stop_after=3))
         assert status == STATUS_RUNNING
 
-    def test_permission_dialog_is_waiting_user(self):
+    def test_permission_dialog_is_waiting_approval(self):
         status, activity, _ = detect(render("hm_permission_command"))
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         assert activity.startswith("Permission:")
 
     @pytest.mark.parametrize("label", ["approved", "denied"])

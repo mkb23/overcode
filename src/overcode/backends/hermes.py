@@ -378,12 +378,13 @@ HERMES_PATTERNS = HermesStatusPatterns(
     #   ╰────────────────────────────────────────────────╯
     #     ↑/↓ to select, Enter to confirm  (298s)
     #   ⚠ ❯
-    # "Enter to confirm" also anchors the /new confirmation box
-    # (new_confirm.txt: "Type 1/2/3 or use ↑/↓ then Enter") — a human has
-    # to answer that one too, so waiting_user is the right answer for both.
+    # "Enter to confirm" also anchors the newer box (new_confirm.txt:
+    # "[1] Approve Once"). Not "dangerous command": the startup tip says
+    # "Dangerous command approval has 4 tiers", which made an idle,
+    # resumed pane read as a permission prompt (idle_resumed.txt).
     permission_patterns=[
-        "dangerous command",
         "allow once",
+        "approve once",
         "enter to confirm",
     ],
 

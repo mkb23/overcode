@@ -222,6 +222,17 @@ class PollingStatusDetector:
             self._last_detect_phase[session.id] = "P8:menu"
             return result
 
+        # Phase 8b: an idle prompt with no busy marker is waiting, whatever
+        # the agent's last message says. Phases 9 and 11 match words like
+        # "thinking" or "fetching" in the last lines, and those are often
+        # prose above the prompt ("I was thinking we could…"), not a
+        # spinner. A backend without busy markers can't tell, so skips this.
+        if self.patterns.busy_markers and not self.patterns.is_busy(last_lines):
+            result = self._detect_user_prompt(last_lines, content)
+            if result is not None:
+                self._last_detect_phase[session.id] = "P8b:idle_prompt"
+                return result
+
         # Phase 9: Active work indicators
         result = self._detect_active_work(last_lines, last_few, content)
         if result is not None:
@@ -296,10 +307,21 @@ class PollingStatusDetector:
         Must come before active indicator checks because permission dialogs
         can contain tool names that would falsely match active indicators.
         """
-        if matches_any(last_few, self.patterns.permission_patterns):
-            request_text = self._extract_permission_request(last_lines)
-            return STATUS_WAITING_USER, f"Permission: {request_text}", content
-        return None
+        if not matches_any(last_few, self.patterns.permission_patterns):
+            return None
+        # An answered dialog stays in scrollback: if the CLI's input prompt
+        # is back below its last line, the agent is no longer asking. Unless
+        # the prompt char is also the dialog's frame (opencode's ┃ draws the
+        # box), in which case a "prompt" below proves nothing.
+        hits = [i for i, line in enumerate(last_lines)
+                if matches_any(line.lower(), self.patterns.permission_patterns)]
+        if hits:
+            inside = last_lines[hits[0]:hits[-1] + 1]
+            framed = any(self.patterns.is_input_ready([line]) for line in inside)
+            if not framed and self.patterns.is_input_ready(last_lines[hits[-1] + 1:]):
+                return None
+        request_text = self._extract_permission_request(last_lines)
+        return STATUS_WAITING_APPROVAL, f"Permission: {request_text}", content
 
     def _detect_error(self, content_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
         """Check for API/system errors (#216).

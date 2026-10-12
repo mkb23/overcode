@@ -67,7 +67,7 @@ class TestStatusDetectorBasics:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         assert "Permission:" in activity
 
     def test_detects_running_with_spinner(self):
@@ -454,7 +454,7 @@ class TestStatusDetectorNewPermissionFormat:
     falsely matched "Web Search commands in" from option 2.
     """
 
-    def test_web_search_permission_is_waiting_user(self):
+    def test_web_search_permission_is_waiting_approval(self):
         """Web Search permission prompt should be waiting_user, not running.
 
         Bug: 'web search' active indicator falsely matches 'Web Search commands in'
@@ -469,12 +469,12 @@ class TestStatusDetectorNewPermissionFormat:
         # Second call - content unchanged
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_APPROVAL, (
             f"Expected waiting_user but got {status}. "
             f"Activity was: {activity}"
         )
 
-    def test_bash_permission_is_waiting_user(self):
+    def test_bash_permission_is_waiting_approval(self):
         """Bash permission prompt should be waiting_user.
 
         Similar to web search - 'Bash commands in' should not trigger active detection.
@@ -487,12 +487,12 @@ class TestStatusDetectorNewPermissionFormat:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_APPROVAL, (
             f"Expected waiting_user but got {status}. "
             f"Activity was: {activity}"
         )
 
-    def test_read_permission_is_waiting_user(self):
+    def test_read_permission_is_waiting_approval(self):
         """Read permission prompt should be waiting_user.
 
         The text 'Reading' is a tool execution indicator that could falsely match.
@@ -505,7 +505,7 @@ class TestStatusDetectorNewPermissionFormat:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_APPROVAL, (
             f"Expected waiting_user but got {status}. "
             f"Activity was: {activity}"
         )
@@ -908,3 +908,45 @@ class TestPollingDetectorCaptureGate:
         gate.plan("w1", True)
         assert detector.get_pane_content("w1") == "second"
         assert gate.raw_captures == 2 and gate.served_from_cache == 1
+
+
+class TestIdlePromptBelowProse:
+    """The agent's last message mentioning "thinking" or "fetching" is prose,
+    not a spinner: an idle prompt with no busy marker is waiting."""
+
+    @pytest.mark.parametrize("prose", [
+        "I was thinking we could split the parser into two passes.",
+        "Fetching the logs showed the job had already finished.",
+        "Searching the codebase turned up three callers.",
+    ])
+    def test_idle_prompt_wins_over_prose(self, prose):
+        pane = (
+            f"⏺ {prose}\n"
+            "\n"
+            "──────────────────────────────\n"
+            "❯ \n"
+            "──────────────────────────────\n"
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+        )
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+        detector.detect_status(session)  # first sight counts as changed content
+        status, _, _ = detector.detect_status(session)
+        assert status == STATUS_WAITING_USER
+
+    def test_a_busy_marker_still_means_running(self):
+        pane = (
+            "⏺ Thinking about the parser\n"
+            "✻ Thinking… (esc to interrupt)\n"
+            "──────────────────────────────\n"
+            "❯ \n"
+            "──────────────────────────────\n"
+            "  ⏵⏵ bypass permissions on · esc to interrupt\n"
+        )
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+        detector.detect_status(session)
+        status, _, _ = detector.detect_status(session)
+        assert status == STATUS_RUNNING
