@@ -24,6 +24,30 @@ from ..tui_helpers import (
 from ..status_constants import is_green_status
 
 
+def read_history_data(tmux_session: str, hours: float) -> tuple:
+    """Read the timeline's history from log files. Safe off the main thread.
+
+    Returns:
+        (presence_history, agent_histories) for StatusTimeline.apply_history_data().
+    """
+    presence_history = read_presence_history(hours=hours)
+    agent_histories = {}
+
+    # The carry is each agent's state at the window's left edge; rows
+    # are written on change plus a keepalive, and build_timeline_slots
+    # forward-fills from it.
+    history_path = get_agent_history_path(tmux_session)
+    all_history = read_agent_status_history(
+        hours=hours, history_file=history_path, carry=True
+    )
+    for ts, agent, status, activity, *_ in all_history:
+        if agent not in agent_histories:
+            agent_histories[agent] = []
+        agent_histories[agent].append((ts, status))
+
+    return presence_history, agent_histories
+
+
 class StatusTimeline(Static):
     """Widget displaying historical status timelines for user presence and agents.
 
@@ -83,27 +107,12 @@ class StatusTimeline(Static):
         self.update_history(sessions)
 
     def fetch_history_data(self, sessions: list) -> tuple:
-        """Read history data from log files. Safe to call from a background thread.
+        """read_history_data for this widget's session and scope (blocking).
 
         Returns:
             (presence_history, agent_histories) tuple for apply_history_data().
         """
-        presence_history = read_presence_history(hours=self.timeline_hours)
-        agent_histories = {}
-
-        # The carry is each agent's state at the window's left edge; rows
-        # are written on change plus a keepalive, and build_timeline_slots
-        # forward-fills from it.
-        history_path = get_agent_history_path(self.tmux_session)
-        all_history = read_agent_status_history(
-            hours=self.timeline_hours, history_file=history_path, carry=True
-        )
-        for ts, agent, status, activity, *_ in all_history:
-            if agent not in agent_histories:
-                agent_histories[agent] = []
-            agent_histories[agent].append((ts, status))
-
-        return presence_history, agent_histories
+        return read_history_data(self.tmux_session, self.timeline_hours)
 
     def apply_history_data(self, sessions: list, presence_history: list, agent_histories: dict) -> None:
         """Apply pre-fetched history data to the widget. Call on main thread."""

@@ -81,6 +81,8 @@ from .tui_logic import (
     compute_session_widget_diff,
     detect_display_changes,
 )
+from .tui_widgets.daemon_status_bar import LocalBarState, read_local_state
+from .tui_widgets.status_timeline import read_history_data
 from .tui_widgets import (
     HelpOverlay,
     PreviewPane,
@@ -1164,41 +1166,45 @@ class SupervisorTUI(
     # ── The status bar ─────────────────────────────────────────────────
 
     def update_daemon_status(self) -> None:
-        """Each second: the engine watch, and the status bar's own local checks."""
+        """Each second: the engine watch, and the status bar's own local checks.
+
+        What the worker needs is read here, on the main thread; it returns
+        plain data that _apply_daemon_status puts on the bar.
+        """
         self.engine_link.watch()
-        self._fetch_daemon_status_async()
+        if not self.query("#daemon-status"):
+            return
+        agents = self.engine_link.agents
+        asleep = {s.id for s in self.sessions if s.is_asleep}
+        active_names = [v.get("name") for sid, v in agents.items()
+                        if sid not in asleep and v.get("name")]
+        self._fetch_daemon_status_async(
+            self.tmux_session,
+            getattr(self, "baseline_minutes", 0),
+            active_names,
+            # Subscription usage is fleet-level, not per-agent: the widget
+            # shows the user's own Claude limits, which stay true for a mixed
+            # fleet as long as one agent is on a subscription-metered backend.
+            self._fleet_has_subscription_usage(list(agents.values())),
+        )
 
     @work(thread=True, group="daemon_status")
     @single_flight("daemon_status")
-    def _fetch_daemon_status_async(self) -> None:
+    def _fetch_daemon_status_async(self, tmux_session: str, baseline_minutes: int,
+                                   active_names: list, fetch_usage: bool) -> None:
         """Worker: what the status bar shows that is not about agents.
 
         Whether the supervisor and API server are running and the
         summarizer is reachable (pid files), the account's usage (fetched
         at most every 5 minutes) and the mean spin over the baseline window
         (the daemon's history CSV, read incrementally). Everything about
-        the agents themselves comes from the engine's snapshot.
+        the agents themselves comes from the engine's snapshot. Reads no
+        widget and no app state: its inputs are the arguments.
         """
-        try:
-            daemon_bar = self.query_one("#daemon-status", DaemonStatusBar)
-        except NoMatches:
-            return
-        agents = list(self._engine_agents.values())
-        # Subscription usage is fleet-level, not per-agent: the widget shows
-        # the user's own Claude limits, which stay true for a mixed fleet as
-        # long as one agent is on a subscription-metered backend.
-        if self._fleet_has_subscription_usage(agents):
+        if fetch_usage:
             self._usage_monitor.fetch()  # Internally throttled to 5min
-        asleep = {s.id for s in self.sessions if s.is_asleep}
-        active_names = [v.get("name") for sid, v in self._engine_agents.items()
-                        if sid not in asleep and v.get("name")]
-        daemon_bar.fetch_local_state(
-            baseline_minutes=getattr(self, "baseline_minutes", 0),
-            active_session_names=active_names,
-        )
-        if self.has_sisters:
-            daemon_bar._sister_states = self._sister_poller.get_sister_states()
-        self.call_from_thread(self._apply_daemon_status, daemon_bar)
+        state = read_local_state(tmux_session, baseline_minutes, active_names)
+        self.call_from_thread(self._apply_daemon_status, state)
 
     def _fleet_has_subscription_usage(self, agents: list) -> bool:
         """True when any agent runs on a subscription-metered backend.
@@ -1217,26 +1223,25 @@ class SupervisorTUI(
             for v in agents
         )
 
-    def _apply_daemon_status(self, daemon_bar: "DaemonStatusBar") -> None:
-        """Main thread: repaint the status bar (no I/O)."""
+    def _apply_daemon_status(self, state: LocalBarState) -> None:
+        """Main thread: the worker's local checks onto the bar, then repaint (no I/O)."""
+        try:
+            daemon_bar = self.query_one("#daemon-status", DaemonStatusBar)
+        except NoMatches:
+            return
+        daemon_bar.apply_local_state(state)
+        if self.has_sisters:
+            daemon_bar._sister_states = self._sister_poller.get_sister_states()
         daemon_bar._usage_snapshot = self._usage_monitor.snapshot
         daemon_bar.engine_connected = self.engine_link.connected
         daemon_bar.refresh_if_changed()
 
     def update_timeline(self) -> None:
-        """Update the status timeline widget (kicks off background worker)"""
-        self._fetch_timeline_async()
-
-    @work(thread=True, group="timeline")
-    @single_flight("timeline")
-    def _fetch_timeline_async(self) -> None:
-        """Read timeline CSV data off the main thread, then apply to UI."""
+        """Refresh the status timeline: rows chosen here, history read in a worker."""
         try:
             timeline = self.query_one("#timeline", StatusTimeline)
         except NoMatches:
             return
-
-        # Snapshot sessions + filter state for the worker (avoid race with main thread)
         sessions = filter_visible_sessions(
             active_sessions=list(self.sessions),
             terminated_sessions=list(self._terminated_sessions.values()),
@@ -1246,21 +1251,30 @@ class SupervisorTUI(
             collapsed_parents=self.collapsed_parents if self._prefs.sort_mode == "by_tree" else None,
             tag_filter=self.tag_filter,
         )
+        self._fetch_timeline_async(sessions, timeline.tmux_session, timeline.timeline_hours,
+                                   self._sister_poller.has_sisters)
 
-        # Heavy CSV I/O happens here in the worker thread
-        presence_history, agent_histories = timeline.fetch_history_data(sessions)
+    @work(thread=True, group="timeline")
+    @single_flight("timeline")
+    def _fetch_timeline_async(self, sessions: list, tmux_session: str, hours: float,
+                              has_sisters: bool) -> None:
+        """Worker: read the timeline's CSV history (and sisters'), then apply on the main thread.
 
+        Reads no widget and no app state: its inputs are the arguments.
+        """
+        presence_history, agent_histories = read_history_data(tmux_session, hours)
         # Merge remote timeline data from sisters (#296)
-        if self._sister_poller.has_sisters:
-            remote_histories = self._sister_poller.poll_all_timelines(
-                timeline.timeline_hours
-            )
-            agent_histories.update(remote_histories)
+        if has_sisters:
+            agent_histories.update(self._sister_poller.poll_all_timelines(hours))
+        self.call_from_thread(self._apply_timeline, sessions, presence_history, agent_histories)
 
-        # Apply on main thread
-        self.call_from_thread(
-            timeline.apply_history_data, sessions, presence_history, agent_histories
-        )
+    def _apply_timeline(self, sessions: list, presence_history: list, agent_histories: dict) -> None:
+        """Main thread: the worker's history onto the timeline (no I/O)."""
+        try:
+            timeline = self.query_one("#timeline", StatusTimeline)
+        except NoMatches:
+            return
+        timeline.apply_history_data(sessions, presence_history, agent_histories)
 
     def _save_prefs(self) -> None:
         """Save current TUI preferences to disk."""

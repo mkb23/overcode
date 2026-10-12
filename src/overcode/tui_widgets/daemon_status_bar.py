@@ -8,6 +8,7 @@ the other processes, and the mean spin over the baseline window.
 """
 
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -30,6 +31,52 @@ from ..tui_helpers import (
     calculate_safe_break_duration,
 )
 from ..status_constants import is_green_status
+
+
+@dataclass(frozen=True)
+class LocalBarState:
+    """What the bar checks itself (read_local_state): processes and the mean spin."""
+
+    supervisor_running: bool = False
+    summarizer_available: bool = False
+    web_running: bool = False
+    web_url: Optional[str] = None
+    baseline_minutes: int = 0
+    mean_spin: float = 0.0
+    spin_sample_count: int = 0
+
+
+def read_local_state(
+    tmux_session: str,
+    baseline_minutes: int = 0,
+    active_session_names: Optional[list] = None,
+) -> LocalBarState:
+    """Check what the bar shows that is not about agents. Safe off the main thread.
+
+    Whether the supervisor and API server run and the summarizer is
+    reachable, and the mean spin over the baseline window from the
+    daemon's status history (an incremental, cached read). Touches no
+    widget: the result is applied with DaemonStatusBar.apply_local_state.
+    """
+    web_running = is_web_server_running(tmux_session)
+    mean_spin, sample_count = 0.0, 0
+    if baseline_minutes > 0 and active_session_names:
+        history = read_agent_status_history(
+            hours=baseline_minutes / 60.0 + 0.1,  # slight buffer
+            history_file=get_agent_history_path(tmux_session)
+        )
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history, active_session_names, baseline_minutes
+        )
+    return LocalBarState(
+        supervisor_running=is_supervisor_daemon_running(tmux_session),
+        summarizer_available=SummarizerClient.is_available(),
+        web_running=web_running,
+        web_url=get_web_server_url(tmux_session) if web_running else None,
+        baseline_minutes=baseline_minutes,
+        mean_spin=mean_spin,
+        spin_sample_count=sample_count,
+    )
 
 
 class DaemonStatusBar(Static):
@@ -86,29 +133,19 @@ class DaemonStatusBar(Static):
         baseline_minutes: int = 0,
         active_session_names: Optional[list] = None,
     ) -> None:
-        """Check what the bar shows that is not about agents. Call from a worker thread.
+        """read_local_state for this bar's session, applied at once (blocking)."""
+        self.apply_local_state(
+            read_local_state(self.tmux_session, baseline_minutes, active_session_names))
 
-        Whether the supervisor and API server run and the summarizer is
-        reachable, and the mean spin over the baseline window from the
-        daemon's status history (an incremental, cached read).
-        """
-        self._supervisor_running = is_supervisor_daemon_running(self.tmux_session)
-        self._summarizer_available = SummarizerClient.is_available()
-        self._web_running = is_web_server_running(self.tmux_session)
-        self._web_url = get_web_server_url(self.tmux_session) if self._web_running else None
-        self._spin_baseline_minutes = baseline_minutes
-
-        if baseline_minutes > 0 and active_session_names:
-            history = read_agent_status_history(
-                hours=baseline_minutes / 60.0 + 0.1,  # slight buffer
-                history_file=get_agent_history_path(self.tmux_session)
-            )
-            self._mean_spin, self._spin_sample_count = calculate_mean_spin_from_history(
-                history, active_session_names, baseline_minutes
-            )
-        else:
-            self._mean_spin = 0.0
-            self._spin_sample_count = 0
+    def apply_local_state(self, state: LocalBarState) -> None:
+        """Main thread: take a read_local_state result (no I/O)."""
+        self._supervisor_running = state.supervisor_running
+        self._summarizer_available = state.summarizer_available
+        self._web_running = state.web_running
+        self._web_url = state.web_url
+        self._spin_baseline_minutes = state.baseline_minutes
+        self._mean_spin = state.mean_spin
+        self._spin_sample_count = state.spin_sample_count
 
     @staticmethod
     def _format_queried_ago(fetched_at: Optional[datetime]) -> str:
