@@ -514,8 +514,15 @@ def rule_dead_shell(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
 
 
 def rule_question(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
-    """A question comes through PermissionRequest too, and wants an answer (#536)."""
-    if ctx.event != "PermissionRequest" or ctx.tool_name not in _QUESTION_TOOLS:
+    """A question wants an answer (#536), however it arrives.
+
+    Asking is the tool's whole run: PreToolUse fires, the menu shows and
+    nothing more until it is answered (PostToolUse). Under bypass
+    permissions that is all there is; otherwise a PermissionRequest
+    follows. Either way the agent is waiting on a person, not working.
+    """
+    if (ctx.event not in ("PreToolUse", "PermissionRequest")
+            or ctx.tool_name not in _QUESTION_TOOLS):
         return None
     return Verdict(STATUS_COLOR_RED, [StatusBadge(kind="ask_question")], v.activity)
 

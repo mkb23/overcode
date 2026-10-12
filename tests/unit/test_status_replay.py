@@ -386,6 +386,22 @@ ASK_USER_QUESTION = Scenario(
     expect=[(0.0, 0.75, GREEN), (1.25, 19.75, RED), (20.25, 21.75, GREEN), (24.0, 30.0, RED)],
 )
 
+# Under bypass permissions no PermissionRequest fires: PreToolUse, then the
+# menu, then nothing until it is answered. Seen live (Claude 2.1.296): a
+# controller sat 3 minutes on a question, shown green.
+ASK_USER_QUESTION_BYPASS = Scenario(
+    "ask_user_question_bypass",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "AskUserQuestion", "q1", questions=[{"question": "Which?"}]),
+        frame(1.1, claude_pane(body="☐ Which?\n❯ 1. This\n  2. That"), busy=False),
+        ev(20.0, "PostToolUse", "AskUserQuestion", "q1", questions=[{"question": "Which?"}]),
+        frame(20.05, claude_pane(body="⏺ User answered")),
+        ev(22.0, "Stop"),
+    ],
+    expect=[(0.0, 0.75, GREEN), (1.25, 19.75, RED), (20.25, 21.75, GREEN), (24.0, 30.0, RED)],
+)
+
 EXIT_PLAN_MODE = Scenario(
     "exit_plan_mode",
     steps=[
@@ -398,6 +414,7 @@ EXIT_PLAN_MODE = Scenario(
 )
 
 SCENARIOS = [
+    ASK_USER_QUESTION_BYPASS,
     PLAIN_TURN,
     QUICK_TEXT_REPLY,
     BACKGROUND_SHELL,
