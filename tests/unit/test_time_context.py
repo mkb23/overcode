@@ -187,17 +187,17 @@ class TestReadHeartbeatTimestamp:
 
     def test_reads_existing_file(self, tmp_path, monkeypatch):
         # Create the file structure
-        hb_dir = tmp_path / ".overcode" / "sessions" / "agents"
+        hb_dir = tmp_path / "agents"
         hb_dir.mkdir(parents=True)
         hb_file = hb_dir / "heartbeat_my-agent.last"
         hb_file.write_text("2025-01-15T14:00:00\n")
 
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
         result = read_heartbeat_timestamp("agents", "my-agent")
         assert result == "2025-01-15T14:00:00"
 
     def test_returns_none_for_missing_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
         result = read_heartbeat_timestamp("agents", "nonexistent")
         assert result is None
 
@@ -359,13 +359,9 @@ class TestGenerateTimeContext:
         state_file = session_dir / "monitor_daemon_state.json"
         state_file.write_text(json.dumps({"sessions": []}))
 
-        # Write heartbeat file
-        hb_dir = tmp_path / ".overcode" / "sessions" / "agents"
-        hb_dir.mkdir(parents=True)
-        hb_file = hb_dir / "heartbeat_my-agent.last"
+        # Write heartbeat file (beside the daemon state)
+        hb_file = session_dir / "heartbeat_my-agent.last"
         hb_file.write_text("2025-01-15T14:00:00")
-
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         config = {
             "office_start": 9,

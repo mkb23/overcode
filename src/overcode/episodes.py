@@ -339,7 +339,9 @@ def status_detail_view(detail, now: float) -> Optional[dict]:
 def episode_log_path(state_dir, agent_name: str):
     from pathlib import Path
 
-    return Path(state_dir) / f"episodes_{agent_name}.jsonl"
+    from .paths import agent_file_name
+
+    return Path(state_dir) / agent_file_name(agent_name, "episodes")
 
 
 def append_episode(state_dir, agent_name: str, session_id: str, episode: Episode) -> None:

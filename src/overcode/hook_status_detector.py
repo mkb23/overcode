@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from .paths import agent_file_name, session_dir
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
     STATUS_RUNNING,
@@ -917,23 +918,16 @@ class HookStatusDetector:
         # so the dialog going away is the signal.
         self._permission_prompt_seen: Dict[str, float] = {}
 
-        # Resolve state directory — must match hook_handler._get_hook_state_path()
-        if state_dir is not None:
-            self._state_dir = state_dir
-        else:
-            env_dir = os.environ.get("OVERCODE_STATE_DIR")
-            if env_dir:
-                self._state_dir = Path(env_dir) / tmux_session
-            else:
-                self._state_dir = Path.home() / ".overcode" / "sessions" / tmux_session
+        # The session directory the hook handler writes into (paths.agent_file)
+        self._state_dir = state_dir if state_dir is not None else session_dir(tmux_session)
 
     def _hook_state_path(self, session_name: str) -> Path:
         """Get the hook state file path for a session."""
-        return self._state_dir / f"hook_state_{session_name}.json"
+        return self._state_dir / agent_file_name(session_name, "hook_state")
 
     def _hook_event_log_path(self, session_name: str) -> Path:
         """Get the hook event log path for a session (#448)."""
-        return self._state_dir / f"hook_events_{session_name}.jsonl"
+        return self._state_dir / agent_file_name(session_name, "hook_events")
 
     def _read_recent_events(self, session_name: str, limit: int = _RECENT_EVENTS_LIMIT) -> list:
         """Return recent event records from the append-only log (#448).

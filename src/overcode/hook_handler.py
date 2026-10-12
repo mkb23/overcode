@@ -22,6 +22,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from .paths import agent_file
+
 try:
     import fcntl
     HAS_FCNTL = True
@@ -407,15 +409,10 @@ def _detect_from_tmux_pane() -> tuple[str | None, str | None]:
 def _get_hook_state_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for a hook state file.
 
-    Returns ~/.overcode/sessions/{tmux_session}/hook_state_{session_name}.json
-    Respects OVERCODE_STATE_DIR environment variable for test isolation.
+    Returns <sessions root>/{tmux_session}/hook_state_{session_name}.json
+    (see ``paths``).
     """
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    if state_dir:
-        base = Path(state_dir)
-    else:
-        base = Path.home() / ".overcode" / "sessions"
-    return base / tmux_session / f"hook_state_{session_name}.json"
+    return agent_file(tmux_session, session_name, "hook_state")
 
 
 def get_rename_notice_path(tmux_session: str, session_name: str) -> Path:
@@ -424,9 +421,7 @@ def get_rename_notice_path(tmux_session: str, session_name: str) -> Path:
     ``overcode rename`` writes it under the *new* name; the agent's next
     UserPromptSubmit prints it as prompt context and deletes it.
     """
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
-    return base / tmux_session / f"rename_notice_{session_name}.txt"
+    return agent_file(tmux_session, session_name, "rename_notice")
 
 
 def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
@@ -444,14 +439,9 @@ def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
 def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for the append-only hook event log (#448).
 
-    Returns ~/.overcode/sessions/{tmux_session}/hook_events_{session_name}.jsonl
+    Returns <sessions root>/{tmux_session}/hook_events_{session_name}.jsonl
     """
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    if state_dir:
-        base = Path(state_dir)
-    else:
-        base = Path.home() / ".overcode" / "sessions"
-    return base / tmux_session / f"hook_events_{session_name}.jsonl"
+    return agent_file(tmux_session, session_name, "hook_events")
 
 
 # Rotate the event log when it grows past _EVENT_LOG_ROTATE_BYTES, down to

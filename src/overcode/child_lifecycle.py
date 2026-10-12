@@ -13,6 +13,7 @@ applies the same rule once for a CLI command run while no daemon is.
 import json
 from typing import Optional
 
+from .paths import agent_file_name
 from .settings import get_session_dir
 from .status_constants import STATUS_WAITING_OVERSIGHT
 
@@ -23,7 +24,7 @@ SETTLEABLE_STATUSES = frozenset({"running", "starting", "terminated", STATUS_WAI
 
 def hook_stopped(tmux_session: str, agent_name: str) -> bool:
     """True if the agent's hook state file shows a Stop event."""
-    hook_state_file = get_session_dir(tmux_session) / f"hook_state_{agent_name}.json"
+    hook_state_file = get_session_dir(tmux_session) / agent_file_name(agent_name, "hook_state")
     if not hook_state_file.exists():
         return False
     try:
@@ -36,7 +37,7 @@ def hook_stopped(tmux_session: str, agent_name: str) -> bool:
 
 def read_report(tmux_session: str, agent_name: str) -> Optional[dict]:
     """The agent's filed report ({'status', 'reason', 'timestamp'}), or None."""
-    report_file = get_session_dir(tmux_session) / f"report_{agent_name}.json"
+    report_file = get_session_dir(tmux_session) / agent_file_name(agent_name, "report")
     if not report_file.exists():
         return None
     try:

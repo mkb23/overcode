@@ -18,12 +18,13 @@ without an import cycle.
 """
 
 import json
-import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Tuple
+
+from ..paths import agent_file
 
 # -- the session record ----------------------------------------------------
 
@@ -92,9 +93,7 @@ def hook_state_path(session: Any) -> Optional[Path]:
         return None
     if not tmux_session or not name:
         return None
-    state_dir = os.environ.get("OVERCODE_STATE_DIR")
-    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
-    return base / tmux_session / f"hook_state_{name}.json"
+    return agent_file(tmux_session, name, "hook_state")
 
 
 def read_hook_state(session: Any) -> Optional[dict]:

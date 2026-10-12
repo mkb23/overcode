@@ -593,7 +593,7 @@ def _session_has_hook_activity(
         live_names = _live_agent_names(session)
     session_dir = get_session_dir(session)
     for name in live_names:
-        if (session_dir / f"hook_state_{name}.json").exists():
+        if (session_dir / paths.agent_file_name(name, "hook_state")).exists():
             return True
     return False
 

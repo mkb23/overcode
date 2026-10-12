@@ -64,14 +64,10 @@ class RenameMixin:
         Hook state and event log (status detection, stats, opencode's
         conversation ids) and the child's ``overcode report`` file.
         """
-        from .hook_handler import _get_hook_event_log_path, _get_hook_state_path
-        from .settings import get_session_dir
+        from .paths import agent_file
 
-        return [
-            _get_hook_state_path(tmux_session, name),
-            _get_hook_event_log_path(tmux_session, name),
-            get_session_dir(tmux_session) / f"report_{name}.json",
-        ]
+        return [agent_file(tmux_session, name, kind)
+                for kind in ("hook_state", "hook_events", "report")]
 
     def _move_name_keyed_files(
         self, tmux_session: str, old_name: str, new_name: str,

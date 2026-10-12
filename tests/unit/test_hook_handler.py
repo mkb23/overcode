@@ -42,6 +42,7 @@ class TestGetHookStatePath:
 
     def test_default_path(self, monkeypatch, tmp_path):
         monkeypatch.delenv("OVERCODE_STATE_DIR", raising=False)
+        monkeypatch.delenv("OVERCODE_DIR", raising=False)
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         path = _get_hook_state_path("agents", "my-agent")
         assert path == tmp_path / ".overcode" / "sessions" / "agents" / "hook_state_my-agent.json"

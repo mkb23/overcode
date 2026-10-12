@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
+from .paths import agent_file_name
 from .settings import DAEMON, get_activity_signal_path
 
 # Wake scan (docs/design/engine-0.6.md): between ticks the daemon stats each
@@ -88,7 +89,7 @@ class WakeScan:
                 continue
             seen.add(name)
             try:
-                st = os.stat(directory / f"hook_state_{name}.json")
+                st = os.stat(directory / agent_file_name(name, "hook_state"))
                 sig = (st.st_mtime_ns, st.st_size)
             except OSError:
                 sig = None
@@ -112,7 +113,7 @@ class WakeScan:
     def hook_event(directory, name: str) -> Optional[str]:
         """The event a changed hook state file holds (one small read, on change only)."""
         try:
-            with open(directory / f"hook_state_{name}.json") as f:
+            with open(directory / agent_file_name(name, "hook_state")) as f:
                 event = json.load(f).get("event")
         except (OSError, ValueError, AttributeError):
             return None
