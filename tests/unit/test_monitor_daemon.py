@@ -15,55 +15,54 @@ from unittest.mock import Mock, MagicMock, patch
 class TestCalculateMedianWorkTime:
     """Test _calculate_median_work_time method."""
 
+    @pytest.fixture(autouse=True)
+    def _state_dir(self, tmp_path):
+        self.tmp_path = tmp_path
+
     def test_empty_list_returns_zero(self):
         """Empty operation times should return 0."""
         from overcode.monitor_daemon import MonitorDaemon
 
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            result = daemon._calculate_median_work_time([])
+        daemon = MonitorDaemon.for_test(self.tmp_path)
+        result = daemon._calculate_median_work_time([])
 
-            assert result == 0.0
+        assert result == 0.0
 
     def test_single_value_returns_that_value(self):
         """Single operation time should return that value."""
         from overcode.monitor_daemon import MonitorDaemon
 
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            result = daemon._calculate_median_work_time([42.0])
+        daemon = MonitorDaemon.for_test(self.tmp_path)
+        result = daemon._calculate_median_work_time([42.0])
 
-            assert result == 42.0
+        assert result == 42.0
 
     def test_odd_count_returns_middle(self):
         """Odd count should return middle value."""
         from overcode.monitor_daemon import MonitorDaemon
 
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            result = daemon._calculate_median_work_time([10.0, 20.0, 30.0])
+        daemon = MonitorDaemon.for_test(self.tmp_path)
+        result = daemon._calculate_median_work_time([10.0, 20.0, 30.0])
 
-            assert result == 20.0
+        assert result == 20.0
 
     def test_even_count_returns_average_of_middle_two(self):
         """Even count should return average of middle two."""
         from overcode.monitor_daemon import MonitorDaemon
 
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            result = daemon._calculate_median_work_time([10.0, 20.0, 30.0, 40.0])
+        daemon = MonitorDaemon.for_test(self.tmp_path)
+        result = daemon._calculate_median_work_time([10.0, 20.0, 30.0, 40.0])
 
-            assert result == 25.0
+        assert result == 25.0
 
     def test_unsorted_input_still_works(self):
         """Should sort input before calculating median."""
         from overcode.monitor_daemon import MonitorDaemon
 
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            result = daemon._calculate_median_work_time([30.0, 10.0, 20.0])
+        daemon = MonitorDaemon.for_test(self.tmp_path)
+        result = daemon._calculate_median_work_time([30.0, 10.0, 20.0])
 
-            assert result == 20.0
+        assert result == 20.0
 
 
 class TestCheckActivitySignal:
@@ -1136,14 +1135,16 @@ class TestPublishState:
 class TestTickTiming:
     """_tick measures its own wall time and stamps when it started (R6)."""
 
+    @pytest.fixture(autouse=True)
+    def _state_dir(self, tmp_path):
+        self.tmp_path = tmp_path
+
     def _make_daemon(self):
         from overcode.monitor_daemon import MonitorDaemon
         from overcode.monitor_daemon_state import MonitorDaemonState
 
-        with patch.object(MonitorDaemon, "__init__", lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
+        daemon = MonitorDaemon.for_test(self.tmp_path)
         daemon.state = MonitorDaemonState()
-        daemon._last_tick_duration_seconds = 0.0
         return daemon
 
     def test_tick_records_duration_and_start(self):
@@ -1391,10 +1392,13 @@ class TestDaemonPersistsTerminatedStatus:
 class TestComputeSubtreeCosts:
     """Test _compute_subtree_costs method."""
 
+    @pytest.fixture(autouse=True)
+    def _state_dir(self, tmp_path):
+        self.tmp_path = tmp_path
+
     def _make_daemon(self):
         from overcode.monitor_daemon import MonitorDaemon
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            return MonitorDaemon.__new__(MonitorDaemon)
+        return MonitorDaemon.for_test(self.tmp_path)
 
     def _make_state(self, name, cost, parent_name=None):
         from overcode.monitor_daemon_state import SessionDaemonState
@@ -1501,7 +1505,6 @@ class TestPrBranchMismatchClearing:
 
     def test_pr_cleared_on_branch_mismatch(self):
         """When branch changes away from pr_branch, both pr_number and pr_branch should clear."""
-        from overcode.monitor_daemon import MonitorDaemon
         from overcode.session_manager import Session
 
         session = Session(
@@ -1535,32 +1538,18 @@ class TestPrBranchMismatchClearing:
         mock_sm.refresh_git_context.return_value = True  # branch changed
         mock_sm.get_session.return_value = refreshed_session
 
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            daemon.session_manager = mock_sm
-            daemon.detector = Mock()
-            daemon.detector.detect_status.return_value = ("running", "Working...", "")
-            daemon._sessions_running_from_heartbeat = set()
-            daemon._heartbeat_start_pending = set()
-            daemon._last_heartbeat_times = {}
-            daemon._heartbeat_cooldown_until = {}
-            daemon._summary_cache = {}
-            daemon.ai_summarizer = None
-            daemon._subtree_watchers = {}
-            daemon._orphan_cost_cache = {}
+        # Simulate the branch mismatch check from _detect_and_enrich
+        git_changed = mock_sm.refresh_git_context(session.id)
+        if git_changed and session.pr_number is not None:
+            refreshed = mock_sm.get_session(session.id)
+            if refreshed and refreshed.branch is not None:
+                if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
+                    mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
 
-            # Simulate the branch mismatch check from _detect_and_enrich
-            git_changed = mock_sm.refresh_git_context(session.id)
-            if git_changed and session.pr_number is not None:
-                refreshed = mock_sm.get_session(session.id)
-                if refreshed and refreshed.branch is not None:
-                    if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
-                        mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
-
-            # Verify update_session was called with clearing args
-            mock_sm.update_session.assert_called_once_with(
-                "test-1", pr_number=None, pr_branch=None
-            )
+        # Verify update_session was called with clearing args
+        mock_sm.update_session.assert_called_once_with(
+            "test-1", pr_number=None, pr_branch=None
+        )
 
     def test_pr_not_cleared_when_branch_unchanged(self):
         """When branch hasn't changed, PR should remain."""
@@ -1687,14 +1676,16 @@ class TestPrBranchMismatchClearing:
 class TestCountUntrackedWindows:
     """Test _count_untracked_windows method (#344)."""
 
+    @pytest.fixture(autouse=True)
+    def _state_dir(self, tmp_path):
+        self.tmp_path = tmp_path
+
     def _make_daemon(self, tmux=None):
         """A bare daemon; ``tmux`` is its persistent client (the count reads it)."""
         from overcode.monitor_daemon import MonitorDaemon
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            daemon.tmux_session = "agents"
-            daemon._tmux = tmux
-            return daemon
+        daemon = MonitorDaemon.for_test(self.tmp_path)
+        daemon._tmux = tmux
+        return daemon
 
     def test_no_untracked_windows(self):
         """Returns 0 when all windows are tracked."""
@@ -1858,13 +1849,7 @@ class TestMaybeRotateHistory:
 
     def _make_daemon(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            daemon.history_path = tmp_path / "agent_status_history.csv"
-            daemon.log = MagicMock()
-            daemon._last_history_rotation_check = None
-            daemon._history_rotation_check_interval = 3600
-            return daemon
+        return MonitorDaemon.for_test(tmp_path, log=MagicMock())
 
     def test_runs_on_first_tick(self, tmp_path):
         """With no prior check recorded, the rotation pass should run immediately."""
@@ -1938,17 +1923,13 @@ class TestMaybeRefreshModelMetadata:
     background thread only when opted in and stale, and a failure backs off
     for hours with a single warning (#473)."""
 
+    @pytest.fixture(autouse=True)
+    def _state_dir(self, tmp_path):
+        self.tmp_path = tmp_path
+
     def _make_daemon(self):
         from overcode.monitor_daemon import MonitorDaemon
-        with patch.object(MonitorDaemon, '__init__', lambda self: None):
-            daemon = MonitorDaemon.__new__(MonitorDaemon)
-            daemon.log = MagicMock()
-            daemon._last_model_metadata_check = None
-            daemon._model_metadata_check_interval = 3600
-            daemon._model_metadata_thread = None
-            daemon._model_metadata_backoff_until = None
-            daemon._model_metadata_failure_backoff = 6 * 3600
-            return daemon
+        return MonitorDaemon.for_test(self.tmp_path, log=MagicMock())
 
     @staticmethod
     def _join(daemon):

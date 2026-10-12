@@ -361,6 +361,21 @@ def make_daemon(
         state_dir=state_dir / "sessions", skip_git_detection=True
     )
     tmux = tmux if tmux is not None else FakeTmux(tmux_session, {})
+    if hasattr(monitor_daemon.MonitorDaemon, "for_test"):
+        from overcode.settings import get_session_dir
+
+        # The directory the real constructor resolves; presence reports
+        # "unavailable" and the log is kept in memory
+        daemon = monitor_daemon.MonitorDaemon.for_test(
+            get_session_dir(tmux_session),
+            detector=detector,
+            tmux=tmux,
+            session_manager=sm,
+            tmux_session=tmux_session,
+        )
+        daemon._legacy_windows_migrated = True
+        daemon.state.loop_count = 1
+        return daemon
     original_presence = monitor_daemon.PresenceLogger
     monitor_daemon.PresenceLogger = None
     try:

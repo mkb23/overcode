@@ -242,8 +242,7 @@ class TestFailingTick:
         from overcode.monitor_daemon import MonitorDaemon
         from overcode.monitor_daemon_state import MonitorDaemonState
 
-        daemon = MonitorDaemon.__new__(MonitorDaemon)
-        daemon.log = MagicMock()
+        daemon = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         daemon.state = MonitorDaemonState()
         daemon._publish_state = MagicMock()
         return daemon
@@ -289,13 +288,10 @@ class TestStateFileFailure:
         from overcode.monitor_daemon import MonitorDaemon
         from overcode.monitor_daemon_state import MonitorDaemonState
 
-        daemon = MonitorDaemon.__new__(MonitorDaemon)
-        daemon.log = MagicMock()
+        presence = MagicMock(available=False)
+        presence.get_current_state.return_value = (1, 0.0, None)
+        daemon = MonitorDaemon.for_test(tmp_path, log=MagicMock(), presence=presence)
         daemon.state = MonitorDaemonState()
-        daemon.state_path = tmp_path / "monitor_daemon_state.json"
-        daemon.tmux_session = "agents"
-        daemon.presence = MagicMock(available=False)
-        daemon.presence.get_current_state.return_value = (1, 0.0, None)
         daemon._engine = MagicMock()
         return daemon
 
@@ -330,13 +326,10 @@ class TestRecorderSaves:
         from overcode.monitor_daemon import MonitorDaemon
         from overcode.status_constants import STATUS_COLOR_GREEN
 
-        daemon = MonitorDaemon.__new__(MonitorDaemon)
-        daemon.log = MagicMock()
-        daemon.state_path = tmp_path / "monitor_daemon_state.json"
+        daemon = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         rec = EpisodeRecorder()
         rec.observe(STATUS_COLOR_GREEN, 100.0)
         daemon._recorders = {"s1": rec}
-        daemon._recorders_dirty = False
         daemon._recorders_saved_at = time.monotonic()
         return daemon
 
@@ -377,16 +370,10 @@ class TestRecorderSaves:
 
 
 class TestTimeAcrossGaps:
-    def _daemon(self):
+    def _daemon(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
-        from overcode.session_manager import PendingUpdates
 
-        daemon = MonitorDaemon.__new__(MonitorDaemon)
-        daemon.log = MagicMock()
-        daemon.last_state_times = {}
-        daemon._time_bases = {}
-        daemon.previous_states = {}
-        daemon._pending = PendingUpdates()
+        daemon = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         daemon._interval_unattended = 10
         return daemon
 
@@ -399,8 +386,8 @@ class TestTimeAcrossGaps:
         start = last_accumulation - timedelta(days=3)
         return SimpleNamespace(id="s1", name="a1", stats=stats, start_time=start.isoformat())
 
-    def test_a_restart_after_downtime_does_not_count_the_downtime(self):
-        daemon = self._daemon()
+    def test_a_restart_after_downtime_does_not_count_the_downtime(self, tmp_path):
+        daemon = self._daemon(tmp_path)
         now = datetime(2026, 10, 9, 23, 49, 14)
         session = self._session(now - timedelta(hours=26))
         daemon._update_state_time(session, "running", now)
@@ -415,16 +402,16 @@ class TestTimeAcrossGaps:
         daemon._update_state_time(session, "running", now + timedelta(seconds=4))
         assert daemon._pending.stats["s1"]["green_time_seconds"] == pytest.approx(102.0)
 
-    def test_a_quick_restart_still_counts_the_seconds_in_between(self):
-        daemon = self._daemon()
+    def test_a_quick_restart_still_counts_the_seconds_in_between(self, tmp_path):
+        daemon = self._daemon(tmp_path)
         now = datetime(2026, 10, 10, 12, 0, 0)
         session = self._session(now - timedelta(seconds=10))
         daemon._update_state_time(session, "running", now)
         daemon._update_state_time(session, "running", now + timedelta(seconds=2))
         assert daemon._pending.stats["s1"]["green_time_seconds"] == pytest.approx(112.0)
 
-    def test_a_machine_sleep_mid_run_is_not_counted(self):
-        daemon = self._daemon()
+    def test_a_machine_sleep_mid_run_is_not_counted(self, tmp_path):
+        daemon = self._daemon(tmp_path)
         now = datetime(2026, 10, 10, 12, 0, 0)
         session = self._session(now - timedelta(seconds=2))
         daemon._update_state_time(session, "waiting_user", now)
@@ -433,15 +420,15 @@ class TestTimeAcrossGaps:
         assert staged["non_green_time_seconds"] == 50.0
         assert staged["last_time_accumulation"] == (now + timedelta(hours=3)).isoformat()
 
-    def test_the_gap_bound_follows_a_long_configured_loop(self):
+    def test_the_gap_bound_follows_a_long_configured_loop(self, tmp_path):
         from overcode.monitor_daemon_core import UNOBSERVED_GAP_SECONDS
 
-        daemon = self._daemon()
+        daemon = self._daemon(tmp_path)
         assert daemon._unobserved_gap_seconds() == UNOBSERVED_GAP_SECONDS
         daemon._interval_unattended = 90
         assert daemon._unobserved_gap_seconds() == 270
 
-    def test_core_counts_an_unobserved_span_as_nothing(self):
+    def test_core_counts_an_unobserved_span_as_nothing(self, tmp_path):
         from overcode.monitor_daemon_core import calculate_time_accumulation
 
         now = datetime(2026, 10, 10, 12, 0, 0)
@@ -538,8 +525,7 @@ class TestJobRetention:
     def test_finished_jobs_past_retention_are_pruned_hourly(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
-        d.log = MagicMock()
+        d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         with patch("overcode.job_manager.JobManager.cleanup_completed") as cleanup, \
                 patch("overcode.config.get_jobs_retention_hours", return_value=12.0):
             d._prune_finished_jobs()
@@ -549,8 +535,7 @@ class TestJobRetention:
     def test_a_failing_prune_is_logged_not_raised(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
-        d.log = MagicMock()
+        d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         with patch("overcode.job_manager.JobManager.cleanup_completed", side_effect=OSError("ro")):
             d._prune_finished_jobs()
         assert "job retention" in d.log.warn.call_args.args[0]

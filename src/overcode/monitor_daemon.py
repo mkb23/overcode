@@ -326,6 +326,46 @@ class PresenceComponent:
             self._logger.stop()
 
 
+class NullPresence:
+    """Presence that knows nothing: no logger thread, no host idle time.
+
+    ``MonitorDaemon.for_test`` uses it, so no test tick depends on whether
+    someone is at the keyboard.
+    """
+
+    available = False
+
+    def _is_tui_active(self) -> bool:
+        return False
+
+    def get_current_state(self) -> tuple:
+        return None, None, None
+
+    def stop(self) -> None:
+        pass
+
+
+class MemoryLogger(BaseDaemonLogger):
+    """A daemon logger that keeps its lines in memory (``lines``), for tests."""
+
+    def __init__(self):
+        import io
+
+        from rich.console import Console
+
+        from .daemon_logging import DAEMON_THEME
+
+        self.log_file = None
+        self.lines: List[str] = []
+        self.console = Console(file=io.StringIO(), theme=DAEMON_THEME, force_terminal=True)
+
+    def _write_to_file(self, message: str, level: str = "INFO"):
+        self.lines.append(f"[{level}] {message}")
+
+    def debug(self, message: str):
+        self.lines.append(f"[DEBUG] {message}")
+
+
 class MonitorDaemon:
     """Monitor Daemon - single source of truth for all session metrics.
 
@@ -348,8 +388,6 @@ class MonitorDaemon:
         status_detector: Optional["StatusDetectorProtocol"] = None,
         tmux: Optional["TmuxInterface"] = None,
     ):
-        self.tmux_session = tmux_session
-
         # Ensure session directory exists
         ensure_session_dir(tmux_session)
 
@@ -362,39 +400,120 @@ class MonitorDaemon:
             from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
 
             tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
-        self._tmux = tmux
 
-        # Session-specific paths
-        self.pid_path = get_monitor_daemon_pid_path(tmux_session)
-        self.state_path = get_monitor_daemon_state_path(tmux_session)
-        self.history_path = get_agent_history_path(tmux_session)
-
-        # Dependencies (allow injection for testing)
-        self.session_manager = session_manager or SessionManager()
+        from .config import get_hostname
         from .settings import resolve_detection_mode
-        detection_mode = resolve_detection_mode(tmux_session)
+
+        self._setup(
+            tmux_session,
+            tmux=tmux,
+            # Session-specific paths
+            pid_path=get_monitor_daemon_pid_path(tmux_session),
+            state_path=get_monitor_daemon_state_path(tmux_session),
+            history_path=get_agent_history_path(tmux_session),
+            # Dependencies (allow injection for testing)
+            session_manager=session_manager or SessionManager(),
+            detection_mode=resolve_detection_mode(tmux_session),
+            polling_detector=status_detector,
+            # Hostname for history disambiguation
+            hostname=get_hostname(),
+            # Presence tracking (graceful degradation)
+            presence=PresenceComponent(tmux_session=tmux_session),
+            # Logging - session-specific log file
+            log=_create_monitor_logger(session=tmux_session),
+            # Loop interval while nobody is watching (config.yaml
+            # monitor_daemon.interval_unattended_seconds; read once).
+            interval_unattended=get_monitor_daemon_config()["interval_unattended"],
+        )
+
+    @classmethod
+    def for_test(
+        cls,
+        state_dir,
+        detector=None,
+        tmux: Optional["TmuxInterface"] = None,
+        session_manager: Optional[SessionManager] = None,
+        presence=None,
+        log=None,
+        tmux_session: str = "agents",
+    ) -> "MonitorDaemon":
+        """A daemon whose files live in ``state_dir``, for tests.
+
+        No presence thread (``presence`` defaults to one that reports
+        nothing), no real tmux (``tmux`` defaults to a ``MockTmux``), a log
+        kept in memory, and a ``SessionManager`` on ``state_dir`` unless one
+        is given. ``detector`` replaces the status detector dispatcher.
+        Nothing here reads the environment's session directory.
+        """
+        from .mocks import MockTmux
+
+        state_dir = Path(state_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        tmux = tmux if tmux is not None else MockTmux()
+        daemon = cls.__new__(cls)
+        daemon._setup(
+            tmux_session,
+            tmux=tmux,
+            pid_path=state_dir / "monitor_daemon.pid",
+            state_path=state_dir / "monitor_daemon_state.json",
+            history_path=state_dir / "agent_status_history.csv",
+            session_manager=(session_manager if session_manager is not None
+                             else SessionManager(state_dir=state_dir, skip_git_detection=True)),
+            detection_mode="polling",
+            detector=detector,
+            detector_tmux=tmux,
+            hostname="test-host",
+            presence=presence if presence is not None else NullPresence(),
+            log=log if log is not None else MemoryLogger(),
+            interval_unattended=int(DAEMON.interval_unattended),
+        )
+        return daemon
+
+    def _setup(
+        self,
+        tmux_session: str,
+        *,
+        tmux: "TmuxInterface",
+        pid_path: Path,
+        state_path: Path,
+        history_path: Path,
+        session_manager: SessionManager,
+        detection_mode: str,
+        hostname: str,
+        presence,
+        log,
+        interval_unattended: int,
+        polling_detector: Optional["StatusDetectorProtocol"] = None,
+        detector=None,
+        detector_tmux: Optional["TmuxInterface"] = None,
+    ) -> None:
+        """Every attribute the daemon has, from its resolved dependencies."""
+        self.tmux_session = tmux_session
+        self._tmux = tmux
+        self.pid_path = pid_path
+        self.state_path = state_path
+        self.history_path = history_path
+        self.session_manager = session_manager
+
         # Capture gating (audit R11): each loop plans, from the tick's pane
         # listing, which panes changed and captures only those; the
         # detectors read the rest from the gate's cache. See _plan_captures.
         self._capture_gate = PaneCaptureGate()
         self._pane_tracker = PaneChangeTracker()
         self._loop_clock = time.monotonic  # the keepalive's clock; tests freeze it
-        self.detector = StatusDetectorDispatcher(
-            tmux_session,
-            polling_detector=status_detector,
-            mode=detection_mode,
-            capture_gate=self._capture_gate,
-        )
+        if detector is None:
+            detector = StatusDetectorDispatcher(
+                tmux_session,
+                tmux=detector_tmux,
+                polling_detector=polling_detector,
+                mode=detection_mode,
+                capture_gate=self._capture_gate,
+            )
+        self.detector = detector
 
-        # Hostname for history disambiguation
-        from .config import get_hostname
-        self._hostname = get_hostname()
-
-        # Presence tracking (graceful degradation)
-        self.presence = PresenceComponent(tmux_session=tmux_session)
-
-        # Logging - session-specific log file
-        self.log = _create_monitor_logger(session=tmux_session)
+        self._hostname = hostname
+        self.presence = presence
+        self.log = log
 
         # State tracking
         self.state = MonitorDaemonState(
@@ -415,13 +534,26 @@ class MonitorDaemon:
         # nor re-rings (see _load_recorders)
         self._recorders: Dict[str, EpisodeRecorder] = {}
         self._recorders_dirty = False
+        # monotonic time of the last engine_state.json write
+        self._recorders_saved_at = 0.0
         # Wake scan: each agent's hook state file signature, by agent name
         self._hook_signatures: Dict[str, Tuple[int, int]] = {}
+        # Wake scan: agents to re-detect once the sticky-green window has
+        # passed (agent name -> monotonic deadline); see _hook_changes
+        self._rechecks: Dict[str, float] = {}
+        # The state file: monotonic time of its last write, and the engine
+        # snapshot it holds (None: not written yet); see _state_file_due
         self._last_state_save = 0.0
+        self._saved_snapshot = None
 
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
         self._last_tick_duration_seconds: float = 0.0
+        # Failed ticks in a row, and the last one's error (see _tick_failed)
+        self._tick_errors = 0
+        self._last_tick_error: Optional[str] = None
+        # session id -> (first failure, last error): see _detection_failed
+        self._detect_failures: Dict[str, Tuple[datetime, Optional[str]]] = {}
 
         # This tmux session's panes from one ``list-panes -s`` per tick
         # (``_panes_at``): pid per window for the 5 s / 15 s syncs, and the
@@ -450,6 +582,12 @@ class MonitorDaemon:
         self._time_bases: Dict[str, Tuple[list, float]] = {}
         self._stats_views: Dict[str, dict] = {}
         self._pane_views: Dict[str, Tuple[str, dict]] = {}
+        # Git diff/untracked by directory and burn by session id, from the
+        # attended-only syncs (see _sync_git, _sync_burn)
+        self._git_by_dir: Dict[str, tuple] = {}
+        self._burn_by_session: Dict[str, dict] = {}
+        self._last_git_sync: Optional[datetime] = None
+        self._last_burn_sync: Optional[datetime] = None
 
         # Everything a tick wants persisted to sessions.json is staged here
         # and written once at the end of the tick (audit R5); see
@@ -502,14 +640,15 @@ class MonitorDaemon:
         self._model_metadata_backoff_until: Optional[datetime] = None
         self._model_metadata_failure_backoff = 6 * 3600  # seconds
 
-        # Loop interval while nobody is watching (config.yaml
-        # monitor_daemon.interval_unattended_seconds; read once).
-        self._interval_unattended: int = get_monitor_daemon_config()["interval_unattended"]
+        # Loop interval while nobody is watching
+        self._interval_unattended: int = interval_unattended
 
         # Housekeeping is wall-clock: first pass HOUSEKEEPING_INTERVAL_SECONDS
         # after the first tick (loop 60 at 2 s used to be 2 minutes in), then
         # every interval, whatever the loop length.
         self._last_housekeeping: Optional[datetime] = None
+        # Finished-job pruning: monotonic time of the last pass (hourly)
+        self._last_job_prune: Optional[float] = None
 
         # Shutdown flag
         self._shutdown = False
@@ -769,7 +908,7 @@ class MonitorDaemon:
         UNOBSERVED_GAP_SECONDS, or three unattended loops if those are
         configured longer, so a slow configured loop is never a gap.
         """
-        interval = getattr(self, "_interval_unattended", 0) or 0
+        interval = self._interval_unattended or 0
         return max(UNOBSERVED_GAP_SECONDS, 3.0 * interval)
 
     def _update_state_time(self, session, status: str, now: datetime) -> None:
@@ -1206,7 +1345,7 @@ class MonitorDaemon:
         serves a status request (a sister TUI's poll), so the daemon never
         slows while a sister is watching this fleet.
         """
-        engine = getattr(self, "_engine", None)
+        engine = self._engine
         if engine is not None and engine.attended:
             return "attended"  # a view on engine.sock says it is being looked at
         attached = self.session_attached
@@ -1239,7 +1378,7 @@ class MonitorDaemon:
 
     def _prune_finished_jobs(self) -> None:
         """Drop finished jobs past their retention, at most hourly."""
-        last = getattr(self, "_last_job_prune", None)
+        last = self._last_job_prune
         if last is not None and time.monotonic() - last < JOB_PRUNE_INTERVAL_SECONDS:
             return
         self._last_job_prune = time.monotonic()
@@ -1293,7 +1432,7 @@ class MonitorDaemon:
             elapsed += step
             self._beat()
 
-            engine = getattr(self, "_engine", None)
+            engine = self._engine
             if not attended and engine is not None and engine.attended:
                 # A view on engine.sock is being looked at again: back to
                 # the attended cadences now, not at the end of the long sleep
@@ -1398,10 +1537,7 @@ class MonitorDaemon:
         presence_state, presence_idle, _ = self.presence.get_current_state()
 
         self.state.last_loop_time = now.isoformat()
-        # getattr: test doubles built via __new__ skip __init__
-        self.state.last_tick_duration_seconds = round(
-            getattr(self, "_last_tick_duration_seconds", 0.0), 3
-        )
+        self.state.last_tick_duration_seconds = round(self._last_tick_duration_seconds, 3)
         self.state.slow_tick_seconds = (
             round(self.state.last_tick_duration_seconds, 1)
             if self.state.last_tick_duration_seconds > self.state.current_interval else None
@@ -1439,7 +1575,7 @@ class MonitorDaemon:
             self._saved_snapshot = snapshot
         # Published whether or not the file could be written: a full disk
         # must not freeze every view's status (the error rides along)
-        engine = getattr(self, "_engine", None)
+        engine = self._engine
         if engine is not None:
             try:
                 engine.publish(snapshot)
@@ -1454,10 +1590,10 @@ class MonitorDaemon:
         """
         from .engine_protocol import diff
 
-        saved = getattr(self, "_saved_snapshot", None)
+        saved = self._saved_snapshot
         if saved is None or self.state.state_file_error:
             return True
-        if time.monotonic() - getattr(self, "_last_state_save", 0.0) >= STATE_FILE_LIVENESS_SECONDS:
+        if time.monotonic() - self._last_state_save >= STATE_FILE_LIVENESS_SECONDS:
             return True
         return not diff(saved, snapshot).empty
 
@@ -1511,7 +1647,7 @@ class MonitorDaemon:
         if observed.bell is not None:
             self.log.info(f"[{session.name}] bell: {observed.bell.colour} since "
                           f"{datetime.fromtimestamp(observed.bell.start).isoformat()}")
-            engine = getattr(self, "_engine", None)
+            engine = self._engine
             if engine is not None:
                 engine.ring(session.id, {"colour": observed.bell.colour,
                                          "start": observed.bell.start, "name": session.name})
@@ -1548,7 +1684,7 @@ class MonitorDaemon:
         nobody.
         """
         stale = (bool(self._recorders) and time.monotonic()
-                 - getattr(self, "_recorders_saved_at", 0.0) >= RECORDER_SEEN_SAVE_SECONDS)
+                 - self._recorders_saved_at >= RECORDER_SEEN_SAVE_SECONDS)
         if not (self._recorders_dirty or force or stale):
             return
         import json
@@ -1568,7 +1704,7 @@ class MonitorDaemon:
             self.log.warn(f"engine state not saved: {e}")
 
     def _apply_visits(self) -> None:
-        engine = getattr(self, "_engine", None)
+        engine = self._engine
         if engine is None:
             return
         for sid, ts in engine.take_visits():
@@ -1588,7 +1724,7 @@ class MonitorDaemon:
         changed = set()
         directory = self.state_path.parent
         seen = set()
-        rechecks = self.__dict__.setdefault("_rechecks", {})
+        rechecks = self._rechecks
         now = time.monotonic()
         for state in self.state.sessions:
             name = state.name
@@ -1674,16 +1810,16 @@ class MonitorDaemon:
     def _attach_git_and_burn(self, session, state: SessionDaemonState) -> None:
         from .tui_helpers import effective_git_directory
 
-        git = getattr(self, "_git_by_dir", {}).get(effective_git_directory(session))
+        git = self._git_by_dir.get(effective_git_directory(session))
         if git is not None:
             state.git_diff, state.git_untracked = git
-        state.burn = getattr(self, "_burn_by_session", {}).get(session.id)
+        state.burn = self._burn_by_session.get(session.id)
 
     def _sync_git(self, sessions: list, now: datetime) -> None:
         """Git diff/untracked per distinct directory, every GIT_SYNC_SECONDS while attended."""
         if self.state.interval_mode == "unattended":
             return
-        last = getattr(self, "_last_git_sync", None)
+        last = self._last_git_sync
         if last is not None and elapsed_seconds(last, now) < GIT_SYNC_SECONDS:
             return
         self._last_git_sync = now
@@ -1708,12 +1844,12 @@ class MonitorDaemon:
 
     def _sync_burn(self, sessions: list, now: datetime) -> None:
         """Burn over each window a visible view asked for, every BURN_SYNC_SECONDS."""
-        engine = getattr(self, "_engine", None)
+        engine = self._engine
         windows = engine.burn_windows if engine is not None else set()
         if not windows or self.state.interval_mode == "unattended":
             self._burn_by_session = {}
             return
-        last = getattr(self, "_last_burn_sync", None)
+        last = self._last_burn_sync
         if last is not None and elapsed_seconds(last, now) < BURN_SYNC_SECONDS:
             return
         self._last_burn_sync = now
@@ -1750,7 +1886,7 @@ class MonitorDaemon:
 
     def _beat(self) -> None:
         """The main loop is alive: tell engine.sock (and re-arm the watchdog)."""
-        engine = getattr(self, "_engine", None)
+        engine = self._engine
         if engine is not None:
             engine.beat()
         self._stall_signalled_at = None
@@ -1797,7 +1933,7 @@ class MonitorDaemon:
         except Exception as e:
             self._tick_failed(e)
             return
-        failed = getattr(self, "_tick_errors", 0)
+        failed = self._tick_errors
         if failed:
             self.log.info(f"Tick recovered after {failed} failed tick(s)")
             self._tick_errors = 0
@@ -1812,10 +1948,10 @@ class MonitorDaemon:
         published status (the views' "Monitor:" symbol) stays ``error``
         until a tick completes; the agents keep their last published state.
         """
-        count = getattr(self, "_tick_errors", 0) + 1
+        count = self._tick_errors + 1
         self._tick_errors = count
         message = f"{type(error).__name__}: {error}"
-        if message != getattr(self, "_last_tick_error", None):
+        if message != self._last_tick_error:
             self.log.error(f"Tick failed ({count} in a row): {message}\n{traceback.format_exc()}")
         elif count & (count - 1) == 0:
             self.log.error(f"Tick failed ({count} in a row): {message}")
@@ -2222,7 +2358,7 @@ class MonitorDaemon:
         pending = self._pending
         self._plan_captures(sessions, now)
         # session id -> (first failure, last error): see _detection_failed
-        detect_failures = self.__dict__.setdefault("_detect_failures", {})
+        detect_failures = self._detect_failures
 
         for snapshot in sessions:
             self._beat()  # a long tick over many agents is slow, not stalled
@@ -2384,7 +2520,7 @@ class MonitorDaemon:
 
         from .protocols import TmuxTimeoutError
 
-        failures = self.__dict__.setdefault("_detect_failures", {})
+        failures = self._detect_failures
         message = f"{type(error).__name__}: {error}"
         first, last_message = failures.get(session.id, (now, None))
         failures[session.id] = (first, message)

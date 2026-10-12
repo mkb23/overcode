@@ -28,13 +28,10 @@ AGENTS = 50
 def daemon(tmp_path):
     from overcode.monitor_daemon import MonitorDaemon
 
-    d = MonitorDaemon.__new__(MonitorDaemon)
-    d.state_path = tmp_path / "monitor_daemon_state.json"
+    d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
     d.state = MonitorDaemonState(pid=1)
     d.state.sessions = [SessionDaemonState(session_id=f"s{i}", name=f"agent{i}")
                         for i in range(AGENTS)]
-    d._hook_signatures = {}
-    d.log = MagicMock()
     for i in range(AGENTS):
         (tmp_path / f"hook_state_agent{i}.json").write_text('{"event": "Stop"}')
     d._hook_changes()  # first sight

@@ -382,12 +382,9 @@ class TestDaemonRecords:
 
         from overcode.monitor_daemon import MonitorDaemon
 
-        daemon = MonitorDaemon.__new__(MonitorDaemon)
-        daemon._recorders = {}
-        daemon.state_path = tmp_path / "state.json"
-        daemon.log = MagicMock()
+        daemon = MonitorDaemon.for_test(
+            tmp_path, log=MagicMock(), detector=SimpleNamespace(detail=None))
         daemon._engine = MagicMock()
-        daemon.detector = SimpleNamespace(detail=None)
         daemon.detector.get_status_detail = lambda name: daemon.detector.detail
         return daemon
 

@@ -23,19 +23,9 @@ def _daemon(tmp_path):
     from overcode.monitor_daemon import MonitorDaemon
     from overcode.monitor_daemon_state import MonitorDaemonState
 
-    d = MonitorDaemon.__new__(MonitorDaemon)
-    d.state_path = tmp_path / "monitor_daemon_state.json"
+    d = MonitorDaemon.for_test(tmp_path, log=MagicMock(), detector=SimpleNamespace(mode="auto"))
     d.state = MonitorDaemonState(pid=1)
-    d.log = MagicMock()
-    d._recorders = {}
-    d._recorders_dirty = False
-    d._hook_signatures = {}
-    d._last_state_save = 0.0
-    d._engine = None
-    d._shutdown = False
-    d.tmux_session = "agents"
     d._refresh_detection_mode = lambda: None  # never reads a real state dir
-    d.detector = SimpleNamespace(mode="auto")
     return d
 
 

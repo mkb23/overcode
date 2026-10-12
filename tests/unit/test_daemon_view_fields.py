@@ -112,20 +112,18 @@ class TestTimeBase:
 
 
 class TestStatsView:
-    def test_a_backend_without_stats_says_so(self):
+    def test_a_backend_without_stats_says_so(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
-        d._stats_views = {}
+        d = MonitorDaemon.for_test(tmp_path)
         d._note_stats_view(SimpleNamespace(id="s1"), None)
         assert d._stats_views["s1"] == {"stats_available": False}
 
-    def test_transcript_values_are_kept_for_the_state(self):
+    def test_transcript_values_are_kept_for_the_state(self, tmp_path):
         from overcode.history_reader import AgentSessionStats
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
-        d._stats_views = {}
+        d = MonitorDaemon.for_test(tmp_path)
         stats = AgentSessionStats(
             interaction_count=3, input_tokens=10, output_tokens=5,
             cache_creation_tokens=0, cache_read_tokens=0, work_times=[10.0, 30.0, 20.0],
@@ -185,12 +183,10 @@ class TestPaneView:
         assert (state.background_bash_count, state.live_subagent_count,
                 state.auto_accept_mode) == (0, 0, False)
 
-    def test_departed_sessions_are_forgotten(self):
+    def test_departed_sessions_are_forgotten(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
-        d.operation_start_times, d.previous_states = {}, {}
-        d._last_logged, d._last_keepalive = {}, {}
+        d = MonitorDaemon.for_test(tmp_path)
         d._time_bases = {"gone": ([0, 0, 0], 1.0)}
         d._stats_views = {"gone": {}}
         d._pane_views = {"gone": ("", {})}
@@ -203,13 +199,7 @@ class TestAttentionFields:
     def _daemon(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
-        d._recorders = {}
-        d._recorders_dirty = False
-        d._engine = None
-        d.state_path = tmp_path / "monitor_daemon_state.json"
-        d.log = MagicMock()
-        return d
+        return MonitorDaemon.for_test(tmp_path, log=MagicMock())
 
     def test_a_red_stretch_and_the_last_visit_are_published(self, tmp_path):
         d = self._daemon(tmp_path)
@@ -241,15 +231,9 @@ class TestSlowTick:
     def _daemon(self, tmp_path, duration, interval):
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
+        d = MonitorDaemon.for_test(tmp_path)
         d.state = MonitorDaemonState(pid=1, current_interval=interval)
         d._last_tick_duration_seconds = duration
-        d.presence = MagicMock()
-        d.presence.get_current_state.return_value = (None, None, None)
-        d.presence.available = False
-        d.tmux_session = "agents"
-        d.state_path = tmp_path / "state.json"
-        d._engine = None
         return d
 
     def test_published_only_while_ticks_overrun(self, tmp_path):
@@ -268,11 +252,8 @@ class TestWakeOnVisibleView:
         from overcode import monitor_daemon
         from overcode.monitor_daemon import MonitorDaemon
 
-        d = MonitorDaemon.__new__(MonitorDaemon)
+        d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         d.state = MonitorDaemonState(pid=1, interval_mode="unattended")
-        d.tmux_session = "agents"
-        d.log = MagicMock()
-        d._shutdown = False
         d._engine = SimpleNamespace(attended=False, beat=lambda: None)
         d._hook_changes = lambda: set()
         slept = []

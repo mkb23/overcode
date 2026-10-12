@@ -407,10 +407,8 @@ class TestWatchdogExit:
 
     def test_removes_its_pid_file_before_exiting(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon, WATCHDOG_EXIT_SECONDS
-        daemon = MonitorDaemon.__new__(MonitorDaemon)
-        daemon.pid_path = tmp_path / "monitor_daemon.pid"
+        daemon = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         daemon.pid_path.write_text(str(os.getpid()))
-        daemon.log = MagicMock()
         with patch("overcode.monitor_daemon.os._exit", side_effect=SystemExit(1)) as ex:
             with pytest.raises(SystemExit):
                 daemon._on_main_loop_stall(WATCHDOG_EXIT_SECONDS + 1)
