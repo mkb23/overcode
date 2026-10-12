@@ -843,6 +843,17 @@ _RUNNING_EVENTS = frozenset({
     "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
 })
 
+# The events the snapshot may hold: exactly those the hook detector maps to
+# a status (hook_status_detector._HOOK_STATUS_MAP, pinned by a test). The
+# detector reads any other event as "waiting for the user" (red), so an
+# event a CLI starts sending that overcode doesn't know goes to the event
+# log only.
+SNAPSHOT_EVENTS = frozenset({
+    "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+    "Stop", "StopFailure", "UserPromptSubmitRejected", "PermissionRequest",
+    "SessionEnd", "Interrupt", "SessionStart",
+})
+
 
 def _is_idle_prompt(data: dict) -> bool:
     if data.get("notification_type") == "idle_prompt":
@@ -939,6 +950,12 @@ def handle_hook_event(backend: str | None = None) -> None:
         # otherwise read as running forever. It only settles a snapshot that
         # still says the turn is running, and only for this conversation.
         _settle_idle_prompt(data, tmux_session, session_name)
+        return
+
+    if event not in SNAPSHOT_EVENTS:
+        logger.info("unmapped hook event %r from %s; not written to the snapshot",
+                    event, backend or "an unnamed backend")
+        append_hook_event(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
         return
 
     tool_use_id = data.get("tool_use_id")

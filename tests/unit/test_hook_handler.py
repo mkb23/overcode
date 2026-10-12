@@ -1478,3 +1478,33 @@ class TestScheduleWakeupLifecycle:
 
         obls = _update_obligations([], "PreToolUse", "Monitor", {"command": "tail -f x"}, "m1", 1.0)
         assert [o["kind"] for o in self._apply(obls, {"stop": True})] == ["monitor"]
+
+
+class TestUnmappedEvents:
+    """An event the detector has no status for never reaches the snapshot."""
+
+    def _send(self, tmp_path, monkeypatch, payload, backend=None):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps(payload)
+            handle_hook_event(backend)
+
+    def test_snapshot_events_are_the_detectors_map(self):
+        from overcode.hook_handler import SNAPSHOT_EVENTS
+        from overcode.hook_status_detector import _HOOK_STATUS_MAP
+        assert SNAPSHOT_EVENTS == set(_HOOK_STATUS_MAP)
+
+    def test_unmapped_event_is_logged_not_snapshotted(self, tmp_path, monkeypatch):
+        self._send(tmp_path, monkeypatch, {"hook_event_name": "UserPromptSubmit", "session_id": "s"})
+        self._send(tmp_path, monkeypatch, {"hook_event_name": "PreCompact", "session_id": "s"},
+                   backend="codex")
+        state = json.loads((tmp_path / "agents" / "hook_state_test-agent.json").read_text())
+        assert state["event"] == "UserPromptSubmit"
+        log = (tmp_path / "agents" / "hook_events_test-agent.jsonl").read_text().splitlines()
+        assert [json.loads(line)["event"] for line in log] == ["UserPromptSubmit", "PreCompact"]
+
+    def test_unmapped_first_event_writes_no_snapshot(self, tmp_path, monkeypatch):
+        self._send(tmp_path, monkeypatch, {"hook_event_name": "Mystery"})
+        assert not (tmp_path / "agents" / "hook_state_test-agent.json").exists()
