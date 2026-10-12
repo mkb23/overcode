@@ -84,12 +84,28 @@ class TestSessionIndexMatchesPerCallMethods:
         assert [p.id for p in index.parent_chain("cyc-1")] == ["cyc-2", "cyc-1"]
         assert index.children_count("cyc-1") == 1
 
+    def test_children_descendants_and_ancestry(self, tmp_path):
+        sm = _tree(tmp_path)
+        assert [c.id for c in sm.get_children("root-a")] == ["child-a1", "child-a2"]
+        assert [c.id for c in sm.get_children("great-a1xy")] == []
+        assert [d.id for d in sm.get_descendants("root-a")] == [
+            "child-a1", "child-a2", "grand-a1x", "great-a1xy",
+        ]
+        assert [d.id for d in sm.get_descendants("root-b")] == ["elsewhere"]
+        assert sm.is_ancestor("root-a", "great-a1xy")
+        assert not sm.is_ancestor("root-b", "great-a1xy")
+        assert not sm.is_ancestor("great-a1xy", "root-a")
+
+    def test_descendants_of_a_cycle_end(self, tmp_path):
+        sm = _tree(tmp_path)
+        assert [d.id for d in sm.get_descendants("cyc-1")] == ["cyc-2"]
+
     def test_of_builds_from_a_list_and_counts_lazily(self, tmp_path):
         sm = _tree(tmp_path)
         index = SessionIndex.of(sm.list_sessions())
-        assert index._children_count is None
+        assert index._children is None
         assert index.children_count("child-a1") == 1
-        assert index._children_count is not None
+        assert index._children is not None
         assert index.by_id["root-a"] is sm.get_session("root-a")
 
     def test_sessions_by_id_is_the_shared_snapshot(self, tmp_path):

@@ -3,7 +3,6 @@ Session state management for Overcode.
 """
 
 import os
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -362,14 +361,17 @@ class SessionIndex:
     a stat per ancestor and a scan of every entry (``get_children`` walks the
     whole table), so a tick was O(agents x entries) even with nothing
     changed (audit R5). Built once per tick from the snapshot the tick
-    already holds, each answer is a dict lookup; the values are exactly what
-    the per-call methods return over the same snapshot, and
-    ``SessionManager.get_parent_chain`` is this class's walk.
+    already holds, each answer is a dict lookup.
+
+    The one implementation of the hierarchy: ``SessionManager``'s
+    ``get_children``, ``get_descendants``, ``get_parent_chain``,
+    ``compute_depth`` and ``is_ancestor`` ask an index over its current
+    snapshot.
     """
 
     def __init__(self, by_id: Mapping[str, "Session"]):
         self.by_id = by_id
-        self._children_count: Optional[Counter] = None
+        self._children: Optional[Dict[str, List["Session"]]] = None
 
     @classmethod
     def of(cls, sessions: Iterable["Session"]) -> "SessionIndex":
@@ -404,13 +406,36 @@ class SessionIndex:
         """Depth in the hierarchy (0 = root), as ``compute_depth`` reports it."""
         return len(self.parent_chain(session.id))
 
+    def is_ancestor(self, ancestor_id: str, descendant_id: str) -> bool:
+        """Whether ``ancestor_id`` is on ``descendant_id``'s parent chain."""
+        return any(s.id == ancestor_id for s in self.parent_chain(descendant_id))
+
+    def children(self, session_id: str) -> List["Session"]:
+        """Direct children, in table order; the parent-to-children map is built on first use."""
+        if self._children is None:
+            children: Dict[str, List[Session]] = {}
+            for s in self.by_id.values():
+                if s.parent_session_id:
+                    children.setdefault(s.parent_session_id, []).append(s)
+            self._children = children
+        return list(self._children.get(session_id, ()))
+
     def children_count(self, session_id: str) -> int:
-        """``len(get_children(session_id))``; the count is built on first use."""
-        if self._children_count is None:
-            self._children_count = Counter(
-                s.parent_session_id for s in self.by_id.values() if s.parent_session_id
-            )
-        return self._children_count.get(session_id, 0)
+        """``len(children(session_id))``."""
+        return len(self.children(session_id))
+
+    def descendants(self, session_id: str) -> List["Session"]:
+        """Every descendant, breadth first (cycle-safe: each session once)."""
+        result: List[Session] = []
+        seen = {session_id}
+        queue = [session_id]
+        while queue:
+            for child in self.children(queue.pop(0)):
+                if child.id not in seen:
+                    seen.add(child.id)
+                    result.append(child)
+                    queue.append(child.id)
+        return result
 
 
 def rename_notice(requested: str, session: Optional["Session"]) -> Optional[str]:
@@ -1093,42 +1118,29 @@ class SessionManager(SessionArchiveMixin, GitContextMixin):
     # Agent Hierarchy (#244)
     # =========================================================================
 
-    def get_children(self, session_id: str) -> List[Session]:
-        """Get direct children of a session.
+    def index(self) -> SessionIndex:
+        """A ``SessionIndex`` over the current snapshot (one stat)."""
+        return SessionIndex(self._snapshot())
 
-        Scans all sessions for matching parent_session_id.
-        Typically <50 agents, so scanning is free.
-        """
-        all_sessions = self.list_sessions()
-        return [s for s in all_sessions if s.parent_session_id == session_id]
+    def get_children(self, session_id: str) -> List[Session]:
+        """Direct children of a session, in table order."""
+        return self.index().children(session_id)
 
     def get_descendants(self, session_id: str) -> List[Session]:
-        """Get all descendants of a session (recursive BFS)."""
-        result = []
-        queue = [session_id]
-        while queue:
-            parent_id = queue.pop(0)
-            children = self.get_children(parent_id)
-            result.extend(children)
-            queue.extend(c.id for c in children)
-        return result
+        """All descendants of a session, breadth first, over one snapshot."""
+        return self.index().descendants(session_id)
 
     def get_parent_chain(self, session_id: str) -> List[Session]:
-        """Walk up from session to root, returning list of ancestors.
-
-        Returns list ordered from immediate parent to root, over one
-        snapshot (see ``SessionIndex.parent_chain``).
-        """
-        return SessionIndex(self._snapshot()).parent_chain(session_id)
+        """Ancestors from the immediate parent up to the root, over one snapshot."""
+        return self.index().parent_chain(session_id)
 
     def compute_depth(self, session: Session) -> int:
-        """Compute depth of a session in the hierarchy (0 = root)."""
-        return len(self.get_parent_chain(session.id))
+        """Depth of a session in the hierarchy (0 = root)."""
+        return self.index().depth(session)
 
     def is_ancestor(self, ancestor_id: str, descendant_id: str) -> bool:
         """Check if ancestor_id is an ancestor of descendant_id."""
-        chain = self.get_parent_chain(descendant_id)
-        return any(s.id == ancestor_id for s in chain)
+        return self.index().is_ancestor(ancestor_id, descendant_id)
 
     def add_tags(self, session_id: str, tags: List[str]) -> List[str]:
         """Add tags to a session (#356).
