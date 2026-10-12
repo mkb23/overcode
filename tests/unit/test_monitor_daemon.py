@@ -235,9 +235,9 @@ class TestPresenceComponent:
 
     def test_get_current_state_falls_back_on_non_macos(self):
         """Should return classify_state result with idle=0 when macOS APIs unavailable."""
-        from overcode.monitor_daemon import PresenceComponent
+        from overcode.daemon_presence import PresenceComponent
 
-        with patch('overcode.monitor_daemon.MACOS_APIS_AVAILABLE', False):
+        with patch('overcode.daemon_presence.MACOS_APIS_AVAILABLE', False):
             component = PresenceComponent()
             state, idle, locked = component.get_current_state()
 
@@ -247,9 +247,9 @@ class TestPresenceComponent:
 
     def test_stop_handles_no_logger(self):
         """Should handle stop when no logger initialized."""
-        from overcode.monitor_daemon import PresenceComponent
+        from overcode.daemon_presence import PresenceComponent
 
-        with patch('overcode.monitor_daemon.MACOS_APIS_AVAILABLE', False):
+        with patch('overcode.daemon_presence.MACOS_APIS_AVAILABLE', False):
             component = PresenceComponent()
             component.stop()  # Should not raise
 

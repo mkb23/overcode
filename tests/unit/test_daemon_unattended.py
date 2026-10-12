@@ -50,17 +50,17 @@ def root(tmp_path, monkeypatch):
 
 def _daemon(root, tmux_session="agents"):
     """A MonitorDaemon whose presence logger is not started and whose tmux is a double."""
-    from overcode import monitor_daemon
+    from overcode import daemon_presence
 
-    original = monitor_daemon.PresenceLogger
-    monitor_daemon.PresenceLogger = None
+    original = daemon_presence.PresenceLogger
+    daemon_presence.PresenceLogger = None
     try:
         with (
             patch("overcode.monitor_daemon.SessionManager"),
         ):
             daemon = MonitorDaemon(tmux_session=tmux_session, tmux=MagicMock())
     finally:
-        monitor_daemon.PresenceLogger = original
+        daemon_presence.PresenceLogger = original
     return daemon
 
 

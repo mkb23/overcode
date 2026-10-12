@@ -124,11 +124,11 @@ class TestBoundedTmux:
         assert RealTmux(command_timeout=0.2)._command_timeout == 0.2
 
     def test_the_daemon_bounds_its_own_client(self, tmp_path, monkeypatch):
-        from overcode import monitor_daemon
+        from overcode import daemon_presence, monitor_daemon
         from overcode.implementations import TMUX_COMMAND_TIMEOUT_SECONDS
 
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "state"))
-        monkeypatch.setattr(monitor_daemon, "PresenceLogger", None)
+        monkeypatch.setattr(daemon_presence, "PresenceLogger", None)
         daemon = monitor_daemon.MonitorDaemon(tmux_session="robust", session_manager=MagicMock())
         assert daemon._tmux._command_timeout == TMUX_COMMAND_TIMEOUT_SECONDS
 

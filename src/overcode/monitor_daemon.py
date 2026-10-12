@@ -62,9 +62,6 @@ from .settings import (
     get_agent_history_path,
     get_activity_signal_path,
     get_supervisor_stats_path,
-    get_tui_heartbeat_path,
-    tui_attended_age_seconds,
-    TUI_ATTENDED_TOUCH_SECONDS,
 )
 from .config import get_monitor_daemon_config
 from .status_constants import (
@@ -83,7 +80,14 @@ from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
 from .pricing import calculate_cost_estimate
+from . import daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
+from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
+    MACOS_APIS_AVAILABLE,
+    NullPresence,
+    PresenceComponent,
+    TUI_ATTENDED_FRESHNESS,
+)
 from .monitor_daemon_core import (
     UNOBSERVED_GAP_SECONDS,
     calculate_time_accumulation,
@@ -106,21 +110,6 @@ from .tmux_utils import (
 
 if TYPE_CHECKING:
     from .protocols import StatusDetectorProtocol, TmuxInterface
-
-
-# Check for macOS presence APIs (optional)
-try:
-    from .presence_logger import (
-        MACOS_APIS_AVAILABLE,
-        get_current_presence_state,
-        PresenceLogger,
-        PresenceLoggerConfig,
-    )
-except ImportError:
-    MACOS_APIS_AVAILABLE = False
-    get_current_presence_state = None
-    PresenceLogger = None
-    PresenceLoggerConfig = None
 
 
 # Interval settings (in seconds)
@@ -171,11 +160,6 @@ STATE_FILE_LIVENESS_SECONDS = 10.0
 # observation time must stay well inside UNOBSERVED_GAP_SECONDS on disk, or
 # a quick restart would read as a gap and split every agent's episode.
 RECORDER_SEEN_SAVE_SECONDS = 30.0
-
-# The API server touches the attended file when it serves a sister's status
-# request (TUIs report on engine.sock instead); three missed touches and the
-# sister is not watching.
-TUI_ATTENDED_FRESHNESS = 3 * TUI_ATTENDED_TOUCH_SECONDS
 
 # The every-60-loops housekeeping (done-agent auto-archive, untracked window
 # count, terminated-session archive) was 120 s of wall clock at the 2 s
@@ -230,119 +214,6 @@ def _create_monitor_logger(session: str = "agents", log_file: Optional[Path] = N
         session_dir = ensure_session_dir(session)
         log_file = session_dir / "monitor_daemon.log"
     return BaseDaemonLogger(log_file)
-
-
-class PresenceComponent:
-    """Presence tracking (works on all platforms; richer on macOS with Quartz)."""
-
-    # TUI heartbeat is considered fresh if within this many seconds
-    TUI_HEARTBEAT_FRESHNESS = 60
-
-    def __init__(self, tmux_session: str = "agents"):
-        self.available = True
-        self._logger: Optional[PresenceLogger] = None
-        self._tmux_session = tmux_session
-        self._last_publish_time: Optional[datetime] = None
-
-        if PresenceLogger is not None:
-            heartbeat_path = str(get_tui_heartbeat_path(tmux_session))
-            config = PresenceLoggerConfig(
-                tui_heartbeat_path=heartbeat_path,
-                tui_heartbeat_freshness=self.TUI_HEARTBEAT_FRESHNESS,
-            )
-            self._logger = PresenceLogger(config)
-            self._logger.start()
-
-    def _is_tui_active(self) -> bool:
-        """Check if TUI heartbeat file has a recent timestamp."""
-        try:
-            heartbeat_path = get_tui_heartbeat_path(self._tmux_session)
-            if not heartbeat_path.exists():
-                return False
-            ts_str = heartbeat_path.read_text().strip()
-            ts = datetime.fromisoformat(ts_str)
-            age = (datetime.now() - ts).total_seconds()
-            return age <= self.TUI_HEARTBEAT_FRESHNESS
-        except (ValueError, OSError):
-            return False
-
-    def _detect_sleep(self) -> bool:
-        """Detect if the machine likely slept since last publish.
-
-        Returns True if the gap since last publish exceeds 2x the daemon interval.
-        """
-        now = datetime.now()
-        if self._last_publish_time is None:
-            self._last_publish_time = now
-            return False
-        gap = (now - self._last_publish_time).total_seconds()
-        slept = gap > 20  # Machine sleep produces gaps of 30s+; absolute threshold avoids false positives
-        self._last_publish_time = now
-        return slept
-
-    def get_current_state(self) -> tuple:
-        """Get current presence state.
-
-        Returns:
-            Tuple of (state, idle_seconds, locked) or (None, None, None) if unavailable.
-            On non-macOS, idle is always 0 and locked is always False, but sleep
-            detection and TUI heartbeat still produce meaningful state values.
-        """
-        try:
-            from .presence_logger import classify_state, DEFAULT_IDLE_THRESHOLD
-
-            tui_active = self._is_tui_active()
-            slept = self._detect_sleep()
-
-            if slept:
-                # Machine just woke — override to asleep state for this sample
-                state = classify_state(
-                    locked=False,
-                    idle_seconds=0.0,
-                    slept=True,
-                    idle_threshold=DEFAULT_IDLE_THRESHOLD,
-                    tui_active=False,
-                )
-                return state, 0.0, False
-
-            if MACOS_APIS_AVAILABLE and get_current_presence_state is not None:
-                return get_current_presence_state(tui_active=tui_active)
-
-            # Non-macOS: idle=0, locked=False; TUI heartbeat still works
-            state = classify_state(
-                locked=False,
-                idle_seconds=0.0,
-                slept=False,
-                idle_threshold=DEFAULT_IDLE_THRESHOLD,
-                tui_active=tui_active,
-            )
-            return state, 0.0, False
-        except Exception:
-            return None, None, None
-
-    def stop(self):
-        """Stop the presence logger if running."""
-        if self._logger is not None:
-            self._logger.stop()
-
-
-class NullPresence:
-    """Presence that knows nothing: no logger thread, no host idle time.
-
-    ``MonitorDaemon.for_test`` uses it, so no test tick depends on whether
-    someone is at the keyboard.
-    """
-
-    available = False
-
-    def _is_tui_active(self) -> bool:
-        return False
-
-    def get_current_state(self) -> tuple:
-        return None, None, None
-
-    def stop(self) -> None:
-        pass
 
 
 class MemoryLogger(BaseDaemonLogger):
@@ -1327,31 +1198,13 @@ class MonitorDaemon:
         return calculate_median(operation_times)
 
     def attendance(self) -> str:
-        """``"attended"`` or ``"unattended"``: is anyone watching this fleet?
-
-        Attended when a view on engine.sock says it is visible (the
-        split's TUI does, from its tmux attached-client check). Otherwise
-        unattended only when the fallbacks agree nobody is: this tick's
-        pane listing counted no client attached to the agents tmux session
-        (``session_attached``; an unknown count — listing failed — counts
-        as attended), the TUI keypress heartbeat is not fresh
-        (PresenceComponent's 60 s window), and the attended file is older
-        than TUI_ATTENDED_FRESHNESS: the API server touches it when it
-        serves a status request (a sister TUI's poll), so the daemon never
-        slows while a sister is watching this fleet.
-        """
-        engine = self._engine
-        if engine is not None and engine.attended:
-            return "attended"  # a view on engine.sock says it is being looked at
-        attached = self.session_attached
-        if attached is None or attached > 0:
-            return "attended"
-        if self.presence._is_tui_active():
-            return "attended"
-        age = tui_attended_age_seconds(self.tmux_session)
-        if age is not None and age <= TUI_ATTENDED_FRESHNESS:
-            return "attended"
-        return "unattended"
+        """``"attended"`` or ``"unattended"``: see :func:`daemon_presence.attendance`."""
+        return daemon_presence.attendance(
+            engine=self._engine,
+            session_attached=self.session_attached,
+            presence=self.presence,
+            tmux_session=self.tmux_session,
+        )
 
     def calculate_interval(
         self, sessions: list, all_waiting_user: bool, unattended: bool = False

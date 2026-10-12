@@ -217,13 +217,13 @@ class TestOnePersistentClient:
     def test_daemon_builds_one_real_client_when_none_is_injected(self, root):
         from overcode.implementations import TMUX_COMMAND_TIMEOUT_SECONDS
 
-        from overcode import monitor_daemon
+        from overcode import daemon_presence, monitor_daemon
         from overcode.status_detector import PollingStatusDetector
 
         sm = SessionManager(state_dir=root / "home" / ".overcode" / "sessions", skip_git_detection=True)
         polling = PollingStatusDetector(TMUX, tmux=FakeTmux(TMUX, {}))
         with patch("overcode.implementations.RealTmux") as real_tmux, \
-                patch.object(monitor_daemon, "PresenceLogger", None):
+                patch.object(daemon_presence, "PresenceLogger", None):
             monitor_daemon.MonitorDaemon(
                 tmux_session=TMUX, session_manager=sm, status_detector=polling)
         # ...with its reads bounded (a wedged tmux server must not hang a tick)
