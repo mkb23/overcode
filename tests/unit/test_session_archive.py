@@ -134,13 +134,14 @@ class TestJsonlArchive:
         assert [r["id"] for r in _lines(sm.archive_file)] == ["old-1", s.id]
         assert not sm.legacy_archive_file.exists()
 
-    def test_unreadable_legacy_archive_is_set_aside(self, tmp_path, capsys):
+    def test_unreadable_legacy_archive_is_set_aside(self, tmp_path, caplog):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         sm.legacy_archive_file.write_text("{not json")
-        assert sm.list_archived_sessions() == []
+        with caplog.at_level("WARNING", logger="overcode.session_archive"):
+            assert sm.list_archived_sessions() == []
         assert not sm.legacy_archive_file.exists()
         assert (tmp_path / "archive.json.unreadable").read_text() == "{not json"
-        assert "could not migrate" in capsys.readouterr().out
+        assert "could not migrate" in caplog.text
         assert sm.list_archived_sessions() == []  # and it is not retried
 
     def test_damaged_and_unfinished_lines_are_skipped_and_repaired(self, tmp_path):
