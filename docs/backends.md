@@ -1359,7 +1359,7 @@ have these — permission dialogs distinguish `waiting_approval` there):
   got it there.
 - **The input box has no fixed-width idle marker.** Unlike codex's single
   literal placeholder string ("Ask Codex to do anything"), grok's box
-  border is drawn at the terminal's width, so `GrokStatusPatterns` matches
+  border is drawn at the terminal's width, so grok's `ready_line_pattern` matches
   the *shape* of an empty input line (`│ ❯` with only whitespace between the
   glyph and the closing border) rather than one fixed string. The same
   constraint means `prompt_ready_chars()` — used once, right after launch,

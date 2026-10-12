@@ -15,6 +15,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+# Values that can never match, for a backend with no analogue of a Claude
+# Code concept (plan-mode approval, subagent/monitor counts, auto-accept bar).
+# NEVER is a regex; NEVER_SUBSTRING is for substring fields — NUL never
+# appears in captured pane text.
+NEVER = r"(?!)"
+NEVER_SUBSTRING = "\x00"
+
 # Regex to match ANSI escape sequences (colors, cursor movement, etc.)
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
@@ -191,29 +198,6 @@ class StatusPatterns:
         "plan requires approval",
     ])
 
-    # Daemon Claude: active work indicators
-    # Used by the supervisor daemon to check if daemon claude is still working.
-    # These are checked against raw pane content (case-sensitive).
-    daemon_active_indicators: List[str] = field(default_factory=lambda: [
-        '· ',
-        'Running…',
-        '(esc to interrupt',
-        '✽',
-    ])
-
-    # Daemon Claude: tool activity indicators
-    # Used by the supervisor daemon to check if daemon claude has started working.
-    # These are checked against raw pane content (case-sensitive).
-    daemon_tool_indicators: List[str] = field(default_factory=lambda: [
-        '⏺',
-        'Read(',
-        'Write(',
-        'Edit(',
-        'Bash(',
-        'Grep(',
-        'Glob(',
-    ])
-
     # Error patterns (#216)
     # These match the SPECIFIC formats Claude Code uses to display errors.
     # Previous broad patterns ("timeout", "429", etc.) caused false positives
@@ -302,6 +286,25 @@ class StatusPatterns:
         r')'
     )
 
+    # How far up the pane bottom ``is_busy`` / ``is_input_ready`` look by
+    # default (0 = every line handed in). Claude Code keeps its busy marker
+    # and single-line prompt at the very bottom; CLIs that paint chrome
+    # below the prompt (a footer, a placeholder, a box) need a wider window.
+    busy_tail: int = 2
+    ready_tail: int = 4
+
+    # Extra "input is ready" line shape, matched (``re.match``) against each
+    # stripped line of the ready window — for prompts that are neither a
+    # bare prompt char nor carry the autocomplete hint.
+    ready_line_pattern: str = NEVER
+
+    # Whether the live input hint (``input_hint_markers``) on its own means
+    # the prompt is ready — for CLIs that never draw a bare prompt glyph.
+    # ``input_hint_tail`` is how far up to look for it: None = the ready
+    # window, 0 = every line handed in.
+    input_hint_means_ready: bool = False
+    input_hint_tail: Optional[int] = None
+
     # Status-bar extraction — background bash tasks. "N shells" (Claude Code
     # 2.1.286+, e.g. "⏵⏵ bypass permissions on · 2 shells · ← 1 agent") and
     # the older "N bashes" are unambiguous; a lone "(running)" could be a
@@ -326,6 +329,7 @@ class StatusPatterns:
         """Compile the regex-shaped fields once per instance (hot paths)."""
         self.command_menu_re = re.compile(self.command_menu_pattern)
         self.tool_execution_re = re.compile(self.tool_execution_pattern)
+        self.ready_line_re = re.compile(self.ready_line_pattern)
         self.background_bash_count_re = re.compile(self.background_bash_count_pattern)
         self.subagent_count_re = re.compile(self.subagent_count_pattern)
         self.monitor_count_re = re.compile(self.monitor_count_pattern)
@@ -335,12 +339,15 @@ class StatusPatterns:
     # Phase-level variance between backends lives here, so the polling
     # detector's phase ordering stays backend-neutral.
 
-    def is_busy(self, lines: List[str], tail: int = 2) -> bool:
+    def is_busy(self, lines: List[str], tail: Optional[int] = None) -> bool:
         """True when the pane bottom shows an in-flight turn.
 
-        Only the last ``tail`` lines are checked — historical thinking output
-        persists in scrollback above the prompt and would false-match (#393).
+        Only the last ``tail`` lines (default ``busy_tail``) are checked —
+        historical thinking output persists in scrollback above the prompt
+        and would false-match (#393).
         """
+        if tail is None:
+            tail = self.busy_tail
         for line in lines[-tail:] if tail else lines:
             lowered = line.lower()
             if any(marker in lowered for marker in self.busy_markers):
@@ -387,8 +394,14 @@ class StatusPatterns:
                     return len(stripped) > 2
         return False
 
-    def is_input_ready(self, lines: List[str], tail: int = 4) -> bool:
-        """True when the pane bottom shows an input prompt awaiting the user."""
+    def is_input_ready(self, lines: List[str], tail: Optional[int] = None) -> bool:
+        """True when the pane bottom shows an input prompt awaiting the user.
+
+        Looks at the last ``tail`` lines (default ``ready_tail``). Callers
+        reach this only after ruling out a busy pane.
+        """
+        if tail is None:
+            tail = self.ready_tail
         for line in lines[-tail:] if tail else lines:
             stripped = line.strip()
             if self.is_prompt_char_line(stripped):
@@ -396,6 +409,12 @@ class StatusPatterns:
             if any(stripped.startswith(c) for c in self.prompt_chars):
                 if self.is_autocomplete_hint(stripped):
                     return True
+            if self.ready_line_re.match(stripped):
+                return True
+        if self.input_hint_means_ready:
+            hint_tail = tail if self.input_hint_tail is None else self.input_hint_tail
+            window = lines[-hint_tail:] if hint_tail else lines
+            return any(self.shows_input_hint(line) for line in window)
         return False
 
 

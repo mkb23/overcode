@@ -19,7 +19,7 @@ from overcode.backends import get_backend
 from overcode.backends.hermes import (
     HERMES_PATTERNS,
     HermesBackend,
-    HermesStatusPatterns,
+    is_ready_prompt_line,
 )
 from tests.tmux_doubles import MockTmux
 from overcode.status_constants import (
@@ -69,7 +69,7 @@ class TestPatternWiring:
     def test_patterns_are_not_claude_patterns(self):
         assert get_patterns("hermes") is not DEFAULT_PATTERNS
         assert HERMES_PATTERNS.prompt_chars == ["❯"]
-        assert isinstance(HERMES_PATTERNS, HermesStatusPatterns)
+        assert HERMES_PATTERNS.ready_tail == 10
 
 
 IDLE_FIXTURES = [
@@ -147,7 +147,7 @@ class TestPredicates:
         "   ❯ typed text   ",
     ])
     def test_ready_prompt_line(self, line):
-        assert HermesStatusPatterns.is_ready_prompt_line(line)
+        assert is_ready_prompt_line(line)
 
     @pytest.mark.parametrize("line", [
         "☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel",
@@ -156,7 +156,7 @@ class TestPredicates:
         "│ ❯ [1] Approve Once — proceed this time only                            │",
     ])
     def test_non_ready_prompt_lines(self, line):
-        assert not HermesStatusPatterns.is_ready_prompt_line(line)
+        assert not is_ready_prompt_line(line)
 
     def test_status_bar_and_busy_line_are_filtered_from_the_hash(self):
         assert is_status_bar_line(" ☤ gpt-5-mini │ 12.7K/400K │ [░░░░░░░░░░] 3% │ 12s │ ⏲ 8s", HERMES_PATTERNS)

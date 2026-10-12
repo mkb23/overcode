@@ -54,7 +54,6 @@ from .settings import (
 from .status_constants import (
     STATUS_WAITING_USER,
 )
-from .status_patterns import get_patterns
 from .tmux_manager import TmuxManager
 from .tmux_utils import DAEMON_CLAUDE_WINDOW_NAME, send_text_to_tmux_window
 from .history_reader import encode_project_path, read_token_usage_from_session_file
@@ -66,6 +65,14 @@ from .supervisor_daemon_core import (
     check_daemon_tool_activity,
     determine_supervisor_action,
 )
+
+# Daemon Claude's pane markers, matched case-sensitively against the raw
+# pane. The supervisor's meta-agent is always Claude Code, so these are not
+# per-backend.
+# Still working: spinner/status line, a running tool, the interrupt hint.
+DAEMON_ACTIVE_INDICATORS = ['· ', 'Running…', '(esc to interrupt', '✽']
+# Has started working: a tool call has been drawn.
+DAEMON_TOOL_INDICATORS = ['⏺', 'Read(', 'Write(', 'Edit(', 'Bash(', 'Grep(', 'Glob(']
 
 
 @dataclass
@@ -338,8 +345,7 @@ class SupervisorDaemon:
         if content is None:
             return True
 
-        patterns = get_patterns()
-        return check_daemon_output_completion(content, patterns.daemon_active_indicators)
+        return check_daemon_output_completion(content, DAEMON_ACTIVE_INDICATORS)
 
     def _has_daemon_claude_started(self) -> bool:
         """Check if daemon claude has started working."""
@@ -354,8 +360,7 @@ class SupervisorDaemon:
         if content is None:
             return False
 
-        patterns = get_patterns()
-        return check_daemon_tool_activity(content, patterns.daemon_tool_indicators)
+        return check_daemon_tool_activity(content, DAEMON_TOOL_INDICATORS)
 
     def wait_for_daemon_claude(
         self,

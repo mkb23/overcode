@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
 from ..hook_handler import GROK_HOOK_EVENTS, GROK_NOTIFICATION_MATCHERS
-from ..status_patterns import StatusPatterns
+from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     BackendCapability,
     DialogRule,
@@ -103,12 +103,6 @@ TESTED_GROK_RANGE = (TESTED_GROK_MIN, TESTED_GROK_MAX)
 
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
-# A regex that can never match, for Claude/opencode/codex concepts grok has
-# no analogue for (plan-mode approval, subagent/monitor/background-bash
-# counts, auto-accept bar).
-_NEVER = r"(?!)"
-# Same idea for substring fields — NUL never appears in captured pane text.
-_NEVER_SUBSTRING = "\x00"
 
 # The input box's empty-input line, e.g.
 #   │ ❯                                                            │
@@ -118,7 +112,7 @@ _NEVER_SUBSTRING = "\x00"
 # with nothing but whitespace on either side. Deliberately anchored on "│"
 # (U+2502, the input box's border) rather than "┃" (U+2503), which is the
 # *permission dialog's* quote-box glyph — the two never collide.
-_EMPTY_INPUT_BOX_RE = re.compile(r"^│\s*❯\s*│$")
+EMPTY_INPUT_BOX_PATTERN = r"^│\s*❯\s*│$"
 
 
 def parse_version(text: str) -> Optional[Tuple[int, int, int]]:
@@ -282,36 +276,22 @@ def hooks_installed() -> bool:
     return _is_ours(existing)
 
 
-class GrokStatusPatterns(StatusPatterns):
-    """grok chrome, with the busy/ready predicates widened like its siblings.
+GROK_PATTERNS = StatusPatterns(
+    # ── Pane-bottom windows ──────────────────────────────────────────────
+    # grok draws its input as a box (``│`` border) with a persistent
+    # telemetry opt-in banner and a dynamic branch/token-counter header
+    # above it. The busy footer hint line (``Shift+Tab:mode │ Esc:cancel │
+    # Ctrl+x:shortcuts``) sits at the pane's trailing edge whether busy or
+    # idle, so tail 2 would reach it; the widening is for the ready check,
+    # whose empty-box line can sit several lines above the bottom edge on a
+    # fresh launch, where the banner box pushes the mode-hint footer off
+    # screen entirely (idle_fresh.txt — only a right-aligned ``[stable]``
+    # channel tag). The empty box or the input hint both mean ready.
+    busy_tail=10,
+    ready_tail=10,
+    ready_line_pattern=EMPTY_INPUT_BOX_PATTERN,
+    input_hint_means_ready=True,
 
-    grok draws its input as a box (``│`` border) with a persistent telemetry
-    opt-in banner and a dynamic git-branch/token-counter header above it —
-    verified in the corpus, the busy footer hint line
-    (``Shift+Tab:mode │ Esc:cancel │ Ctrl+x:shortcuts``) sits exactly at the
-    pane's trailing edge whether busy or idle, so the base class's tail=2
-    default already reaches it; the widening here is for
-    ``is_input_ready()``, whose empty-box marker can sit several lines above
-    the bottom edge on a fresh (pre-interaction) launch, where the banner
-    box pushes the mode-hint footer off screen entirely (see
-    ``idle_fresh.txt`` — no hint bar at all, only a right-aligned
-    ``[stable]`` channel tag).
-    """
-
-    def is_busy(self, lines: List[str], tail: int = 10) -> bool:
-        return super().is_busy(lines, tail=tail)
-
-    def is_input_ready(self, lines: List[str], tail: int = 10) -> bool:
-        if super().is_input_ready(lines, tail=tail):
-            return True
-        window = lines[-tail:] if tail else lines
-        for line in window:
-            if _EMPTY_INPUT_BOX_RE.match(line.strip()):
-                return True
-        return any(self.shows_input_hint(line) for line in window)
-
-
-GROK_PATTERNS = GrokStatusPatterns(
     # ── Permission dialog ────────────────────────────────────────────────
     # From permission_required.txt:
     #   ┃  1 (●) Yes, and don't ask again for anything (always-approve mode)
@@ -360,7 +340,7 @@ GROK_PATTERNS = GrokStatusPatterns(
 
     # The input box's leading glyph. Never appears bare on its own line —
     # grok always pairs it with the box's "│" border — see
-    # GrokStatusPatterns.is_input_ready for how idle is actually detected.
+    # input_hint_means_ready for how idle is actually detected.
     prompt_chars=["❯"],
     line_prefixes=["❯ ", "◆ ", "┃  ◆ ", "┃  ", "- "],
 
@@ -378,23 +358,8 @@ GROK_PATTERNS = GrokStatusPatterns(
     # diverge here without also changing this fixture-grounded value.
     command_menu_pattern=r"^\s*/[\w-]+\s{2,}\S",
 
-    spawn_failure_patterns=[
-        "command not found",
-        "not found:",
-        "no such file or directory",
-        "permission denied",
-        "cannot execute",
-        "is not recognized",
-    ],
-
     # grok has no plan-mode / "approve this plan" stage.
-    approval_patterns=[_NEVER],
-
-    # Supervisor-daemon fields. The supervisor's own meta-agent stays Claude
-    # (design doc predecessor §2.4), so these are only meaningful if that
-    # ever changes.
-    daemon_active_indicators=["esc:cancel", "waiting for response"],
-    daemon_tool_indicators=["◆ ", "┃  ◆ "],
+    approval_patterns=[NEVER],
 
     # UNVERIFIED: error_bad_model.txt is a *headless* (`-p`/`--single`)
     # capture, not a live TUI error state — the interactive TUI was
@@ -423,7 +388,7 @@ GROK_PATTERNS = GrokStatusPatterns(
     # post-interaction, mid-turn, even the never-visited-directory trust
     # check) and absent the moment the process exits (exited_shell.txt,
     # error_bad_model.txt have no box at all). This is what
-    # GrokStatusPatterns.is_input_ready falls back to alongside the
+    # input_hint_means_ready falls back to alongside the
     # empty-box regex.
     input_hint_markers=["╭"],
 
@@ -441,8 +406,8 @@ GROK_PATTERNS = GrokStatusPatterns(
     # only while the slash-menu is open, not an inline autocomplete overlay
     # on a partially-typed line — a different concept from Claude's hint,
     # so it is not wired here either.
-    autocomplete_hint_symbol=_NEVER_SUBSTRING,
-    autocomplete_hint_word=_NEVER_SUBSTRING,
+    autocomplete_hint_symbol=NEVER_SUBSTRING,
+    autocomplete_hint_word=NEVER_SUBSTRING,
 
     # Hook-detector-only field (Phase 4 wiring): downgrades a stuck RUNNING
     # to waiting_user when the user interrupted the turn from the keyboard.
@@ -451,28 +416,15 @@ GROK_PATTERNS = GrokStatusPatterns(
     # omits it.
     interrupt_prompt_markers=["Turn cancelled by user"],
 
-    # Unused while execution_indicators is empty, but harmless to leave at
-    # the inherited default shape.
-    tool_execution_pattern=(
-        r'^\w+\s+'
-        r'(?:'
-        r'\w+\('
-        r'|"'
-        r"|'"
-        r'|\S+\.\w{1,10}'
-        r'|\S+/'
-        r')'
-    ),
-
     # No analogue: grok's footer carries the model/effort/mode pill and a
     # token counter, never counts of background bashes, subagents,
     # monitors, or an auto-accept toggle.
-    background_bash_count_pattern=_NEVER,
-    background_bash_marker=_NEVER_SUBSTRING,
-    single_task_running_marker=_NEVER_SUBSTRING,
-    subagent_count_pattern=_NEVER,
-    monitor_count_pattern=_NEVER,
-    auto_accept_pattern=_NEVER,
+    background_bash_count_pattern=NEVER,
+    background_bash_marker=NEVER_SUBSTRING,
+    single_task_running_marker=NEVER_SUBSTRING,
+    subagent_count_pattern=NEVER,
+    monitor_count_pattern=NEVER,
+    auto_accept_pattern=NEVER,
 )
 
 
@@ -853,7 +805,6 @@ __all__ = [
     "GROK_PATTERNS",
     "GrokBackend",
     "GrokNotFoundError",
-    "GrokStatusPatterns",
     "TESTED_GROK_MAX",
     "TESTED_GROK_MIN",
     "TESTED_GROK_RANGE",

@@ -35,8 +35,8 @@ what broke.
 (the placeholder rotates between launches and turns — "Draft a reply to the
 last email in my inbox", "Summarize what's in this folder", "Explain this
 error and how to fix it", "Research this topic and write me a brief"), so an
-exact-line match against `❯` never fires. `HermesStatusPatterns.
-is_ready_prompt_line` matches "`❯` alone or `❯ ` + anything", and
+exact-line match against `❯` never fires. `hermes.is_ready_prompt_line`
+matches "`❯` alone or `❯ ` + anything", and
 `HermesBackend.prompt_ready_line` hands the launcher the same predicate.
 The other two spellings of the input line carry a leading glyph and never
 match it: `☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel` while a

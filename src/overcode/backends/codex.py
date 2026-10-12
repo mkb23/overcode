@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
 from ..hook_handler import CODEX_HOOK_EVENTS
-from ..status_patterns import StatusPatterns
+from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     BackendCapability,
     DialogRule,
@@ -90,12 +90,6 @@ TESTED_CODEX_RANGE = (TESTED_CODEX_MIN, TESTED_CODEX_MAX)
 
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
-# A regex that can never match, for Claude/opencode concepts codex has no
-# analogue for (plan-mode approval, slash-command menu chrome — never
-# captured, subagent/monitor/background-bash counts, auto-accept bar).
-_NEVER = r"(?!)"
-# Same idea for substring fields — NUL never appears in captured pane text.
-_NEVER_SUBSTRING = "\x00"
 
 
 def parse_version(text: str) -> Optional[Tuple[int, int, int]]:
@@ -119,32 +113,19 @@ def version_in_tested_range(version: str) -> Optional[bool]:
     return low <= parsed < high
 
 
-class CodexStatusPatterns(StatusPatterns):
-    """codex chrome, with both "is the pane bottom busy/ready?" predicates widened.
+CODEX_PATTERNS = StatusPatterns(
+    # ── Pane-bottom windows ──────────────────────────────────────────────
+    # codex paints the (dormant) input placeholder — "Ask Codex to do
+    # anything" — and the model/dir footer *below* the spinner line even
+    # while a turn is in flight (busy.txt: the busy marker sits 2-3
+    # non-blank lines above the pane's trailing edge), and it never draws a
+    # bare prompt glyph for an empty input — only that placeholder inside
+    # the box. So both predicates look at the full 10-line window
+    # detect_status() hands them, and the placeholder alone means ready.
+    busy_tail=10,
+    ready_tail=10,
+    input_hint_means_ready=True,
 
-    codex paints the (dormant) input placeholder — "Ask Codex to do
-    anything" — and the model/dir footer *below* the spinner line even while
-    a turn is in flight (verified in ``busy.txt``: the busy marker sits 2-3
-    non-blank lines above the pane's trailing edge, not at it), and it never
-    draws a bare prompt glyph for an empty input — only that placeholder text
-    inside the box. Both defaults are default-tail 2/4 in the base class,
-    tuned for Claude Code's single-line prompt; codex needs the same
-    widening opencode's ``is_input_ready`` override needed, applied to the
-    full 10-line window ``detect_status()`` already hands these predicates
-    (nothing beyond that window is ever visible to either check, so widening
-    to it is bounded, not a blank cheque).
-    """
-
-    def is_busy(self, lines: List[str], tail: int = 10) -> bool:
-        return super().is_busy(lines, tail=tail)
-
-    def is_input_ready(self, lines: List[str], tail: int = 10) -> bool:
-        if super().is_input_ready(lines, tail=tail):
-            return True
-        return any(self.shows_input_hint(line) for line in lines[-tail:])
-
-
-CODEX_PATTERNS = CodexStatusPatterns(
     # ── Permission dialog ────────────────────────────────────────────────
     # From permission_required.txt:
     #   Would you like to run the following command?
@@ -189,7 +170,7 @@ CODEX_PATTERNS = CodexStatusPatterns(
 
     # The input line's leading glyph. Never appears bare — codex always
     # draws placeholder or echoed-prompt text after it — see
-    # CodexStatusPatterns.is_input_ready for how idle is actually detected.
+    # input_hint_means_ready for how idle is actually detected.
     prompt_chars=["›"],
     line_prefixes=["› ", "• ", "  └ ", "- "],
 
@@ -201,25 +182,10 @@ CODEX_PATTERNS = CodexStatusPatterns(
     status_bar_prefixes=[],
 
     # UNVERIFIED: no slash-command menu was captured in the Phase 0 corpus.
-    command_menu_pattern=_NEVER,
-
-    spawn_failure_patterns=[
-        "command not found",
-        "not found:",
-        "no such file or directory",
-        "permission denied",
-        "cannot execute",
-        "is not recognized",
-    ],
+    command_menu_pattern=NEVER,
 
     # codex has no plan-mode / "approve this plan" stage.
-    approval_patterns=[_NEVER],
-
-    # Supervisor-daemon fields. The supervisor's own meta-agent stays Claude
-    # (design doc predecessor §2.4), so these are only meaningful if that
-    # ever changes.
-    daemon_active_indicators=["esc to interrupt"],
-    daemon_tool_indicators=["• ", "■ "],
+    approval_patterns=[NEVER],
 
     # UNVERIFIED: the only error-shaped capture (error_bad_model.txt) is a
     # turn-level failure codex recovers from on its own, settling right back
@@ -247,7 +213,7 @@ CODEX_PATTERNS = CodexStatusPatterns(
 
     # The idle placeholder text — present only while the TUI is live and
     # accepting input, never in scrollback after codex exits (exited_shell.txt
-    # has no trace of it). This is what CodexStatusPatterns.is_input_ready
+    # has no trace of it). This is what input_hint_means_ready
     # falls back to, since codex never draws a bare prompt glyph.
     input_hint_markers=["Ask Codex to do anything"],
 
@@ -260,8 +226,8 @@ CODEX_PATTERNS = CodexStatusPatterns(
     prompt_continuation_chars=[" "],
 
     # No "↵ to send" style hint exists in codex's input box.
-    autocomplete_hint_symbol=_NEVER_SUBSTRING,
-    autocomplete_hint_word=_NEVER_SUBSTRING,
+    autocomplete_hint_symbol=NEVER_SUBSTRING,
+    autocomplete_hint_word=NEVER_SUBSTRING,
 
     # Hook-detector-only field (Phase 2 wiring): downgrades a stuck RUNNING
     # to waiting_user when the user interrupted the turn from the keyboard.
@@ -270,27 +236,14 @@ CODEX_PATTERNS = CodexStatusPatterns(
     # during the permission dialog produces the same marker (Appendix A).
     interrupt_prompt_markers=["Conversation interrupted"],
 
-    # Unused while execution_indicators is empty, but harmless to leave at
-    # the inherited default shape.
-    tool_execution_pattern=(
-        r'^\w+\s+'
-        r'(?:'
-        r'\w+\('
-        r'|"'
-        r"|'"
-        r'|\S+\.\w{1,10}'
-        r'|\S+/'
-        r')'
-    ),
-
     # No analogue: codex's footer carries model/dir/effort, never counts of
     # background bashes, subagents, monitors, or an auto-accept toggle.
-    background_bash_count_pattern=_NEVER,
-    background_bash_marker=_NEVER_SUBSTRING,
-    single_task_running_marker=_NEVER_SUBSTRING,
-    subagent_count_pattern=_NEVER,
-    monitor_count_pattern=_NEVER,
-    auto_accept_pattern=_NEVER,
+    background_bash_count_pattern=NEVER,
+    background_bash_marker=NEVER_SUBSTRING,
+    single_task_running_marker=NEVER_SUBSTRING,
+    subagent_count_pattern=NEVER,
+    monitor_count_pattern=NEVER,
+    auto_accept_pattern=NEVER,
 )
 
 
@@ -612,7 +565,6 @@ __all__ = [
     "CODEX_PATTERNS",
     "CodexBackend",
     "CodexNotFoundError",
-    "CodexStatusPatterns",
     "TESTED_CODEX_MAX",
     "TESTED_CODEX_MIN",
     "TESTED_CODEX_RANGE",

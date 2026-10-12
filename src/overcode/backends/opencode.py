@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
-from ..status_patterns import StatusPatterns
+from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     BackendCapability,
     DialogRule,
@@ -71,11 +71,6 @@ PLUGIN_MARKER = "OVERCODE-PLUGIN-MARKER: overcode-telemetry"
 
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
-# A regex that can never match, for the Claude concepts opencode has no
-# analogue for (plan-mode approval, subagent/monitor counts, auto-accept bar).
-_NEVER = r"(?!)"
-# Same idea for substring fields — NUL never appears in captured pane text.
-_NEVER_SUBSTRING = "\x00"
 
 # Ancillary (post-Phase-5) true bypass: every per-tool key opencode's own
 # published config schema (https://opencode.ai/config.json,
@@ -228,8 +223,8 @@ def plugin_installed(start_directory: Optional[str]) -> bool:
         return False
 
 
-class OpencodeStatusPatterns(StatusPatterns):
-    """opencode chrome, with the "is the prompt ready?" predicate widened.
+def opencode_patterns(**fields) -> StatusPatterns:
+    """StatusPatterns with opencode's input-box windows (shared with opencode2).
 
     opencode draws its input as a box (``┃`` gutter) rather than a single
     prompt line, and parks a model footer plus a bottom info bar under it,
@@ -238,19 +233,18 @@ class OpencodeStatusPatterns(StatusPatterns):
     still: the box is vertically centred with blank filler beneath, and the
     detector's bottom-10-lines slice never reaches it at all.
 
-    Hence two widenings: a deeper scan, and a fallback on the hint bar,
-    which opencode draws only while the TUI is accepting input. Callers
-    reach this predicate only after ruling out a busy pane, so "live and
-    not working" genuinely means "waiting for the user".
+    Hence two widenings: a deeper scan, and a fallback on the hint bar
+    anywhere in the lines, which opencode draws only while the TUI is
+    accepting input. Callers reach the ready check only after ruling out a
+    busy pane, so "live and not working" genuinely means "waiting for the
+    user".
     """
-
-    def is_input_ready(self, lines: List[str], tail: int = 8) -> bool:
-        if super().is_input_ready(lines, tail=tail):
-            return True
-        return any(self.shows_input_hint(line) for line in lines)
+    return StatusPatterns(
+        ready_tail=8, input_hint_means_ready=True, input_hint_tail=0, **fields,
+    )
 
 
-OPENCODE_PATTERNS = OpencodeStatusPatterns(
+OPENCODE_PATTERNS = opencode_patterns(
     # ── Permission dialog ────────────────────────────────────────────────
     # △ Permission required
     #   # Shell command
@@ -299,22 +293,8 @@ OPENCODE_PATTERNS = OpencodeStatusPatterns(
     # Slash menu rows are drawn inside the box: "┃ /exit    Exit the app   ┃"
     command_menu_pattern=r"^\s*┃?\s*/[\w-]+\s{2,}\S",
 
-    spawn_failure_patterns=[
-        "command not found",
-        "not found:",
-        "no such file or directory",
-        "permission denied",
-        "cannot execute",
-        "is not recognized",
-    ],
-
     # opencode has no plan-mode / "approve this plan" stage.
-    approval_patterns=[_NEVER],
-
-    # Supervisor-daemon fields. The supervisor's own meta-agent stays Claude
-    # (design §2.4), so these are only meaningful if that ever changes.
-    daemon_active_indicators=["esc interrupt", "esc again to interrupt"],
-    daemon_tool_indicators=["▣", "→ ", "✱ ", "$ "],
+    approval_patterns=[NEVER],
 
     # opencode renders provider/tool errors as prose inside a red-bordered
     # box using the same ┃ gutter as everything else — the colour is the only
@@ -361,8 +341,8 @@ OPENCODE_PATTERNS = OpencodeStatusPatterns(
     prompt_continuation_chars=[" "],
 
     # No "↵ to send" hint exists in opencode's input box.
-    autocomplete_hint_symbol=_NEVER_SUBSTRING,
-    autocomplete_hint_word=_NEVER_SUBSTRING,
+    autocomplete_hint_symbol=NEVER_SUBSTRING,
+    autocomplete_hint_word=NEVER_SUBSTRING,
 
     # Hook-detector-only field: it downgrades a stuck RUNNING to waiting_user
     # when the user has interrupted the turn from the keyboard.
@@ -373,25 +353,14 @@ OPENCODE_PATTERNS = OpencodeStatusPatterns(
     # busy hint ("esc again to interrupt") never contains it.
     interrupt_prompt_markers=["· interrupted"],
 
-    tool_execution_pattern=(
-        r'^\w+\s+'
-        r'(?:'
-        r'\w+\('
-        r'|"'
-        r"|'"
-        r'|\S+\.\w{1,10}'
-        r'|\S+/'
-        r')'
-    ),
-
     # No analogue: opencode's bottom bar carries tokens/cost, never counts of
     # background bashes, subagents, monitors, or an auto-accept toggle.
-    background_bash_count_pattern=_NEVER,
-    background_bash_marker=_NEVER_SUBSTRING,
-    single_task_running_marker=_NEVER_SUBSTRING,
-    subagent_count_pattern=_NEVER,
-    monitor_count_pattern=_NEVER,
-    auto_accept_pattern=_NEVER,
+    background_bash_count_pattern=NEVER,
+    background_bash_marker=NEVER_SUBSTRING,
+    single_task_running_marker=NEVER_SUBSTRING,
+    subagent_count_pattern=NEVER,
+    monitor_count_pattern=NEVER,
+    auto_accept_pattern=NEVER,
 )
 
 
@@ -744,7 +713,7 @@ __all__ = [
     "PLUGIN_MARKER",
     "OpencodeBackend",
     "OpencodeNotFoundError",
-    "OpencodeStatusPatterns",
+    "opencode_patterns",
     "TESTED_OPENCODE_MAX",
     "TESTED_OPENCODE_MIN",
     "TESTED_OPENCODE_RANGE",

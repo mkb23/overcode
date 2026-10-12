@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
-from ..status_patterns import StatusPatterns
+from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     BackendCapability,
     DialogRule,
@@ -69,10 +69,6 @@ TESTED_HERMES_RANGE = (TESTED_HERMES_MIN, TESTED_HERMES_MAX)
 
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
-# A regex that can never match, for Claude/opencode concepts Hermes has no
-# analogue for.
-_NEVER = r"(?!)"
-_NEVER_SUBSTRING = "\x00"
 
 # The plugin's on-disk identity. Both bundled files carry this marker so a
 # user-authored plugin dir of the same name is never overwritten.
@@ -85,6 +81,10 @@ PLUGIN_FILES = ("plugin.yaml", "__init__.py")
 # inbox"), a busy turn swaps the whole line for "☤ ❯ msg=interrupt · /queue
 # · /bg · /steer · Ctrl+C cancel", and an open dialog shows "⚠ ❯".
 PROMPT_GLYPH = "❯"
+# The live input line: the glyph alone or followed by a space (matched
+# against the stripped line).
+READY_PROMPT_LINE_PATTERN = rf"{PROMPT_GLYPH}(?: |$)"
+READY_PROMPT_LINE_RE = re.compile(READY_PROMPT_LINE_PATTERN)
 
 
 def parse_version(text: str) -> Optional[Tuple[int, int, int]]:
@@ -336,35 +336,27 @@ def configured_context_length(config: Optional[dict] = None) -> Optional[int]:
 
 # ── status patterns ───────────────────────────────────────────────────────
 
-class HermesStatusPatterns(StatusPatterns):
-    """Hermes's classic-CLI chrome, with both pane-bottom predicates widened.
-
-    The prompt_toolkit REPL keeps two chrome lines *below* the input line
-    (a rule and, above the input, the ``☤`` status bar), and the input line
-    itself never carries a bare glyph — so the base class's default-tail
-    2/4 windows and exact-glyph match both miss. Same widening codex and
-    opencode needed, bounded to the 10-line window ``detect_status`` hands
-    these predicates.
+def is_ready_prompt_line(line: str) -> bool:
+    """True for the live input line — ``❯`` alone or ``❯ <placeholder or
+    typed text>``. The busy (``☤ ❯ …``) and dialog (``⚠ ❯``) variants
+    carry a leading glyph and never match; so do the ``│ ❯ 1. Allow
+    once`` selector rows inside a boxed dialog.
     """
-
-    def is_busy(self, lines: List[str], tail: int = 10) -> bool:
-        return super().is_busy(lines, tail=tail)
-
-    def is_input_ready(self, lines: List[str], tail: int = 10) -> bool:
-        return any(self.is_ready_prompt_line(line) for line in lines[-tail:])
-
-    @staticmethod
-    def is_ready_prompt_line(line: str) -> bool:
-        """True for the live input line — ``❯`` alone or ``❯ <placeholder or
-        typed text>``. The busy (``☤ ❯ …``) and dialog (``⚠ ❯``) variants
-        carry a leading glyph and never match; so do the ``│ ❯ 1. Allow
-        once`` selector rows inside a boxed dialog.
-        """
-        stripped = line.strip()
-        return stripped == PROMPT_GLYPH or stripped.startswith(f"{PROMPT_GLYPH} ")
+    return READY_PROMPT_LINE_RE.match(line.strip()) is not None
 
 
-HERMES_PATTERNS = HermesStatusPatterns(
+HERMES_PATTERNS = StatusPatterns(
+    # ── Pane-bottom windows ──────────────────────────────────────────────
+    # The prompt_toolkit REPL keeps two chrome lines *below* the input line
+    # (a rule and, above the input, the ``☤`` status bar), and the input
+    # line itself never carries a bare glyph — so the default 2/4 windows
+    # and exact-glyph match both miss. Both predicates look at the 10-line
+    # window detect_status hands them, and the ready check accepts
+    # ``❯ <text>`` (is_ready_prompt_line).
+    busy_tail=10,
+    ready_tail=10,
+    ready_line_pattern=READY_PROMPT_LINE_PATTERN,
+
     # ── Permission dialog ────────────────────────────────────────────────
     # From permission_required.txt (approvals.mode: manual):
     #   ╭────────────────────────────────────────────────╮
@@ -425,20 +417,8 @@ HERMES_PATTERNS = HermesStatusPatterns(
     # matches Hermes's menu rows as-is.
     command_menu_pattern=r"^\s*/[\w-]+\s{2,}\S",
 
-    spawn_failure_patterns=[
-        "command not found",
-        "not found:",
-        "no such file or directory",
-        "permission denied",
-        "cannot execute",
-        "is not recognized",
-    ],
-
     # No plan-mode / "approve this plan" stage.
-    approval_patterns=[_NEVER],
-
-    daemon_active_indicators=["ctrl+c cancel"],
-    daemon_tool_indicators=["┊ ", "● "],
+    approval_patterns=[NEVER],
 
     # A provider failure ("OpenAI API rejected your API key … Provider
     # said: HTTP 401") settles straight back at the prompt in the same
@@ -478,8 +458,8 @@ HERMES_PATTERNS = HermesStatusPatterns(
     prompt_continuation_chars=[" "],
 
     # No "↵ to send" style hint in Hermes's input box.
-    autocomplete_hint_symbol=_NEVER_SUBSTRING,
-    autocomplete_hint_word=_NEVER_SUBSTRING,
+    autocomplete_hint_symbol=NEVER_SUBSTRING,
+    autocomplete_hint_word=NEVER_SUBSTRING,
 
     # interrupted.txt / interrupted_api.txt: a single C-c mid-turn prints
     # "⚡ Interrupted during API call." and "Operation interrupted: waiting
@@ -487,26 +467,15 @@ HERMES_PATTERNS = HermesStatusPatterns(
     # plugin's Interrupt event covers the hooks path, this the polling one.
     interrupt_prompt_markers=["Operation interrupted", "Interrupted during API call"],
 
-    tool_execution_pattern=(
-        r'^\w+\s+'
-        r'(?:'
-        r'\w+\('
-        r'|"'
-        r"|'"
-        r'|\S+\.\w{1,10}'
-        r'|\S+/'
-        r')'
-    ),
-
     # No analogue: Hermes's status bar carries model/context/cost/timers,
     # never counts of background bashes, subagents, monitors, or an
     # auto-accept toggle (its "⚙ 1" is the tool-call counter).
-    background_bash_count_pattern=_NEVER,
-    background_bash_marker=_NEVER_SUBSTRING,
-    single_task_running_marker=_NEVER_SUBSTRING,
-    subagent_count_pattern=_NEVER,
-    monitor_count_pattern=_NEVER,
-    auto_accept_pattern=_NEVER,
+    background_bash_count_pattern=NEVER,
+    background_bash_marker=NEVER_SUBSTRING,
+    single_task_running_marker=NEVER_SUBSTRING,
+    subagent_count_pattern=NEVER,
+    monitor_count_pattern=NEVER,
+    auto_accept_pattern=NEVER,
 )
 
 
@@ -696,7 +665,7 @@ class HermesBackend:
         glyph followed by a rotating placeholder", which is the only idle
         shape Hermes ever draws.
         """
-        return HermesStatusPatterns.is_ready_prompt_line(line)
+        return is_ready_prompt_line(line)
 
     def status_patterns(self) -> StatusPatterns:
         return HERMES_PATTERNS
@@ -858,7 +827,7 @@ __all__ = [
     "HERMES_PATTERNS",
     "HermesBackend",
     "HermesNotFoundError",
-    "HermesStatusPatterns",
+    "is_ready_prompt_line",
     "PLUGIN_MARKER",
     "PLUGIN_NAME",
     "PROMPT_GLYPH",

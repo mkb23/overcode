@@ -762,3 +762,43 @@ class TestExtractFromPane:
         result = extract_from_pane(content)
         assert result.background_bash_count == 0
         assert result.bash_count_ambiguous is False
+
+
+class TestPaneBottomWindows:
+    """busy_tail / ready_tail / ready_line_pattern / input_hint_* fields."""
+
+    def test_default_windows_are_claudes(self):
+        p = StatusPatterns()
+        assert p.is_busy(["esc to interrupt", "", ""]) is False
+        assert p.is_busy(["", "esc to interrupt", ""]) is True
+        assert p.is_input_ready([">", "", "", "", ""]) is False
+        assert p.is_input_ready([">", "", "", ""]) is True
+
+    def test_widened_windows(self):
+        p = StatusPatterns(busy_tail=10, ready_tail=10)
+        assert p.is_busy(["esc to interrupt"] + [""] * 9) is True
+        assert p.is_input_ready([">"] + [""] * 9) is True
+        assert p.is_input_ready([">"] + [""] * 10) is False
+
+    def test_explicit_tail_overrides_field(self):
+        p = StatusPatterns(busy_tail=10)
+        assert p.is_busy(["esc to interrupt", ""], tail=1) is False
+        assert p.is_busy(["esc to interrupt"] + [""] * 20, tail=0) is True
+
+    def test_ready_line_pattern(self):
+        p = StatusPatterns(ready_line_pattern=r"❯(?: |$)")
+        assert p.is_input_ready(["  ❯ typed text  "]) is True
+        assert p.is_input_ready(["☤ ❯ busy"]) is False
+        assert StatusPatterns().is_input_ready(["❯ typed text"]) is False
+
+    def test_input_hint_means_ready_uses_ready_window(self):
+        p = StatusPatterns(ready_tail=2, input_hint_means_ready=True)
+        assert p.is_input_ready(["? for shortcuts", "x"]) is True
+        assert p.is_input_ready(["? for shortcuts", "x", "y"]) is False
+
+    def test_input_hint_tail_zero_scans_everything(self):
+        p = StatusPatterns(ready_tail=2, input_hint_means_ready=True, input_hint_tail=0)
+        assert p.is_input_ready(["? for shortcuts"] + ["x"] * 20) is True
+
+    def test_hint_alone_is_not_ready_by_default(self):
+        assert StatusPatterns().is_input_ready(["? for shortcuts"]) is False

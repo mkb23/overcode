@@ -23,20 +23,16 @@ input-box gutter, ``╹▀`` bottom border, ``ctrl+p commands`` footer hint,
 chrome, and the ``· interrupted`` suffix on a keyboard-abandoned turn.
 """
 
-from .opencode import OpencodeStatusPatterns
+from ..status_patterns import NEVER, NEVER_SUBSTRING
+from .opencode import opencode_patterns
 
-# A regex that can never match, for the Claude concepts opencode2 has no
-# analogue for (plan-mode approval, subagent/monitor counts, auto-accept).
-_NEVER = r"(?!)"
-# Same idea for substring fields — NUL never appears in captured pane text.
-_NEVER_SUBSTRING = "\x00"
 
 # opencode2 is a rolling preview with no stable tags, so — unlike v1's
 # TESTED_OPENCODE_RANGE — there is no version range these patterns are
 # verified against, only the build the corpus was captured from.
 OPENCODE2_CORPUS_BUILD = "v0.0.0-dev-19272"
 
-OPENCODE2_PATTERNS = OpencodeStatusPatterns(
+OPENCODE2_PATTERNS = opencode_patterns(
     # ── Permission dialog ────────────────────────────────────────────────
     # permission_required.txt:
     #   ┃  △ Permission required
@@ -103,26 +99,8 @@ OPENCODE2_PATTERNS = OpencodeStatusPatterns(
     #   ┃ /exit                     Exit the app                                       ┃
     command_menu_pattern=r"^\s*┃?\s*/[\w-]+\s{2,}\S",
 
-    # Carried from v1: shell-level spawn errors, backend-independent.
-    spawn_failure_patterns=[
-        "command not found",
-        "not found:",
-        "no such file or directory",
-        "permission denied",
-        "cannot execute",
-        "is not recognized",
-    ],
-
     # opencode2 has no plan-mode / "approve this plan" stage.
-    approval_patterns=[_NEVER],
-
-    # Supervisor-daemon fields (same caveat as v1: only meaningful if the
-    # supervisor's own meta-agent ever stops being Claude). The busy
-    # footer hints are corpus-proven (busy.txt); the tool glyphs are the
-    # v2 corpus's — v1's "▣"/"✱" are gone, the v2 corpus uses "→"
-    # (→ Skill), "+" (+ Thought) and "$" ($ echo hi2 inside the box).
-    daemon_active_indicators=["esc interrupt", "esc again to interrupt"],
-    daemon_tool_indicators=["→ ", "+ ", "$ "],
+    approval_patterns=[NEVER],
 
     # error_api_key.txt renders a provider failure as a plain transcript
     # line — no red box glyph survives ANSI stripping:
@@ -188,8 +166,8 @@ OPENCODE2_PATTERNS = OpencodeStatusPatterns(
 
     # No "↵ to send" hint exists in opencode2's input box (no corpus pane
     # shows one).
-    autocomplete_hint_symbol=_NEVER_SUBSTRING,
-    autocomplete_hint_word=_NEVER_SUBSTRING,
+    autocomplete_hint_symbol=NEVER_SUBSTRING,
+    autocomplete_hint_word=NEVER_SUBSTRING,
 
     # Hook-detector-only field: it downgrades a stuck RUNNING to
     # waiting_user when the user has interrupted the turn from the
@@ -200,28 +178,14 @@ OPENCODE2_PATTERNS = OpencodeStatusPatterns(
     # interrupt") never contains it.
     interrupt_prompt_markers=["· interrupted"],
 
-    # Kept from v1: only consulted by line_starts_with_any alongside
-    # execution_indicators, which is empty (see above), so this shape is
-    # inert — retained so the field cannot silently drift to Claude's.
-    tool_execution_pattern=(
-        r'^\w+\s+'
-        r'(?:'
-        r'\w+\('
-        r'|"'
-        r"|'"
-        r'|\S+\.\w{1,10}'
-        r'|\S+/'
-        r')'
-    ),
-
     # No analogue: v2's bottom bar carries the project directory and
     # context/cost inline (idle_after_response.txt: "10.7K (2%) · $0.01")
     # — never counts of background bashes, subagents, monitors, or an
     # auto-accept toggle.
-    background_bash_count_pattern=_NEVER,
-    background_bash_marker=_NEVER_SUBSTRING,
-    single_task_running_marker=_NEVER_SUBSTRING,
-    subagent_count_pattern=_NEVER,
-    monitor_count_pattern=_NEVER,
-    auto_accept_pattern=_NEVER,
+    background_bash_count_pattern=NEVER,
+    background_bash_marker=NEVER_SUBSTRING,
+    single_task_running_marker=NEVER_SUBSTRING,
+    subagent_count_pattern=NEVER,
+    monitor_count_pattern=NEVER,
+    auto_accept_pattern=NEVER,
 )

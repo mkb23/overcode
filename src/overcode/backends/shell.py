@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 from ..exceptions import AgentCliNotFoundError
 from ..status_constants import STATUS_RUNNING, STATUS_WAITING_USER
 from ..status_detector import PollingStatusDetector
-from ..status_patterns import StatusPatterns
+from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     BackendCapability,
     DialogRule,
@@ -54,12 +54,9 @@ KNOWN_SHELLS = frozenset({
     "nu", "elvish", "xonsh",
 })
 
-# Same idea as codex's: regex/substring values that can never match, for
-# the Claude chrome a shell has no analogue of — so a shell's own output
-# (a "3 bashes" in a log, a "⏺" in a file) can't light up agent columns.
-_NEVER = r"(?!)"
-_NEVER_SUBSTRING = "\x00"
 
+# Every Claude concept is switched off (NEVER / empty), so a shell's own
+# output (a "3 bashes" in a log, a "⏺" in a file) can't light up agent columns.
 SHELL_PATTERNS = StatusPatterns(
     permission_patterns=[],
     active_indicators=[],
@@ -68,31 +65,29 @@ SHELL_PATTERNS = StatusPatterns(
     prompt_chars=[],
     line_prefixes=[],
     status_bar_prefixes=[],
-    command_menu_pattern=_NEVER,
+    command_menu_pattern=NEVER,
     # A shell reporting "command not found" is the user's typo, not a
     # failed agent spawn.
     spawn_failure_patterns=[],
     approval_patterns=[],
-    daemon_active_indicators=[],
-    daemon_tool_indicators=[],
     error_patterns=[],
     permission_chrome_markers=[],
     tool_output_prefixes=[],
-    tool_output_marker=_NEVER_SUBSTRING,
+    tool_output_marker=NEVER_SUBSTRING,
     busy_markers=[],
     input_hint_markers=[],
     thinking_markers=[],
     prompt_continuation_chars=[],
-    autocomplete_hint_symbol=_NEVER_SUBSTRING,
-    autocomplete_hint_word=_NEVER_SUBSTRING,
+    autocomplete_hint_symbol=NEVER_SUBSTRING,
+    autocomplete_hint_word=NEVER_SUBSTRING,
     interrupt_prompt_markers=[],
-    tool_execution_pattern=_NEVER,
-    background_bash_count_pattern=_NEVER,
-    background_bash_marker=_NEVER_SUBSTRING,
-    single_task_running_marker=_NEVER_SUBSTRING,
-    subagent_count_pattern=_NEVER,
-    monitor_count_pattern=_NEVER,
-    auto_accept_pattern=_NEVER,
+    tool_execution_pattern=NEVER,
+    background_bash_count_pattern=NEVER,
+    background_bash_marker=NEVER_SUBSTRING,
+    single_task_running_marker=NEVER_SUBSTRING,
+    subagent_count_pattern=NEVER,
+    monitor_count_pattern=NEVER,
+    auto_accept_pattern=NEVER,
 )
 
 
