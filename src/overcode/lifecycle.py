@@ -10,6 +10,10 @@ end to end.
 Everything that touches tmux sessions or processes goes through
 ``SystemOps`` so tests can swap it out; per-agent work goes through
 ``AgentLauncher`` (whose tmux layer takes a ``MockTmux``).
+
+One agent's lifecycle lives here too: ``AgentLifecycleMixin`` is the part
+of ``AgentLauncher`` that kills agents, clears terminated records and
+settles lifecycle for a CLI run with no daemon (``reconcile_lifecycle``).
 """
 
 from __future__ import annotations
@@ -19,14 +23,232 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from .status_constants import STATUS_TERMINATED
+from .tmux_utils import untracked_window_names
+
+if TYPE_CHECKING:
+    from .session_manager import Session
 
 JOBS_TMUX_SESSION = "jobs"
 SPLIT_TMUX_SESSION = "overcode"  # cli/split.py: the split layout's own session
 CONTROLLER_TMUX_SESSION = "overcode-controller"  # the pre-0.6.0 `overcode supervisor` layout
 LINKED_SESSION_PREFIX = "oc-view"  # cli/split.py
+
+
+# ---------------------------------------------------------------------------
+# One agent: kill, clean up, settle (AgentLauncher)
+# ---------------------------------------------------------------------------
+
+def window_lookup(windows: List[Dict[str, Any]]) -> Tuple[set, set]:
+    """Build (names, index-strings) sets from a ``list_windows()`` result.
+
+    Lets callers answer "does window X exist?" for many X from one tmux
+    round-trip, with the same semantics as ``TmuxManager.window_exists``:
+    exact name match, falling back to a legacy digit-string index match.
+    """
+    names = {w.get("name", "") for w in windows}
+    indices = {str(w.get("index")) for w in windows if w.get("index") is not None}
+    return names, indices
+
+
+def window_in_lookup(window: str, lookup: Tuple[set, set]) -> bool:
+    """Existence check against ``window_lookup`` output (see there)."""
+    names, indices = lookup
+    if window in names:
+        return True
+    return window.isdigit() and window in indices
+
+
+@dataclass
+class LifecycleReconcile:
+    """What ``AgentLauncher.reconcile_lifecycle`` changed (agent names)."""
+
+    terminated: List[str] = field(default_factory=list)
+    done: List[str] = field(default_factory=list)
+    waiting_oversight: List[str] = field(default_factory=list)
+    refunds: List[Tuple[str, float]] = field(default_factory=list)
+
+
+class AgentLifecycleMixin:
+    """Kill agents and settle their lifecycle (see module docstring).
+
+    Uses the launcher's ``tmux``, ``sessions``, ``_resolve`` and
+    ``list_sessions``.
+    """
+
+    def reconcile_lifecycle(self) -> "LifecycleReconcile":
+        """Settle every agent's lifecycle once, for a CLI run with no daemon.
+
+        The monitor daemon does this every tick (``MonitorDaemon._settle_children``
+        and its terminated detection); this is the same rule applied once,
+        for ``overcode list`` / ``cleanup`` when no daemon is running to
+        have done it. Never call it while the daemon runs: there must be one
+        writer of lifecycle state.
+
+        - A legacy digit window id is resolved to the window's name.
+        - A child whose Stop hook fired becomes done (with a report) or
+          waiting_oversight (without), whether or not its window is there.
+        - Any other agent whose window is gone becomes terminated.
+        - A child that just became done has its unused budget refunded to
+          its parent (#432; idempotent, ``reclaim_budget`` caps the child).
+
+        Writes sessions.json, prints nothing; returns what changed.
+        """
+        from .child_lifecycle import hook_stopped, settled_child_status
+
+        result = LifecycleReconcile()
+        my_sessions = self.list_sessions()
+        tmux_windows = self._list_tmux_windows_cheap()
+        self._migrate_legacy_window_ids(my_sessions, tmux_windows)
+        existing = window_lookup(tmux_windows)
+        for snapshot in my_sessions:
+            session = self.sessions.get_session(snapshot.id) or snapshot
+            if session.status == "done":
+                continue
+            stopped_child = (session.parent_session_id is not None
+                             and hook_stopped(session.tmux_session, session.name))
+            new_status = settled_child_status(session, stopped=stopped_child)
+            # A stopped child is settled above, never terminated: its window
+            # going is how a finished child ends (the daemon's
+            # _is_waiting_on_oversight guard)
+            if (new_status is None and not stopped_child
+                    and session.status != "terminated"
+                    and not window_in_lookup(session.tmux_window, existing)):
+                new_status = "terminated"
+            if new_status is None:
+                continue
+            self.sessions.update_session_status(session.id, new_status)
+            if new_status == "terminated":
+                result.terminated.append(session.name)
+            elif new_status == "done":
+                result.done.append(session.name)
+                refunded = self.sessions.reclaim_budget(session.id)
+                if refunded and refunded > 0:
+                    result.refunds.append((session.name, refunded))
+            else:
+                result.waiting_oversight.append(session.name)
+        return result
+
+    def kill_untracked_windows(self) -> List[str]:
+        """Kill this tmux session's windows no live agent is tracked in; their names.
+
+        The same predicate the monitor daemon counts with (#344), so what it
+        reports as untracked is exactly what this kills: never window 0
+        (default shell), a live agent's window, or one of overcode's own
+        (placeholder #457, supervisor claude, SSH proxies).
+        """
+        if not self.tmux.session_exists():
+            return []
+        tracked_windows = {s.tmux_window for s in self.list_sessions() if s.status != "terminated"}
+        untracked = untracked_window_names(self.tmux.list_windows(), tracked_windows)
+        for w_name in untracked:
+            self.tmux.kill_window(w_name)
+        return list(untracked)
+
+    def cleanup_terminated_sessions(self) -> int:
+        """Remove all terminated sessions from state.
+
+        Returns:
+            Number of sessions cleaned up
+        """
+        all_sessions = self.sessions.list_sessions()
+        terminated = [s for s in all_sessions if s.status == "terminated"]
+
+        for session in terminated:
+            self.sessions.delete_session(session.id)
+
+        return len(terminated)
+
+    def kill_session(self, name: str, cascade: bool = True) -> bool:
+        """Kill a session by name.
+
+        Handles both active sessions and stale sessions (where tmux window/session
+        no longer exists, e.g., after a machine reboot).
+
+        Args:
+            name: Name of the session to kill
+            cascade: If True (default), also kill all descendant agents.
+                If False, orphan children (set their parent_session_id to None).
+        """
+        session = self._resolve(name)
+        if session is None:
+            print(f"Session '{name}' not found")
+            return False
+
+        # Handle cascade: kill descendants deepest-first (#244)
+        if cascade:
+            descendants = self.sessions.get_descendants(session.id)
+            # Sort by depth (deepest first) for clean teardown
+            descendants.sort(key=lambda s: self.sessions.compute_depth(s), reverse=True)
+            for desc in descendants:
+                self._kill_single_session(desc)
+        else:
+            # Orphan children: set their parent_session_id to None
+            children = self.sessions.get_children(session.id)
+            for child in children:
+                self.sessions.update_session(child.id, parent_session_id=None)
+
+        return self._kill_single_session(session)
+
+    def _kill_single_session(self, session: Session) -> bool:
+        """Kill a single session (no cascade). Internal helper."""
+        # Check if the tmux window/session still exists
+        window_exists = self.tmux.window_exists(session.tmux_window)
+
+        if window_exists:
+            # Active session - try to kill the tmux window
+            if self.tmux.kill_window(session.tmux_window):
+                self.sessions.delete_session(session.id)
+                print(f"✓ Killed session '{session.name}'")
+                return True
+            else:
+                print(f"Failed to kill tmux window for '{session.name}'")
+                return False
+        else:
+            # Stale session - tmux window/session is already gone (e.g., after reboot)
+            # Just clean up the state file
+            self.sessions.delete_session(session.id)
+            print(f"✓ Cleaned up stale session '{session.name}' (tmux window no longer exists)")
+            return True
+
+    def _list_tmux_windows_cheap(self) -> List[Dict[str, Any]]:
+        """Window list without per-window pane commands (one tmux command).
+
+        Tolerates tmux managers that don't accept ``include_command``
+        (test doubles, older subclasses).
+        """
+        try:
+            return self.tmux.list_windows(include_command=False)
+        except TypeError:
+            return self.tmux.list_windows()
+
+    def _migrate_legacy_window_ids(
+        self, sessions: List[Session], windows: Optional[List[Dict[str, Any]]] = None
+    ) -> None:
+        """Migrate legacy digit-string tmux_window values to actual window names.
+
+        Legacy sessions stored the window index (int) which got converted to a
+        digit string like "4". We resolve these to the actual window name by
+        looking up the tmux window list by index.
+
+        Args:
+            windows: pre-fetched ``list_windows()`` result to avoid a second
+                tmux round-trip; fetched here when omitted.
+        """
+        if windows is None:
+            windows = self._list_tmux_windows_cheap()
+        if not windows:
+            return
+        index_to_name = {str(w['index']): w['name'] for w in windows}
+
+        for session in sessions:
+            if session.tmux_window.isdigit() and session.tmux_window in index_to_name:
+                # Written, not set on ``session``: it is the shared snapshot
+                self.sessions.update_session(
+                    session.id, tmux_window=index_to_name[session.tmux_window]
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -81,8 +303,6 @@ def find_dead_agents(launcher) -> list:
     children that filed a report — auto-archived done agents are marked
     terminated too, and are finished, not dead.
     """
-    from .launcher import window_in_lookup, window_lookup
-
     sessions = launcher.list_sessions()
     existing = window_lookup(launcher._list_tmux_windows_cheap())
     dead = [
@@ -435,8 +655,6 @@ def _stop_agents(ts, launcher, ops: SystemOps, *, force, dry_run, timeout, add,
     ``overcode shutdown``) can't be exited mid-run: its record is marked
     and its window goes with its tmux session, killed last.
     """
-    from .launcher import window_in_lookup, window_lookup
-
     sessions = [s for s in launcher.sessions.list_sessions() if s.tmux_session == ts]
     existing = window_lookup(launcher._list_tmux_windows_cheap())
     alive = [s for s in sessions if window_in_lookup(s.tmux_window, existing)]

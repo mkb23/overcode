@@ -10,14 +10,12 @@ Which CLI gets launched, and with what argv, comes from the session's
 """
 
 import shlex
-import subprocess
 import os
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional
 
 import re
 
@@ -37,45 +35,26 @@ from .backends.claude_code import (  # noqa: F401  (compat re-export)
 )
 from .backends.shell import SHELL_BACKEND
 from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
-from .tmux_utils import (
-    send_text_to_tmux_window,
-    get_tmux_pane_content,
-    tmux_window_target,
-    untracked_window_names,
-)
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
 from .launch_settings import LaunchArgs, resolve_launch_settings
 from .dependency_check import require_tmux, require_agent_cli
 from .exceptions import (
-    AgentBusyError, AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
+    AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
     TmuxNotFoundError,
 )
-from .status_constants import GREEN_STATUSES, STATUS_WAITING_APPROVAL
+from .agent_io import AgentIOMixin
+from .lifecycle import (  # noqa: F401  (window_* and LifecycleReconcile re-exported)
+    AgentLifecycleMixin,
+    LifecycleReconcile,
+    window_in_lookup,
+    window_lookup,
+)
+from .rename import RenameMixin
 
 
 # Valid session name pattern
 SESSION_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
-
-
-def window_lookup(windows: List[Dict[str, Any]]) -> Tuple[set, set]:
-    """Build (names, index-strings) sets from a ``list_windows()`` result.
-
-    Lets callers answer "does window X exist?" for many X from one tmux
-    round-trip, with the same semantics as ``TmuxManager.window_exists``:
-    exact name match, falling back to a legacy digit-string index match.
-    """
-    names = {w.get("name", "") for w in windows}
-    indices = {str(w.get("index")) for w in windows if w.get("index") is not None}
-    return names, indices
-
-
-def window_in_lookup(window: str, lookup: Tuple[set, set]) -> bool:
-    """Existence check against ``window_lookup`` output (see there)."""
-    names, indices = lookup
-    if window in names:
-        return True
-    return window.isdigit() and window in indices
 
 
 def drop_model_flag(extra_args: Optional[List[str]]) -> Optional[List[str]]:
@@ -120,17 +99,7 @@ def validate_session_name(name: str) -> None:
         raise InvalidSessionNameError(name)
 
 
-@dataclass
-class LifecycleReconcile:
-    """What ``AgentLauncher.reconcile_lifecycle`` changed (agent names)."""
-
-    terminated: List[str] = field(default_factory=list)
-    done: List[str] = field(default_factory=list)
-    waiting_oversight: List[str] = field(default_factory=list)
-    refunds: List[Tuple[str, float]] = field(default_factory=list)
-
-
-class AgentLauncher:
+class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
     """Launches interactive agent-CLI sessions in tmux windows.
 
     Backend-neutral: the argv grammar, gestures and startup handshake for
@@ -139,6 +108,11 @@ class AgentLauncher:
 
     All sessions are interactive - this is the only supported mode.
     Users can take over any session at any time via tmux.
+
+    Launch, fork, restart and revive live here; the rest is mixed in:
+    sending to and reading an agent (``agent_io``), renaming it
+    (``rename``), and killing it and settling its lifecycle
+    (``lifecycle``).
     """
 
     def __init__(
@@ -508,98 +482,6 @@ class AgentLauncher:
 
         return session
 
-    # Characters that indicate the agent's input prompt is ready
-    PROMPT_READY_CHARS = get_backend().prompt_ready_chars()
-
-    def _wait_for_prompt(
-        self,
-        window_name: str,
-        timeout: float = 30.0,
-        poll_interval: float = 0.5,
-        backend: Optional[AgentBackend] = None,
-    ) -> bool:
-        """Poll pane content until the agent's input prompt appears.
-
-        Dismisses the backend's startup dialogs on the way (for Claude:
-        the workspace trust dialog and the bypass-permissions warning).
-
-        Returns True if prompt detected, False on timeout.
-        """
-        from .status_patterns import strip_ansi
-        from .tmux_utils import _build_tmux_cmd
-
-        backend = backend or get_backend()
-        target = tmux_window_target(self.tmux.session_name, window_name)
-        tmux_cmd = _build_tmux_cmd()
-        prompt_chars = backend.prompt_ready_chars()
-        # A backend whose idle prompt is never a bare glyph (hermes) answers
-        # through prompt_ready_line; the exact-set match is the default.
-        prompt_ready_line = getattr(backend, "prompt_ready_line", None)
-        rules = backend.startup_dialog_rules()
-        handled: set[str] = set()
-
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            content = get_tmux_pane_content(
-                self.tmux.session_name, window_name, lines=20
-            )
-            if content:
-                dismissed = False
-                for rule in rules:
-                    if rule.marker in handled or rule.marker not in content:
-                        continue
-                    for press in rule.presses:
-                        keys = [press.keys, 'Enter'] if press.enter else [press.keys]
-                        subprocess.run(tmux_cmd + ['send-keys', '-t', target] + keys, timeout=5)
-                        if press.delay_after:
-                            time.sleep(press.delay_after)
-                    handled.add(rule.marker)
-                    time.sleep(rule.settle_seconds)
-                    dismissed = True
-                    break
-                if dismissed:
-                    continue
-
-                for line in content.split('\n'):
-                    cleaned = strip_ansi(line).strip()
-                    if prompt_ready_line is not None:
-                        if prompt_ready_line(cleaned):
-                            return True
-                    elif cleaned in prompt_chars:
-                        return True
-            time.sleep(poll_interval)
-        return False
-
-    def _send_prompt_to_window(
-        self,
-        window_name: str,
-        prompt: str,
-        startup_delay: float = 3.0,
-        backend: Optional[AgentBackend] = None,
-    ) -> bool:
-        """Send a prompt to an agent session via tmux load-buffer/paste-buffer.
-
-        Polls for the agent's input prompt before sending. Falls back to
-        startup_delay if the prompt is not detected within 30 seconds.
-        """
-        if self._wait_for_prompt(window_name, backend=backend):
-            # Prompt detected — send immediately, no delay needed
-            return send_text_to_tmux_window(
-                self.tmux.session_name,
-                window_name,
-                prompt,
-                send_enter=True,
-                startup_delay=0,
-            )
-        # Fallback: prompt not detected, use original delay
-        return send_text_to_tmux_window(
-            self.tmux.session_name,
-            window_name,
-            prompt,
-            send_enter=True,
-            startup_delay=startup_delay,
-        )
-
     def launch_fork(
         self,
         name: str,
@@ -920,219 +802,6 @@ class AgentLauncher:
         self.sessions.update_stats(session.id, current_task="Restarting...")
         return True
 
-    # Renaming a live agent stops and resumes it. In these statuses that
-    # would cut into work — it is acting, or a permission dialog is open
-    # (which the exit gesture would answer) — so rename refuses without
-    # force (#478).
-    RENAME_BUSY_STATUSES = GREEN_STATUSES | {STATUS_WAITING_APPROVAL}
-    # Names overcode treats specially: the supervisor excludes an agent
-    # called this from supervision.
-    RESERVED_AGENT_NAMES = frozenset({"daemon_claude"})
-
-    def _live_status(self, session: Session) -> str:
-        """The agent's status now, detected directly (the daemon may be stale)."""
-        from .backends import session_backend_name
-        from .settings import resolve_detection_mode
-        from .status_detector_factory import (
-            create_status_detector,
-            resolve_session_detection_mode,
-        )
-        from .status_patterns import get_patterns
-
-        detector = create_status_detector(
-            session.tmux_session,
-            strategy=resolve_session_detection_mode(
-                session, resolve_detection_mode(session.tmux_session)
-            ),
-            tmux=self.tmux._tmux,
-            patterns=get_patterns(session_backend_name(session)),
-            backend_name=session_backend_name(session),
-        )
-        status, _, _ = detector.detect_status(session)
-        return status
-
-    @staticmethod
-    def _name_keyed_paths(tmux_session: str, name: str) -> List[Path]:
-        """Every per-agent file whose name is the agent's name.
-
-        Hook state and event log (status detection, stats, opencode's
-        conversation ids) and the child's ``overcode report`` file.
-        """
-        from .hook_handler import _get_hook_event_log_path, _get_hook_state_path
-        from .settings import get_session_dir
-
-        return [
-            _get_hook_state_path(tmux_session, name),
-            _get_hook_event_log_path(tmux_session, name),
-            get_session_dir(tmux_session) / f"report_{name}.json",
-        ]
-
-    def _move_name_keyed_files(
-        self, tmux_session: str, old_name: str, new_name: str,
-    ) -> List[Tuple[Path, Path]]:
-        """Rekey the agent's name-keyed files to ``new_name``; returns the moves.
-
-        A file already at a new-name path belongs to no agent (nobody is
-        called ``new_name``) — a leftover from an earlier agent of that name
-        — and is removed, so the renamed agent cannot inherit a stale status
-        or a stale report that would mark it done.
-        """
-        moved: List[Tuple[Path, Path]] = []
-        for old_path, new_path in zip(
-            self._name_keyed_paths(tmux_session, old_name),
-            self._name_keyed_paths(tmux_session, new_name),
-        ):
-            try:
-                new_path.unlink(missing_ok=True)
-                if old_path.exists():
-                    new_path.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(old_path, new_path)
-                    moved.append((old_path, new_path))
-            except OSError:
-                pass  # telemetry continuity is best-effort, not blocking
-        return moved
-
-    def rename(
-        self,
-        session: Session,
-        new_name: str,
-        *,
-        force: bool = False,
-        graceful_exit_wait: float = 3.0,
-    ) -> bool:
-        """Rename an agent, preserving its conversation and telemetry (#478).
-
-        An agent's name is load-bearing: the tmux window name, the files
-        keyed by it (hook state and event log, which the running process
-        writes under the ``OVERCODE_SESSION_NAME`` baked into it, and the
-        ``overcode report`` file), and the session record. Renaming therefore
-        stops a live agent, rekeys all of those, and relaunches it in place —
-        same window, same conversation (resume, not fresh) — under the new
-        name. The old name stays on the record as an alias
-        (``previous_names``), so anyone still using it reaches the agent with
-        a notice, and the agent is told its new name with its next prompt.
-
-        A busy agent (``RENAME_BUSY_STATUSES``) is refused unless ``force``:
-        the stop would cancel its turn and kill whatever it was running, and
-        the resumed agent would not pick the task back up.
-
-        Failure leaves the agent as it was: if the window rename fails, or a
-        concurrent rename takes ``new_name`` first, everything is put back
-        and the agent is relaunched under its old name.
-
-        Returns:
-            True if the rename completed. False if tmux refused the window
-            rename (agent restored under its old name), or if the relaunch
-            under the new name could not be sent (the rename itself stands;
-            ``restart`` picks it up).
-
-        Raises:
-            InvalidSessionNameError: ``new_name`` fails the name pattern.
-            AgentBusyError: the agent is busy and ``force`` is False.
-            ValueError: ``new_name`` is taken, reserved, or unchanged.
-        """
-        validate_session_name(new_name)
-        if new_name in self.RESERVED_AGENT_NAMES:
-            raise ValueError(f"'{new_name}' is reserved by overcode")
-        if new_name == session.name:
-            raise ValueError(f"the agent is already called '{new_name}'")
-        # Fast duplicate rejection; the authoritative check runs under the
-        # session-state lock at commit time (rename_session below).
-        for other in self.sessions.list_sessions():
-            if other.id != session.id and other.name == new_name:
-                raise ValueError(f"an agent named '{new_name}' already exists")
-
-        # The agent lives in its own tmux session, which need not be the one
-        # this launcher was built for (the CLI's --session default): its
-        # window, its hook files and the relaunch all belong to that one.
-        if session.tmux_session and session.tmux_session != self.tmux_session:
-            return AgentLauncher(
-                session.tmux_session,
-                tmux_manager=TmuxManager(
-                    session.tmux_session, tmux=self.tmux._tmux, socket=self.tmux.socket,
-                ),
-                session_manager=self.sessions,
-            ).rename(
-                session, new_name, force=force, graceful_exit_wait=graceful_exit_wait,
-            )
-
-        old_name = session.name
-        old_window = session.tmux_window
-        window_exists = self.tmux.window_exists(old_window)
-        if window_exists and not force:
-            try:
-                status = self._live_status(session)
-            except Exception:
-                status = "unknown"  # can't tell it is idle, so don't assume it
-            if status in self.RENAME_BUSY_STATUSES or status == "unknown":
-                raise AgentBusyError(old_name, status)
-
-        if window_exists:
-            self._send_graceful_exit(self.backend_for(session), old_window)
-            time.sleep(graceful_exit_wait)
-
-        new_window = f"{new_name}-{session.id[:4]}"
-        if window_exists and not self.tmux.rename_window(old_window, new_window):
-            # Nothing has been renamed; bring the agent back as it was.
-            self._send_launch_for_session(session, old_window, fresh=False)
-            return False
-
-        moved = self._move_name_keyed_files(self.tmux_session, old_name, new_name)
-
-        # Locked duplicate check + write: a concurrent rename of another
-        # agent to `new_name` cannot slip between check and update.
-        if not self.sessions.rename_session(
-            session.id, new_name, tmux_window=new_window
-        ):
-            # Lost the race — restore the pre-rename identity before bailing.
-            for old_path, new_path in reversed(moved):
-                try:
-                    os.replace(new_path, old_path)
-                except OSError:
-                    pass
-            if window_exists:
-                self.tmux.rename_window(new_window, old_window)
-                self._send_launch_for_session(session, old_window, fresh=False)
-            raise ValueError(f"an agent named '{new_name}' already exists")
-
-        self._write_rename_notice(old_name, new_name)
-        if not window_exists:
-            return True
-
-        refreshed = self.sessions.get_session(session.id)
-        if not self._send_launch_for_session(refreshed, new_window, fresh=False):
-            return False
-        # The old process may have fired a last hook on its way out, after
-        # the files moved; nobody is called old_name any more, so anything
-        # under it now is stale and would mislead a later agent of that name.
-        if self.sessions.get_session_by_name(old_name) is None:
-            for path in self._name_keyed_paths(self.tmux_session, old_name):
-                path.unlink(missing_ok=True)
-        self.sessions.update_stats(session.id, current_task=f"Renamed from {old_name}")
-        return True
-
-    def _write_rename_notice(self, old_name: str, new_name: str) -> None:
-        """Leave the agent a note of its new name for its next prompt (#478).
-
-        Delivered as prompt context by the UserPromptSubmit hook
-        (``hook_handler._emit_rename_notice``), so it costs no extra turn;
-        its resumed conversation otherwise still calls it ``old_name``.
-        """
-        from .hook_handler import get_rename_notice_path
-
-        get_rename_notice_path(self.tmux_session, old_name).unlink(missing_ok=True)
-        path = get_rename_notice_path(self.tmux_session, new_name)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                f"[overcode] This agent was renamed from '{old_name}' to "
-                f"'{new_name}'. Use '{new_name}' as your name from now on; "
-                f"other agents and overcode commands now address you by it.\n",
-                encoding="utf-8",
-            )
-        except OSError:
-            pass  # a missing note is cosmetic
-
     def revive(
         self,
         session: Session,
@@ -1216,316 +885,3 @@ class AgentLauncher:
         return [s for s in self.sessions.list_sessions()
                 if s.tmux_session == self.tmux.session_name]
 
-    def reconcile_lifecycle(self) -> "LifecycleReconcile":
-        """Settle every agent's lifecycle once, for a CLI run with no daemon.
-
-        The monitor daemon does this every tick (``MonitorDaemon._settle_children``
-        and its terminated detection); this is the same rule applied once,
-        for ``overcode list`` / ``cleanup`` when no daemon is running to
-        have done it. Never call it while the daemon runs: there must be one
-        writer of lifecycle state.
-
-        - A legacy digit window id is resolved to the window's name.
-        - A child whose Stop hook fired becomes done (with a report) or
-          waiting_oversight (without), whether or not its window is there.
-        - Any other agent whose window is gone becomes terminated.
-        - A child that just became done has its unused budget refunded to
-          its parent (#432; idempotent, ``reclaim_budget`` caps the child).
-
-        Writes sessions.json, prints nothing; returns what changed.
-        """
-        from .child_lifecycle import hook_stopped, settled_child_status
-
-        result = LifecycleReconcile()
-        my_sessions = self.list_sessions()
-        tmux_windows = self._list_tmux_windows_cheap()
-        self._migrate_legacy_window_ids(my_sessions, tmux_windows)
-        existing = window_lookup(tmux_windows)
-        for snapshot in my_sessions:
-            session = self.sessions.get_session(snapshot.id) or snapshot
-            if session.status == "done":
-                continue
-            stopped_child = (session.parent_session_id is not None
-                             and hook_stopped(session.tmux_session, session.name))
-            new_status = settled_child_status(session, stopped=stopped_child)
-            # A stopped child is settled above, never terminated: its window
-            # going is how a finished child ends (the daemon's
-            # _is_waiting_on_oversight guard)
-            if (new_status is None and not stopped_child
-                    and session.status != "terminated"
-                    and not window_in_lookup(session.tmux_window, existing)):
-                new_status = "terminated"
-            if new_status is None:
-                continue
-            self.sessions.update_session_status(session.id, new_status)
-            if new_status == "terminated":
-                result.terminated.append(session.name)
-            elif new_status == "done":
-                result.done.append(session.name)
-                refunded = self.sessions.reclaim_budget(session.id)
-                if refunded and refunded > 0:
-                    result.refunds.append((session.name, refunded))
-            else:
-                result.waiting_oversight.append(session.name)
-        return result
-
-    def kill_untracked_windows(self) -> List[str]:
-        """Kill this tmux session's windows no live agent is tracked in; their names.
-
-        The same predicate the monitor daemon counts with (#344), so what it
-        reports as untracked is exactly what this kills: never window 0
-        (default shell), a live agent's window, or one of overcode's own
-        (placeholder #457, supervisor claude, SSH proxies).
-        """
-        if not self.tmux.session_exists():
-            return []
-        tracked_windows = {s.tmux_window for s in self.list_sessions() if s.status != "terminated"}
-        untracked = untracked_window_names(self.tmux.list_windows(), tracked_windows)
-        for w_name in untracked:
-            self.tmux.kill_window(w_name)
-        return list(untracked)
-
-    def cleanup_terminated_sessions(self) -> int:
-        """Remove all terminated sessions from state.
-
-        Returns:
-            Number of sessions cleaned up
-        """
-        all_sessions = self.sessions.list_sessions()
-        terminated = [s for s in all_sessions if s.status == "terminated"]
-
-        for session in terminated:
-            self.sessions.delete_session(session.id)
-
-        return len(terminated)
-
-    def kill_session(self, name: str, cascade: bool = True) -> bool:
-        """Kill a session by name.
-
-        Handles both active sessions and stale sessions (where tmux window/session
-        no longer exists, e.g., after a machine reboot).
-
-        Args:
-            name: Name of the session to kill
-            cascade: If True (default), also kill all descendant agents.
-                If False, orphan children (set their parent_session_id to None).
-        """
-        session = self._resolve(name)
-        if session is None:
-            print(f"Session '{name}' not found")
-            return False
-
-        # Handle cascade: kill descendants deepest-first (#244)
-        if cascade:
-            descendants = self.sessions.get_descendants(session.id)
-            # Sort by depth (deepest first) for clean teardown
-            descendants.sort(key=lambda s: self.sessions.compute_depth(s), reverse=True)
-            for desc in descendants:
-                self._kill_single_session(desc)
-        else:
-            # Orphan children: set their parent_session_id to None
-            children = self.sessions.get_children(session.id)
-            for child in children:
-                self.sessions.update_session(child.id, parent_session_id=None)
-
-        return self._kill_single_session(session)
-
-    def _kill_single_session(self, session: Session) -> bool:
-        """Kill a single session (no cascade). Internal helper."""
-        # Check if the tmux window/session still exists
-        window_exists = self.tmux.window_exists(session.tmux_window)
-
-        if window_exists:
-            # Active session - try to kill the tmux window
-            if self.tmux.kill_window(session.tmux_window):
-                self.sessions.delete_session(session.id)
-                print(f"✓ Killed session '{session.name}'")
-                return True
-            else:
-                print(f"Failed to kill tmux window for '{session.name}'")
-                return False
-        else:
-            # Stale session - tmux window/session is already gone (e.g., after reboot)
-            # Just clean up the state file
-            self.sessions.delete_session(session.id)
-            print(f"✓ Cleaned up stale session '{session.name}' (tmux window no longer exists)")
-            return True
-
-    def send_to_session(self, name: str, text: str, enter: bool = True) -> bool:
-        """Send text/keys to a session by name.
-
-        Args:
-            name: Name of the session
-            text: Text to send (or special key like "Enter", "Escape")
-            enter: Whether to press Enter after the text (default: True)
-
-        Returns:
-            True if successful, False otherwise
-        """
-        session = self._resolve(name)
-        if session is None:
-            print(f"Session '{name}' not found")
-            return False
-
-        return self._send_to_resolved_session(session, text, enter)
-
-    def send_to_session_by_id(self, session_id: str, text: str, enter: bool = True) -> bool:
-        """Send text/keys to a session by ID.
-
-        Preferred over send_to_session() when the session ID is known,
-        since IDs are unique even when local and remote agents share a name.
-
-        Args:
-            session_id: Unique session ID
-            text: Text to send (or special key like "Enter", "Escape")
-            enter: Whether to press Enter after the text (default: True)
-
-        Returns:
-            True if successful, False otherwise
-        """
-        session = self.sessions.get_session(session_id)
-        if session is None:
-            return False
-
-        return self._send_to_resolved_session(session, text, enter)
-
-    def _send_to_resolved_session(self, session: Session, text: str, enter: bool = True) -> bool:
-        """Send text/keys to an already-resolved session.
-
-        Internal helper shared by send_to_session() and send_to_session_by_id().
-        """
-        # Handle special keys
-        special_keys = {
-            "enter": "",  # Empty string + Enter = just press Enter
-            "escape": "Escape",
-            "esc": "Escape",
-            "tab": "Tab",
-            "up": "Up",
-            "down": "Down",
-            "left": "Left",
-            "right": "Right",
-        }
-
-        # Backend-resolved gestures. "enter"/"escape" are raw keys and stay
-        # raw; "approve"/"reject" ask the session's backend what its permission
-        # dialog wants, so a supervisor recipe can stay backend-neutral.
-        gesture_keys = {
-            "approve": "approve_keys",
-            "reject": "reject_keys",
-        }
-
-        # Check if it's a special key
-        text_lower = text.lower().strip()
-        success = False
-        if text_lower in gesture_keys:
-            backend = self.backend_for(session)
-            presses = getattr(backend, gesture_keys[text_lower])()
-            success = bool(presses)
-            for press in presses:
-                if not self.tmux.send_keys(
-                    session.tmux_window, press.keys, enter=press.enter
-                ):
-                    success = False
-                    break
-                if press.delay_after:
-                    time.sleep(press.delay_after)
-        elif text_lower in special_keys:
-            key = special_keys[text_lower]
-            if key == "":
-                # Just press Enter
-                success = self.tmux.send_keys(session.tmux_window, "", enter=True)
-            else:
-                # Send special key without Enter
-                success = self.tmux.send_keys(session.tmux_window, key, enter=False)
-        elif '\n' in text:
-            # Multi-line text: use load-buffer/paste-buffer so newlines are
-            # pasted as a single block instead of being interpreted as Enter
-            # keypresses by tmux send-keys (#376)
-            success = send_text_to_tmux_window(
-                self.tmux.session_name, session.tmux_window, text,
-                send_enter=enter,
-            )
-        else:
-            # Single-line regular text
-            success = self.tmux.send_keys(session.tmux_window, text, enter=enter)
-
-        # Update last activity on success (steers_count is tracked via supervisor log parsing)
-        if success:
-            self.sessions.update_stats(
-                session.id,
-                last_activity=time.strftime("%Y-%m-%dT%H:%M:%S")
-            )
-
-        return success
-
-    def _list_tmux_windows_cheap(self) -> List[Dict[str, Any]]:
-        """Window list without per-window pane commands (one tmux command).
-
-        Tolerates tmux managers that don't accept ``include_command``
-        (test doubles, older subclasses).
-        """
-        try:
-            return self.tmux.list_windows(include_command=False)
-        except TypeError:
-            return self.tmux.list_windows()
-
-    def _migrate_legacy_window_ids(
-        self, sessions: List[Session], windows: Optional[List[Dict[str, Any]]] = None
-    ) -> None:
-        """Migrate legacy digit-string tmux_window values to actual window names.
-
-        Legacy sessions stored the window index (int) which got converted to a
-        digit string like "4". We resolve these to the actual window name by
-        looking up the tmux window list by index.
-
-        Args:
-            windows: pre-fetched ``list_windows()`` result to avoid a second
-                tmux round-trip; fetched here when omitted.
-        """
-        if windows is None:
-            windows = self._list_tmux_windows_cheap()
-        if not windows:
-            return
-        index_to_name = {str(w['index']): w['name'] for w in windows}
-
-        for session in sessions:
-            if session.tmux_window.isdigit() and session.tmux_window in index_to_name:
-                # Written, not set on ``session``: it is the shared snapshot
-                self.sessions.update_session(
-                    session.id, tmux_window=index_to_name[session.tmux_window]
-                )
-
-    def get_session_output(self, name: str, lines: int = 50) -> Optional[str]:
-        """Get recent output from a session.
-
-        Args:
-            name: Name of the session
-            lines: Number of lines to capture (default: 50)
-
-        Returns:
-            The captured output, or None if session not found
-        """
-        session = self._resolve(name)
-        if session is None:
-            print(f"Session '{name}' not found")
-            return None
-
-        try:
-            from .tmux_utils import _build_tmux_cmd
-
-            result = subprocess.run(
-                [
-                    *_build_tmux_cmd(), "capture-pane",
-                    "-t", tmux_window_target(self.tmux.session_name, session.tmux_window),
-                    "-p",  # Print to stdout
-                    "-S", f"-{lines}",  # Capture last N lines
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                return result.stdout.rstrip()
-            return None
-        except subprocess.SubprocessError:
-            return None

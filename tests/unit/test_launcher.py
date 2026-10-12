@@ -464,7 +464,7 @@ class TestLauncherSendToSession:
         launcher.launch(name="test-agent")
         initial_keys = len(mock_tmux.sent_keys)
 
-        with patch("overcode.launcher.send_text_to_tmux_window", return_value=True) as mock_send:
+        with patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as mock_send:
             result = launcher.send_to_session("test-agent", "line1\nline2\nline3")
 
         assert result is True
@@ -647,7 +647,7 @@ class TestWaitForPrompt:
         launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
-        with patch("overcode.launcher.get_tmux_pane_content", return_value="some banner\n❯ \n"):
+        with patch("overcode.agent_io.get_tmux_pane_content", return_value="some banner\n❯ \n"):
             result = launcher._wait_for_prompt(session.tmux_window, timeout=5.0)
 
         assert result is True
@@ -660,7 +660,7 @@ class TestWaitForPrompt:
         launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
-        with patch("overcode.launcher.get_tmux_pane_content", return_value="banner\n>\n"):
+        with patch("overcode.agent_io.get_tmux_pane_content", return_value="banner\n>\n"):
             result = launcher._wait_for_prompt(session.tmux_window, timeout=5.0)
 
         assert result is True
@@ -673,7 +673,7 @@ class TestWaitForPrompt:
         launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
-        with patch("overcode.launcher.get_tmux_pane_content", return_value="loading..."):
+        with patch("overcode.agent_io.get_tmux_pane_content", return_value="loading..."):
             with patch("time.sleep"):
                 result = launcher._wait_for_prompt(session.tmux_window, timeout=0.01)
 
@@ -687,7 +687,7 @@ class TestWaitForPrompt:
         launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
-        with patch("overcode.launcher.get_tmux_pane_content", return_value=None):
+        with patch("overcode.agent_io.get_tmux_pane_content", return_value=None):
             with patch("time.sleep"):
                 result = launcher._wait_for_prompt(session.tmux_window, timeout=0.01)
 
@@ -703,7 +703,7 @@ class TestWaitForPrompt:
 
         # First two calls: loading, third call: prompt ready
         side_effects = ["loading...", "still loading...", "welcome\n❯ \n"]
-        with patch("overcode.launcher.get_tmux_pane_content", side_effect=side_effects):
+        with patch("overcode.agent_io.get_tmux_pane_content", side_effect=side_effects):
             with patch("time.sleep"):
                 result = launcher._wait_for_prompt(session.tmux_window, timeout=30.0)
 
@@ -719,7 +719,7 @@ class TestWaitForPrompt:
 
         # Prompt wrapped in ANSI codes
         ansi_prompt = "\x1b[32m❯\x1b[0m \n"
-        with patch("overcode.launcher.get_tmux_pane_content", return_value=ansi_prompt):
+        with patch("overcode.agent_io.get_tmux_pane_content", return_value=ansi_prompt):
             result = launcher._wait_for_prompt(session.tmux_window, timeout=5.0)
 
         assert result is True
@@ -790,7 +790,7 @@ class TestSendPromptToWindow:
         session = launcher.launch(name="test-agent")
 
         with patch.object(launcher, "_wait_for_prompt", return_value=False):
-            with patch("overcode.launcher.send_text_to_tmux_window", return_value=True) as mock_send:
+            with patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as mock_send:
                 result = launcher._send_prompt_to_window(session.tmux_window, "hello", startup_delay=5.0)
 
         assert result is True
@@ -808,7 +808,7 @@ class TestSendPromptToWindow:
         session = launcher.launch(name="test-agent")
 
         with patch.object(launcher, "_wait_for_prompt", return_value=True):
-            with patch("overcode.launcher.send_text_to_tmux_window", return_value=True) as mock_send:
+            with patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as mock_send:
                 result = launcher._send_prompt_to_window(session.tmux_window, "hello", startup_delay=5.0)
 
         assert result is True
