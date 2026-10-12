@@ -708,8 +708,8 @@ class TestRenderEffort:
         assert col.visible(_make_ctx(any_has_effort=True))
 
     def test_sorts_by_level_not_alphabetically(self):
-        from overcode.summary_columns import COLUMN_SORT
-        key, descending = COLUMN_SORT["effort"]
+        from overcode.summary_columns import COLUMNS_BY_ID
+        key, descending = COLUMNS_BY_ID["effort"].sort_key, COLUMNS_BY_ID["effort"].sort_desc
         assert descending
         ranks = [key(_make_ctx(effort=e)) for e in ("low", "medium", "high", "xhigh", "max")]
         assert ranks == sorted(ranks)
@@ -1567,9 +1567,9 @@ class TestUniformColumns:
         assert uniform_columns([_make_ctx()]) == {}
 
     def test_only_opted_in_columns_are_considered(self):
-        from overcode.summary_columns import HIDE_WHEN_UNIFORM, uniform_columns
+        from overcode.summary_columns import SUMMARY_COLUMNS, uniform_columns
         rows = [_make_ctx(), _make_ctx()]
-        assert set(uniform_columns(rows)) <= HIDE_WHEN_UNIFORM
+        assert set(uniform_columns(rows)) <= {c.id for c in SUMMARY_COLUMNS if c.hide_when_uniform}
 
     def test_uniform_column_is_hidden(self):
         from overcode.summary_columns import COLUMNS_BY_ID, resolve_column_visible

@@ -302,22 +302,28 @@ class SummaryColumn:
     header: str = ""  # Short header label for column header row (e.g., "UPT", "TOK")
     name: str = ""  # Human-readable display name for config modal
     cli_only: bool = False  # True for synthetic aggregate lines used only by the CLI
-    # Header tooltip and C-modal help line (#477); set from COLUMN_HELP below
+    # Header tooltip and C-modal help line (#477). A test asserts every TUI
+    # column has one, so a new column cannot ship without it.
     description: str = ""
     # Sort value for this column (#487); None = not sortable. Rows whose key
-    # is None always sort last. Set from COLUMN_SORT below.
+    # is None always sort last.
     sort_key: Optional[Callable[[ColumnContext], object]] = None
     sort_desc: bool = False  # Natural direction: True = largest first
-    # Hidden while every row shows the same value (uniform_columns); set
-    # from HIDE_WHEN_UNIFORM below
+    # Says nothing when every agent shows the same value (one host, one
+    # model, one repo…): hidden until the fleet differs (uniform_columns),
+    # unless the user switched it on explicitly. (backend also has its own
+    # older gate, mixed_backends, which hides its placeholder too.)
     hide_when_uniform: bool = False
-    # Popup for a row's cell, naming what its emoji stand for; set from
-    # COLUMN_HOVER below. None = no popup.
+    # Popup for a row's cell, naming what its emoji stand for. None = no popup.
     hover: Optional[Callable[[ColumnContext], Optional["Text"]]] = None  # noqa: F821
     # Reads the clock: its cell can change with nothing else changing (a
     # duration or countdown). The TUI's 250 ms row clock redraws only these
     # cells; every other cell is rebuilt only when the row's inputs change.
     ticks: bool = False
+
+    def __post_init__(self):
+        if self.hide_when_uniform:
+            self.description = (self.description + " Hidden while every agent shows the same value.").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -1403,171 +1409,6 @@ def render_host_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Ordered column list — reorder by moving items
-# ---------------------------------------------------------------------------
-SUMMARY_COLUMNS: List[SummaryColumn] = [
-    # Identity group — always visible
-    SummaryColumn(id="status_symbol", group="identity", detail_levels=ALL, render=render_status_symbol,
-                  label="Status", render_plain=render_status_plain, name="Status"),
-    SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert,
-                  name="Alert"),
-    SummaryColumn(id="time_in_state", ticks=True, group="identity", detail_levels=ALL, render=render_time_in_state,
-                  header="ST", name="Time in State"),
-    SummaryColumn(id="sleep_countdown", ticks=True, group="identity", detail_levels=ALL, render=render_sleep_countdown,
-                  visible=lambda ctx: ctx.any_is_sleeping or ctx.any_has_status_detail,
-                  header="DTL", name="Status Detail"),
-    SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
-                  name="Expand"),
-    SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
-                  header="NAME", name="Agent Name"),
-    SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
-                  label="Host", render_plain=render_host_plain, header="HST", name="Host"),
-
-    # Git group — repo, branch (high/full only), diff stats
-    SummaryColumn(id="repo_name", group="git", detail_levels=HIGH_PLUS, render=render_repo_name,
-                  label="Repo", render_plain=render_repo_name_plain, header="RPO", name="Repo Name"),
-    SummaryColumn(id="branch", group="git", detail_levels=HIGH_PLUS, render=render_branch,
-                  label="Branch", render_plain=render_branch_plain, header="BR", name="Branch"),
-    SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
-                  label="Git", render_plain=render_git_diff_plain, header="GIT", name="Git Diff"),
-    SummaryColumn(id="git_untracked", group="git", detail_levels=HIGH_PLUS, render=render_git_untracked,
-                  label="Untracked", render_plain=render_git_untracked_plain, header="UN",
-                  name="Untracked Files"),
-    SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
-                  label="PR", render_plain=render_pr_number_plain,
-                  visible=lambda ctx: ctx.any_has_pr, placeholder_width=8, header="PR", name="PR Number"),
-
-    # Time group — uptime, running, stalled, sleep, active%
-    SummaryColumn(id="uptime", ticks=True, group="time", detail_levels=MED_PLUS, render=render_uptime,
-                  label="Uptime", render_plain=render_uptime_plain, header="UPT", name="Uptime"),
-    SummaryColumn(id="running_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_running_time,
-                  header="RUN", name="Running Time"),
-    SummaryColumn(id="stalled_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_stalled_time,
-                  header="STL", name="Stalled Time"),
-    SummaryColumn(id="sleep_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_sleep_time,
-                  header="ZZZ", name="Sleep Time"),
-    SummaryColumn(id="active_pct", ticks=True, group="time", detail_levels=HIGH_PLUS, render=render_active_pct,
-                  header="ACT", name="Active %"),
-    # Synthetic CLI-only: combined time line
-    SummaryColumn(id="time_combined", ticks=True, group="time", detail_levels=set(), render=lambda ctx: None,
-                  label="Time", render_plain=render_time_plain, cli_only=True),
-
-    # LLM usage group — TOK, ENRG, $, BDG, SUB$ (energy before cost for readability)
-    SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
-                  label="Tokens", render_plain=render_token_count_plain, header="TOK", name="Token Count"),
-    SummaryColumn(id="joules", group="llm_usage", detail_levels=set(), render=render_joules,
-                  header="ENRG", name="Energy (Joules)"),
-    SummaryColumn(id="cost", group="llm_usage", detail_levels=set(), render=render_cost,
-                  label="Cost", render_plain=render_cost_plain, header="$", name="Cost"),
-    SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
-                  visible=lambda ctx: ctx.any_has_budget, placeholder_width=7,
-                  header="BDG", name="Budget"),
-    SummaryColumn(id="subtree_cost", group="llm_usage", detail_levels=set(),
-                  render=render_subtree_cost, label="Subtree",
-                  render_plain=render_subtree_cost_plain,
-                  visible=lambda ctx: ctx.any_has_subtree_cost,
-                  placeholder_width=8, header="SUB$", name="Subtree Cost"),
-    # Burn rate over the timeline window (#174). Hidden until at least one
-    # agent has window-scoped activity, so the column doesn't take width
-    # when burn data isn't being computed (TUI not running, no recent tokens).
-    SummaryColumn(id="burn_rate", group="llm_usage", detail_levels=HIGH_PLUS,
-                  render=render_burn_rate, label="Burn",
-                  render_plain=render_burn_rate_plain,
-                  visible=lambda ctx: ctx.any_has_burn,
-                  placeholder_width=9, header="BURN", name="Burn Rate"),
-
-    # Context group — always visible, independent of $ toggle
-    SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage,
-                  header="CTX", name="Context Usage"),
-    SummaryColumn(id="model", group="context", detail_levels=ALL, render=render_model,
-                  label="Model", render_plain=render_model_plain,
-                  visible=lambda ctx: ctx.any_has_model,
-                  placeholder_width=8, header="MDL", name="Model"),
-    SummaryColumn(id="effort", group="context", detail_levels=MED_PLUS, render=render_effort,
-                  label="Effort", render_plain=render_effort_plain,
-                  visible=lambda ctx: ctx.any_has_effort,
-                  placeholder_width=6, header="EFF", name="Effort"),
-    SummaryColumn(id="provider", group="context", detail_levels=ALL, render=render_provider,
-                  label="Provider", render_plain=render_provider_plain,
-                  visible=lambda ctx: ctx.any_has_provider,
-                  placeholder_width=3, header="PRV", name="Provider"),
-    SummaryColumn(id="backend", group="context", detail_levels=ALL, render=render_backend,
-                  label="Backend", render_plain=render_backend_plain,
-                  visible=lambda ctx: ctx.mixed_backends,
-                  placeholder_width=3, header="BKD", name="Agent Backend"),
-
-    # Performance group — median work, CPU, RAM
-    SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
-                  header="MED", name="Median Work Time"),
-    SummaryColumn(id="cpu_pct", group="performance", detail_levels=HIGH_PLUS, render=render_cpu_pct,
-                  label="CPU", render_plain=render_cpu_pct_plain,
-                  visible=lambda ctx: ctx.any_has_cpu,
-                  placeholder_width=6, header="CPU", name="CPU %"),
-    SummaryColumn(id="ram", group="performance", detail_levels=HIGH_PLUS, render=render_ram,
-                  label="RAM", render_plain=render_ram_plain,
-                  visible=lambda ctx: ctx.any_has_ram,
-                  placeholder_width=6, header="RAM", name="Memory (RSS)"),
-
-    # Subprocesses group
-    SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_subagent_count,
-                  header="SUB", name="Subagent Count"),
-    SummaryColumn(id="bash_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_bash_count,
-                  header="SH", name="Bash Count"),
-    SummaryColumn(id="child_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_child_count,
-                  header="CH", name="Child Count"),
-    SummaryColumn(id="job_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_job_count,
-                  header="JOB", name="Job Count"),
-    # Synthetic CLI-only: combined work + interactions line
-    SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
-                  label="Work", render_plain=render_work_plain, cli_only=True),
-    # Synthetic CLI-only: combined agents line
-    SummaryColumn(id="agents_combined", group="subprocesses", detail_levels=set(), render=lambda ctx: None,
-                  label="Agents", render_plain=render_agents_plain, cli_only=True),
-
-    # Supervision group
-    SummaryColumn(id="permission_mode", group="supervision", detail_levels=ALL, render=render_permission_mode,
-                  label="Mode", render_plain=render_mode_plain, header="MOD", name="Permission Mode"),
-    SummaryColumn(id="agent_teams", group="supervision", detail_levels=ALL, render=render_agent_teams,
-                  label="Teams", render_plain=render_teams_plain, header="TM", name="Teams"),
-    SummaryColumn(id="wrapper", group="supervision", detail_levels=ALL, render=render_wrapper,
-                  label="Wrapper", render_plain=render_wrapper_plain, header="WRP", name="Wrapper"),
-    SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
-                  label="Tools", render_plain=render_tools_plain, header="TLS", name="Allowed Tools"),
-    SummaryColumn(id="skill_profile", group="supervision", detail_levels=ALL, render=render_skill_profile,
-                  label="Skill Profile", render_plain=render_skill_profile_plain, header="PRF",
-                  name="Skill Profile"),
-    SummaryColumn(id="loaded_skills", group="supervision", detail_levels=ALL, render=render_loaded_skills,
-                  label="Loaded Skills", render_plain=render_skills_plain, header="SKL", name="Loaded Skills"),
-    SummaryColumn(id="available_skills", group="supervision", detail_levels=ALL, render=render_available_skills,
-                  label="Available Skills", render_plain=render_available_skills_plain, header="ASK", name="Available Skills"),
-    SummaryColumn(id="enhanced_context", group="supervision", detail_levels=ALL, render=render_enhanced_context,
-                  header="EC", name="Enhanced Context"),
-    SummaryColumn(id="human_count", group="supervision", detail_levels=ALL, render=render_human_count,
-                  header="H#", name="Human Count"),
-    SummaryColumn(id="robot_count", group="supervision", detail_levels=ALL, render=render_robot_count,
-                  header="R#", name="Robot Count"),
-    SummaryColumn(id="standing_orders", group="supervision", detail_levels=ALL, render=render_standing_orders,
-                  label="Orders", render_plain=render_orders_plain, header="ORD", name="Standing Orders"),
-    SummaryColumn(id="heartbeat", ticks=True, group="supervision", detail_levels=ALL, render=render_heartbeat,
-                  label="Heartbeat", render_plain=render_heartbeat_plain, header="HB", name="Heartbeat"),
-    SummaryColumn(id="oversight_countdown", ticks=True, group="supervision", detail_levels=ALL, render=render_oversight_countdown,
-                  visible=lambda ctx: ctx.any_has_oversight_timeout, placeholder_width=8,
-                  header="OVR", name="Oversight Countdown"),
-
-    # Priority group
-    SummaryColumn(id="agent_value", group="priority", detail_levels=ALL, render=render_agent_value,
-                  label="Value", render_plain=render_value_plain, header="VAL", name="Agent Value"),
-]
-
-
-# ---------------------------------------------------------------------------
-# Column help (#477) and sort order (#487)
-# ---------------------------------------------------------------------------
-# Kept beside the registry rather than in each SummaryColumn(...) call so the
-# column list above stays scannable. A test asserts every TUI column has a
-# description, so a new column cannot ship without one.
-
-# ---------------------------------------------------------------------------
 # Hover popups: what a row's emoji stand for
 # ---------------------------------------------------------------------------
 
@@ -1649,68 +1490,13 @@ def hover_status_detail(ctx: ColumnContext):
     return _emoji_legend("Status detail", rows)
 
 
-COLUMN_HOVER: dict[str, Callable[[ColumnContext], object]] = {
-    "loaded_skills": hover_loaded_skills,
-    "available_skills": hover_available_skills,
-    "skill_profile": hover_skill_profile,
-    "allowed_tools": hover_allowed_tools,
-    "wrapper": hover_wrapper,
-    "sleep_countdown": hover_status_detail,
-}
-
-
-COLUMN_HELP: dict[str, str] = {
-    "status_symbol": "What the agent is doing: running, waiting for you, stalled, asleep, done",
-    "unvisited_alert": "Flags an agent that stalled and you haven't looked at since",
-    "time_in_state": "How long the agent has been in its current status",
-    "sleep_countdown": "Status detail: current tool, subagents, sleep wake-up estimate",
-    "expand_icon": "Fold marker for tree view",
-    "agent_name": "Agent name (tree connectors show parent/child in tree sort)",
-    "host": "Machine the agent runs on (shown when sister hosts are configured)",
-    "repo_name": "Git repository the agent is working in",
-    "branch": "Git branch checked out in the agent's working directory",
-    "git_diff": "Uncommitted changes: files changed, lines added, lines removed",
-    "git_untracked": "Untracked files in the working tree (work not yet added to git)",
-    "pr_number": "Open pull request for the agent's branch",
-    "uptime": "Time since the agent was launched",
-    "running_time": "Total time spent working (green) since launch",
-    "stalled_time": "Total time spent waiting or stalled (non-green) since launch",
-    "sleep_time": "Total time spent asleep",
-    "active_pct": "Share of awake time spent working rather than waiting",
-    "token_count": "Total tokens used (input + output + cache)",
-    "joules": "Estimated energy: tokens x a guess at the model's GPU energy (config: energy)",
-    "cost": "Estimated spend in dollars, from token usage and model pricing",
-    "budget": "Cost budget set for this agent (B to edit)",
-    "subtree_cost": "Cost of this agent plus all its children",
-    "burn_rate": "Spend rate over the timeline window (units follow $)",
-    "context_usage": "How full the model's context window is",
-    "model": "Model the agent is running",
-    "effort": "Reasoning effort the model is running at (low, med, high, xhigh, max…)",
-    "provider": "API provider (web or Bedrock)",
-    "backend": "Agent CLI: cc Claude Code, oc opencode, cx codex, gk grok, hm hermes",
-    "median_work_time": "Median length of a work cycle between human prompts",
-    "cpu_pct": "CPU used by the agent's process tree (over 100% = several cores)",
-    "ram": "Resident memory of the agent's process tree",
-    "subagent_count": "Subagents running right now",
-    "bash_count": "Background shell commands running right now",
-    "child_count": "Overcode child agents launched by this agent",
-    "job_count": "Overcode jobs this agent launched that are still running",
-    "permission_mode": "Permission mode: normal, auto-accept, permissive or bypass",
-    "agent_teams": "Agent teams enabled",
-    "wrapper": "Launch wrapper (e.g. devcontainer) and sandbox badge",
-    "allowed_tools": "Tools the agent was launched with permission to use",
-    "skill_profile": "Skill profile the agent launched with, as its emoji; hover a row to name it (W to edit profiles)",
-    "loaded_skills": "Skills the agent has loaded this session",
-    "available_skills": "Skills installed and available to the agent",
-    "enhanced_context": "Enhanced context hook on (^T to toggle)",
-    "human_count": "Prompts sent by a human",
-    "robot_count": "Prompts sent by the supervisor (steers)",
-    "standing_orders": "Standing orders: ✓ complete, preset name, 📋 custom, ➖ none",
-    "heartbeat": "Heartbeat interval and next send time (⏸ paused)",
-    "oversight_countdown": "Time left before an oversight timeout fires",
-    "agent_value": "Priority value (V to edit; 1000 is neutral)",
-}
-
+# ---------------------------------------------------------------------------
+# Sort keys (#487)
+# ---------------------------------------------------------------------------
+# A column's sort_key; None = not sortable. Rows whose key is None always
+# sort last. agent_name / status_symbol / agent_value have keys too, but the
+# TUI sorts them with the tree-aware presets in tui_logic (alphabetical,
+# by_status, by_value) so they keep their established tie-breaks.
 
 def _age_seconds(when) -> Optional[float]:
     """Seconds since a datetime or ISO string; None when unknown."""
@@ -1783,80 +1569,308 @@ def _if_stats(fn: Callable[[ColumnContext], object]) -> Callable[[ColumnContext]
     return lambda ctx: fn(ctx) if ctx.claude_stats is not None else None
 
 
-# id -> (sort key, natural direction is descending). Absent = not sortable.
-# agent_name / status_symbol / agent_value have keys here too, but the TUI
-# sorts them with the tree-aware presets in tui_logic (alphabetical,
-# by_status, by_value) so they keep their established tie-breaks.
-COLUMN_SORT: dict[str, Tuple[Callable[[ColumnContext], object], bool]] = {
-    "status_symbol": (lambda ctx: ctx.stats.current_state, False),
-    "unvisited_alert": (lambda ctx: int(ctx.is_unvisited_stalled), True),
-    "time_in_state": (lambda ctx: _age_seconds(ctx.status_changed_at), True),
-    "agent_name": (lambda ctx: ctx.session.name.lower(), False),
-    "host": (lambda ctx: _lower(ctx.source_host or ctx.local_hostname), False),
-    "repo_name": (lambda ctx: _lower(ctx.repo_name), False),
-    "branch": (lambda ctx: _lower(ctx.branch), False),
-    "git_diff": (lambda ctx: (ctx.git_diff_stats[0], ctx.git_diff_stats[1] + ctx.git_diff_stats[2])
-                 if ctx.git_diff_stats else None, True),
-    "git_untracked": (lambda ctx: ctx.git_untracked_count, True),
-    "pr_number": (lambda ctx: ctx.pr_number, True),
-    "uptime": (lambda ctx: _age_seconds(ctx.session.start_time), True),
-    "running_time": (lambda ctx: ctx.green_time, True),
-    "stalled_time": (lambda ctx: ctx.non_green_time, True),
-    "sleep_time": (lambda ctx: ctx.sleep_time, True),
-    "active_pct": (_sort_active_pct, True),
-    "token_count": (_if_stats(lambda ctx: ctx.claude_stats.total_tokens), True),
-    "joules": (_if_stats(lambda ctx: ctx.session.stats.estimated_energy_j), True),
-    "cost": (_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd), True),
-    "budget": (lambda ctx: ctx.session.cost_budget_usd or None, True),
-    "subtree_cost": (lambda ctx: ctx.subtree_cost_usd or None, True),
-    "burn_rate": (_sort_burn_rate, True),
-    "context_usage": (_sort_context_usage, True),
-    "model": (_sort_model, False),
-    "effort": (_sort_effort, True),
-    "provider": (lambda ctx: getattr(ctx.session, 'provider', 'web') or 'web', False),
-    "backend": (_sort_backend, False),
-    "median_work_time": (_if_stats(lambda ctx: ctx.median_work), True),
-    "cpu_pct": (lambda ctx: getattr(ctx.session, 'cpu_percent', 0.0) or 0.0, True),
-    "ram": (lambda ctx: getattr(ctx.session, 'rss_bytes', 0) or 0, True),
-    "subagent_count": (lambda ctx: ctx.live_subagent_count, True),
-    "bash_count": (lambda ctx: ctx.background_bash_count, True),
-    "child_count": (lambda ctx: ctx.child_count, True),
-    "job_count": (lambda ctx: ctx.job_count, True),
-    "permission_mode": (lambda ctx: ctx.session.permissiveness_mode, False),
-    "agent_teams": (lambda ctx: int(bool(ctx.session.agent_teams)), True),
-    "wrapper": (lambda ctx: render_wrapper_plain(ctx), False),
-    "skill_profile": (lambda ctx: _skill_profile(ctx) or "", False),
-    "loaded_skills": (lambda ctx: len(ctx.session.loaded_skills or []), True),
-    "available_skills": (lambda ctx: len(ctx.session.available_skills or []), True),
-    "enhanced_context": (lambda ctx: int(bool(ctx.session.enhanced_context_enabled)), True),
-    "human_count": (_if_stats(lambda ctx: max(0, ctx.claude_stats.interaction_count
-                                              - ctx.stats.steers_count)), True),
-    "robot_count": (lambda ctx: ctx.stats.steers_count, True),
-    "standing_orders": (lambda ctx: (not ctx.session.standing_orders_complete,)
-                        if ctx.session.standing_instructions else None, True),
-    "heartbeat": (_sort_heartbeat, False),
-    "oversight_countdown": (_sort_oversight, False),
-    "agent_value": (lambda ctx: ctx.session.agent_value, True),
-}
+# ---------------------------------------------------------------------------
+# Ordered column list — reorder by moving items
+# ---------------------------------------------------------------------------
+SUMMARY_COLUMNS: List[SummaryColumn] = [
+    # Identity group — always visible
+    SummaryColumn(id="status_symbol", group="identity", detail_levels=ALL, render=render_status_symbol,
+                  label="Status", render_plain=render_status_plain, name="Status",
+                  description="What the agent is doing: running, waiting for you, stalled, asleep, done",
+                  sort_key=lambda ctx: ctx.stats.current_state),
+    SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert,
+                  name="Alert",
+                  description="Flags an agent that stalled and you haven't looked at since",
+                  sort_key=lambda ctx: int(ctx.is_unvisited_stalled),
+                  sort_desc=True),
+    SummaryColumn(id="time_in_state", ticks=True, group="identity", detail_levels=ALL, render=render_time_in_state,
+                  header="ST", name="Time in State",
+                  description="How long the agent has been in its current status",
+                  sort_key=lambda ctx: _age_seconds(ctx.status_changed_at),
+                  sort_desc=True),
+    SummaryColumn(id="sleep_countdown", ticks=True, group="identity", detail_levels=ALL, render=render_sleep_countdown,
+                  visible=lambda ctx: ctx.any_is_sleeping or ctx.any_has_status_detail,
+                  header="DTL", name="Status Detail",
+                  description="Status detail: current tool, subagents, sleep wake-up estimate",
+                  hover=hover_status_detail),
+    SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
+                  name="Expand",
+                  description="Fold marker for tree view"),
+    SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
+                  header="NAME", name="Agent Name",
+                  description="Agent name (tree connectors show parent/child in tree sort)",
+                  sort_key=lambda ctx: ctx.session.name.lower()),
+    SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
+                  label="Host", render_plain=render_host_plain, header="HST", name="Host",
+                  description="Machine the agent runs on (shown when sister hosts are configured)",
+                  sort_key=lambda ctx: _lower(ctx.source_host or ctx.local_hostname),
+                  hide_when_uniform=True),
 
-# Columns that say nothing when every agent shows the same value — one
-# host, one model, one repo… They hide until the fleet differs; a column
-# the user switched on explicitly stays. (backend has its own older gate,
-# mixed_backends, which hides its placeholder too.)
-HIDE_WHEN_UNIFORM = frozenset({
-    "host", "backend", "provider", "model", "effort",
-    "permission_mode", "wrapper", "repo_name", "branch",
-})
+    # Git group — repo, branch (high/full only), diff stats
+    SummaryColumn(id="repo_name", group="git", detail_levels=HIGH_PLUS, render=render_repo_name,
+                  label="Repo", render_plain=render_repo_name_plain, header="RPO", name="Repo Name",
+                  description="Git repository the agent is working in",
+                  sort_key=lambda ctx: _lower(ctx.repo_name),
+                  hide_when_uniform=True),
+    SummaryColumn(id="branch", group="git", detail_levels=HIGH_PLUS, render=render_branch,
+                  label="Branch", render_plain=render_branch_plain, header="BR", name="Branch",
+                  description="Git branch checked out in the agent's working directory",
+                  sort_key=lambda ctx: _lower(ctx.branch),
+                  hide_when_uniform=True),
+    SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
+                  label="Git", render_plain=render_git_diff_plain, header="GIT", name="Git Diff",
+                  description="Uncommitted changes: files changed, lines added, lines removed",
+                  sort_key=lambda ctx: (ctx.git_diff_stats[0], ctx.git_diff_stats[1] + ctx.git_diff_stats[2])
+                      if ctx.git_diff_stats else None,
+                  sort_desc=True),
+    SummaryColumn(id="git_untracked", group="git", detail_levels=HIGH_PLUS, render=render_git_untracked,
+                  label="Untracked", render_plain=render_git_untracked_plain, header="UN",
+                  name="Untracked Files",
+                  description="Untracked files in the working tree (work not yet added to git)",
+                  sort_key=lambda ctx: ctx.git_untracked_count,
+                  sort_desc=True),
+    SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
+                  label="PR", render_plain=render_pr_number_plain,
+                  visible=lambda ctx: ctx.any_has_pr, placeholder_width=8, header="PR", name="PR Number",
+                  description="Open pull request for the agent's branch",
+                  sort_key=lambda ctx: ctx.pr_number,
+                  sort_desc=True),
 
-for _col in SUMMARY_COLUMNS:
-    _col.description = COLUMN_HELP.get(_col.id, "")
-    _col.hover = COLUMN_HOVER.get(_col.id)
-    if _col.id in COLUMN_SORT:
-        _col.sort_key, _col.sort_desc = COLUMN_SORT[_col.id]
-    if _col.id in HIDE_WHEN_UNIFORM:
-        _col.hide_when_uniform = True
-        _col.description = (_col.description + " Hidden while every agent shows the same value.").strip()
-del _col
+    # Time group — uptime, running, stalled, sleep, active%
+    SummaryColumn(id="uptime", ticks=True, group="time", detail_levels=MED_PLUS, render=render_uptime,
+                  label="Uptime", render_plain=render_uptime_plain, header="UPT", name="Uptime",
+                  description="Time since the agent was launched",
+                  sort_key=lambda ctx: _age_seconds(ctx.session.start_time),
+                  sort_desc=True),
+    SummaryColumn(id="running_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_running_time,
+                  header="RUN", name="Running Time",
+                  description="Total time spent working (green) since launch",
+                  sort_key=lambda ctx: ctx.green_time,
+                  sort_desc=True),
+    SummaryColumn(id="stalled_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_stalled_time,
+                  header="STL", name="Stalled Time",
+                  description="Total time spent waiting or stalled (non-green) since launch",
+                  sort_key=lambda ctx: ctx.non_green_time,
+                  sort_desc=True),
+    SummaryColumn(id="sleep_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_sleep_time,
+                  header="ZZZ", name="Sleep Time",
+                  description="Total time spent asleep",
+                  sort_key=lambda ctx: ctx.sleep_time,
+                  sort_desc=True),
+    SummaryColumn(id="active_pct", ticks=True, group="time", detail_levels=HIGH_PLUS, render=render_active_pct,
+                  header="ACT", name="Active %",
+                  description="Share of awake time spent working rather than waiting",
+                  sort_key=_sort_active_pct,
+                  sort_desc=True),
+    # Synthetic CLI-only: combined time line
+    SummaryColumn(id="time_combined", ticks=True, group="time", detail_levels=set(), render=lambda ctx: None,
+                  label="Time", render_plain=render_time_plain, cli_only=True),
+
+    # LLM usage group — TOK, ENRG, $, BDG, SUB$ (energy before cost for readability)
+    SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
+                  label="Tokens", render_plain=render_token_count_plain, header="TOK", name="Token Count",
+                  description="Total tokens used (input + output + cache)",
+                  sort_key=_if_stats(lambda ctx: ctx.claude_stats.total_tokens),
+                  sort_desc=True),
+    SummaryColumn(id="joules", group="llm_usage", detail_levels=set(), render=render_joules,
+                  header="ENRG", name="Energy (Joules)",
+                  description="Estimated energy: tokens x a guess at the model's GPU energy (config: energy)",
+                  sort_key=_if_stats(lambda ctx: ctx.session.stats.estimated_energy_j),
+                  sort_desc=True),
+    SummaryColumn(id="cost", group="llm_usage", detail_levels=set(), render=render_cost,
+                  label="Cost", render_plain=render_cost_plain, header="$", name="Cost",
+                  description="Estimated spend in dollars, from token usage and model pricing",
+                  sort_key=_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd),
+                  sort_desc=True),
+    SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
+                  visible=lambda ctx: ctx.any_has_budget, placeholder_width=7,
+                  header="BDG", name="Budget",
+                  description="Cost budget set for this agent (B to edit)",
+                  sort_key=lambda ctx: ctx.session.cost_budget_usd or None,
+                  sort_desc=True),
+    SummaryColumn(id="subtree_cost", group="llm_usage", detail_levels=set(),
+                  render=render_subtree_cost, label="Subtree",
+                  render_plain=render_subtree_cost_plain,
+                  visible=lambda ctx: ctx.any_has_subtree_cost,
+                  placeholder_width=8, header="SUB$", name="Subtree Cost",
+                  description="Cost of this agent plus all its children",
+                  sort_key=lambda ctx: ctx.subtree_cost_usd or None,
+                  sort_desc=True),
+    # Burn rate over the timeline window (#174). Hidden until at least one
+    # agent has window-scoped activity, so the column doesn't take width
+    # when burn data isn't being computed (TUI not running, no recent tokens).
+    SummaryColumn(id="burn_rate", group="llm_usage", detail_levels=HIGH_PLUS,
+                  render=render_burn_rate, label="Burn",
+                  render_plain=render_burn_rate_plain,
+                  visible=lambda ctx: ctx.any_has_burn,
+                  placeholder_width=9, header="BURN", name="Burn Rate",
+                  description="Spend rate over the timeline window (units follow $)",
+                  sort_key=_sort_burn_rate,
+                  sort_desc=True),
+
+    # Context group — always visible, independent of $ toggle
+    SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage,
+                  header="CTX", name="Context Usage",
+                  description="How full the model's context window is",
+                  sort_key=_sort_context_usage,
+                  sort_desc=True),
+    SummaryColumn(id="model", group="context", detail_levels=ALL, render=render_model,
+                  label="Model", render_plain=render_model_plain,
+                  visible=lambda ctx: ctx.any_has_model,
+                  placeholder_width=8, header="MDL", name="Model",
+                  description="Model the agent is running",
+                  sort_key=_sort_model,
+                  hide_when_uniform=True),
+    SummaryColumn(id="effort", group="context", detail_levels=MED_PLUS, render=render_effort,
+                  label="Effort", render_plain=render_effort_plain,
+                  visible=lambda ctx: ctx.any_has_effort,
+                  placeholder_width=6, header="EFF", name="Effort",
+                  description="Reasoning effort the model is running at (low, med, high, xhigh, max…)",
+                  sort_key=_sort_effort,
+                  sort_desc=True,
+                  hide_when_uniform=True),
+    SummaryColumn(id="provider", group="context", detail_levels=ALL, render=render_provider,
+                  label="Provider", render_plain=render_provider_plain,
+                  visible=lambda ctx: ctx.any_has_provider,
+                  placeholder_width=3, header="PRV", name="Provider",
+                  description="API provider (web or Bedrock)",
+                  sort_key=lambda ctx: getattr(ctx.session, 'provider', 'web') or 'web',
+                  hide_when_uniform=True),
+    SummaryColumn(id="backend", group="context", detail_levels=ALL, render=render_backend,
+                  label="Backend", render_plain=render_backend_plain,
+                  visible=lambda ctx: ctx.mixed_backends,
+                  placeholder_width=3, header="BKD", name="Agent Backend",
+                  description="Agent CLI: cc Claude Code, oc opencode, cx codex, gk grok, hm hermes",
+                  sort_key=_sort_backend,
+                  hide_when_uniform=True),
+
+    # Performance group — median work, CPU, RAM
+    SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
+                  header="MED", name="Median Work Time",
+                  description="Median length of a work cycle between human prompts",
+                  sort_key=_if_stats(lambda ctx: ctx.median_work),
+                  sort_desc=True),
+    SummaryColumn(id="cpu_pct", group="performance", detail_levels=HIGH_PLUS, render=render_cpu_pct,
+                  label="CPU", render_plain=render_cpu_pct_plain,
+                  visible=lambda ctx: ctx.any_has_cpu,
+                  placeholder_width=6, header="CPU", name="CPU %",
+                  description="CPU used by the agent's process tree (over 100% = several cores)",
+                  sort_key=lambda ctx: getattr(ctx.session, 'cpu_percent', 0.0) or 0.0,
+                  sort_desc=True),
+    SummaryColumn(id="ram", group="performance", detail_levels=HIGH_PLUS, render=render_ram,
+                  label="RAM", render_plain=render_ram_plain,
+                  visible=lambda ctx: ctx.any_has_ram,
+                  placeholder_width=6, header="RAM", name="Memory (RSS)",
+                  description="Resident memory of the agent's process tree",
+                  sort_key=lambda ctx: getattr(ctx.session, 'rss_bytes', 0) or 0,
+                  sort_desc=True),
+
+    # Subprocesses group
+    SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_subagent_count,
+                  header="SUB", name="Subagent Count",
+                  description="Subagents running right now",
+                  sort_key=lambda ctx: ctx.live_subagent_count,
+                  sort_desc=True),
+    SummaryColumn(id="bash_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_bash_count,
+                  header="SH", name="Bash Count",
+                  description="Background shell commands running right now",
+                  sort_key=lambda ctx: ctx.background_bash_count,
+                  sort_desc=True),
+    SummaryColumn(id="child_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_child_count,
+                  header="CH", name="Child Count",
+                  description="Overcode child agents launched by this agent",
+                  sort_key=lambda ctx: ctx.child_count,
+                  sort_desc=True),
+    SummaryColumn(id="job_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_job_count,
+                  header="JOB", name="Job Count",
+                  description="Overcode jobs this agent launched that are still running",
+                  sort_key=lambda ctx: ctx.job_count,
+                  sort_desc=True),
+    # Synthetic CLI-only: combined work + interactions line
+    SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
+                  label="Work", render_plain=render_work_plain, cli_only=True),
+    # Synthetic CLI-only: combined agents line
+    SummaryColumn(id="agents_combined", group="subprocesses", detail_levels=set(), render=lambda ctx: None,
+                  label="Agents", render_plain=render_agents_plain, cli_only=True),
+
+    # Supervision group
+    SummaryColumn(id="permission_mode", group="supervision", detail_levels=ALL, render=render_permission_mode,
+                  label="Mode", render_plain=render_mode_plain, header="MOD", name="Permission Mode",
+                  description="Permission mode: normal, auto-accept, permissive or bypass",
+                  sort_key=lambda ctx: ctx.session.permissiveness_mode,
+                  hide_when_uniform=True),
+    SummaryColumn(id="agent_teams", group="supervision", detail_levels=ALL, render=render_agent_teams,
+                  label="Teams", render_plain=render_teams_plain, header="TM", name="Teams",
+                  description="Agent teams enabled",
+                  sort_key=lambda ctx: int(bool(ctx.session.agent_teams)),
+                  sort_desc=True),
+    SummaryColumn(id="wrapper", group="supervision", detail_levels=ALL, render=render_wrapper,
+                  label="Wrapper", render_plain=render_wrapper_plain, header="WRP", name="Wrapper",
+                  description="Launch wrapper (e.g. devcontainer) and sandbox badge",
+                  sort_key=lambda ctx: render_wrapper_plain(ctx),
+                  hover=hover_wrapper,
+                  hide_when_uniform=True),
+    SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
+                  label="Tools", render_plain=render_tools_plain, header="TLS", name="Allowed Tools",
+                  description="Tools the agent was launched with permission to use",
+                  hover=hover_allowed_tools),
+    SummaryColumn(id="skill_profile", group="supervision", detail_levels=ALL, render=render_skill_profile,
+                  label="Skill Profile", render_plain=render_skill_profile_plain, header="PRF",
+                  name="Skill Profile",
+                  description="Skill profile the agent launched with, as its emoji; hover a row to name it (W to edit profiles)",
+                  sort_key=lambda ctx: _skill_profile(ctx) or "",
+                  hover=hover_skill_profile),
+    SummaryColumn(id="loaded_skills", group="supervision", detail_levels=ALL, render=render_loaded_skills,
+                  label="Loaded Skills", render_plain=render_skills_plain, header="SKL", name="Loaded Skills",
+                  description="Skills the agent has loaded this session",
+                  sort_key=lambda ctx: len(ctx.session.loaded_skills or []),
+                  sort_desc=True,
+                  hover=hover_loaded_skills),
+    SummaryColumn(id="available_skills", group="supervision", detail_levels=ALL, render=render_available_skills,
+                  label="Available Skills", render_plain=render_available_skills_plain, header="ASK", name="Available Skills",
+                  description="Skills installed and available to the agent",
+                  sort_key=lambda ctx: len(ctx.session.available_skills or []),
+                  sort_desc=True,
+                  hover=hover_available_skills),
+    SummaryColumn(id="enhanced_context", group="supervision", detail_levels=ALL, render=render_enhanced_context,
+                  header="EC", name="Enhanced Context",
+                  description="Enhanced context hook on (^T to toggle)",
+                  sort_key=lambda ctx: int(bool(ctx.session.enhanced_context_enabled)),
+                  sort_desc=True),
+    SummaryColumn(id="human_count", group="supervision", detail_levels=ALL, render=render_human_count,
+                  header="H#", name="Human Count",
+                  description="Prompts sent by a human",
+                  sort_key=_if_stats(lambda ctx: max(0, ctx.claude_stats.interaction_count
+                      - ctx.stats.steers_count)),
+                  sort_desc=True),
+    SummaryColumn(id="robot_count", group="supervision", detail_levels=ALL, render=render_robot_count,
+                  header="R#", name="Robot Count",
+                  description="Prompts sent by the supervisor (steers)",
+                  sort_key=lambda ctx: ctx.stats.steers_count,
+                  sort_desc=True),
+    SummaryColumn(id="standing_orders", group="supervision", detail_levels=ALL, render=render_standing_orders,
+                  label="Orders", render_plain=render_orders_plain, header="ORD", name="Standing Orders",
+                  description="Standing orders: ✓ complete, preset name, 📋 custom, ➖ none",
+                  sort_key=lambda ctx: (not ctx.session.standing_orders_complete,)
+                      if ctx.session.standing_instructions else None,
+                  sort_desc=True),
+    SummaryColumn(id="heartbeat", ticks=True, group="supervision", detail_levels=ALL, render=render_heartbeat,
+                  label="Heartbeat", render_plain=render_heartbeat_plain, header="HB", name="Heartbeat",
+                  description="Heartbeat interval and next send time (⏸ paused)",
+                  sort_key=_sort_heartbeat),
+    SummaryColumn(id="oversight_countdown", ticks=True, group="supervision", detail_levels=ALL, render=render_oversight_countdown,
+                  visible=lambda ctx: ctx.any_has_oversight_timeout, placeholder_width=8,
+                  header="OVR", name="Oversight Countdown",
+                  description="Time left before an oversight timeout fires",
+                  sort_key=_sort_oversight),
+
+    # Priority group
+    SummaryColumn(id="agent_value", group="priority", detail_levels=ALL, render=render_agent_value,
+                  label="Value", render_plain=render_value_plain, header="VAL", name="Agent Value",
+                  description="Priority value (V to edit; 1000 is neutral)",
+                  sort_key=lambda ctx: ctx.session.agent_value,
+                  sort_desc=True),
+]
 
 COLUMNS_BY_ID: dict[str, SummaryColumn] = {c.id: c for c in SUMMARY_COLUMNS}
 

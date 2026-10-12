@@ -4,7 +4,7 @@ import pytest
 from rich.cells import cell_len
 
 from overcode.summary_columns import (
-    COLUMN_HELP, COLUMN_SORT, COLUMNS_BY_ID, SUMMARY_COLUMNS, column_at, render_header_cells,
+    COLUMNS_BY_ID, SUMMARY_COLUMNS, column_at, render_header_cells,
 )
 from tests.tui_harness import palette as _palette, ready as _ready, until
 
@@ -15,9 +15,10 @@ class TestRegistry:
         missing = [c.id for c in SUMMARY_COLUMNS if not c.cli_only and not c.description]
         assert missing == []
 
-    def test_help_and_sort_tables_name_real_columns(self):
-        assert set(COLUMN_HELP) - set(COLUMNS_BY_ID) == set()
-        assert set(COLUMN_SORT) - set(COLUMNS_BY_ID) == set()
+    def test_hide_when_uniform_says_so_in_help(self):
+        for c in SUMMARY_COLUMNS:
+            if c.hide_when_uniform:
+                assert c.description.endswith("Hidden while every agent shows the same value."), c.id
 
     def test_presets_are_sortable_columns(self):
         from overcode.tui_logic import PRESET_FOR_COLUMN
@@ -88,7 +89,7 @@ class TestHeaderInTUI:
             tip = header.tooltip_for("agent_name").plain
             assert "Agent Name" in tip and "Sorted ▲" in tip
             tip = header.tooltip_for("uptime").plain
-            assert COLUMN_HELP["uptime"] in tip and "Click to sort" in tip
+            assert COLUMNS_BY_ID["uptime"].description in tip and "Click to sort" in tip
             assert "Not sortable" in header.tooltip_for("allowed_tools").plain
 
     async def test_hover_sets_tooltip(self, tui):

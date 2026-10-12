@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 from overcode import skill_library as sl
 from overcode.status_constants import BADGE_KINDS, BADGE_MEANINGS, StatusBadge, StatusDetail
 from overcode.summary_columns import (
-    COLUMN_HOVER, COLUMNS_BY_ID, hover_allowed_tools, hover_loaded_skills,
+    COLUMNS_BY_ID, hover_allowed_tools, hover_loaded_skills,
     hover_skill_profile, hover_status_detail, render_skill_profile,
     render_skill_profile_plain,
 )
@@ -85,7 +85,6 @@ class TestPrfColumn:
 class TestHoverText:
 
     def test_registry_names_real_columns(self):
-        assert set(COLUMN_HOVER) <= set(COLUMNS_BY_ID)
         assert COLUMNS_BY_ID["skill_profile"].hover is hover_skill_profile
 
     def test_every_badge_has_a_meaning(self):
