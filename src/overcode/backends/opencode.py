@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
+    AgentBackendBase,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -364,7 +365,7 @@ OPENCODE_PATTERNS = opencode_patterns(
 )
 
 
-class OpencodeBackend:
+class OpencodeBackend(AgentBackendBase):
     """opencode CLI adapter (verified against v1.18.19)."""
 
     name = "opencode"

@@ -57,13 +57,9 @@ class AgentIOMixin:
         backend = backend or get_backend()
         target = tmux_window_target(self.tmux.session_name, window_name)
         tmux_cmd = _build_tmux_cmd()
-        prompt_chars = backend.prompt_ready_chars()
-        # A backend whose idle prompt is never a bare glyph (hermes) answers
-        # through prompt_ready_line; the exact-set match is the default.
-        prompt_ready_line = getattr(backend, "prompt_ready_line", None)
         rules = backend.startup_dialog_rules()
         handled: set[str] = set()
-        settle = getattr(backend, "prompt_settle_seconds", 0.0)
+        settle = backend.prompt_settle_seconds
 
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -97,7 +93,7 @@ class AgentIOMixin:
                 if dismissed:
                     continue
 
-                if self._shows_prompt(content, prompt_chars, prompt_ready_line):
+                if self._shows_prompt(content, backend):
                     if not settle:
                         return True
                     # The prompt can be drawn before a dialog over it (codex
@@ -109,24 +105,18 @@ class AgentIOMixin:
                     ) or ""
                     if not any(
                         r.marker not in handled and r.marker in again for r in rules
-                    ) and self._shows_prompt(again, prompt_chars, prompt_ready_line):
+                    ) and self._shows_prompt(again, backend):
                         return True
                     continue
             time.sleep(poll_interval)
         return False
 
     @staticmethod
-    def _shows_prompt(content: str, prompt_chars, prompt_ready_line) -> bool:
+    def _shows_prompt(content: str, backend: AgentBackend) -> bool:
         from .status_patterns import strip_ansi
 
-        for line in content.split('\n'):
-            cleaned = strip_ansi(line).strip()
-            if prompt_ready_line is not None:
-                if prompt_ready_line(cleaned):
-                    return True
-            elif cleaned in prompt_chars:
-                return True
-        return False
+        return any(backend.prompt_ready_line(strip_ansi(line).strip())
+                   for line in content.split('\n'))
 
     def _pane_shows(self, window_name: str, text: str, timeout: float) -> bool:
         """Whether ``text`` appears in the window within ``timeout`` seconds."""
@@ -165,7 +155,7 @@ class AgentIOMixin:
             # such a backend has the prompt's first words checked on screen
             first = prompt.strip().split("\n")[0].strip()[:20]
             backend = backend or get_backend()
-            if sent and first and getattr(backend, "confirm_prompt_delivery", False):
+            if sent and first and backend.confirm_prompt_delivery:
                 for _ in range(3):
                     if self._pane_shows(window_name, first, timeout=3.0):
                         break
@@ -269,7 +259,7 @@ class AgentIOMixin:
             else:
                 # Send special key without Enter
                 success = self.tmux.send_keys(session.tmux_window, key, enter=False)
-        elif '\n' in text and getattr(self.backend_for(session), "type_multiline_text", False):
+        elif '\n' in text and self.backend_for(session).type_multiline_text:
             # Claude: a long paste reaches the model as <pasted_content>,
             # not to be obeyed; typed, it is the user's message
             success = type_text_to_tmux_window(

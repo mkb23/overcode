@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 from .base import (
     AgentBackend,
+    AgentBackendBase,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -155,6 +156,7 @@ def session_supports(session: Any, capability: BackendCapability) -> bool:
 
 __all__ = [
     "AgentBackend",
+    "AgentBackendBase",
     "BackendCapability",
     "ClaudeCodeBackend",
     "CodexBackend",

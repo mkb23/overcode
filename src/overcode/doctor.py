@@ -305,7 +305,7 @@ def session_process_argv_markers(session) -> Sequence[str]:
     """argv substrings that identify an agent's process (see find_agent_process)."""
     from .backends import get_backend
     backend = get_backend(getattr(session, "backend", None))
-    return tuple(getattr(backend, "process_argv_markers", ()) or ())
+    return tuple(backend.process_argv_markers)
 
 
 def gather_data_findings(
@@ -604,12 +604,10 @@ def inspect_agent(
     backend_name = session_backend_name(session)
     backend = get_backend(backend_name)
     verdict, details = backend.health_verdict(argv)
-    refine = getattr(backend, "refine_health_verdict", None)
-    if refine is not None:
-        try:
-            verdict, details = refine(session, verdict, details)
-        except Exception:
-            pass
+    try:
+        verdict, details = backend.refine_health_verdict(session, verdict, details)
+    except Exception:
+        pass
 
     # A "missing" telemetry footprint is expected, not broken, when the
     # user turned this backend's telemetry off in config.yaml — say so

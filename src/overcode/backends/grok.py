@@ -32,6 +32,7 @@ from ..exceptions import AgentCliNotFoundError
 from ..hook_handler import GROK_HOOK_EVENTS, GROK_NOTIFICATION_MATCHERS
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
+    AgentBackendBase,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -428,7 +429,7 @@ GROK_PATTERNS = StatusPatterns(
 )
 
 
-class GrokBackend:
+class GrokBackend(AgentBackendBase):
     """Grok Build CLI adapter (verified against v1.0.5, Phase 0 of the design doc).
 
     RESUME, FORK, SESSION_ID_PRESCRIPTION and PERMISSION_INJECTION since

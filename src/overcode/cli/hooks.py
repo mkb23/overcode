@@ -104,12 +104,7 @@ def hooks_uninstall_backend(
         rprint(f"[red]Error:[/red] unknown backend '{backend}'")
         raise typer.Exit(1)
 
-    handler = getattr(adapter, "uninstall_telemetry", None)
-    if handler is None:
-        rprint(f"[dim]nothing installed on disk for this backend ({backend})[/dim]")
-        return
-
-    ok, message = handler(dir)
+    ok, message = adapter.uninstall_telemetry(dir)
     if not ok:
         if message.startswith("Error:"):
             rprint(f"[red]Error:[/red] {message[len('Error:'):].strip()}")

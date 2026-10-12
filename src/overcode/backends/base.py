@@ -134,35 +134,9 @@ class AgentBackend(Protocol):
     not_found_error: Type[Exception]
     capabilities: BackendCapability
 
-    # True when the backend's fork grammar takes an explicit new session id
-    # (--session-id alongside --fork-session) AND the prescribed id is
-    # authoritative for the forked session; False when the CLI mints its own
-    # fork id and discovery must fill it in. Only meaningful alongside
-    # SESSION_ID_PRESCRIPTION — launcher.py's fork branch mints a fresh uuid
-    # to bind eagerly only when both are true. Both grok (Phase 3) and Claude
-    # Code (#466, 2026-08-28) declare this True: Claude Code was originally
-    # assumed to mint its own, different fork id, but a live check of
-    # `claude --resume <id> --fork-session --session-id <new>` found the
-    # prescribed id IS honored — the CLI writes the fork's transcript under
-    # the prescribed uuid. That wrong assumption was #466's root cause:
-    # without eager binding, a fork's id was discovered via directory+time
-    # matching, which is ambiguous whenever another agent shares the same
-    # start_directory (the fork's record could bind to a sibling's id
-    # instead of its own). (The default backends don't literally inherit
-    # this Protocol, so launcher.py reads it via
-    # ``getattr(backend, "fork_prescribes_new_session_id", False)`` — this
-    # default documents the fallback, it isn't inherited automatically.)
-    fork_prescribes_new_session_id: bool = False
-
-    # Optional. Substrings that identify the agent's live process by argv when
-    # its basename is not distinctive — hermes runs as Hermes's own venv
-    # python (`.../venv/bin/python .../hermes-agent/hermes --cli`), so
-    # matching ``process_basenames`` alone would have to match "python".
-    # ``doctor.find_agent_process`` reads this via ``getattr`` and accepts a
-    # process whose basename is in ``process_basenames`` OR whose argv
-    # contains any marker. Same "not inherited from the Protocol" caveat as
-    # fork_prescribes_new_session_id above.
-    process_argv_markers: Sequence[str] = ()
+    # See AgentBackendBase for the defaults of the members below.
+    fork_prescribes_new_session_id: bool
+    process_argv_markers: Sequence[str]
 
     def build_command(self, spec: LaunchSpec) -> List[str]: ...
 
@@ -191,36 +165,11 @@ class AgentBackend(Protocol):
 
     def prompt_ready_chars(self) -> Set[str]: ...
 
-    def prompt_ready_line(self, line: str) -> bool:
-        """Optional. Is this (ANSI-stripped, whitespace-trimmed) pane line the
-        live, empty input prompt?
+    def prompt_ready_line(self, line: str) -> bool: ...
 
-        ``launcher._wait_for_prompt`` consults this via ``getattr`` before
-        falling back to an exact match against ``prompt_ready_chars()``. The
-        exact-set form can't express a prompt that is never drawn bare —
-        hermes always follows its glyph with a rotating placeholder hint —
-        so a backend with that shape implements this instead.
-        """
-        ...
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]: ...
 
-    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
-        """Optional. Remove this backend's on-disk telemetry footprint.
-
-        Backs ``overcode hooks uninstall-backend <name>``. Returns ``(ok,
-        message)``: ``ok`` False means the footprint was found but *not*
-        removed (not overcode-managed, or ``project_dir`` was needed and
-        missing) and the CLI exits non-zero. A backend whose telemetry
-        leaves nothing on disk (Claude Code's ``--settings``, codex's ``-c``
-        overrides) returns ``(True, "nothing installed on disk …")``.
-        """
-        ...
-
-    def doctor_findings(self) -> List[str]:
-        """Optional. Fleet-level warnings for ``overcode doctor`` — version
-        outside the tested range, missing auth, stats-store schema drift.
-        Only called when the fleet actually has an agent on this backend.
-        """
-        ...
+    def doctor_findings(self) -> List[str]: ...
 
     def status_patterns(self) -> "StatusPatterns": ...
 
@@ -231,14 +180,106 @@ class AgentBackend(Protocol):
 
         Returns ``(verdict, details)`` from the ``doctor.VERDICT_*``
         vocabulary, given the agent process's full argv.
-
-        A backend whose telemetry leaves no trace on the command line may
-        also define an *optional* ``refine_health_verdict(session, verdict,
-        details) -> (verdict, details)``. ``doctor`` calls it via ``getattr``
-        with the session in hand — opencode uses it to check for its
-        telemetry plugin in the project directory.
         """
         ...
+
+    def refine_health_verdict(self, session, verdict: str, details: str) -> Tuple[str, str]: ...
+
+    def make_polling_detector(self, tmux_session: str, tmux=None, patterns=None): ...
+
+
+class AgentBackendBase:
+    """Defaults for the AgentBackend members most backends don't need.
+
+    Every backend inherits this, so callers call these members directly.
+    """
+
+    # True when the backend's fork grammar takes an explicit new session id
+    # (--session-id alongside --fork-session) AND the prescribed id is
+    # authoritative for the forked session; False when the CLI mints its own
+    # fork id and discovery must fill it in. Only meaningful alongside
+    # SESSION_ID_PRESCRIPTION — launcher.py's fork branch mints a fresh uuid
+    # to bind eagerly only when both are true. Both grok (Phase 3) and Claude
+    # Code (#466, 2026-08-28) declare this True: Claude Code was originally
+    # assumed to mint its own, different fork id, but a live check of
+    # `claude --resume <id> --fork-session --session-id <new>` found the
+    # prescribed id IS honored — the CLI writes the fork's transcript under
+    # the prescribed uuid. That wrong assumption was #466's root cause:
+    # without eager binding, a fork's id was discovered via directory+time
+    # matching, which is ambiguous whenever another agent shares the same
+    # start_directory (the fork's record could bind to a sibling's id
+    # instead of its own).
+    fork_prescribes_new_session_id: bool = False
+
+    # Substrings that identify the agent's live process by argv when its
+    # basename is not distinctive — hermes runs as Hermes's own venv python
+    # (`.../venv/bin/python .../hermes-agent/hermes --cli`), so matching
+    # ``process_basenames`` alone would have to match "python".
+    # ``doctor.find_agent_process`` accepts a process whose basename is in
+    # ``process_basenames`` OR whose argv contains any marker.
+    process_argv_markers: Sequence[str] = ()
+
+    # Launch and send, for CLIs that need more than a paste once the input
+    # line shows (agent_io): seconds to look again for a dialog drawn over
+    # the input line, whether to check the first prompt reached the screen,
+    # whether the first prompt goes on the command line, and whether a
+    # multi-line send is typed rather than pasted.
+    prompt_settle_seconds: float = 0.0
+    confirm_prompt_delivery: bool = False
+    prompt_as_argument: bool = False
+    type_multiline_text: bool = False
+
+    def prompt_ready_line(self, line: str) -> bool:
+        """Is this (ANSI-stripped, whitespace-trimmed) pane line the live,
+        empty input prompt?
+
+        ``AgentIO._wait_for_prompt`` asks this of every pane line. The
+        default is an exact match against ``prompt_ready_chars()``; a
+        backend whose prompt is never drawn bare (hermes always follows its
+        glyph with a rotating placeholder hint) overrides it.
+        """
+        return line in self.prompt_ready_chars()
+
+    def status_patterns(self) -> "StatusPatterns":
+        from ..status_patterns import DEFAULT_PATTERNS
+        return DEFAULT_PATTERNS
+
+    def make_polling_detector(self, tmux_session: str, tmux=None, patterns=None):
+        """The polling status detector for this backend's panes.
+
+        Pane scraping with the backend's patterns by default; a backend
+        whose status can't come from pane text (the plain shell, #496)
+        supplies its own.
+        """
+        from ..status_detector import PollingStatusDetector
+        return PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+
+    def refine_health_verdict(self, session, verdict: str, details: str) -> Tuple[str, str]:
+        """A second look at ``health_verdict`` with the session in hand.
+
+        For a backend whose telemetry leaves no trace on the command line —
+        opencode checks for its telemetry plugin in the project directory.
+        """
+        return verdict, details
+
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Remove this backend's on-disk telemetry footprint.
+
+        Backs ``overcode hooks uninstall-backend <name>``. Returns ``(ok,
+        message)``: ``ok`` False means the footprint was found but *not*
+        removed (not overcode-managed, or ``project_dir`` was needed and
+        missing) and the CLI exits non-zero. The default is for a backend
+        whose telemetry leaves nothing on disk (Claude Code's
+        ``--settings``, codex's ``-c`` overrides).
+        """
+        return True, f"nothing installed on disk for this backend ({self.name})"
+
+    def doctor_findings(self) -> List[str]:
+        """Fleet-level warnings for ``overcode doctor`` — version outside
+        the tested range, missing auth, stats-store schema drift. Only
+        called when the fleet actually has an agent on this backend.
+        """
+        return []
 
 
 def supports(backend: AgentBackend, capability: BackendCapability) -> bool:

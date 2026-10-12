@@ -183,7 +183,7 @@ def doctor(
     # grok's subscription auth, hermes's plugin enablement / provider setup,
     # opencode2's rolling-preview build,
     # and each stats store's schema drift. Each adapter answers through its
-    # optional ``doctor_findings()`` (see AgentBackend in backends/base.py);
+    # ``doctor_findings()`` (see AgentBackendBase in backends/base.py);
     # only backends that actually have an agent in the fleet are consulted.
     from ..backends import UnknownBackendError, get_backend, session_backend_name
     present = {session_backend_name(s) for s in sessions}
@@ -192,11 +192,8 @@ def doctor(
             backend = get_backend(backend_name)
         except UnknownBackendError:
             continue
-        findings_fn = getattr(backend, "doctor_findings", None)
-        if findings_fn is None:
-            continue
         try:
-            for finding in findings_fn():
+            for finding in backend.doctor_findings():
                 rprint(f"[yellow]⚠[/yellow] {finding}")
         except Exception:
             pass

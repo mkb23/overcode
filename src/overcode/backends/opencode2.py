@@ -19,7 +19,7 @@ from typing import List, Optional, Tuple
 
 from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import StatusPatterns
-from .base import BackendCapability, KeyPress, LaunchSpec
+from .base import AgentBackendBase, BackendCapability, KeyPress, LaunchSpec
 from .opencode import parse_version
 
 class Opencode2NotFoundError(AgentCliNotFoundError):
@@ -42,7 +42,7 @@ OPENCODE2_PREVIEW_RE = re.compile(r"v0\.0\.0-dev-(\d+)")
 _OPENCODE2_BYPASS_PERMISSION = None
 
 
-class Opencode2Backend:
+class Opencode2Backend(AgentBackendBase):
     """opencode2 CLI adapter (verified against v0.0.0-dev-19272).
 
     Deliberately absent vs the v1 backend: ``--model``/``--agent`` flags

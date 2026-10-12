@@ -430,7 +430,7 @@ def get_patterns(backend_name: str = None) -> StatusPatterns:
     """Get the status detection patterns for an agent backend.
 
     The backend is the source of truth (``AgentBackend.status_patterns()``);
-    a backend that doesn't supply a set, or a name overcode doesn't know,
+    a backend that doesn't override it, or a name overcode doesn't know,
     falls back to the Claude Code defaults.
 
     Args:
@@ -451,8 +451,7 @@ def get_patterns(backend_name: str = None) -> StatusPatterns:
     except UnknownBackendError:
         patterns = DEFAULT_PATTERNS
     else:
-        getter = getattr(backend, "status_patterns", None)
-        patterns = getter() if getter is not None else DEFAULT_PATTERNS
+        patterns = backend.status_patterns()
 
     _PATTERNS_BY_BACKEND[name] = patterns
     return patterns

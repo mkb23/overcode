@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
+    AgentBackendBase,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -479,7 +480,7 @@ HERMES_PATTERNS = StatusPatterns(
 )
 
 
-class HermesBackend:
+class HermesBackend(AgentBackendBase):
     """Hermes agent adapter (verified against v0.21.3).
 
     RESUME (``--resume <id>``), HOOK_EVENTS (the bundled plugin) and
@@ -515,7 +516,6 @@ class HermesBackend:
         | BackendCapability.HOOK_EVENTS
         | BackendCapability.TRANSCRIPT_STATS
     )
-    fork_prescribes_new_session_id = False
 
     def executable(self) -> str:
         """The binary to invoke, honouring the HERMES_COMMAND override.

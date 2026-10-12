@@ -507,7 +507,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         harness, and a prompt starting with "-", which the CLI would read
         as an option.
         """
-        if (not prompt or not getattr(backend, "prompt_as_argument", False)
+        if (not prompt or not backend.prompt_as_argument
                 or os.environ.get("MOCK_SCENARIO") or prompt.lstrip().startswith("-")):
             return None
         from .settings import get_session_dir
@@ -720,7 +720,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             # narrower signal for the fork case specifically.
             if (
                 supports(backend, BackendCapability.SESSION_ID_PRESCRIPTION)
-                and getattr(backend, "fork_prescribes_new_session_id", False)
+                and backend.fork_prescribes_new_session_id
             ):
                 new_claude_sid = str(uuid.uuid4())
             else:

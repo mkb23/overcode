@@ -30,6 +30,7 @@ from ..exceptions import AgentCliNotFoundError
 from ..hook_handler import CODEX_HOOK_EVENTS
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
+    AgentBackendBase,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -247,7 +248,7 @@ CODEX_PATTERNS = StatusPatterns(
 )
 
 
-class CodexBackend:
+class CodexBackend(AgentBackendBase):
     """Codex CLI adapter (verified against v0.150.1, Phase 0 of the design doc).
 
     RESUME, FORK, HOOK_EVENTS and TRANSCRIPT_STATS as of Phase 2: every

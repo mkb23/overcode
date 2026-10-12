@@ -482,6 +482,7 @@ class TestPluginHealthVerdict:
         )
 
     def test_claude_backend_has_no_refinement(self):
-        # The hook is optional; doctor uses getattr so Claude Code opts out by
-        # simply not defining it.
-        assert not hasattr(get_backend("claude-code"), "refine_health_verdict")
+        # Claude Code inherits AgentBackendBase's pass-through.
+        assert get_backend("claude-code").refine_health_verdict(
+            None, "ok", "hooks injected via --settings",
+        ) == ("ok", "hooks injected via --settings")

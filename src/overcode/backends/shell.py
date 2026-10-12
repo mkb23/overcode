@@ -33,6 +33,7 @@ from ..status_constants import STATUS_RUNNING, STATUS_WAITING_USER
 from ..status_detector import PollingStatusDetector
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
+    AgentBackendBase,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -163,7 +164,7 @@ class ShellStatusDetector(PollingStatusDetector):
         return STATUS_WAITING_USER, "Shell prompt", content
 
 
-class ShellBackend:
+class ShellBackend(AgentBackendBase):
     """A plain interactive shell. See the module docstring."""
 
     name = SHELL_BACKEND
@@ -255,11 +256,6 @@ class ShellBackend:
         from ..doctor import VERDICT_OK
         return VERDICT_OK, "plain shell — no telemetry to inject"
 
-    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
-        return True, f"nothing installed on disk for this backend ({self.name})"
-
-    def doctor_findings(self) -> List[str]:
-        return []
 
 
 __all__ = [

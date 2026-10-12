@@ -5,10 +5,11 @@ import os
 import shlex
 import shutil
 import sys
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
 from .base import (
+    AgentBackendBase,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -76,7 +77,7 @@ def _build_launch_settings(overcode_bin: str, include_punchy_perms: bool = False
     }
 
 
-class ClaudeCodeBackend:
+class ClaudeCodeBackend(AgentBackendBase):
     """Claude Code CLI adapter."""
 
     name = "claude-code"
@@ -291,10 +292,6 @@ class ClaudeCodeBackend:
     def make_stats_reader(self) -> "StatsReader":
         from ..stats_reader import ClaudeStatsReader
         return ClaudeStatsReader()
-
-    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
-        """Nothing on disk: telemetry rides on per-launch argv (see cli/hooks.py)."""
-        return True, f"nothing installed on disk for this backend ({self.name})"
 
     def health_verdict(self, argv: str) -> Tuple[str, str]:
         """Hooks reach Claude Code only via the injected --settings payload."""

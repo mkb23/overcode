@@ -32,10 +32,9 @@ def _polling_detector(
 ) -> StatusDetectorProtocol:
     """The polling detector for a backend.
 
-    A backend whose status can't come from pane text (the plain shell,
-    #496) supplies its own through an optional
-    ``make_polling_detector(tmux_session, tmux=, patterns=)``; every other
-    backend is scraped by ``PollingStatusDetector`` with its patterns.
+    The backend's ``make_polling_detector``: pane scraping by default, its
+    own detector for a backend whose status can't come from pane text (the
+    plain shell, #496).
     """
     if backend_name:
         from .backends import UnknownBackendError, get_backend
@@ -43,9 +42,8 @@ def _polling_detector(
             backend = get_backend(backend_name)
         except UnknownBackendError:
             backend = None
-        make = getattr(backend, "make_polling_detector", None)
-        if make is not None:
-            return make(tmux_session, tmux=tmux, patterns=patterns)
+        if backend is not None:
+            return backend.make_polling_detector(tmux_session, tmux=tmux, patterns=patterns)
     from .status_detector import PollingStatusDetector
     return PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
 
