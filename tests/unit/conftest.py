@@ -33,8 +33,6 @@ for _var in ("CODEX_HOME", "GROK_HOME", "HERMES_HOME", "OPENCODE_DATA_DIR",
 _TMUX_TMPDIR = tempfile.mkdtemp(prefix="ocpt-", dir="/tmp")
 os.environ["TMUX_TMPDIR"] = _TMUX_TMPDIR
 
-from tests.daemon_test_utils import stop_daemons_in_state_dir  # noqa: E402
-
 # Long-lived overcode processes a unit test must never start for real.
 _DAEMON_MODULES = (
     "overcode.monitor_daemon",
@@ -80,29 +78,13 @@ subprocess.Popen.__init__ = _guarded_popen_init
 os.environ.setdefault("OVERCODE_MODEL_METADATA_BUNDLED_ONLY", "1")
 
 
-# Test classes that actually mount Textual apps or start daemons and need
-# an isolated OVERCODE_STATE_DIR with daemon cleanup on teardown.
-_CLASSES_NEEDING_ISOLATION = frozenset({
-    "TestSupervisorTUIPilot",
-    "TestHelpOverlayPilot",
-    "TestCommandBarWidget",
-    "TestCommandBarIntegration",
-    "TestCommandBarWithSessions",
-    "TestUniqueAgentName",
-    "TestActivityPilot",
-    "TestViewControlPilot",
-    "TestJourneyPanelPilot",
-    "TestMentorFooterPilot",
-})
-
-
 @pytest.fixture(autouse=True)
 def no_real_daemons(monkeypatch):
     """Unit tests never start real daemons (#485).
 
     Mounting SupervisorTUI spawns a monitor daemon. The pilot tests finish
-    before it writes its PID file, so isolated_state_dir's cleanup can miss
-    it and it outlives the run. Tests that check the spawn patch it
+    before it writes its PID file, so a cleanup by PID file can miss it and
+    it outlives the run. Tests that check the spawn patch it
     themselves, over this stub.
     """
     import overcode.pid_utils
@@ -269,45 +251,77 @@ def pytest_sessionfinish(session, exitstatus):
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
-@pytest.fixture(autouse=True)
-def isolated_state_dir(request):
-    """Isolate state directory for tests that mount TUI apps or start daemons.
+# ── The TUI pilot harness (tests/tui_harness.py) ─────────────────────────
 
-    Only activates for test classes listed in _CLASSES_NEEDING_ISOLATION.
-    Pure function tests in the same files are not affected.
+
+@pytest.fixture
+def tui_state_dir(monkeypatch):
+    """A short private OVERCODE_DIR for one TUI test.
+
+    Short because the engine's Unix socket lives under it and macOS caps
+    AF_UNIX paths at 104 bytes (tmp_path is too long there).
     """
-    cls_name = request.node.cls.__name__ if request.node.cls else ""
-    if cls_name not in _CLASSES_NEEDING_ISOLATION:
-        yield
-        return
+    d = Path(tempfile.mkdtemp(prefix="oc-tui-", dir="/tmp"))
+    monkeypatch.setenv("OVERCODE_DIR", str(d))
+    monkeypatch.setenv("OVERCODE_STATE_DIR", str(d / "s"))
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
 
-    # Create temp directory for state
-    state_dir = tempfile.mkdtemp(prefix="overcode-unit-test-")
 
-    # Save original value
-    orig_state_dir = os.environ.get("OVERCODE_STATE_DIR")
+@pytest.fixture
+def make_tui(tui_state_dir, monkeypatch):
+    """Build a SupervisorTUI for a pilot test: ``make_tui(sessions=..., engine=..., ...)``.
 
-    # Set environment variable so child processes inherit it
-    os.environ["OVERCODE_STATE_DIR"] = state_dir
+    - ``sessions``: the agents ``list_sessions`` returns (a list, or a
+      callable returning one); None reads the private sessions.json.
+    - ``engine``: a ``FakeEngine`` (default: a new one, connected from
+      mount with an empty snapshot), or ``"socket"`` for the real
+      EngineClient (the test serves the socket).
+    - ``timers``: False (default) starts no periodic timer; call the ticks.
+    - ``size``: the default terminal size for ``app.run_test()`` (else Textual's 80x24).
 
-    try:
-        yield state_dir
-    finally:
-        # Only run expensive daemon cleanup if PID files were actually created
-        state_path = Path(state_dir)
-        has_pid_files = any(state_path.rglob("*.pid")) if state_path.exists() else False
+    The app carries ``app.engine`` (the FakeEngine, or None),
+    ``app.daemon_starts`` (the stubbed ``_ensure_monitor_daemon``) and a
+    MagicMock ``_notifier``. Status detection raises: the engine does it.
+    """
+    from functools import partial
+    from unittest.mock import MagicMock
 
-        if has_pid_files:
-            stop_daemons_in_state_dir(state_dir)
-            import time
-            time.sleep(0.3)
-            stop_daemons_in_state_dir(state_dir)
+    from overcode.launcher import AgentLauncher
+    from overcode.status_detector_factory import StatusDetectorDispatcher
+    import overcode.tui
+    from overcode.tui import SupervisorTUI
+    from tests.tui_harness import FakeEngine
 
-        # Remove temp state directory
-        shutil.rmtree(state_dir, ignore_errors=True)
+    def no_detection(*a, **kw):
+        raise AssertionError("the TUI must not detect status (the engine does)")
 
-        # Restore original environment
-        if orig_state_dir is None:
-            os.environ.pop("OVERCODE_STATE_DIR", None)
-        else:
-            os.environ["OVERCODE_STATE_DIR"] = orig_state_dir
+    def make(sessions=None, *, engine=None, timers=False, size=None,
+             tmux_session="test", **kwargs):
+        starts = MagicMock()
+        monkeypatch.setattr(SupervisorTUI, "_ensure_monitor_daemon", starts)
+        monkeypatch.setattr(StatusDetectorDispatcher, "detect_status", no_detection)
+        if sessions is not None:
+            source = sessions if callable(sessions) else (lambda: list(sessions))
+            monkeypatch.setattr(AgentLauncher, "list_sessions", lambda self: source())
+        if engine != "socket":
+            engine = engine if engine is not None else FakeEngine()
+            monkeypatch.setattr(overcode.tui, "EngineClient", engine.client_factory)
+        app = SupervisorTUI(tmux_session=tmux_session, timers=timers, **kwargs)
+        # Recorded, never sent (its mode stays the real one's)
+        app._notifier = MagicMock(mode=app._notifier.mode)
+        app.daemon_starts = starts
+        app.engine = engine if engine != "socket" else None
+        if size is not None:
+            app.run_test = partial(app.run_test, size=size)
+        return app
+
+    return make
+
+
+@pytest.fixture
+def tui(make_tui):
+    """The usual pilot app: alpha, bravo and charlie, a connected engine, no timers."""
+    from tests.tui_harness import three_agents
+
+    return make_tui(three_agents())

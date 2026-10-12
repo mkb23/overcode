@@ -115,9 +115,8 @@ class TestViewControlPilot:
         raise AssertionError("no ack")
 
     @pytest.mark.asyncio
-    async def test_columns_sort_detail_filter_and_errors(self, tmp_path):
-        from overcode.tui import SupervisorTUI
-        app = SupervisorTUI(tmux_session="test-pilot")
+    async def test_columns_sort_detail_filter_and_errors(self, make_tui, tmp_path):
+        app = make_tui(tmux_session="test-pilot")
         async with app.run_test() as pilot:
             await pilot.pause()
 
@@ -172,9 +171,8 @@ class TestViewControlPilot:
             assert any(a["action"] == "view:sort" and a["via"] == "agent" for a in state["recent_actions"])
 
     @pytest.mark.asyncio
-    async def test_tick_picks_up_the_inbox(self, tmp_path):
-        from overcode.tui import SupervisorTUI
-        app = SupervisorTUI(tmux_session="test-pilot")
+    async def test_tick_picks_up_the_inbox(self, make_tui, tmp_path):
+        app = make_tui(tmux_session="test-pilot")
         async with app.run_test() as pilot:
             await pilot.pause()
             append_jsonl(control_path("test-pilot"),
@@ -218,10 +216,10 @@ class TestToggleIsViewOnly:
         assert toggle_refusal(cmd.category) is None
 
     @pytest.mark.asyncio
-    async def test_kill_twice_through_view_kills_nothing(self, tmp_path):
+    async def test_kill_twice_through_view_kills_nothing(self, make_tui, tmp_path):
         from unittest.mock import patch
         from overcode.tui import SupervisorTUI
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
         async with app.run_test() as pilot:
             await pilot.pause()
             with patch.object(SupervisorTUI, "action_kill_focused") as kill, \

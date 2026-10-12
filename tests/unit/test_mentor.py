@@ -1,7 +1,6 @@
 """Tests for the mentor (#483 P3): the director, its state, and the TUI's gates."""
 
 import time
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -222,9 +221,8 @@ class TestTuiGates:
 
 class TestMentorFooterPilot:
     @pytest.mark.asyncio
-    async def test_tip_replaces_the_footer_and_taking_it_restores_it(self):
-        from overcode.tui import SupervisorTUI
-        app = SupervisorTUI(tmux_session="test-pilot")
+    async def test_tip_replaces_the_footer_and_taking_it_restores_it(self, make_tui):
+        app = make_tui(tmux_session="test-pilot")
         async with app.run_test(size=(150, 40)) as pilot:
             await pilot.pause()
             footer = app.query_one("#help-text")

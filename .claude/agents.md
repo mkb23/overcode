@@ -20,6 +20,11 @@ add an entry when something bites.
   unmocked restarts the user's dashboard and replaces the pytest process.
   Patch `overcode.cli.split.open_split`.
 - Fixtures are synthetic. Never copy real `~/.overcode` data into the repo.
+- TUI pilot tests build the app with the `make_tui` fixture
+  (`tests/tui_harness.py`): no periodic timers (call the tick you test),
+  and an in-memory engine connected from mount. An app with real timers
+  and no engine shows the "engine not running" banner after 1.5 s, which
+  shifts every row: that is how the old pilot tests flaked.
 
 ## The TUI has one layout
 

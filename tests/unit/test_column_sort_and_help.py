@@ -6,7 +6,7 @@ from rich.cells import cell_len
 from overcode.summary_columns import (
     COLUMN_HELP, COLUMN_SORT, COLUMNS_BY_ID, SUMMARY_COLUMNS, column_at, render_header_cells,
 )
-from tests.unit.test_command_palette import _palette, _ready, tui  # noqa: F401 (fixture)
+from tests.tui_harness import palette as _palette, ready as _ready, until
 
 
 class TestRegistry:
@@ -53,15 +53,6 @@ class TestHeaderArrow:
     def test_unsorted_header_unchanged(self):
         line = render_header_cells(self._only("cpu_pct"), [6])
         assert line.plain == " CPU  "
-
-
-async def _until(pilot, cond, timeout=3.0):
-    """Pause until cond() holds — clicks land a frame or two late under load."""
-    for _ in range(int(timeout / 0.05)):
-        if cond():
-            return
-        await pilot.pause(0.05)
-    assert cond()
 
 
 def _header(app):
@@ -114,12 +105,12 @@ class TestHeaderInTUI:
             header = _header(tui)
             x = _x_of(header, "uptime") + 2
             await pilot.click("#column-headers", offset=(x, 0))
-            await _until(pilot, lambda: tui._prefs.sort_mode == "col:uptime")
+            assert await until(pilot, lambda: tui._prefs.sort_mode == "col:uptime")
             assert not tui._prefs.sort_reversed
             assert header.sort_column == "uptime" and header.sort_descending
             await pilot.pause(0.6)  # past the double-click window
             await pilot.click("#column-headers", offset=(x, 0))
-            await _until(pilot, lambda: tui._prefs.sort_reversed)
+            assert await until(pilot, lambda: tui._prefs.sort_reversed)
             assert not header.sort_descending
 
     async def test_click_name_selects_alphabetical_preset(self, tui):

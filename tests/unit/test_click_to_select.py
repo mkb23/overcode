@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.unit.test_command_palette import _ready, tui  # noqa: F401 (fixture)
+from tests.tui_harness import ready as _ready
 
 
 def _rows(session_ids):
@@ -50,7 +50,7 @@ class TestClickHandler:
 @pytest.mark.asyncio
 class TestClickInTUI:
 
-    async def test_click_switches_the_tmux_pane_to_that_agent(self, tui):  # noqa: F811 (fixture)
+    async def test_click_switches_the_tmux_pane_to_that_agent(self, tui):
         from overcode.tui_widgets import SessionSummary
         synced = []
         tui._sync_tmux_window = lambda widget=None: synced.append(widget.session.id)

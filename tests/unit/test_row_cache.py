@@ -6,23 +6,21 @@ of ``ticks`` columns. These tests hold the cache to the uncached render
 can change a row, check that every column reading the clock is marked
 ``ticks``, and count the work a quiet fleet costs.
 
-A real ``EngineServer`` publishes to a real TUI (Textual pilot), as in
-test_engine_view_tui; the clock the rows read is frozen and moved by hand.
+An in-memory engine (tests/tui_harness.py) publishes to a real TUI
+(Textual pilot) with no timers running: the clock the rows read is frozen
+and moved by hand, and the test does the 250 ms tick's work itself.
 """
 
-import shutil
-import tempfile
 from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from overcode.engine_protocol import Snapshot
-from overcode.engine_socket import EngineServer
 from overcode.summary_columns import COLUMNS_BY_ID
+from tests.tui_harness import FakeEngine, until as _until
 
 pytestmark = pytest.mark.unit
 
@@ -111,50 +109,14 @@ def clock():
 
 
 @pytest.fixture
-def state_dir(monkeypatch):
-    """A short state dir: Unix socket paths are limited to ~104 bytes on macOS."""
-    import os
-
-    for k in list(os.environ):
-        if k.startswith("OVERCODE_"):
-            monkeypatch.delenv(k)
-    d = Path(tempfile.mkdtemp(prefix="oc-rc-", dir="/tmp"))
-    monkeypatch.setenv("OVERCODE_DIR", str(d))
-    monkeypatch.setenv("OVERCODE_STATE_DIR", str(d / "s"))
-    yield d
-    shutil.rmtree(d, ignore_errors=True)
+def engine():
+    return FakeEngine()
 
 
 @pytest.fixture
-def engine(state_dir):
-    from overcode import tui_engine
-
-    server = EngineServer(tui_engine.engine_socket_path("test"))
-    server.start()
-    yield server
-    server.stop()
-
-
-@pytest.fixture
-def app(state_dir, clock):
-    from overcode.status_detector_factory import StatusDetectorDispatcher
-    from overcode.tui import SupervisorTUI
-
+def app(make_tui, engine, clock):
     sessions = _sessions()
-    with patch.object(SupervisorTUI, "_ensure_monitor_daemon", MagicMock()), \
-            patch.object(StatusDetectorDispatcher, "detect_status", MagicMock()), \
-            patch("overcode.launcher.AgentLauncher.list_sessions", lambda self: sessions):
-        tui = SupervisorTUI(tmux_session="test")
-        tui._notifier = MagicMock()
-        yield tui
-
-
-async def _until(pilot, predicate, timeout=5.0):
-    for _ in range(int(timeout / 0.05)):
-        if predicate():
-            return True
-        await pilot.pause(0.05)
-    return predicate()
+    return make_tui(sessions, engine=engine)
 
 
 def _rows(app):
@@ -170,7 +132,7 @@ def _row(app, name):
 async def _connected(pilot, app):
     assert await _until(pilot, lambda: app._engine_connected
                         and len(app._engine_agents) == len(AGENTS))
-    await pilot.pause(0.1)
+    await pilot.pause()
 
 
 async def _settle_and_check(pilot, app, step: str) -> None:

@@ -411,9 +411,13 @@ class SupervisorTUI(
     jobs: reactive[List[Job]] = reactive(list)
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False,
-                 initial_jobs_mode: bool = False, sync_target: Optional[str] = None):
+                 initial_jobs_mode: bool = False, sync_target: Optional[str] = None,
+                 timers: bool = True):
         super().__init__()
         self.tmux_session = tmux_session
+        # False only in tests (tests/tui_harness.py): no periodic timer
+        # starts, and the test calls the tick methods itself.
+        self._timers_enabled = timers
         # The linked session the split's bottom pane shows (`overcode tmux`
         # passes it). Navigation switches its window; see in_split.
         self.tmux_sync_target: Optional[str] = sync_target
@@ -873,6 +877,8 @@ class SupervisorTUI(
         a PAUSED_WHEN_UNATTENDED timer starts paused while nobody is
         attached.
         """
+        if not getattr(self, "_timers_enabled", True):
+            return
         interval = TIMER_INTERVALS[name]
         delay = TIMER_PHASE_OFFSETS[name]
 

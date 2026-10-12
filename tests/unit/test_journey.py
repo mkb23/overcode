@@ -172,11 +172,10 @@ class TestOutput:
 
 class TestJourneyPanelPilot:
     @pytest.mark.asyncio
-    async def test_u_opens_it_and_t_tries_the_next_step(self, tmp_path, monkeypatch):
-        from overcode.tui import SupervisorTUI
+    async def test_u_opens_it_and_t_tries_the_next_step(self, make_tui, tmp_path, monkeypatch):
         from overcode.journey import Journey
         monkeypatch.setattr("overcode.journey.gather_residue", lambda: Residue())
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause()
             await pilot.press("u")
@@ -198,10 +197,9 @@ class TestJourneyPanelPilot:
             assert calls == [1]
 
     @pytest.mark.asyncio
-    async def test_esc_closes(self, tmp_path, monkeypatch):
-        from overcode.tui import SupervisorTUI
+    async def test_esc_closes(self, make_tui, tmp_path, monkeypatch):
         monkeypatch.setattr("overcode.journey.gather_residue", lambda: Residue())
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause()
             app.action_open_journey()

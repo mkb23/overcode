@@ -1029,11 +1029,9 @@ class TestSupervisorTUIPilot:
     """Test SupervisorTUI with Textual Pilot for key bindings"""
 
     @pytest.mark.asyncio
-    async def test_help_toggle(self):
+    async def test_help_toggle(self, make_tui):
         """Pressing h toggles help overlay visibility"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
@@ -1050,11 +1048,9 @@ class TestSupervisorTUIPilot:
             assert not help_overlay.has_class("visible")
 
     @pytest.mark.asyncio
-    async def test_daemon_panel_toggle(self):
+    async def test_daemon_panel_toggle(self, make_tui):
         """Pressing d toggles daemon panel visibility (like timeline)"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
@@ -1071,11 +1067,9 @@ class TestSupervisorTUIPilot:
             assert daemon_panel.display == initial_display
 
     @pytest.mark.asyncio
-    async def test_question_mark_shows_help(self):
+    async def test_question_mark_shows_help(self, make_tui):
         """Pressing ? also toggles help"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
@@ -1084,11 +1078,9 @@ class TestSupervisorTUIPilot:
             assert help_overlay.has_class("visible")
 
     @pytest.mark.asyncio
-    async def test_quit_exits_app(self):
+    async def test_quit_exits_app(self, make_tui):
         """Pressing q quits the application"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
@@ -1097,11 +1089,9 @@ class TestSupervisorTUIPilot:
             # (run_test handles cleanup)
 
     @pytest.mark.asyncio
-    async def test_timeline_toggle(self):
+    async def test_timeline_toggle(self, make_tui):
         """Pressing t toggles timeline visibility"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
@@ -1119,11 +1109,9 @@ class TestSupervisorTUIPilot:
 
     @pytest.mark.asyncio
     @pytest.mark.asyncio
-    async def test_summary_detail_cycling(self):
+    async def test_summary_detail_cycling(self, make_tui):
         """Pressing s cycles summary detail level through low->med->high->full"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
@@ -1152,11 +1140,11 @@ class TestSupervisorTUIPilot:
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
 
     @pytest.mark.asyncio
-    async def test_widgets_mounted(self):
+    async def test_widgets_mounted(self, make_tui):
         """App mounts expected widgets"""
-        from overcode.tui import SupervisorTUI, DaemonStatusBar, StatusTimeline
+        from overcode.tui import DaemonStatusBar, StatusTimeline
 
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
@@ -1173,16 +1161,14 @@ class TestSupervisorTUIPilot:
             assert container is not None
 
     @pytest.mark.asyncio
-    async def test_e_starts_the_overagent(self):
+    async def test_e_starts_the_overagent(self, make_tui):
         """Pressing e with no overagent asks the launcher for one.
 
         The launch itself is stubbed: unstubbed, every run started a real
         Claude overagent in a tmux session named after this test.
         """
         from unittest.mock import MagicMock
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
         app._launch_overagent_async = MagicMock()
 
         async with app.run_test() as pilot:
@@ -1195,11 +1181,9 @@ class TestSupervisorTUIPilot:
         assert backend == "overagent" and name.startswith("overagent")
 
     @pytest.mark.asyncio
-    async def test_collapse_all_agents(self):
+    async def test_collapse_all_agents(self, make_tui):
         """Pressing c collapses all session summaries"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.press("c")
@@ -1210,11 +1194,9 @@ class TestHelpOverlayPilot:
     """Test HelpOverlay widget with Pilot"""
 
     @pytest.mark.asyncio
-    async def test_help_overlay_content_visible(self):
+    async def test_help_overlay_content_visible(self, make_tui):
         """Help overlay shows complete content when visible"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+        app = make_tui(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
             await pilot.press("h")

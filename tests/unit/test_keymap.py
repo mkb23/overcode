@@ -4,7 +4,6 @@ palette and the running TUI."""
 
 import re
 import json
-from unittest.mock import patch
 
 import pytest
 from rich.cells import cell_len
@@ -421,26 +420,18 @@ class TestHelpLayout:
 # Through the real TUI
 # ---------------------------------------------------------------------------
 
+from tests.tui_harness import palette as _palette, ready as _ready, three_agents  # noqa: E402
+
 @pytest.fixture
-def vscode_tui(tmp_path, monkeypatch):
-    for k in list(__import__("os").environ):
-        if k.startswith("OVERCODE_"):
-            monkeypatch.delenv(k)
-    monkeypatch.setenv("OVERCODE_DIR", str(tmp_path))
-    monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "sessions"))
+def vscode_tui(make_tui, monkeypatch):
     monkeypatch.setattr(km_mod, "user_keys_config", lambda: {"preset": "vscode"})
-    from tests.unit.test_command_palette import _sessions
-    from overcode.tui import SupervisorTUI
-    with patch.object(SupervisorTUI, "_ensure_monitor_daemon", lambda self: None), \
-         patch("overcode.launcher.AgentLauncher.list_sessions", lambda self: _sessions()):
-        yield SupervisorTUI(tmux_session="test")
+    return make_tui(three_agents())
 
 
 @pytest.mark.asyncio
 class TestKeymapInTUI:
 
     async def test_remapped_key_runs_the_action(self, vscode_tui):
-        from tests.unit.test_command_palette import _palette, _ready
         tui = vscode_tui
         async with tui.run_test(size=(120, 40)) as pilot:
             await _ready(pilot)
@@ -453,7 +444,6 @@ class TestKeymapInTUI:
             assert _palette(tui).has_class("visible") and _palette(tui).mode == "agents"
 
     async def test_palette_shows_remapped_key(self, vscode_tui):
-        from tests.unit.test_command_palette import _palette, _ready
         tui = vscode_tui
         async with tui.run_test(size=(120, 40)) as pilot:
             await _ready(pilot)
@@ -466,7 +456,6 @@ class TestKeymapInTUI:
             assert row.match.command.action == "rename_focused"
 
     async def test_palette_nav_uses_scope_keys(self, vscode_tui):
-        from tests.unit.test_command_palette import _palette, _ready
         tui = vscode_tui
         async with tui.run_test(size=(120, 40)) as pilot:
             await _ready(pilot)
@@ -480,7 +469,6 @@ class TestKeymapInTUI:
             assert palette.selected_index == start + 1
 
     async def test_footer_and_help_follow_the_keymap(self, vscode_tui):
-        from tests.unit.test_command_palette import _ready
         tui = vscode_tui
         async with tui.run_test(size=(120, 40)) as pilot:
             await _ready(pilot)
@@ -493,7 +481,6 @@ class TestKeymapInTUI:
             assert re.search(r"Space +Jump to agent", body.render().plain)
 
     async def test_cycle_preset_rebinds_live(self, vscode_tui, monkeypatch):
-        from tests.unit.test_command_palette import _palette, _ready
         tui = vscode_tui
         saved = []
         monkeypatch.setattr(km_mod, "set_configured_preset", saved.append)
@@ -507,9 +494,7 @@ class TestKeymapInTUI:
             await pilot.pause()
             assert _palette(tui).has_class("visible")
 
-    async def test_help_scrolls_instead_of_closing(self, tui_small):
-        from tests.unit.test_command_palette import _ready
-        tui = tui_small
+    async def test_help_scrolls_instead_of_closing(self, tui):
         async with tui.run_test(size=(80, 20)) as pilot:
             await _ready(pilot)
             await pilot.press("h")
@@ -528,20 +513,6 @@ class TestKeymapInTUI:
             await pilot.press("escape")
             await pilot.pause()
             assert not overlay.has_class("visible")
-
-
-@pytest.fixture
-def tui_small(tmp_path, monkeypatch):
-    for k in list(__import__("os").environ):
-        if k.startswith("OVERCODE_"):
-            monkeypatch.delenv(k)
-    monkeypatch.setenv("OVERCODE_DIR", str(tmp_path))
-    monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "sessions"))
-    from tests.unit.test_command_palette import _sessions
-    from overcode.tui import SupervisorTUI
-    with patch.object(SupervisorTUI, "_ensure_monitor_daemon", lambda self: None), \
-         patch("overcode.launcher.AgentLauncher.list_sessions", lambda self: _sessions()):
-        yield SupervisorTUI(tmux_session="test")
 
 
 class TestWidgetScopes:

@@ -244,15 +244,14 @@ class TestIterRecords:
 class TestActivityPilot:
     """The TUI's chokepoints record keys, actions and dialogs."""
 
-    def _app(self, tmp_path):
-        from overcode.tui import SupervisorTUI
-        app = SupervisorTUI(tmux_session="test-pilot")
+    @pytest.fixture
+    def app(self, make_tui, tmp_path):
+        app = make_tui(tmux_session="test-pilot")
         app._activity = ActivityRecorder("test-pilot", directory=tmp_path, enabled=True)
         return app
 
     @pytest.mark.asyncio
-    async def test_key_action_and_dialog_are_recorded(self, tmp_path):
-        app = self._app(tmp_path)
+    async def test_key_action_and_dialog_are_recorded(self, app, tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("h")
@@ -269,8 +268,7 @@ class TestActivityPilot:
         assert ("help", "open") in dialogs and ("help", "cancel") in dialogs
 
     @pytest.mark.asyncio
-    async def test_palette_pick_is_recorded_as_via_palette(self, tmp_path):
-        app = self._app(tmp_path)
+    async def test_palette_pick_is_recorded_as_via_palette(self, app, tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("slash")
@@ -290,8 +288,7 @@ class TestActivityPilot:
                    for r in records)
 
     @pytest.mark.asyncio
-    async def test_pause_toggle_stops_recording(self, tmp_path):
-        app = self._app(tmp_path)
+    async def test_pause_toggle_stops_recording(self, app, tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_toggle_activity_recording()

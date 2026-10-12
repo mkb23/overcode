@@ -165,51 +165,9 @@ class TestStates:
 # Through the real TUI
 # ---------------------------------------------------------------------------
 
-def _sessions():
-    from overcode.session_manager import Session
-    specs = [("alpha", "repo-a", "main", ["ui"]), ("bravo", "repo-b", "main", []),
-             ("charlie", "repo-c", "feat/x", ["ui", "api"])]
-    return [Session(id=f"id-{n}", name=n, tmux_session="test", tmux_window=f"w{i}",
-                    command=["claude"], start_directory="/tmp",
-                    start_time="2026-09-24T10:00:00", repo_name=r, branch=b, tags=t)
-            for i, (n, r, b, t) in enumerate(specs)]
-
-
-@pytest.fixture
-def tui(tmp_path, monkeypatch):
-    for k in list(__import__("os").environ):
-        if k.startswith("OVERCODE_"):
-            monkeypatch.delenv(k)
-    monkeypatch.setenv("OVERCODE_DIR", str(tmp_path))
-    monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "sessions"))
-    from overcode.tui import SupervisorTUI
-    with patch.object(SupervisorTUI, "_ensure_monitor_daemon", lambda self: None), \
-         patch("overcode.launcher.AgentLauncher.list_sessions", lambda self: _sessions()):
-        yield SupervisorTUI(tmux_session="test")
-
-
-async def _ready(pilot):
-    """The three agents are on screen and the layout has settled.
-
-    The timeline's history arrives from a worker after mount and grows the
-    timeline, which moves every agent row down. A test that measures or
-    clicks a row before that lands is racing it (the flaky column-guide and
-    click tests under load), so wait for the timeline to hold the agents.
-    """
-    app = pilot.app
-    for _ in range(100):
-        timeline = app.query_one("#timeline")
-        if len(app._get_widgets_in_session_order()) == 3 and (
-            not timeline.display or len(timeline.sessions) == 3
-        ):
-            break
-        await pilot.pause(0.05)
-    await pilot.pause(0.1)
-
-
-def _palette(app):
-    from overcode.tui_widgets import CommandPalette
-    return app.query_one("#command-palette", CommandPalette)
+# The app comes from the ``tui`` fixture (tests/unit/conftest.py): alpha,
+# bravo and charlie, connected to an in-memory engine, no timers.
+from tests.tui_harness import palette as _palette, ready as _ready  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -355,7 +313,10 @@ class TestPaletteInTUI:
             await pilot.pause()
             assert palette._list_height > 3
 
-    async def test_every_state_renders_on_a_live_app(self, tui):
+    async def test_every_state_renders_on_a_live_app(self, tui, tmp_path):
+        from overcode.activity_log import ActivityRecorder
+        # Recording is off in tests (OVERCODE_ACTIVITY=0); on, it has a state
+        tui._activity = ActivityRecorder("test", directory=tmp_path, enabled=True)
         async with tui.run_test(size=(120, 40)) as pilot:
             await _ready(pilot)
             for c in COMMANDS:
@@ -366,11 +327,18 @@ class TestPaletteInTUI:
                 if not c.agent:
                     assert state.current is not None, c.action
             await pilot.press("slash")
-            # Render every page of the list without error
+            await pilot.pause()
+            # Every item, selected in turn (its page scrolled into view, its
+            # tip and state drawn), renders on the live app without error
             palette = _palette(tui)
-            for _ in range(len(palette._items)):
-                palette.render()
-                await pilot.press("down")
+            assert palette.has_class("visible") and len(palette._items) > 50
+            for i in range(len(palette._items)):
+                palette._select(i)
+                assert palette.selected_index == i
+                lines = palette.render().plain.split("\n")
+                assert all(cell_len(line) <= palette.size.width for line in lines)
+            palette._select(0)
+            await pilot.pause()  # and the screen draws it
 
 
 class TestFooter:

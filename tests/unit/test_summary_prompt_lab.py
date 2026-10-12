@@ -233,7 +233,7 @@ class TestRunner:
 # The dialog, driven through the real TUI
 # ---------------------------------------------------------------------------
 
-from tests.unit.test_command_palette import _ready, tui  # noqa: E402,F401 (fixture)
+from tests.tui_harness import ready as _ready  # noqa: E402
 
 
 def _lab(app):
@@ -251,7 +251,7 @@ class TestLabInTUI:
         await pilot.pause()
         return _lab(pilot.app)
 
-    async def test_opens_on_the_short_prompt_with_the_editor_focused(self, tui):  # noqa: F811 (fixture)
+    async def test_opens_on_the_short_prompt_with_the_editor_focused(self, tui):
         async with tui.run_test(size=(120, 40)) as pilot:
             lab = await self._open(pilot)
             assert lab.has_class("visible")
@@ -259,7 +259,7 @@ class TestLabInTUI:
             assert lab.mode == "short" and lab.draft == sp.DEFAULT_PROMPT_SHORT
             assert not lab.dirty
 
-    async def test_typing_then_ctrl_s_saves_and_q_does_not_quit(self, tui, tmp_path):  # noqa: F811 (fixture)
+    async def test_typing_then_ctrl_s_saves_and_q_does_not_quit(self, tui, tui_state_dir):
         async with tui.run_test(size=(120, 40)) as pilot:
             lab = await self._open(pilot)
             await pilot.press("ctrl+a")  # line start
@@ -270,11 +270,11 @@ class TestLabInTUI:
             await pilot.press("ctrl+s")
             await pilot.pause()
             assert not lab.dirty
-            saved = (tmp_path / "prompts" / "summary-short.md").read_text()
+            saved = (tui_state_dir / "prompts" / "summary-short.md").read_text()
             assert saved.startswith("q! What is the agent doing")
             assert sp.load_prompt("short") == saved
 
-    async def test_esc_with_unsaved_edits_asks_first(self, tui):  # noqa: F811 (fixture)
+    async def test_esc_with_unsaved_edits_asks_first(self, tui):
         async with tui.run_test(size=(120, 40)) as pilot:
             lab = await self._open(pilot)
             await pilot.press("x")
@@ -293,7 +293,7 @@ class TestLabInTUI:
             assert not lab.has_class("visible")
             assert not (sp.prompt_path("short")).exists()
 
-    async def test_ctrl_t_switches_to_the_context_prompt(self, tui):  # noqa: F811 (fixture)
+    async def test_ctrl_t_switches_to_the_context_prompt(self, tui):
         async with tui.run_test(size=(120, 40)) as pilot:
             lab = await self._open(pilot)
             await pilot.press("ctrl+t")
@@ -301,7 +301,7 @@ class TestLabInTUI:
             assert lab.mode == "context"
             assert lab.draft == sp.DEFAULT_PROMPT_CONTEXT
 
-    async def test_saving_the_default_text_removes_the_file(self, tui):  # noqa: F811 (fixture)
+    async def test_saving_the_default_text_removes_the_file(self, tui):
         async with tui.run_test(size=(120, 40)) as pilot:
             sp.save_prompt("short", "custom {pane_content}")
             lab = await self._open(pilot)
@@ -313,6 +313,6 @@ class TestLabInTUI:
             assert not sp.prompt_path("short").exists()
             assert not lab.dirty
 
-    async def test_listed_in_the_palette(self, tui):  # noqa: F811 (fixture)
+    async def test_listed_in_the_palette(self, tui):
         from overcode.command_palette import COMMANDS
         assert any(c.action == "open_summary_prompt_lab" for c in COMMANDS)

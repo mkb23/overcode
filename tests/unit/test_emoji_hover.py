@@ -10,7 +10,7 @@ from overcode.summary_columns import (
     hover_skill_profile, hover_status_detail, render_skill_profile,
     render_skill_profile_plain,
 )
-from tests.unit.test_command_palette import _ready, tui  # noqa: F401 (fixture)
+from tests.tui_harness import ready as _ready, three_agents
 from tests.unit.test_summary_columns import _make_ctx, _make_session
 
 
@@ -123,25 +123,13 @@ class TestHoverText:
 
 
 @pytest.fixture
-def agents_with_tools(monkeypatch):
-    """Agents that carry allowed tools, patched in before the TUI is built
-    (it loads its agents in __init__)."""
-    from tests.unit import test_command_palette as tcp
-    plain = tcp._sessions
-
-    def with_tools():
-        sessions = plain()
-        # Different per agent, or the column hides as uniform
-        for s, tools in zip(sessions, ("Read,Bash", "Read", None)):
-            s.allowed_tools = tools
-        return sessions
-
-    monkeypatch.setattr(tcp, "_sessions", with_tools)
-
-
-@pytest.fixture
-def tools_tui(agents_with_tools, tui):  # noqa: F811 (fixture)
-    return tui
+def tools_tui(make_tui):
+    """Agents that carry allowed tools."""
+    sessions = three_agents()
+    # Different per agent, or the column hides as uniform
+    for s, tools in zip(sessions, ("Read,Bash", "Read", None)):
+        s.allowed_tools = tools
+    return make_tui(sessions)
 
 
 @pytest.mark.asyncio

@@ -100,13 +100,11 @@ class TestPrefs:
         assert settings.TUIPreferences.load("x").theme == "light"
 
 
-class TestSupervisorTUIPilot:  # name opts into conftest state isolation
+class TestSupervisorTUIPilot:
 
     @pytest.mark.asyncio
-    async def test_toggle_flips_theme_prefs_and_filters(self):
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
+    async def test_toggle_flips_theme_prefs_and_filters(self, make_tui):
+        app = make_tui(tmux_session="test-pilot")
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.ui_theme == "dark"

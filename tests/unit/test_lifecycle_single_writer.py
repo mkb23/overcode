@@ -9,10 +9,7 @@
 """
 
 import json
-import shutil
-import tempfile
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -286,21 +283,6 @@ class TestCliListReconcilesOnlyWithoutDaemon:
 # ── the TUI: a new agent's row within one tick ───────────────────────────
 
 
-@pytest.fixture
-def short_state_dir(monkeypatch):
-    """A short state dir: Unix socket paths are limited to ~104 bytes on macOS."""
-    import os
-
-    for k in list(os.environ):
-        if k.startswith("OVERCODE_"):
-            monkeypatch.delenv(k)
-    d = Path(tempfile.mkdtemp(prefix="oc-lw-", dir="/tmp"))
-    monkeypatch.setenv("OVERCODE_DIR", str(d))
-    monkeypatch.setenv("OVERCODE_STATE_DIR", str(d / "s"))
-    yield d
-    shutil.rmtree(d, ignore_errors=True)
-
-
 def _add(sm, name):
     return sm.create_session(name=name, tmux_session="test", tmux_window=f"{name}-w",
                              command=["claude"], start_directory="/tmp")
@@ -308,18 +290,8 @@ def _add(sm, name):
 
 @pytest.mark.asyncio
 class TestTuiRowsFollowSessionsJson:
-    async def _app(self):
-        from overcode.status_detector_factory import StatusDetectorDispatcher
-        from overcode.tui import SupervisorTUI
-
-        def no_detection(*a, **kw):
-            raise AssertionError("the TUI must not detect status")
-
-        with patch.object(SupervisorTUI, "_ensure_monitor_daemon", MagicMock()), \
-                patch.object(StatusDetectorDispatcher, "detect_status", no_detection):
-            tui = SupervisorTUI(tmux_session="test")
-        tui._notifier = MagicMock()
-        return tui
+    """The app reads the private sessions.json (tests/tui_harness.py); no
+    timers run, so each focused-pane tick is the test's."""
 
     @staticmethod
     def _names(app):
@@ -327,12 +299,22 @@ class TestTuiRowsFollowSessionsJson:
 
         return sorted(w.session.name for w in app.query(SessionSummary))
 
-    async def test_new_agent_gets_a_row_within_one_tick(self, short_state_dir):
+    @staticmethod
+    async def _one_tick(pilot, app, expected):
+        """One focused-pane tick, then wait for its capture (the thread) to land."""
+        from tests.tui_harness import until
+
+        app._focused_pane_tick()
+        assert await until(pilot, lambda: not app._focused_capture_in_flight, timeout=2)
+        await pilot.pause()
+        return TestTuiRowsFollowSessionsJson._names(app) == expected
+
+    async def test_new_agent_gets_a_row_within_one_tick(self, make_tui):
         from overcode.launcher import AgentLauncher
 
         sm = SessionManager(skip_git_detection=True)
         _add(sm, "alpha")
-        app = await self._app()
+        app = make_tui()
         # Writing nothing anywhere: the 10 s refresh never runs in this test
         # (the row must come from the focused-pane tick), and the TUI never
         # reaches a writing path.
@@ -342,31 +324,23 @@ class TestTuiRowsFollowSessionsJson:
                 patch.object(SessionManager, "update_session_status",
                              side_effect=AssertionError("the TUI must not write status")):
             async with app.run_test(size=(200, 30)) as pilot:
-                await pilot.pause(0.3)
+                await pilot.pause()
                 assert self._names(app) == ["alpha"]
 
                 _add(sm, "bravo")
-                # One focused tick is 250 ms; allow one more for the worker
-                for _ in range(10):
-                    await pilot.pause(0.05)
-                    if self._names(app) == ["alpha", "bravo"]:
-                        break
-                assert self._names(app) == ["alpha", "bravo"]
+                assert await self._one_tick(pilot, app, ["alpha", "bravo"])
 
                 sm.delete_session(sm.get_session_by_name("alpha").id)
-                for _ in range(10):
-                    await pilot.pause(0.05)
-                    if self._names(app) == ["bravo"]:
-                        break
-                assert self._names(app) == ["bravo"]
+                assert await self._one_tick(pilot, app, ["bravo"])
 
-    async def test_unchanged_table_does_not_reapply(self, short_state_dir):
+    async def test_unchanged_table_does_not_reapply(self, make_tui):
         sm = SessionManager(skip_git_detection=True)
         _add(sm, "alpha")
-        app = await self._app()
+        app = make_tui()
         async with app.run_test(size=(200, 30)) as pilot:
-            await pilot.pause(0.3)
+            await self._one_tick(pilot, app, ["alpha"])
             applied = MagicMock(wraps=app._apply_sessions)
             with patch.object(app, "_apply_sessions", applied):
-                await pilot.pause(1.0)  # four focused ticks
+                for _ in range(4):
+                    assert await self._one_tick(pilot, app, ["alpha"])
             applied.assert_not_called()

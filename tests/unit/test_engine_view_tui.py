@@ -8,15 +8,13 @@ window), and when the engine is missing show it and start it, never
 falling back to computing anything itself.
 """
 
-import shutil
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from overcode.engine_protocol import Snapshot
 from overcode.engine_socket import EngineServer
+from tests.tui_harness import until as _until
 
 pytestmark = pytest.mark.unit
 
@@ -55,22 +53,7 @@ def _snapshot(**per_agent):
 
 
 @pytest.fixture
-def state_dir(monkeypatch):
-    """A short state dir: Unix socket paths are limited to ~104 bytes on macOS."""
-    import os
-
-    for k in list(os.environ):
-        if k.startswith("OVERCODE_"):
-            monkeypatch.delenv(k)
-    d = Path(tempfile.mkdtemp(prefix="oc-tv-", dir="/tmp"))
-    monkeypatch.setenv("OVERCODE_DIR", str(d))
-    monkeypatch.setenv("OVERCODE_STATE_DIR", str(d / "s"))
-    yield d
-    shutil.rmtree(d, ignore_errors=True)
-
-
-@pytest.fixture
-def engine(state_dir):
+def engine(tui_state_dir):
     """The engine's socket, served by a real EngineServer (no daemon behind it)."""
     from overcode import tui_engine
 
@@ -81,29 +64,18 @@ def engine(state_dir):
 
 
 @pytest.fixture
-def app(state_dir):
-    from overcode.status_detector_factory import StatusDetectorDispatcher
-    from overcode.tui import SupervisorTUI
-
-    def no_detection(*a, **kw):
-        raise AssertionError("the TUI must not detect status (the engine does)")
-
-    starts = MagicMock()
-    with patch.object(SupervisorTUI, "_ensure_monitor_daemon", starts), \
-            patch.object(StatusDetectorDispatcher, "detect_status", no_detection), \
-            patch("overcode.launcher.AgentLauncher.list_sessions", lambda self: _sessions()):
-        tui = SupervisorTUI(tmux_session="test")
-        tui._notifier = MagicMock()
-        tui.daemon_starts = starts
-        yield tui
+def app(make_tui):
+    """The real EngineClient on the socket (tests/tui_harness.py), no timers:
+    a test that needs a tick calls it."""
+    return make_tui(_sessions(), engine="socket")
 
 
-async def _until(pilot, predicate, timeout=5.0):
-    for _ in range(int(timeout / 0.05)):
-        if predicate():
-            return True
-        await pilot.pause(0.05)
-    return predicate()
+def _ticked(tick, predicate):
+    """``predicate`` with ``tick`` run first: the timer's work, done by the test."""
+    def check():
+        tick()
+        return predicate()
+    return check
 
 
 def _row(app, name):
@@ -319,11 +291,21 @@ class TestSisterAgents:
 @pytest.mark.asyncio
 class TestEngineAbsent:
 
-    async def test_no_socket_shows_the_banner_and_starts_the_daemon(self, app, state_dir):
+    async def test_no_socket_shows_the_banner_and_starts_the_daemon(self, app):
+        from overcode.tui import ENGINE_BANNER_GRACE_SECONDS
+
         async with app.run_test(size=(200, 40)) as pilot:
             banner = app.query_one("#engine-banner")
             container = app.query_one("#sessions-container")
-            assert await _until(pilot, lambda: banner.has_class("visible"), timeout=4)
+            # Within the grace (the engine may be starting) the watch shows nothing
+            app.update_daemon_status()
+            await pilot.pause()
+            assert not banner.has_class("visible")
+            # Past it, the next watch tick shows the banner
+            app._engine_down_since -= ENGINE_BANNER_GRACE_SECONDS
+            app.update_daemon_status()
+            await pilot.pause()
+            assert banner.has_class("visible")
             assert container.has_class("engine-stale")
             assert app.daemon_starts.called
             # Nothing was computed in its place: rows keep what sessions.json says
@@ -368,15 +350,18 @@ class TestEngineAbsent:
             await _connected(pilot, app)
             banner = app.query_one("#engine-banner")
             container = app.query_one("#sessions-container")
-            # Nothing beats the engine here: its pings soon carry a stale age
-            assert await _until(pilot, lambda: banner.has_class("visible"), timeout=4)
+            # Nothing beats the engine here: its pings soon carry a stale age,
+            # which the watch (each daemon_status tick) shows
+            assert await _until(pilot, _ticked(app.update_daemon_status,
+                                               lambda: banner.has_class("visible")), timeout=4)
             assert container.has_class("engine-stale")
             assert "frozen" in str(banner.render())
             assert app.query_one("#daemon-status").engine_stalled_for is not None
             assert app._engine_connected  # frozen, not gone: the daemon's watchdog acts
             # The loop beats again: the banner goes
             monkeypatch.setattr(engine_socket, "STALL_SECONDS", 1e9)
-            assert await _until(pilot, lambda: not banner.has_class("visible"), timeout=4)
+            assert await _until(pilot, _ticked(app.update_daemon_status,
+                                               lambda: not banner.has_class("visible")), timeout=4)
             assert not container.has_class("engine-stale")
             assert app.query_one("#daemon-status").engine_stalled_for is None
 
@@ -402,7 +387,8 @@ class TestFocusedCaptureThread:
         async with app.run_test(size=(200, 40)) as pilot:
             await _connected(pilot, app)
             # The tick keeps it going: one thread, a delivery every tick
-            assert await _until(pilot, lambda: len(applied) >= 3, timeout=2)
+            tick = app._focused_pane_tick
+            assert await _until(pilot, _ticked(tick, lambda: len(applied) >= 3), timeout=2)
             thread = app._capture_thread
             assert thread is not None and thread.is_alive()
             assert [t for t in threading.enumerate() if t.name == "focused-capture"] == [thread]
@@ -421,7 +407,9 @@ class TestFocusedCaptureThread:
             # Single flight: while one is in flight the tick asks for nothing
             app._focused_capture_in_flight = True
             count = len(applied)
-            await pilot.pause(0.6)
+            for _ in range(3):
+                tick()
+                await pilot.pause(0.05)
             assert len(applied) == count
             app._focused_capture_in_flight = False
         thread.join(timeout=3)
@@ -431,6 +419,7 @@ class TestFocusedCaptureThread:
         engine.publish(_snapshot())
         async with app.run_test(size=(200, 40)) as pilot:
             await _connected(pilot, app)
+            app._focused_pane_tick()  # the first tick starts the thread
             assert await _until(pilot, lambda: app._capture_thread is not None)
             app.detector.get_pane_content = MagicMock(side_effect=[RuntimeError("tmux"), "ok"])
             assert await _until(pilot, lambda: not app._focused_capture_in_flight, timeout=1)
@@ -451,8 +440,7 @@ class TestFocusedCaptureThread:
         engine.publish(_snapshot())
         async with app.run_test(size=(200, 40)) as pilot:
             await _connected(pilot, app)
-            app._focused_capture_in_flight = True  # the tick stays out of the way
-            await pilot.pause(0.3)
+            app._focused_capture_in_flight = True  # no capture in the way
             rows = {w.session.id: w.session for w in app.query(SessionSummary)}
             app._apply_focused_capture(None, None, dict(rows))
             walks = []
@@ -567,7 +555,7 @@ class TestDaemonPanelReadsTheEngine:
             patch("overcode.tui_widgets.daemon_panel.follow_log", log),
         ]
 
-    async def _run(self, app, engine, fleet_extra, shown, seconds=2.6):
+    async def _run(self, app, engine, fleet_extra, shown):
         from contextlib import ExitStack
 
         snap = _snapshot()
@@ -581,7 +569,10 @@ class TestDaemonPanelReadsTheEngine:
                 await _connected(pilot, app)
                 panel = app.query_one("#daemon-panel")
                 panel.display = shown
-                await pilot.pause(seconds)
+                for _ in range(2):  # two of its 1 s ticks
+                    panel._refresh_logs()
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
                 text = panel.render().plain
         return calls, text
 

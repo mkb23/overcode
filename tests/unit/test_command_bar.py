@@ -3,18 +3,17 @@ Integration tests for the CommandBar widget.
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 class TestCommandBarWidget:
     """Test CommandBar widget in isolation"""
 
     @pytest.mark.asyncio
-    async def test_command_bar_starts_hidden(self):
+    async def test_command_bar_starts_hidden(self, make_tui):
         """CommandBar should start hidden (display: none)"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test():
             cmd_bar = app.query_one("#command-bar", CommandBar)
             # CSS sets display: none
@@ -26,23 +25,23 @@ class TestCommandBarIntegration:
     """Integration tests for CommandBar in SupervisorTUI"""
 
     @pytest.mark.asyncio
-    async def test_command_bar_hidden_on_start(self):
+    async def test_command_bar_hidden_on_start(self, make_tui):
         """Command bar should be hidden when TUI starts"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             cmd_bar = app.query_one("#command-bar", CommandBar)
             assert not cmd_bar.has_class("visible")
             assert cmd_bar.display == False
 
     @pytest.mark.asyncio
-    async def test_i_key_shows_command_bar(self):
+    async def test_i_key_shows_command_bar(self, make_tui):
         """Pressing 'i' should show the command bar"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
         from textual.widgets import Input
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             cmd_bar = app.query_one("#command-bar", CommandBar)
 
@@ -61,11 +60,11 @@ class TestCommandBarIntegration:
             assert app.focused == input_widget
 
     @pytest.mark.asyncio
-    async def test_colon_key_shows_command_bar(self):
+    async def test_colon_key_shows_command_bar(self, make_tui):
         """Pressing ':' should show the command bar (vim-style)"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             cmd_bar = app.query_one("#command-bar", CommandBar)
 
@@ -74,11 +73,11 @@ class TestCommandBarIntegration:
             assert cmd_bar.has_class("visible")
 
     @pytest.mark.asyncio
-    async def test_escape_hides_command_bar(self):
+    async def test_escape_hides_command_bar(self, make_tui):
         """Pressing Escape should hide the command bar"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             cmd_bar = app.query_one("#command-bar", CommandBar)
 
@@ -93,12 +92,11 @@ class TestCommandBarIntegration:
             assert not cmd_bar.has_class("visible")
 
     @pytest.mark.asyncio
-    async def test_typing_in_command_bar(self):
+    async def test_typing_in_command_bar(self, make_tui):
         """Should be able to type in the command bar"""
-        from overcode.tui import SupervisorTUI, CommandBar
         from textual.widgets import Input
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             # Show command bar
             await pilot.press("i")
@@ -110,12 +108,11 @@ class TestCommandBarIntegration:
             assert input_widget.value == "hello"
 
     @pytest.mark.asyncio
-    async def test_enter_sends_message(self):
+    async def test_enter_sends_message(self, make_tui):
         """Pressing Enter should send the message"""
-        from overcode.tui import SupervisorTUI, CommandBar
         from textual.widgets import Input
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             # Show command bar
             await pilot.press("i")
@@ -133,11 +130,11 @@ class TestCommandBarIntegration:
             assert input_widget.value == ""
 
     @pytest.mark.asyncio
-    async def test_command_bar_does_not_capture_h_key(self):
+    async def test_command_bar_does_not_capture_h_key(self, make_tui):
         """When hidden, command bar should not capture 'h' key"""
-        from overcode.tui import SupervisorTUI, HelpOverlay
+        from overcode.tui import HelpOverlay
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             help_overlay = app.query_one("#help-overlay", HelpOverlay)
 
@@ -147,12 +144,12 @@ class TestCommandBarIntegration:
             assert help_overlay.has_class("visible")
 
     @pytest.mark.asyncio
-    async def test_ctrl_e_toggles_multiline(self):
+    async def test_ctrl_e_toggles_multiline(self, make_tui):
         """Ctrl+E should toggle between single and multi-line mode"""
-        from overcode.tui import SupervisorTUI, CommandBar
-        from textual.widgets import Input, TextArea
+        from overcode.tui import CommandBar
+        from textual.widgets import TextArea
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         async with app.run_test() as pilot:
             cmd_bar = app.query_one("#command-bar", CommandBar)
 
@@ -174,9 +171,9 @@ class TestCommandBarWithSessions:
     """Test CommandBar interaction with sessions"""
 
     @pytest.mark.asyncio
-    async def test_target_session_from_focused(self, tmp_path):
+    async def test_target_session_from_focused(self, make_tui, tmp_path):
         """Command bar should target the focused session"""
-        from overcode.tui import SupervisorTUI, CommandBar, SessionSummary
+        from overcode.tui import CommandBar, SessionSummary
         from overcode.session_manager import SessionManager
 
         # Create a session
@@ -188,7 +185,7 @@ class TestCommandBarWithSessions:
             command=["claude"]
         )
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         app.session_manager = session_manager
 
         async with app.run_test() as pilot:
@@ -215,14 +212,14 @@ class TestUniqueAgentName:
     """Test unique agent name generation (#131)"""
 
     @pytest.mark.asyncio
-    async def test_unique_name_no_conflict(self, tmp_path):
+    async def test_unique_name_no_conflict(self, make_tui, tmp_path):
         """When no conflict, returns base name unchanged"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
         from overcode.session_manager import SessionManager
 
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         app.session_manager = session_manager
 
         async with app.run_test() as pilot:
@@ -232,9 +229,9 @@ class TestUniqueAgentName:
             assert result == "myagent"
 
     @pytest.mark.asyncio
-    async def test_unique_name_with_one_conflict(self, tmp_path):
+    async def test_unique_name_with_one_conflict(self, make_tui, tmp_path):
         """When name exists, returns name2"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
         from overcode.session_manager import SessionManager
 
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -245,7 +242,7 @@ class TestUniqueAgentName:
             command=["claude"]
         )
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         app.session_manager = session_manager
 
         async with app.run_test() as pilot:
@@ -255,9 +252,9 @@ class TestUniqueAgentName:
             assert result == "foo2"
 
     @pytest.mark.asyncio
-    async def test_unique_name_with_multiple_conflicts(self, tmp_path):
+    async def test_unique_name_with_multiple_conflicts(self, make_tui, tmp_path):
         """When name and name2 exist, returns name3"""
-        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.tui import CommandBar
         from overcode.session_manager import SessionManager
 
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -274,7 +271,7 @@ class TestUniqueAgentName:
             command=["claude"]
         )
 
-        app = SupervisorTUI(tmux_session="test")
+        app = make_tui()
         app.session_manager = session_manager
 
         async with app.run_test() as pilot:

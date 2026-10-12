@@ -5,7 +5,7 @@ from rich.cells import cell_len
 
 from overcode.tui_widgets import dialog_style as ds
 from overcode.tui_widgets.modal_base import ModalBase
-from tests.unit.test_command_palette import _ready, tui  # noqa: F401 (fixture)
+from tests.tui_harness import ready as _ready
 
 
 def _dialog_classes():
@@ -62,7 +62,7 @@ class TestEveryDialog:
 @pytest.mark.asyncio
 class TestInTUI:
 
-    async def test_column_guide_samples_focused_agent(self, tui):  # noqa: F811
+    async def test_column_guide_samples_focused_agent(self, tui):
         from overcode.tui_widgets import SummaryConfigModal
         async with tui.run_test(size=(140, 44)) as pilot:
             await _ready(pilot)
@@ -80,7 +80,7 @@ class TestInTUI:
             assert modal.region.y >= first_row + modal._KEEP_AGENTS
             assert modal.region.bottom <= tui.size.height - 1
 
-    async def test_dialog_recentres_on_resize(self, tui):  # noqa: F811
+    async def test_dialog_recentres_on_resize(self, tui):
         from overcode.tui_widgets import TmuxConfigModal
         async with tui.run_test(size=(140, 44)) as pilot:
             await _ready(pilot)
