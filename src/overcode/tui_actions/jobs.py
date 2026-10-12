@@ -175,11 +175,8 @@ class JobsMixin:
         job = widget.job
         if job.status == "running" and job.tmux_window:
             try:
-                tmux = self._job_launcher.tmux
-                pane = tmux._get_pane(job.tmux_window)
-                if pane:
-                    lines = pane.capture_pane()
-                    widget.pane_content = lines if lines else []
+                content = self._job_launcher.tmux.capture_pane(job.tmux_window)
+                widget.pane_content = content.split("\n") if content else []
             except Exception:
                 pass
 

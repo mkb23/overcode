@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 from contextlib import contextmanager
-from typing import Iterator, Optional, List, Dict, Any
+from typing import Callable, Iterator, Optional, List, Dict, Any
 
 import libtmux
 import libtmux.neo
@@ -110,18 +110,24 @@ class RealTmux:
     default_command_timeout: Optional[float] = None
 
     def __init__(self, socket_name: Optional[str] = None,
-                 command_timeout: Optional[float] = None):
+                 command_timeout: Optional[float] = None,
+                 cache_ttl: Optional[float] = None):
         """Initialize with optional socket name for test isolation.
 
         If no socket_name is provided, checks OVERCODE_TMUX_SOCKET env var.
 
-        ``command_timeout`` bounds each read (capture_pane, has_session,
-        list_windows, list_panes, get_pane_pid): one the server does not
-        answer in time raises TmuxTimeoutError (list_panes returns None),
-        and for ``command_timeout`` seconds after that the reads fail at
-        once instead of each waiting out its own timeout, so a tick over
-        many agents costs one timeout, not one per agent. None (the
-        default) takes ``default_command_timeout``.
+        ``command_timeout`` bounds every tmux command. A read the server
+        does not answer in time (capture_pane, has_session, list_windows,
+        get_pane_pid) raises TmuxTimeoutError (list_panes returns None); a
+        write (send_keys, new_window, kill_window, ...) returns its failure
+        value. For ``command_timeout`` seconds after a timeout every call
+        fails at once instead of each waiting out its own timeout, so a
+        tick over many agents costs one timeout, not one per agent. None
+        (the default) takes ``default_command_timeout``.
+
+        ``cache_ttl`` is how long session and pane objects are reused
+        (default ``_CACHE_TTL``); 0 looks them up afresh on every call, for
+        a client that creates and kills windows (``TmuxManager``).
         """
         # Support OVERCODE_TMUX_SOCKET env var for testing
         self._socket_name = socket_name or os.environ.get("OVERCODE_TMUX_SOCKET")
@@ -130,6 +136,7 @@ class RealTmux:
             command_timeout if command_timeout is not None else self.default_command_timeout
         )
         self._unresponsive_until = 0.0  # time.monotonic() deadline
+        self._cache_ttl = self._CACHE_TTL if cache_ttl is None else cache_ttl
         # Cache: (session_name, window_index) -> (pane, timestamp)
         self._pane_cache: Dict[tuple, tuple] = {}
         # Cache: session_name -> (session_obj, timestamp)
@@ -175,7 +182,7 @@ class RealTmux:
         now = time.time()
         if session in self._session_cache:
             cached_session, cached_time = self._session_cache[session]
-            if now - cached_time < self._CACHE_TTL:
+            if now - cached_time < self._cache_ttl:
                 return cached_session
 
         try:
@@ -213,7 +220,7 @@ class RealTmux:
         # Check cache first
         if cache_key in self._pane_cache:
             cached_pane, cached_time = self._pane_cache[cache_key]
-            if now - cached_time < self._CACHE_TTL:
+            if now - cached_time < self._cache_ttl:
                 return cached_pane
 
         # Cache miss - fetch from tmux
@@ -262,14 +269,15 @@ class RealTmux:
 
     def send_keys(self, session: str, window: str, keys: str, enter: bool = True) -> bool:
         try:
-            pane = self._get_pane(session, window)
-            if pane is None:
-                return False
+            with self._bounded():
+                pane = self._get_pane(session, window)
+                if pane is None:
+                    return False
 
-            from .tmux_utils import send_keys_to_pane
-            send_keys_to_pane(pane, keys, enter=enter)
-            return True
-        except LibTmuxException:
+                from .tmux_utils import send_keys_to_pane
+                send_keys_to_pane(pane, keys, enter=enter)
+                return True
+        except (LibTmuxException, TmuxTimeoutError):
             return False
 
     def has_session(self, session: str) -> bool:
@@ -281,55 +289,116 @@ class RealTmux:
 
     def new_session(self, session: str) -> bool:
         try:
-            self.server.new_session(session_name=session, attach=False)
-            return True
-        except LibTmuxException:
+            with self._bounded():
+                self.server.new_session(session_name=session, attach=False)
+                return True
+        except (LibTmuxException, TmuxTimeoutError):
             return False
 
     def new_window(self, session: str, name: str, command: Optional[List[str]] = None,
-                   cwd: Optional[str] = None) -> Optional[str]:
+                   cwd: Optional[str] = None, *, wait_for_prompt: bool = False,
+                   options: Optional[Dict[str, str]] = None) -> Optional[str]:
+        """Create a window; its name, or None.
+
+        ``automatic-rename`` is turned off (lookups rely on stable names)
+        and each of ``options`` is set as a window option.
+        ``wait_for_prompt`` returns only once the window's shell has drawn
+        its prompt (at most a few seconds), for a caller about to type.
+        """
         try:
-            sess = self._get_session(session)
-            if sess is None:
-                return None
+            with self._bounded():
+                sess = self._get_session(session)
+                if sess is None:
+                    return None
 
-            kwargs: Dict[str, Any] = {'window_name': name, 'attach': False}
-            if cwd:
-                kwargs['start_directory'] = cwd
-            if command:
-                kwargs['window_shell'] = ' '.join(command)
+                kwargs: Dict[str, Any] = {'window_name': name, 'attach': False}
+                if cwd:
+                    kwargs['start_directory'] = cwd
+                if command:
+                    kwargs['window_shell'] = ' '.join(command)
 
-            window = sess.new_window(**kwargs)
-            # Prevent tmux from auto-renaming the window based on the
-            # running process — we rely on stable window names for lookups.
-            window.set_window_option('automatic-rename', 'off')
-            return window.window_name
-        except (LibTmuxException, ValueError):
+                window = sess.new_window(**kwargs)
+                window.set_window_option('automatic-rename', 'off')
+                for option, value in (options or {}).items():
+                    window.set_window_option(option, value)
+                if wait_for_prompt:
+                    self._wait_for_prompt(window)
+                return window.window_name
+        except (LibTmuxException, ValueError, TmuxTimeoutError):
             return None
+
+    @staticmethod
+    def _wait_for_prompt(window, timeout: float = 3.0) -> None:
+        """Wait for a new window's shell to draw its prompt.
+
+        Until the shell's line editor starts, the tty is in canonical
+        mode and drops typed-ahead input past 1024 bytes (MAX_CANON on
+        macOS), so a long launch command sent too early arrives cut off
+        and the shell sits at a `quote>` prompt.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if any(line.strip() for line in window.active_pane.capture_pane()):
+                    return
+            except (LibTmuxException, TmuxTimeoutError):
+                return
+            time.sleep(0.05)
 
     def kill_window(self, session: str, window: str) -> bool:
         try:
-            win = self._get_window(session, window)
-            if win is None:
-                return False
-            win.kill()
-            return True
-        except LibTmuxException:
+            with self._bounded():
+                win = self._get_window(session, window)
+                if win is None:
+                    return False
+                win.kill()
+                self.invalidate_cache(session, window)
+                return True
+        except (LibTmuxException, TmuxTimeoutError):
             return False
+
+    def kill_windows(self, session: str, match: Callable[[str], bool]) -> List[str]:
+        """Kill every window whose name ``match`` accepts; the names killed.
+
+        Unlike ``kill_window`` it copes with several windows sharing a name.
+        """
+        killed: List[str] = []
+        try:
+            with self._bounded():
+                sess = self._get_session(session)
+                if sess is None:
+                    return killed
+                for win in list(sess.windows):
+                    name = win.window_name
+                    if name is not None and match(name):
+                        win.kill()
+                        killed.append(name)
+                        self.invalidate_cache(session, name)
+        except (LibTmuxException, TmuxTimeoutError):
+            pass
+        return killed
 
     def rename_window(self, session: str, window: str, new_name: str) -> bool:
         """Rename a window (exact target; see ``rename_tmux_window``)."""
         from .tmux_utils import rename_tmux_window
-        return rename_tmux_window(self.server, session, window, new_name)
+        try:
+            with self._bounded():
+                renamed = rename_tmux_window(self.server, session, window, new_name)
+        except TmuxTimeoutError:
+            return False
+        self.invalidate_cache(session, window)
+        return renamed
 
     def kill_session(self, session: str) -> bool:
         try:
-            sess = self._get_session(session)
-            if sess is None:
-                return False
-            sess.kill()
-            return True
-        except LibTmuxException:
+            with self._bounded():
+                sess = self._get_session(session)
+                if sess is None:
+                    return False
+                sess.kill()
+                self.invalidate_cache(session)
+                return True
+        except (LibTmuxException, TmuxTimeoutError):
             return False
 
     def list_windows(self, session: str) -> List[Dict[str, Any]]:
@@ -390,7 +459,7 @@ class RealTmux:
     def _attach_bare(self, session: str, window: str) -> None:
         """Create a linked session with stripped chrome and attach to it."""
         from .tmux_utils import attach_bare
-        attach_bare(session, window)
+        attach_bare(session, window, socket_path=self._socket_name)
 
     def get_pane_pid(self, session: str, window: str) -> Optional[int]:
         """Get the PID of the shell process in a window's first pane."""
@@ -406,12 +475,13 @@ class RealTmux:
     def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session (for external pane sync)."""
         try:
-            win = self._get_window(session, window)
-            if win is None:
-                return False
-            win.select()
-            return True
-        except LibTmuxException:
+            with self._bounded():
+                win = self._get_window(session, window)
+                if win is None:
+                    return False
+                win.select()
+                return True
+        except (LibTmuxException, TmuxTimeoutError):
             return False
 
     def ensure_empty_placeholder_window(self, session: str, window_name: str, message: str) -> bool:
@@ -422,30 +492,24 @@ class RealTmux:
         previously-focused agent.
         """
         try:
-            sess = self._get_session(session)
-            if sess is None:
-                return False
-            for win in sess.windows:
-                if win.window_name == window_name:
+            with self._bounded():
+                sess = self._get_session(session)
+                if sess is None:
+                    return False
+                if any(win.window_name == window_name for win in sess.windows):
                     return True
-            # Use printf for embedded newlines + tail -f /dev/null to keep the
-            # window alive without burning CPU. Single-quoted to keep the
-            # shell-passed message escaped safely below.
-            import shlex
-            safe_msg = shlex.quote(message)
-            cmd = f"clear; printf %s {safe_msg}; tail -f /dev/null"
-            window = sess.new_window(
-                window_name=window_name,
-                attach=False,
-                window_shell=cmd,
-            )
-            window.set_window_option('automatic-rename', 'off')
-            # Tag the window so cleanup logic and untracked-window kill paths
-            # can recognise it as overcode infrastructure rather than an agent.
-            window.set_window_option('@is_overcode_placeholder', 'on')
-            return True
-        except (LibTmuxException, ValueError):
+        except (LibTmuxException, TmuxTimeoutError):
             return False
+        # printf for embedded newlines; tail -f /dev/null keeps the window
+        # alive without burning CPU. The message is shell-quoted.
+        import shlex
+        cmd = f"clear; printf %s {shlex.quote(message)}; tail -f /dev/null"
+        # Tagged so cleanup logic and the untracked-window kill paths
+        # recognise it as overcode infrastructure rather than an agent.
+        return self.new_window(
+            session, window_name, command=[cmd],
+            options={'@is_overcode_placeholder': 'on'},
+        ) is not None
 
     def resize_window(self, session: str, window: str, width: int, height: int) -> bool:
         """Resize a tmux window to match terminal dimensions.
@@ -462,15 +526,14 @@ class RealTmux:
         Returns:
             True if resize succeeded, False otherwise
         """
+        from .tmux_utils import tmux_window_target
         try:
-            # Use tmux resize-window command
-            # Format: session:window.pane
-            target = f"{session}:{window}"
-            result = self.run(
-                [*_build_tmux_cmd(), "resize-window", "-t", target, "-x", str(width), "-y", str(height)],
-                timeout=2
-            )
-            return result is not None and result.get("returncode") == 0
-        except Exception:
+            with self._bounded():
+                result = self.server.cmd(
+                    "resize-window", "-t", tmux_window_target(session, window),
+                    "-x", str(width), "-y", str(height),
+                )
+        except (LibTmuxException, TmuxTimeoutError):
             return False
+        return result.returncode == 0 and not result.stderr
 

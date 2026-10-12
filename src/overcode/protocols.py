@@ -6,7 +6,7 @@ swap real implementations (subprocess calls to tmux, file I/O) with
 mock implementations in tests.
 """
 
-from typing import Protocol, Optional, List, Dict, Any, Tuple, runtime_checkable, TYPE_CHECKING
+from typing import Callable, Protocol, Optional, List, Dict, Any, Tuple, runtime_checkable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .session_manager import Session
@@ -16,12 +16,14 @@ if TYPE_CHECKING:
 class TmuxTimeoutError(Exception):
     """The tmux server did not answer a read within the client's timeout.
 
-    Only a tmux client built with a command timeout raises it (the monitor
-    daemon's: ``RealTmux(command_timeout=...)``). It is raised, not turned
-    into None/False/[], from the reads whose empty answer means "gone"
-    (``capture_pane``, ``has_session``, ``list_windows``, ``get_pane_pid``),
-    so a wedged server reads as "no answer this tick", never as a dead
-    agent. ``list_panes`` returns its documented no-answer None instead.
+    Only a tmux client built with a command timeout raises it
+    (``RealTmux(command_timeout=...)``: the monitor daemon's, and every
+    ``TmuxManager``'s). It is raised, not turned into None/False/[], from
+    the reads whose empty answer means "gone" (``capture_pane``,
+    ``has_session``, ``list_windows``, ``get_pane_pid``), so a wedged server
+    reads as "no answer this tick", never as a dead agent. ``list_panes``
+    returns its documented no-answer None instead, and writes return their
+    failure value.
     """
 
 
@@ -73,8 +75,16 @@ class TmuxInterface(Protocol):
         ...
 
     def new_window(self, session: str, name: str, command: Optional[List[str]] = None,
-                   cwd: Optional[str] = None) -> Optional[str]:
+                   cwd: Optional[str] = None, *, wait_for_prompt: bool = False,
+                   options: Optional[Dict[str, str]] = None) -> Optional[str]:
         """Create a new window in a session.
+
+        Args:
+            command: the window's shell command (default: a login shell)
+            cwd: its start directory
+            wait_for_prompt: return only once the shell has drawn its
+                prompt, for a caller about to type into it
+            options: window options to set on it (e.g. ``@is_ssh_proxy``)
 
         Returns:
             Window name if successful, None otherwise
@@ -83,6 +93,18 @@ class TmuxInterface(Protocol):
 
     def kill_window(self, session: str, window: str) -> bool:
         """Kill a tmux window."""
+        ...
+
+    def kill_windows(self, session: str, match: Callable[[str], bool]) -> List[str]:
+        """Kill every window whose name ``match`` accepts; the names killed.
+
+        Copes with several windows sharing a name, which ``kill_window``
+        cannot address.
+        """
+        ...
+
+    def resize_window(self, session: str, window: str, width: int, height: int) -> bool:
+        """Resize a window; True on success."""
         ...
 
     def rename_window(self, session: str, window: str, new_name: str) -> bool:

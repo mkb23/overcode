@@ -1,8 +1,11 @@
 """Tests for tmux_utils module."""
 
 import os
+import threading
 from unittest.mock import patch, MagicMock
 import subprocess
+
+import pytest
 
 from overcode.tmux_utils import (
     DAEMON_CLAUDE_WINDOW_NAME,
@@ -469,3 +472,61 @@ class TestPaneForWindow:
         from overcode.tmux_utils import pane_for_window
 
         assert pane_for_window(self._panes(), "missing") is None
+
+
+class _RecordingPane:
+    """A pane that records what it is sent, into a shared timeline."""
+
+    def __init__(self, timeline):
+        self.timeline = timeline
+
+    def send_keys(self, keys, **kwargs):
+        self.timeline.append(("send", keys, kwargs))
+
+
+class TestSendKeysToPane:
+    """The keystroke sequence an agent receives: text, pauses, Enter."""
+
+    @pytest.mark.parametrize("keys, enter, expected", [
+        # Text and Enter are separate commands, with a pause for the CLI
+        ("echo hello", True, [
+            ("send", "echo hello", {"enter": False}), ("sleep", 0.1),
+            ("send", "", {"enter": True})]),
+        ("partial text", False, [
+            ("send", "partial text", {"enter": False}), ("sleep", 0.1)]),
+        ("", True, [("send", "", {"enter": True})]),
+        ("", False, []),
+        # A ! command: the ! alone first, so Claude switches to bash mode (#139)
+        ("!ls -la", True, [
+            ("send", "!", {"enter": False}), ("sleep", 0.15),
+            ("send", "ls -la", {"enter": False}), ("sleep", 0.1),
+            ("send", "", {"enter": True})]),
+        ("!pwd", False, [
+            ("send", "!", {"enter": False}), ("sleep", 0.15),
+            ("send", "pwd", {"enter": False}), ("sleep", 0.1)]),
+        ("!", True, [
+            ("send", "!", {"enter": False}), ("sleep", 0.1),
+            ("send", "", {"enter": True})]),
+        # A slash command: one literal string, then a longer pause (#307)
+        ("/clear", True, [
+            ("send", "/clear", {"enter": False, "literal": True}), ("sleep", 0.5),
+            ("send", "", {"enter": True})]),
+        ("/", True, [
+            ("send", "/", {"enter": False}), ("sleep", 0.1),
+            ("send", "", {"enter": True})]),
+    ])
+    def test_sequence(self, keys, enter, expected):
+        from overcode.tmux_utils import send_keys_to_pane
+
+        timeline = []
+        me = threading.current_thread()
+
+        def sleep(seconds):
+            # time is one shared module: count only this thread's sleeps
+            if threading.current_thread() is me:
+                timeline.append(("sleep", seconds))
+
+        with patch("overcode.tmux_utils.time.sleep", sleep):
+            send_keys_to_pane(_RecordingPane(timeline), keys, enter=enter)
+
+        assert timeline == expected

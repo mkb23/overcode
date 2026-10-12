@@ -132,6 +132,40 @@ class TestBoundedTmux:
         daemon = monitor_daemon.MonitorDaemon(tmux_session="robust", session_manager=MagicMock())
         assert daemon._tmux._command_timeout == TMUX_COMMAND_TIMEOUT_SECONDS
 
+    def test_a_wedged_server_fails_a_write_instead_of_hanging(self, fake_tmux):
+        fake_tmux.hang.touch()
+        tmux = RealTmux(socket_name="oc-unit-nope", command_timeout=0.3)
+        started = time.monotonic()
+        assert tmux.send_keys("agents", "w", "hello") is False
+        # the rest fail at once: the server just timed out
+        assert tmux.new_window("agents", "w2") is None
+        assert tmux.kill_window("agents", "w") is False
+        assert tmux.kill_windows("agents", lambda name: True) == []
+        assert tmux.select_window("agents", "w") is False
+        assert tmux.resize_window("agents", "w", 80, 24) is False
+        assert tmux.rename_window("agents", "w", "x") is False
+        assert tmux.new_session("agents") is False
+        assert tmux.kill_session("agents") is False
+        assert time.monotonic() - started < 5
+
+    def test_every_tmux_manager_call_is_bounded(self, fake_tmux):
+        from overcode.implementations import TMUX_COMMAND_TIMEOUT_SECONDS
+        from overcode.tmux_manager import TmuxManager
+
+        manager = TmuxManager("agents", socket="oc-unit-nope")
+        assert manager.client._command_timeout == TMUX_COMMAND_TIMEOUT_SECONDS
+        manager.client._command_timeout = 0.3
+        fake_tmux.hang.touch()
+        started = time.monotonic()
+        # "gone" is never the answer to a read the server did not give
+        with pytest.raises(TmuxTimeoutError):
+            manager.window_exists("w")
+        with pytest.raises(TmuxTimeoutError):
+            manager.session_exists()
+        assert manager.send_keys("w", "hello") is False
+        assert manager.kill_window("w") is False
+        assert time.monotonic() - started < 5
+
     def test_mock_tmux_can_play_a_wedged_server(self):
         tmux = MockTmux()
         tmux.set_pane_content("agents", "w", "hi")

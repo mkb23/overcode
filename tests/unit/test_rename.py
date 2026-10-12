@@ -168,7 +168,7 @@ class TestLauncherRename:
 
     @staticmethod
     def _sent(launcher):
-        return launcher.tmux._tmux.sent_keys
+        return launcher.tmux.client.sent_keys
 
     @staticmethod
     def _files(tmp_path, name):

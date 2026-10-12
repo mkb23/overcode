@@ -5,7 +5,7 @@ These mocks allow unit tests to run without real tmux sessions,
 file system access, or subprocess calls.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Callable, Optional, List, Dict, Any
 
 
 class MockTmux:
@@ -15,6 +15,8 @@ class MockTmux:
         self.sessions: Dict[str, Dict[str, str]] = {}  # session -> {window_name: content}
         self.sent_keys: List[tuple] = []  # Record of sent keys
         self._next_window = 1
+        # Every new_window call's arguments, in order
+        self.windows_created: List[Dict[str, Any]] = []
         # True: a wedged server, as a timed RealTmux reports it — the reads
         # whose empty answer means "gone" raise TmuxTimeoutError and
         # list_panes answers None.
@@ -56,10 +58,15 @@ class MockTmux:
         return False
 
     def new_window(self, session: str, name: str, command: Optional[List[str]] = None,
-                   cwd: Optional[str] = None) -> Optional[str]:
+                   cwd: Optional[str] = None, *, wait_for_prompt: bool = False,
+                   options: Optional[Dict[str, str]] = None) -> Optional[str]:
         if session not in self.sessions:
             return None
         self.sessions[session][name] = ""
+        self.windows_created.append({
+            "session": session, "name": name, "command": command, "cwd": cwd,
+            "wait_for_prompt": wait_for_prompt, "options": dict(options or {}),
+        })
         return name
 
     def kill_window(self, session: str, window: str) -> bool:
@@ -67,6 +74,17 @@ class MockTmux:
             del self.sessions[session][window]
             return True
         return False
+
+    def kill_windows(self, session: str, match: Callable[[str], bool]) -> List[str]:
+        windows = self.sessions.get(session, {})
+        killed = [name for name, content in windows.items()
+                  if isinstance(content, str) and match(name)]
+        for name in killed:
+            del windows[name]
+        return killed
+
+    def resize_window(self, session: str, window: str, width: int, height: int) -> bool:
+        return window in self.sessions.get(session, {})
 
     def rename_window(self, session: str, window: str, new_name: str) -> bool:
         """Rename a window, preserving its pane content."""

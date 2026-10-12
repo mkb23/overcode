@@ -1,16 +1,23 @@
 """
 Tmux session and window management for Overcode.
 
-Uses libtmux for reliable tmux interaction.
+``TmuxManager`` is one tmux session's view of a ``TmuxInterface`` client:
+the session name is bound once, so callers pass only window names. The
+default client is a ``RealTmux`` with a command timeout, so every call
+here is bounded: a wedged tmux server costs the launcher, the TUI, the
+supervisor or the web API a few seconds, never a hang. Reads whose empty
+answer would mean "gone" (``session_exists``, ``window_exists``,
+``list_windows``, ``get_pane_pid``, ``capture_pane``) raise
+``TmuxTimeoutError`` on a timeout rather than report the agent gone;
+writes return their failure value.
 """
 
 import os
-import time
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+import shlex
+from typing import Any, Callable, Dict, List, Optional
 
-import libtmux
-from libtmux.exc import LibTmuxException
-from libtmux._internal.query_list import ObjectDoesNotExist
+from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+from .protocols import TmuxInterface
 
 # Window name reserved for the dead-window placeholder (#457). Lives on the
 # agents tmux session so the TUI can fall back to it when select_window
@@ -20,142 +27,52 @@ from libtmux._internal.query_list import ObjectDoesNotExist
 # untracked-window checks skip it; re-exported here for existing callers.
 from .tmux_utils import EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 
-if TYPE_CHECKING:
-    from .protocols import TmuxInterface
-
 
 class TmuxManager:
-    """Manages tmux sessions and windows for Overcode.
+    """Manages one tmux session's windows for Overcode."""
 
-    This class can be used directly (uses libtmux) or with an injected
-    TmuxInterface for testing.
-    """
-
-    def __init__(self, session_name: str = "agents", tmux: "TmuxInterface" = None, socket: Optional[str] = None):
+    def __init__(self, session_name: str = "agents", tmux: Optional[TmuxInterface] = None,
+                 socket: Optional[str] = None):
         """Initialize the tmux manager.
 
         Args:
             session_name: Name of the tmux session to manage
-            tmux: Optional TmuxInterface for dependency injection (testing)
-            socket: Optional tmux socket name (for testing isolation)
+            tmux: The tmux client (a test double in tests). Default: a
+                ``RealTmux`` on ``socket`` with a command timeout and no
+                object cache (this client creates and kills windows).
+            socket: tmux socket name for the default client (default:
+                ``OVERCODE_TMUX_SOCKET``)
         """
         self.session_name = session_name
-        self._tmux = tmux  # If None, use libtmux directly
-        # Support OVERCODE_TMUX_SOCKET env var for testing
         self.socket = socket or os.environ.get("OVERCODE_TMUX_SOCKET")
-        self._server: Optional[libtmux.Server] = None
-
-    @property
-    def server(self) -> libtmux.Server:
-        """Lazy-load the tmux server connection."""
-        if self._server is None:
-            if self.socket:
-                self._server = libtmux.Server(socket_name=self.socket)
-            else:
-                self._server = libtmux.Server()
-        return self._server
-
-    def _get_session(self) -> Optional[libtmux.Session]:
-        """Get the managed session, or None if it doesn't exist."""
-        try:
-            return self.server.sessions.get(session_name=self.session_name)
-        except (LibTmuxException, ObjectDoesNotExist):
-            return None
-
-
-    def _get_window(self, window_name: str) -> Optional[libtmux.Window]:
-        """Get a window by name.
-
-        Falls back to index-based lookup for legacy digit-string values.
-        """
-        sess = self._get_session()
-        if sess is None:
-            return None
-        try:
-            return sess.windows.get(window_name=window_name)
-        except (LibTmuxException, ObjectDoesNotExist):
-            # Fallback: legacy sessions may have digit-string window indices
-            if window_name.isdigit():
-                try:
-                    return sess.windows.get(window_index=window_name)
-                except (LibTmuxException, ObjectDoesNotExist):
-                    pass
-            return None
-
-    def _get_pane(self, window_name: str) -> Optional[libtmux.Pane]:
-        """Get the first pane of a window."""
-        win = self._get_window(window_name)
-        if win is None or not win.panes:
-            return None
-        return win.panes[0]
+        if tmux is None:
+            tmux = RealTmux(
+                socket_name=self.socket,
+                command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
+                cache_ttl=0,
+            )
+        self.client: TmuxInterface = tmux
 
     def ensure_session(self) -> bool:
-        """Create tmux session if it doesn't exist"""
-        if self.session_exists():
-            return True
-
-        if self._tmux:
-            return self._tmux.new_session(self.session_name)
-
-        try:
-            self.server.new_session(session_name=self.session_name, attach=False)
-            return True
-        except LibTmuxException:
-            return False
+        """Create the tmux session if it doesn't exist."""
+        return self.session_exists() or self.client.new_session(self.session_name)
 
     def session_exists(self) -> bool:
-        """Check if the tmux session exists"""
-        if self._tmux:
-            return self._tmux.has_session(self.session_name)
-
-        try:
-            return self.server.has_session(self.session_name)
-        except LibTmuxException:
-            return False
+        """Check if the tmux session exists."""
+        return self.client.has_session(self.session_name)
 
     def create_window(self, window_name: str, start_directory: Optional[str] = None) -> Optional[str]:
-        """Create a new window in the tmux session"""
+        """Create a shell window, ready to be typed into; its name, or None.
+
+        Returns once the shell has drawn its prompt (see
+        ``RealTmux._wait_for_prompt``), so a long launch command sent next
+        is not cut off.
+        """
         if not self.ensure_session():
             return None
-
-        if self._tmux:
-            return self._tmux.new_window(self.session_name, window_name, cwd=start_directory)
-
-        try:
-            sess = self._get_session()
-            if sess is None:
-                return None
-
-            kwargs: Dict[str, Any] = {'window_name': window_name, 'attach': False}
-            if start_directory:
-                kwargs['start_directory'] = start_directory
-
-            window = sess.new_window(**kwargs)
-            # Prevent tmux from auto-renaming the window based on the
-            # running process — we rely on stable window names for lookups.
-            window.set_window_option('automatic-rename', 'off')
-            self._wait_for_prompt(window)
-            return window.window_name
-        except (LibTmuxException, ValueError):
-            return None
-
-    @staticmethod
-    def _wait_for_prompt(window, timeout: float = 3.0) -> None:
-        """Wait for the new window's shell to draw its prompt.
-
-        Until the shell's line editor starts, the tty is in canonical
-        mode and drops typed-ahead input past 1024 bytes (MAX_CANON on
-        macOS), so a long launch command sent too early arrives cut off
-        and the shell sits at a `quote>` prompt.
-        """
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                if any(line.strip() for line in window.active_pane.capture_pane()):
-                    return
-            except LibTmuxException:
-                return
-            time.sleep(0.05)
+        return self.client.new_window(
+            self.session_name, window_name, cwd=start_directory, wait_for_prompt=True,
+        )
 
     def create_ssh_proxy_window(
         self,
@@ -167,7 +84,8 @@ class TmuxManager:
         """Create a tmux window that SSH-attaches to a remote agent's tmux window.
 
         Uses ControlMaster multiplexing so subsequent connections to the same
-        host are near-instant.
+        host are near-instant. The window is tagged ``@is_ssh_proxy`` so the
+        keybindings forward scrollback to the remote tmux.
 
         Args:
             window_name: Local window name (e.g., "ssh:desktop:myagent")
@@ -180,72 +98,12 @@ class TmuxManager:
         """
         if not self.ensure_session():
             return None
-
-        try:
-            sess = self._get_session()
-            if sess is None:
-                return None
-
-            # Build the SSH command with ControlMaster for fast reconnection.
-            # Remote windows are named "agent-name-uuid" but we may only
-            # have "agent-name". Use grep to find the full window name,
-            # then select + attach. (tmux prefix match "=name" requires
-            # tmux 3.5+ which isn't universally available.)
-            from .ssh_provisioner import SSH_CONTROL_OPTS
-            import shlex
-
-            ssh_opts_str = " ".join(shlex.quote(o) for o in SSH_CONTROL_OPTS)
-            q_target = shlex.quote(ssh_target)
-
-            # Create a linked session on the remote so our proxy has an
-            # independent window selection — the remote's own TUI/daemon
-            # also calls select-window on the agents session, which would
-            # hijack our view if we attached directly.
-            # The linked session auto-destroys via a client-detached hook
-            # (destroy-unattached can't be used because it fires before
-            # the first attach).
-            ssh_cmd_str = (
-                f"ssh -t {ssh_opts_str} {q_target} "
-                f"'W=$(tmux list-windows -t {remote_tmux_session}"
-                ' -F "#{window_name}"'
-                f" | grep -m1 ^{remote_window});"
-                f" LS=oc-proxy-$W;"
-                # Create linked session sharing the agents window group
-                f" tmux new-session -d -s $LS -t {remote_tmux_session} 2>/dev/null;"
-                # Select our target window in the linked session
-                f" tmux select-window -t $LS:$W;"
-                # Strip status bar, generous scrollback
-                f" tmux set -t $LS status off;"
-                f" tmux set -t $LS history-limit 50000;"
-                # Smooth scroll: rebind PPage/NPage in copy-mode to scroll
-                # 3 lines instead of a full page, so mouse wheel forwarded
-                # from the local TUI feels natural.
-                ' tmux bind-key -T copy-mode-vi PPage send-keys -X -N 3 scroll-up;'
-                ' tmux bind-key -T copy-mode-vi NPage send-keys -X -N 3 scroll-down;'
-                ' tmux bind-key -T copy-mode PPage send-keys -X -N 3 scroll-up;'
-                ' tmux bind-key -T copy-mode NPage send-keys -X -N 3 scroll-down;'
-                # Auto-destroy when SSH disconnects
-                f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
-                # Attach to the isolated linked session
-                f" tmux attach-session -t $LS'"
-            )
-
-            window = sess.new_window(
-                window_name=window_name,
-                attach=False,
-                window_shell=ssh_cmd_str,
-            )
-            window.set_window_option('automatic-rename', 'off')
-            # Tag for keybinding detection (scrollback must be forwarded
-            # to the remote tmux, not handled locally).
-            window.set_window_option('@is_ssh_proxy', 'on')
-            return window.window_name
-        except (LibTmuxException, ValueError) as e:
-            import logging
-            logging.getLogger(__name__).debug(
-                "Failed to create SSH proxy window %s: %s", window_name, e
-            )
-            return None
+        return self.client.new_window(
+            self.session_name,
+            window_name,
+            command=[ssh_proxy_command(ssh_target, remote_tmux_session, remote_window)],
+            options={'@is_ssh_proxy': 'on'},
+        )
 
     def send_keys(self, window_name: str, keys: str, enter: bool = True) -> bool:
         """Send keys to a tmux window.
@@ -253,86 +111,28 @@ class TmuxManager:
         For Claude Code: text and Enter must be sent as SEPARATE commands
         with a small delay, otherwise Claude Code doesn't process the Enter.
         """
-        if self._tmux:
-            return self._tmux.send_keys(self.session_name, window_name, keys, enter)
+        return self.client.send_keys(self.session_name, window_name, keys, enter)
 
-        try:
-            pane = self._get_pane(window_name)
-            if pane is None:
-                return False
-
-            from .tmux_utils import send_keys_to_pane
-            send_keys_to_pane(pane, keys, enter=enter)
-            return True
-        except LibTmuxException:
-            return False
+    def capture_pane(self, window_name: str, lines: int = 100) -> Optional[str]:
+        """The window's last ``lines`` lines (with escape sequences), or None."""
+        return self.client.capture_pane(self.session_name, window_name, lines=lines)
 
     def attach_session(self, window: Optional[str] = None, bare: bool = False):
-        """Attach to the tmux session (blocking).
+        """Attach to the tmux session (replaces this process).
 
         Args:
             window: optional window name to target
             bare: if True, create a linked session with tmux chrome stripped,
                   isolated from other clients attached to the main session
         """
-        if self._tmux:
-            self._tmux.attach(self.session_name, window=window, bare=bare)
-            return
-        if bare:
-            self._attach_bare(window)
-        else:
-            from .tmux_utils import tmux_window_target, _build_tmux_cmd
-            target = tmux_window_target(self.session_name, window) if window is not None else self.session_name
-            cmd = [*_build_tmux_cmd(), "attach-session", "-t", target]
-            os.execvp("tmux", cmd)
+        self.client.attach(self.session_name, window=window, bare=bare)
 
-    def _attach_bare(self, window: str):
-        """Create a linked session with stripped chrome and attach to it."""
-        from .tmux_utils import attach_bare
-        attach_bare(self.session_name, window, socket_path=self.socket)
+    def list_windows(self) -> List[Dict[str, Any]]:
+        """The session's windows: dicts with 'index' (int) and 'name' (str).
 
-    def list_windows(self, include_command: bool = True) -> List[Dict[str, Any]]:
-        """List all windows in the session.
-
-        Returns list of dicts with 'index' (int), 'name' (str), 'command' (str).
-
-        Args:
-            include_command: Populate 'command' with the first pane's current
-                command. libtmux fetches that with one ``list-panes`` call per
-                window, so callers that only need names/indices (existence
-                checks, legacy-index migration) should pass False to keep this
-                to a single tmux round-trip.
+        Empty when the session does not exist. One tmux round-trip.
         """
-        if not self.session_exists():
-            return []
-
-        if self._tmux:
-            # Convert from interface format to our format
-            raw_windows = self._tmux.list_windows(self.session_name)
-            return [
-                {"index": w.get('index', 0), "name": w.get('name', ''), "command": ""}
-                for w in raw_windows
-            ]
-
-        try:
-            sess = self._get_session()
-            if sess is None:
-                return []
-
-            windows = []
-            for win in sess.windows:
-                # Get command from first pane
-                command = ""
-                if include_command and win.panes:
-                    command = win.panes[0].pane_current_command or ""
-                windows.append({
-                    "index": int(win.window_index),
-                    "name": win.window_name,
-                    "command": command
-                })
-            return windows
-        except LibTmuxException:
-            return []
+        return self.client.list_windows(self.session_name)
 
     def rename_window(self, window_name: str, new_name: str) -> bool:
         """Rename a window; False when tmux refused (see ``rename_tmux_window``).
@@ -340,68 +140,76 @@ class TmuxManager:
         tmux's ``rename-window`` also turns ``automatic-rename`` off for the
         window, so the new name sticks.
         """
-        if self._tmux:
-            return self._tmux.rename_window(self.session_name, window_name, new_name)
-        from .tmux_utils import rename_tmux_window
-        return rename_tmux_window(self.server, self.session_name, window_name, new_name)
+        return self.client.rename_window(self.session_name, window_name, new_name)
 
     def kill_window(self, window_name: str) -> bool:
-        """Kill a specific window"""
-        if self._tmux:
-            return self._tmux.kill_window(self.session_name, window_name)
+        """Kill a specific window."""
+        return self.client.kill_window(self.session_name, window_name)
 
-        try:
-            win = self._get_window(window_name)
-            if win is None:
-                return False
-            win.kill()
-            return True
-        except LibTmuxException:
-            return False
+    def kill_windows(self, match: Callable[[str], bool]) -> List[str]:
+        """Kill every window whose name ``match`` accepts (duplicates too)."""
+        return self.client.kill_windows(self.session_name, match)
 
     def kill_session(self) -> bool:
-        """Kill the entire tmux session"""
-        if self._tmux:
-            return self._tmux.kill_session(self.session_name)
-
-        try:
-            sess = self._get_session()
-            if sess is None:
-                return False
-            sess.kill()
-            return True
-        except LibTmuxException:
-            return False
+        """Kill the entire tmux session."""
+        return self.client.kill_session(self.session_name)
 
     def get_pane_pid(self, window_name: str) -> Optional[int]:
-        """Get the PID of the shell process in a window's first pane.
-
-        Returns None if the window doesn't exist.
-        """
-        if self._tmux:
-            return self._tmux.get_pane_pid(self.session_name, window_name)
-
-        pane = self._get_pane(window_name)
-        if pane is None:
-            return None
-        try:
-            return int(pane.pane_pid)
-        except (ValueError, TypeError):
-            return None
+        """The PID of the shell in a window's first pane; None if no window."""
+        return self.client.get_pane_pid(self.session_name, window_name)
 
     def window_exists(self, window_name: str) -> bool:
         """Check if a specific window exists.
 
-        Falls back to index-based lookup for legacy digit-string values
-        (handled by _get_window).
+        Falls back to index-based lookup for legacy digit-string values.
         """
-        if self._tmux:
-            windows = self._tmux.list_windows(self.session_name)
-            if any(w.get('name') == window_name for w in windows):
-                return True
-            # Fallback: legacy digit-string index
-            if window_name.isdigit():
-                return any(str(w.get('index')) == window_name for w in windows)
-            return False
+        windows = self.list_windows()
+        if any(w.get('name') == window_name for w in windows):
+            return True
+        if window_name.isdigit():
+            return any(str(w.get('index')) == window_name for w in windows)
+        return False
 
-        return self._get_window(window_name) is not None
+
+def ssh_proxy_command(ssh_target: str, remote_tmux_session: str, remote_window: str) -> str:
+    """The shell command of an SSH proxy window (see ``create_ssh_proxy_window``).
+
+    Remote windows are named "agent-name-uuid" but we may only have
+    "agent-name", so grep finds the full window name, then select + attach
+    (tmux's "=name" prefix match needs tmux 3.5+, not universally available).
+
+    The proxy attaches to a linked session on the remote, so it has its own
+    window selection: the remote's own TUI/daemon also selects windows on
+    the agents session, which would hijack the view if we attached
+    directly. The linked session destroys itself via a client-detached
+    hook (destroy-unattached fires before the first attach).
+    """
+    from .ssh_provisioner import SSH_CONTROL_OPTS
+
+    ssh_opts_str = " ".join(shlex.quote(o) for o in SSH_CONTROL_OPTS)
+    q_target = shlex.quote(ssh_target)
+    return (
+        f"ssh -t {ssh_opts_str} {q_target} "
+        f"'W=$(tmux list-windows -t {remote_tmux_session}"
+        ' -F "#{window_name}"'
+        f" | grep -m1 ^{remote_window});"
+        f" LS=oc-proxy-$W;"
+        # Create linked session sharing the agents window group
+        f" tmux new-session -d -s $LS -t {remote_tmux_session} 2>/dev/null;"
+        # Select our target window in the linked session
+        f" tmux select-window -t $LS:$W;"
+        # Strip status bar, generous scrollback
+        f" tmux set -t $LS status off;"
+        f" tmux set -t $LS history-limit 50000;"
+        # Smooth scroll: rebind PPage/NPage in copy-mode to scroll 3 lines
+        # instead of a full page, so mouse wheel forwarded from the local
+        # TUI feels natural.
+        ' tmux bind-key -T copy-mode-vi PPage send-keys -X -N 3 scroll-up;'
+        ' tmux bind-key -T copy-mode-vi NPage send-keys -X -N 3 scroll-down;'
+        ' tmux bind-key -T copy-mode PPage send-keys -X -N 3 scroll-up;'
+        ' tmux bind-key -T copy-mode NPage send-keys -X -N 3 scroll-down;'
+        # Auto-destroy when SSH disconnects
+        f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
+        # Attach to the isolated linked session
+        f" tmux attach-session -t $LS'"
+    )

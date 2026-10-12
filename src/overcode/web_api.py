@@ -92,11 +92,12 @@ def _capture_agent_pane(tmux_session: str, window_id: int) -> str:
     Returns the captured text, or empty string on failure.
     """
     try:
-        from .implementations import RealTmux
-        tmux = RealTmux()
+        from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+        from .protocols import TmuxTimeoutError
+        tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
         content = tmux.capture_pane(tmux_session, window_id, lines=100)
         return content or ""
-    except (subprocess.SubprocessError, ImportError, OSError) as e:
+    except (subprocess.SubprocessError, ImportError, OSError, TmuxTimeoutError) as e:
         logger.debug("Failed to capture pane for window %s: %s", window_id, e)
         return ""
 

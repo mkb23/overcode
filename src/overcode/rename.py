@@ -50,7 +50,7 @@ class RenameMixin:
             strategy=resolve_session_detection_mode(
                 session, resolve_detection_mode(session.tmux_session)
             ),
-            tmux=self.tmux._tmux,
+            tmux=self.tmux.client,
             patterns=get_patterns(session_backend_name(session)),
             backend_name=session_backend_name(session),
         )
@@ -157,7 +157,7 @@ class RenameMixin:
             return type(self)(
                 session.tmux_session,
                 tmux_manager=TmuxManager(
-                    session.tmux_session, tmux=self.tmux._tmux, socket=self.tmux.socket,
+                    session.tmux_session, tmux=self.tmux.client, socket=self.tmux.socket,
                 ),
                 session_manager=self.sessions,
             ).rename(

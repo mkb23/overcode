@@ -214,15 +214,8 @@ class AgentLifecycleMixin:
             return True
 
     def _list_tmux_windows_cheap(self) -> List[Dict[str, Any]]:
-        """Window list without per-window pane commands (one tmux command).
-
-        Tolerates tmux managers that don't accept ``include_command``
-        (test doubles, older subclasses).
-        """
-        try:
-            return self.tmux.list_windows(include_command=False)
-        except TypeError:
-            return self.tmux.list_windows()
+        """The tmux session's windows (``TmuxManager.list_windows``)."""
+        return self.tmux.list_windows()
 
     def _migrate_legacy_window_ids(
         self, sessions: List[Session], windows: Optional[List[Dict[str, Any]]] = None

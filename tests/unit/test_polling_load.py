@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -80,9 +80,9 @@ class CountingTmuxManager(TmuxManager):
         self.list_calls = 0
         self.exists_calls = 0
 
-    def list_windows(self, include_command: bool = True):
+    def list_windows(self):
         self.list_calls += 1
-        return super().list_windows(include_command=include_command)
+        return super().list_windows()
 
     def window_exists(self, window_name: str) -> bool:
         self.exists_calls += 1
@@ -145,25 +145,6 @@ class TestListSessionsUsesOneWindowList:
         by_name = {s.name: s for s in launcher.list_sessions()}
         assert by_name["dead"].status == "terminated"
         assert by_name["alive"].status != "terminated"
-
-
-class TestTmuxManagerListWindowsCheap:
-    def test_include_command_false_skips_pane_lookup(self):
-        manager = TmuxManager("agents")
-        manager._server = MagicMock()
-        manager._server.has_session.return_value = True
-        mock_session = MagicMock()
-        manager._server.sessions.get.return_value = mock_session
-
-        win = MagicMock()
-        win.window_index = "3"
-        win.window_name = "agent-xyz"
-        type(win).panes = PropertyMock(side_effect=AssertionError("list-panes should not run"))
-        mock_session.windows = [win]
-
-        assert manager.list_windows(include_command=False) == [
-            {"index": 3, "name": "agent-xyz", "command": ""}
-        ]
 
 
 # ── read_git_context_from_disk ───────────────────────────────────────

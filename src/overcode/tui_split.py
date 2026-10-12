@@ -80,12 +80,12 @@ class TmuxSplit(NullSplit):
     active = True
 
     def __init__(self, app: "SupervisorTUI", sync_target: str) -> None:
-        from .implementations import RealTmux
+        from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
         from .tmux_manager import TmuxManager
 
         self.app = app
         self.sync_target = sync_target
-        self._tmux = RealTmux()
+        self._tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
         # TmuxManager for the agents session, where ssh proxy windows live
         self._tmux_manager = TmuxManager(app.tmux_session)
         # SSH proxy windows for remote agents: session_id -> tmux window name
@@ -241,11 +241,7 @@ class TmuxSplit(NullSplit):
         # Kill any stale proxy windows with this name (e.g., leftover from
         # a previous TUI session) to avoid duplicates that break window lookup.
         try:
-            sess = self._tmux_manager._get_session()
-            if sess:
-                for win in list(sess.windows):
-                    if win.window_name == proxy_name:
-                        win.kill()
+            self._tmux_manager.kill_windows(lambda name: name == proxy_name)
         except Exception:
             pass
 
@@ -273,19 +269,10 @@ class TmuxSplit(NullSplit):
         """Kill any ssh: proxy windows left over from a previous TUI session.
 
         Called on startup to prevent duplicate window names that break
-        libtmux's window lookup. Uses direct libtmux iteration to handle
-        duplicates safely (TmuxManager.kill_window fails on duplicate names).
+        libtmux's window lookup (``kill_windows`` copes with duplicates).
         """
         try:
-            sess = self._tmux_manager._get_session()
-            if sess is None:
-                return
-            for win in list(sess.windows):
-                if win.window_name.startswith(SSH_PROXY_WINDOW_PREFIX):
-                    try:
-                        win.kill()
-                    except Exception:
-                        pass
+            self._tmux_manager.kill_windows(lambda name: name.startswith(SSH_PROXY_WINDOW_PREFIX))
         except Exception:
             pass
 

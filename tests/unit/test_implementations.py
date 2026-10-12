@@ -727,3 +727,103 @@ class TestRealTmux:
 
             # Only window 1 should have caused a new lookup
             assert mock_session.windows.get.call_count == initial_window_calls + 1
+
+
+def _server_with_session():
+    """A mocked libtmux server whose session hands back ``window`` objects."""
+    window = MagicMock()
+    window.window_name = "w"
+    session = MagicMock()
+    session.new_window.return_value = window
+    server = MagicMock()
+    server.sessions.get.return_value = session
+    return server, session, window
+
+
+class TestRealTmuxWindowManagement:
+    """What TmuxManager relies on: options, prompt wait, bulk kill, cache."""
+
+    def test_new_window_sets_the_options_it_is_given(self):
+        server, session, window = _server_with_session()
+        tmux = RealTmux()
+        tmux._server = server
+
+        assert tmux.new_window("s", "w", command=["ssh host"], options={"@is_ssh_proxy": "on"}) == "w"
+
+        assert session.new_window.call_args.kwargs["window_shell"] == "ssh host"
+        set_options = [c.args for c in window.set_window_option.call_args_list]
+        assert set_options == [("automatic-rename", "off"), ("@is_ssh_proxy", "on")]
+
+    def test_wait_for_prompt_returns_once_the_shell_has_drawn(self):
+        server, _, window = _server_with_session()
+        window.active_pane.capture_pane.side_effect = [[""], ["", ""], ["$ "]]
+        tmux = RealTmux()
+        tmux._server = server
+
+        with patch("overcode.implementations.time.sleep"):
+            assert tmux.new_window("s", "w", wait_for_prompt=True) == "w"
+
+        assert window.active_pane.capture_pane.call_count == 3
+
+    def test_no_prompt_wait_unless_asked(self):
+        server, _, window = _server_with_session()
+        tmux = RealTmux()
+        tmux._server = server
+
+        tmux.new_window("s", "w")
+
+        window.active_pane.capture_pane.assert_not_called()
+
+    def test_kill_windows_kills_every_match_including_duplicates(self):
+        server, session, _ = _server_with_session()
+        wins = []
+        for name in ("ssh:a", "agent", "ssh:a", "ssh:b"):
+            w = MagicMock()
+            w.window_name = name
+            wins.append(w)
+        session.windows = wins
+        tmux = RealTmux()
+        tmux._server = server
+
+        killed = tmux.kill_windows("s", lambda n: n.startswith("ssh:"))
+
+        assert killed == ["ssh:a", "ssh:a", "ssh:b"]
+        assert [w.kill.called for w in wins] == [True, False, True, True]
+
+    def test_kill_window_drops_the_cached_pane(self):
+        server, session, _ = _server_with_session()
+        tmux = RealTmux()
+        tmux._server = server
+        tmux._pane_cache[("s", "w")] = (MagicMock(), 1e18)
+
+        assert tmux.kill_window("s", "w") is True
+
+        assert ("s", "w") not in tmux._pane_cache
+
+    def test_cache_ttl_zero_looks_objects_up_every_time(self):
+        server, session, _ = _server_with_session()
+        tmux = RealTmux(cache_ttl=0)
+        tmux._server = server
+
+        tmux.kill_window("s", "w")
+        tmux.kill_window("s", "w")
+
+        assert server.sessions.get.call_count == 2
+
+    def test_resize_window_targets_the_window_exactly(self):
+        server = MagicMock()
+        server.cmd.return_value = MagicMock(returncode=0, stderr=[])
+        tmux = RealTmux()
+        tmux._server = server
+
+        assert tmux.resize_window("s", "agent-1", 120, 40) is True
+        server.cmd.assert_called_once_with(
+            "resize-window", "-t", "s:=agent-1", "-x", "120", "-y", "40")
+
+        server.cmd.return_value = MagicMock(returncode=1, stderr=["no such window"])
+        assert tmux.resize_window("s", "gone", 120, 40) is False
+
+    def test_bare_attach_uses_the_clients_socket(self):
+        with patch("overcode.tmux_utils.attach_bare") as attach_bare:
+            RealTmux(socket_name="oc-sock").attach("s", window="w", bare=True)
+        attach_bare.assert_called_once_with("s", "w", socket_path="oc-sock")
