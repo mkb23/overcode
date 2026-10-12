@@ -102,8 +102,8 @@ class Housekeeping:
 
             # Archive: kill tmux window and mark terminated
             try:
-                from .implementations import RealTmux
-                tmux = RealTmux()
+                from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+                tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
                 tmux.kill_window(self.tmux_session, session.tmux_window)
             except Exception:
                 pass  # Window may already be gone

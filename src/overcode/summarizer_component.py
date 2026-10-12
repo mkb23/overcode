@@ -75,8 +75,8 @@ class SummarizerComponent:
 
         # Dependency injection for testability
         if tmux is None:
-            from .implementations import RealTmux
-            tmux = RealTmux()
+            from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+            tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
         self.tmux = tmux
 
         # Initialize client (gracefully handles missing API key)
