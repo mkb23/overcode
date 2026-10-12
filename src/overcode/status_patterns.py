@@ -632,14 +632,14 @@ def _find_status_bar_line(content: str, patterns: StatusPatterns = None, *, clea
     return None
 
 
-def status_bar_visible(content: str, patterns: StatusPatterns = None) -> bool:
+def status_bar_visible(content: str, patterns: StatusPatterns = None, *, clean_content: str = None) -> bool:
     """True when the pane shows the CLI's status bar at all (#507).
 
     The bar's counts (shells, monitors) read as 0 both when nothing is
     running and when a menu or dialog is drawn over the bar; this tells the
     two apart.
     """
-    return _find_status_bar_line(content, patterns) is not None
+    return _find_status_bar_line(content, patterns, clean_content=clean_content) is not None
 
 
 # How far up from the bottom a busy marker counts: the status bar and the
@@ -647,7 +647,9 @@ def status_bar_visible(content: str, patterns: StatusPatterns = None) -> bool:
 _IDLE_TAIL_LINES = 15
 
 
-def pane_shows_idle(content: str, patterns: StatusPatterns = None) -> Optional[bool]:
+def pane_shows_idle(
+    content: str, patterns: StatusPatterns = None, *, clean_content: str = None
+) -> Optional[bool]:
     """Whether the pane shows a CLI that is between turns.
 
     True: the CLI's own chrome (status bar or input hint) is on screen and
@@ -658,7 +660,7 @@ def pane_shows_idle(content: str, patterns: StatusPatterns = None) -> Optional[b
     patterns = patterns or DEFAULT_PATTERNS
     if not content or not patterns.busy_markers:
         return None
-    clean = strip_ansi(content)
+    clean = clean_content if clean_content is not None else strip_ansi(content)
     lines = [line for line in clean.splitlines() if line.strip()]
     tail = lines[-_IDLE_TAIL_LINES:]
     bar = _find_status_bar_line(content, patterns, clean_content=clean)
@@ -669,12 +671,15 @@ def pane_shows_idle(content: str, patterns: StatusPatterns = None) -> Optional[b
     return None
 
 
-def shows_permission_prompt(content: str, patterns: StatusPatterns = None, tail: int = 20) -> bool:
+def shows_permission_prompt(
+    content: str, patterns: StatusPatterns = None, tail: int = 20, *, clean_content: str = None
+) -> bool:
     """True when the bottom of the pane shows a permission dialog (#507)."""
     patterns = patterns or DEFAULT_PATTERNS
     if not content or not patterns.permission_patterns:
         return False
-    lines = [line for line in strip_ansi(content).splitlines() if line.strip()]
+    clean = clean_content if clean_content is not None else strip_ansi(content)
+    lines = [line for line in clean.splitlines() if line.strip()]
     return matches_any("\n".join(lines[-tail:]), patterns.permission_patterns)
 
 
