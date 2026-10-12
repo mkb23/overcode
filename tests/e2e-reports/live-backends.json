@@ -1,0 +1,38 @@
+{
+  "tier": "live-backends",
+  "result": "passed",
+  "commit": "06ad28887535c1de7916711f93710a9265058198",
+  "src_dirty": false,
+  "ran_at": "2026-10-12T22:36:27+00:00",
+  "duration_s": 294,
+  "exit_code": 0,
+  "counts": {
+    "passed": 8,
+    "failed": 0,
+    "skipped": 1
+  },
+  "missing_required": [],
+  "tests": {
+    "tests.e2e.test_live_backends.TestLiveBackend::test_real_cli_round_trip[claude-code]": "passed",
+    "tests.e2e.test_live_backends.TestLiveBackend::test_real_cli_round_trip[codex]": "passed",
+    "tests.e2e.test_live_backends.TestLiveBackend::test_real_cli_round_trip[grok]": "skipped",
+    "tests.e2e.test_live_backends.TestLiveBackend::test_real_cli_round_trip[hermes]": "passed",
+    "tests.e2e.test_live_backends.TestLiveBackend::test_real_cli_round_trip[opencode2]": "passed",
+    "tests.e2e.test_live_backends.TestLiveBackend::test_real_cli_round_trip[opencode]": "passed",
+    "tests.e2e.test_live_opencode_states.TestLiveOpencodeStates::test_provider_error_is_visible": "passed",
+    "tests.e2e.test_live_opencode_states.TestLiveOpencodeStates::test_state_walk": "passed",
+    "tests.e2e.test_live_session_identity::test_a_second_claude_in_the_repo_is_not_adopted[claude-code]": "passed"
+  },
+  "env": {
+    "OVERCODE_LIVE_BACKENDS": "all"
+  },
+  "versions": {
+    "python": "3.12.9",
+    "platform": "Darwin 25.5.0 arm64",
+    "claude": "2.1.296 (Claude Code)",
+    "codex": "codex-cli 0.156.1",
+    "opencode": "1.18.29",
+    "hermes": "Hermes Agent v0.21.3 (2026.9.14) \u00b7 upstream 98f758ae",
+    "grok": "grok 1.0.34 (3736acbc8658) [stable]"
+  }
+}

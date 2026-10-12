@@ -1,0 +1,32 @@
+{
+  "tier": "real-claude",
+  "result": "passed",
+  "commit": "06ad28887535c1de7916711f93710a9265058198",
+  "src_dirty": false,
+  "ran_at": "2026-10-12T22:31:33+00:00",
+  "duration_s": 215,
+  "exit_code": 0,
+  "counts": {
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0
+  },
+  "missing_required": [],
+  "tests": {
+    "tests.e2e.test_child_delegation.TestChildDelegation::test_parent_delegates_to_children": "passed",
+    "tests.e2e.test_hook_status_detection.TestHookStatusDetection::test_child_agent_waiting_oversight": "passed",
+    "tests.e2e.test_hook_status_detection.TestHookStatusDetection::test_hook_lifecycle_bypass_mode": "passed",
+    "tests.e2e.test_hook_status_detection.TestHookStatusDetection::test_permission_request_detection": "passed",
+    "tests.e2e.test_two_layer_delegation.TestTwoLayerDelegation::test_two_layer_delegation": "passed"
+  },
+  "env": {},
+  "versions": {
+    "python": "3.12.9",
+    "platform": "Darwin 25.5.0 arm64",
+    "claude": "2.1.296 (Claude Code)",
+    "codex": "codex-cli 0.156.1",
+    "opencode": "1.18.29",
+    "hermes": "Hermes Agent v0.21.3 (2026.9.14) \u00b7 upstream 98f758ae",
+    "grok": "grok 1.0.34 (3736acbc8658) [stable]"
+  }
+}
