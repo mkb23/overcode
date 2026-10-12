@@ -435,6 +435,10 @@ class CodexBackend:
         # literal `n` reject key, only Escape.
         return [KeyPress("Escape", enter=False)]
 
+    # codex 0.156 draws its input line before the trust dialog over it;
+    # the launcher looks again after this long before sending the prompt
+    prompt_settle_seconds = 2.0
+
     def startup_dialog_rules(self) -> List[DialogRule]:
         # trust_dialog.txt: "Do you trust the contents of this directory? ...
         # Press enter to continue" — Enter accepts option 1 ("Yes,
@@ -453,14 +457,25 @@ class CodexBackend:
             # upgrading the CLI under the agent. Digits select immediately
             # in this widget (verified on the trust dialog, same widget):
             # "2" skips for this launch only and persists nothing.
+            # Keyed on the menu's option, not the banner: codex 0.156 shows
+            # "Update available! ... Run npm install -g @openai/codex to
+            # update." as a plain banner, where a "2" would land in the
+            # trust dialog ("2. Quit") or the input box.
             DialogRule(
-                marker="Update available!",
+                marker="Update now",
                 presses=[KeyPress("2", enter=False)],
                 settle_seconds=1.5,
             ),
             DialogRule(
                 marker="Do you trust the contents of this directory?",
                 presses=[KeyPress("", enter=True)],
+                settle_seconds=1.5,
+            ),
+            # codex 0.156.1 (seen live Oct 12 2026): "Trust this folder? ...
+            # › 1. Trust and continue / 2. Quit / enter continue · esc quit"
+            DialogRule(
+                marker="Trust this folder?",
+                presses=[KeyPress("1", enter=False)],
                 settle_seconds=1.5,
             ),
         ]

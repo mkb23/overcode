@@ -365,9 +365,10 @@ class TestGestures:
 
     def test_trust_dialog_rule(self, backend):
         rules = {r.marker: r for r in backend.startup_dialog_rules()}
-        # Two startup dialogs are known: the update prompt (0.153.4+, see
-        # TestStartupDialogRules) and the per-directory trust dialog.
-        assert set(rules) == {"Update available!", "Do you trust the contents of this directory?"}
+        # The update menu (0.153.4+, see TestStartupDialogRules) and the
+        # per-directory trust dialog in its old and 0.156 wordings.
+        assert set(rules) == {"Update now", "Do you trust the contents of this directory?",
+                              "Trust this folder?"}
         rule = rules["Do you trust the contents of this directory?"]
         assert [(p.keys, p.enter) for p in rule.presses] == [("", True)]
 
@@ -413,8 +414,21 @@ class TestStartupDialogRules:
         # must pick "2. Skip" by digit, no Enter (seen live, codex 0.153.4).
         from overcode.backends.codex import CodexBackend
         rules = {r.marker: r for r in CodexBackend().startup_dialog_rules()}
-        rule = rules["Update available!"]
+        rule = rules["Update now"]
         assert [(p.keys, p.enter) for p in rule.presses] == [("2", False)]
+
+    def test_the_update_banner_alone_presses_nothing(self):
+        """codex 0.156 shows "Update available!" as a banner, not a menu: a
+        "2" there would land in the trust dialog (Quit) or the input box."""
+        from overcode.backends.codex import CodexBackend
+        banner = ("✨ Update available! 0.156.1 -> 0.162.1\n"
+                  "Run npm install -g @openai/codex to update.")
+        assert not [r for r in CodexBackend().startup_dialog_rules() if r.marker in banner]
+
+    def test_the_0_156_trust_dialog_is_accepted_by_its_digit(self):
+        from overcode.backends.codex import CodexBackend
+        rules = {r.marker: r for r in CodexBackend().startup_dialog_rules()}
+        assert [(p.keys, p.enter) for p in rules["Trust this folder?"].presses] == [("1", False)]
 
     def test_trust_dialog_is_accepted_with_enter(self):
         from overcode.backends.codex import CodexBackend
@@ -428,6 +442,6 @@ class TestStartupDialogRules:
         # — but it must not be lost.
         from overcode.backends.codex import CodexBackend
         markers = [r.marker for r in CodexBackend().startup_dialog_rules()]
-        assert markers.index("Update available!") < markers.index(
+        assert markers.index("Update now") < markers.index(
             "Do you trust the contents of this directory?"
         )

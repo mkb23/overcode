@@ -178,7 +178,9 @@ SPECS: List[LiveSpec] = [
             ["claude", "auth", "status"], capture_output=True, text=True, timeout=20
         ).stdout,
         project_files=_no_files,
-        backend_args=(),
+        # Claude 2.1.29x may start in "auto mode", which runs the probe's
+        # `touch` without asking; the test needs the manual dialog
+        backend_args=("--permission-mode=default",),
         simple_prompt="Reply with the single word pong and nothing else.",
         # `echo` runs without asking on Claude Code 2.1 (built-in safe-command
         # classification, verified live with no allow rules) — a file write

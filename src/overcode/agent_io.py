@@ -51,7 +51,6 @@ class AgentIOMixin:
 
         Returns True if prompt detected, False on timeout.
         """
-        from .status_patterns import strip_ansi
         from .tmux_utils import _build_tmux_cmd
 
         backend = backend or get_backend()
@@ -63,6 +62,7 @@ class AgentIOMixin:
         prompt_ready_line = getattr(backend, "prompt_ready_line", None)
         rules = backend.startup_dialog_rules()
         handled: set[str] = set()
+        settle = getattr(backend, "prompt_settle_seconds", 0.0)
 
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -74,27 +74,69 @@ class AgentIOMixin:
                 for rule in rules:
                     if rule.marker in handled or rule.marker not in content:
                         continue
+                    completed = True
                     for press in rule.presses:
+                        if press.wait_for and not self._pane_shows(
+                            window_name, press.wait_for, timeout=3.0
+                        ):
+                            # Not where we meant to be (an early key was
+                            # dropped): send nothing more, try the dialog again
+                            completed = False
+                            break
                         keys = [press.keys, 'Enter'] if press.enter else [press.keys]
                         subprocess.run(tmux_cmd + ['send-keys', '-t', target] + keys, timeout=5)
                         if press.delay_after:
                             time.sleep(press.delay_after)
-                    handled.add(rule.marker)
+                    if completed:
+                        handled.add(rule.marker)
+                        handled.update(rule.supersedes)
                     time.sleep(rule.settle_seconds)
                     dismissed = True
                     break
                 if dismissed:
                     continue
 
-                for line in content.split('\n'):
-                    cleaned = strip_ansi(line).strip()
-                    if prompt_ready_line is not None:
-                        if prompt_ready_line(cleaned):
-                            return True
-                    elif cleaned in prompt_chars:
+                if self._shows_prompt(content, prompt_chars, prompt_ready_line):
+                    if not settle:
                         return True
+                    # The prompt can be drawn before a dialog over it (codex
+                    # 0.156 paints its input line, then the trust dialog):
+                    # look again before typing into what may be a menu
+                    time.sleep(settle)
+                    again = get_tmux_pane_content(
+                        self.tmux.session_name, window_name, lines=20
+                    ) or ""
+                    if not any(
+                        r.marker not in handled and r.marker in again for r in rules
+                    ) and self._shows_prompt(again, prompt_chars, prompt_ready_line):
+                        return True
+                    continue
             time.sleep(poll_interval)
         return False
+
+    @staticmethod
+    def _shows_prompt(content: str, prompt_chars, prompt_ready_line) -> bool:
+        from .status_patterns import strip_ansi
+
+        for line in content.split('\n'):
+            cleaned = strip_ansi(line).strip()
+            if prompt_ready_line is not None:
+                if prompt_ready_line(cleaned):
+                    return True
+            elif cleaned in prompt_chars:
+                return True
+        return False
+
+    def _pane_shows(self, window_name: str, text: str, timeout: float) -> bool:
+        """Whether ``text`` appears in the window within ``timeout`` seconds."""
+        deadline = time.time() + timeout
+        while True:
+            content = get_tmux_pane_content(self.tmux.session_name, window_name, lines=20)
+            if content and text in content:
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.2)
 
     def _send_prompt_to_window(
         self,

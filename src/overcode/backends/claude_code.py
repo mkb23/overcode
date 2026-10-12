@@ -240,13 +240,18 @@ class ClaudeCodeBackend:
             # bare Enter leaves the dialog up (verified live), so navigate
             # Down to the trust line first. Listed before the legacy rule
             # so it wins whenever the "❯ No, exit" cursor line is present.
+            # Claude Code 2.1.296: Enter on the preselected "No, exit" quits,
+            # so the Enter waits until the cursor is on the trust line; a
+            # Down that arrived before the menu took input is retried.
             DialogRule(
                 marker="❯ No, exit",
                 presses=[
                     KeyPress("Down", enter=False, delay_after=0.3),
-                    KeyPress("", enter=True),
+                    KeyPress("", enter=True, wait_for="❯ Yes, I trust this folder"),
                 ],
                 settle_seconds=1.5,
+                # The legacy rule's marker is in this dialog's text too
+                supersedes=("I trust this folder",),
             ),
             # Trust prompt, older builds: accept was preselected, just Enter
             DialogRule(

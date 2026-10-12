@@ -652,6 +652,55 @@ class TestWaitForPrompt:
 
         assert result is True
 
+    def test_the_trust_dialog_enter_waits_for_the_cursor(self, tmp_path):
+        """Claude 2.1.296 quits on Enter over the preselected "No, exit": if
+        the Down is lost, no Enter is sent and the dialog is tried again."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        stuck = "Accessing workspace:\n ❯ No, exit\n   Yes, I trust this folder\n"
+        moved = "Accessing workspace:\n   No, exit\n ❯ Yes, I trust this folder\n"
+        screens = iter([stuck, stuck, stuck, stuck, moved, moved, "❯ \n"])
+        sent = []
+        with patch("overcode.agent_io.get_tmux_pane_content",
+                   side_effect=lambda *a, **k: next(screens, "❯ \n")), \
+                patch("overcode.agent_io.subprocess.run",
+                      side_effect=lambda cmd, **k: sent.append(cmd[cmd.index("-t") + 2:])), \
+                patch("overcode.agent_io.time.sleep"), \
+                patch.object(launcher, "_pane_shows",
+                             side_effect=[False, True]):
+            assert launcher._wait_for_prompt(session.tmux_window, timeout=5.0)
+        # First attempt: Down, then no Enter (the cursor never moved);
+        # second: Down, then Enter once the trust line is selected
+        assert sent == [["Down"], ["Down"], ["", "Enter"]]
+
+    def test_a_dialog_drawn_after_the_prompt_is_answered_first(self, tmp_path):
+        """codex 0.156 paints its input line, then the trust dialog over it:
+        the launcher looks again before typing, and answers the dialog."""
+        from overcode.backends import get_backend
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        prompt = "› Ask Codex to do anything\n"
+        dialog = "Trust this folder?\n› 1. Trust and continue\n  2. Quit\n"
+        screens = iter([prompt, dialog, dialog, prompt, prompt])
+        sent = []
+        with patch("overcode.agent_io.get_tmux_pane_content",
+                   side_effect=lambda *a, **k: next(screens, prompt)), \
+                patch("overcode.agent_io.subprocess.run",
+                      side_effect=lambda cmd, **k: sent.append(cmd[cmd.index("-t") + 2:])), \
+                patch("overcode.agent_io.time.sleep"):
+            assert launcher._wait_for_prompt(
+                session.tmux_window, timeout=5.0, backend=get_backend("codex"))
+        assert sent == [["1"]]
+
     def test_detects_angled_bracket_prompt(self, tmp_path):
         """Also detects > prompt character"""
         mock_tmux = MockTmux()

@@ -50,6 +50,10 @@ class KeyPress:
     keys: str
     enter: bool = False
     delay_after: float = 0.0
+    # Send only once this text is on screen (e.g. the cursor reached the
+    # option to choose). If it never shows, the press is skipped and the
+    # dialog is retried, rather than confirming whatever is selected.
+    wait_for: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,9 @@ class DialogRule:
     marker: str
     presses: Sequence[KeyPress]
     settle_seconds: float = 1.0
+    # Other rules' markers this one answers too: once it is handled they are
+    # never fired (an older wording that also matches this dialog's text)
+    supersedes: Sequence[str] = ()
 
 
 @dataclass
