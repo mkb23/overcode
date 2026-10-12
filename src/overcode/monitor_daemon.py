@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -82,6 +82,7 @@ from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, 
 from .pricing import calculate_cost_estimate
 from . import daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
+from .daemon_housekeeping import Housekeeping
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
     NullPresence,
@@ -97,15 +98,12 @@ from .monitor_daemon_core import (
     parse_datetime_safe,
     is_heartbeat_eligible,
     is_heartbeat_due,
-    should_archive_terminated,
-    should_auto_archive,
     should_enforce_oversight_timeout,
 )
 from .tmux_utils import (
     PaneInfo,
     pane_for_window,
     send_text_to_tmux_window,
-    untracked_window_names,
 )
 
 if TYPE_CHECKING:
@@ -165,9 +163,6 @@ RECORDER_SEEN_SAVE_SECONDS = 30.0
 # count, terminated-session archive) was 120 s of wall clock at the 2 s
 # loop; it is a wall-clock cadence now so the unattended loop keeps it.
 HOUSEKEEPING_INTERVAL_SECONDS = 60 * DAEMON.interval_fast
-# Finished jobs older than jobs.retention_hours are dropped from jobs.json
-# this often (it otherwise grew without limit)
-JOB_PRUNE_INTERVAL_SECONDS = 3600.0
 
 
 # Create PID helper functions using factory
@@ -466,10 +461,6 @@ class MonitorDaemon:
         # Last pr-link PR number seen per session id (see _sync_pr)
         self._transcript_prs: Dict[str, int] = {}
 
-        # When each terminated entry in sessions.json was first seen so by
-        # this daemon (any tmux session); after the configured grace the
-        # every-60-loops housekeeping moves it to the archive.
-        self._terminated_since: Dict[str, datetime] = {}
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
         self._last_commands: Dict[str, str] = {}  # session_id → last user prompt
 
@@ -503,18 +494,21 @@ class MonitorDaemon:
             housekeeping=Cadence(HOUSEKEEPING_INTERVAL_SECONDS),
         )
 
-        # The models.dev fetch runs on a background thread so a
-        # packet-dropping network can never stall the loop, and a failure
-        # backs off for hours.
-        self._model_metadata_thread: Optional[threading.Thread] = None
-        self._model_metadata_backoff_until: Optional[datetime] = None
-        self._model_metadata_failure_backoff = 6 * 3600  # seconds
+        # Archiving, untracked windows, job pruning, history rotation,
+        # models.dev refresh
+        self.housekeeping = Housekeeping(
+            tmux_session,
+            tmux=tmux,
+            history_path=history_path,
+            log=log,
+            housekeeping=self.cadence.housekeeping,
+            rotation=self.cadence.history_rotation,
+            model_metadata=self.cadence.model_metadata,
+        )
 
         # Loop interval while nobody is watching
         self._interval_unattended: int = interval_unattended
 
-        # Finished-job pruning: monotonic time of the last pass (hourly)
-        self._last_job_prune: Optional[float] = None
 
         # Shutdown flag
         self._shutdown = False
@@ -1224,37 +1218,6 @@ class MonitorDaemon:
             return self._interval_unattended
         return INTERVAL_FAST
 
-    def _prune_finished_jobs(self) -> None:
-        """Drop finished jobs past their retention, at most hourly."""
-        last = self._last_job_prune
-        if last is not None and time.monotonic() - last < JOB_PRUNE_INTERVAL_SECONDS:
-            return
-        self._last_job_prune = time.monotonic()
-        try:
-            from .config import get_jobs_retention_hours
-            from .job_manager import JobManager
-
-            JobManager().cleanup_completed(get_jobs_retention_hours())
-        except Exception as e:  # housekeeping must never fail the tick
-            self.log.warn(f"job retention not applied: {e}")
-
-    def _housekeeping_due(self, now: datetime) -> bool:
-        """Wall-clock replacement for ``loop_count % 60 == 0``.
-
-        The first tick starts the clock (the loop-count rule first fired
-        two minutes in, not on loop 1); after that every
-        HOUSEKEEPING_INTERVAL_SECONDS, at the 2 s loop and the unattended
-        one alike. Tests move ``cadence.housekeeping.last`` back to force a pass.
-        """
-        cadence = self.cadence.housekeeping
-        if cadence.last is None:
-            cadence.mark(now)
-            return False
-        if cadence.due(now):
-            cadence.mark(now)
-            return True
-        return False
-
     def _interruptible_sleep(self, total_seconds: int) -> None:
         """Sleep with activity signal checking.
 
@@ -1302,61 +1265,6 @@ class MonitorDaemon:
                     self._quick_tick(changed, datetime.now())
                 except Exception as e:  # the full tick will retry
                     self.log.warn(f"quick tick failed: {e}")
-
-    def _auto_archive_done_agents(self, sessions: list) -> None:
-        """Auto-archive done agents that have been done for over 1 hour (#244).
-
-        Kills the tmux window and marks as terminated so cleanup can remove them.
-        """
-        now = datetime.now()
-
-        for session in sessions:
-            if not should_auto_archive(
-                session.status,
-                session.stats.state_since,
-                now,
-            ):
-                continue
-
-            # Archive: kill tmux window and mark terminated
-            try:
-                from .implementations import RealTmux
-                tmux = RealTmux()
-                tmux.kill_window(self.tmux_session, session.tmux_window)
-            except Exception:
-                pass  # Window may already be gone
-            self._pending.update_session_status(session.id, "terminated")
-            self.log.info(f"Auto-archived done agent: {session.name}")
-
-    def _count_untracked_windows(self, sessions: list, tmux=None) -> int:
-        """Count tmux windows not tracked by any active session (#344).
-
-        Uses the same predicate as ``overcode cleanup --untracked``
-        (``tmux_utils.untracked_window_names``): window 0, live agents'
-        windows and overcode's own windows (the dead-window placeholder,
-        the supervisor daemon's claude window, SSH proxy windows) are not
-        untracked, so the count never advertises a cleanup that would kill
-        them.
-
-        Args:
-            sessions: Sessions from the current tick.
-            tmux: A ``TmuxInterface``; the daemon's own client when None.
-                Injectable so the count can be tested against a fake tmux —
-                the previous code called a ``session_exists`` method that
-                ``RealTmux`` never had, so it raised on every run and the
-                ``except`` below silently reported 0 untracked windows forever.
-        """
-        try:
-            if tmux is None:
-                tmux = self._tmux
-            if not tmux.has_session(self.tmux_session):
-                return 0
-            tmux_windows = tmux.list_windows(self.tmux_session)
-            active_sessions = [s for s in sessions if s.status != "terminated"]
-            tracked_windows = {s.tmux_window for s in active_sessions}
-            return len(untracked_window_names(tmux_windows, tracked_windows))
-        except Exception:
-            return 0
 
     def _enforce_oversight_timeouts(self, sessions: list) -> None:
         """Enforce oversight timeouts for waiting_oversight sessions."""
@@ -1856,8 +1764,8 @@ class MonitorDaemon:
             # change was written as it was found.
             self._flush_pending_writes()
             self._refund_done_children(newly_done)
-        self._maybe_rotate_history(now)
-        self._maybe_refresh_model_metadata(now)
+        self.housekeeping.maybe_rotate_history(now)
+        self.housekeeping.maybe_refresh_model_metadata(now)
 
     def _flush_pending_writes(self) -> None:
         """Commit this tick's staged mutations to sessions.json in one write.
@@ -1877,98 +1785,6 @@ class MonitorDaemon:
             return
         self._pending = PendingUpdates()
         self.session_manager.commit_pending(pending)
-
-    def _maybe_rotate_history(self, now: datetime) -> None:
-        """Rotate/compress agent_status_history.csv and prune old archives (#465, #468).
-
-        Runs at most hourly — a size/age stat check is cheap, but there's no
-        reason to do even that on every 2-30s tick.
-        """
-        if not self.cadence.history_rotation.due(now):
-            return
-        self.cadence.history_rotation.mark(now)
-        try:
-            from .config import get_history_retention_config
-            from .status_history import rotate_and_retain
-
-            cfg = get_history_retention_config()
-            result = rotate_and_retain(
-                self.history_path,
-                rotate_mb=cfg["status_history_rotate_mb"],
-                retention_days=cfg["status_history_max_days"],
-                now=now,
-            )
-            if result["archived"]:
-                self.log.info(f"Rotated agent_status_history.csv -> {result['archived'].name}")
-            if result["deleted"]:
-                self.log.info(
-                    f"Pruned {len(result['deleted'])} expired agent_status_history archive(s)"
-                )
-        except Exception as e:
-            self.log.error(f"History rotation check failed: {e}")
-
-    def _maybe_refresh_model_metadata(self, now: datetime) -> None:
-        """Refresh the local models.dev cache when opted in and stale (#473).
-
-        Runs its stat() check at most hourly; the fetch only happens when
-        ``model_metadata.auto_refresh`` is true *and* the local cache is
-        missing or older than ``max_age_days``. The fetch itself runs on a
-        daemon thread — the loop never waits on the network — and a failure
-        backs off for ``_model_metadata_failure_backoff`` seconds with one
-        warning, so an air-gapped or packet-dropping host sees neither a
-        stall nor an hourly log line. Lookups keep working off whatever
-        catalog is already on disk throughout.
-        """
-        if not self.cadence.model_metadata.due(now):
-            return
-        self.cadence.model_metadata.mark(now)
-        thread = self._model_metadata_thread
-        if thread is not None and thread.is_alive():
-            return
-        if self._model_metadata_backoff_until and now < self._model_metadata_backoff_until:
-            return
-        try:
-            from .config import get_model_metadata_config
-            from . import model_metadata
-
-            cfg = get_model_metadata_config()
-            if not cfg["auto_refresh"]:
-                return
-            age = model_metadata.local_cache_age_days()
-            if age is not None and age < cfg["max_age_days"]:
-                return
-        except Exception as e:
-            self.log.warn(f"Model metadata auto-refresh check failed: {e}")
-            return
-
-        thread = threading.Thread(
-            target=self._run_model_metadata_refresh,
-            name="model-metadata-refresh",
-            daemon=True,
-        )
-        self._model_metadata_thread = thread
-        thread.start()
-
-    def _run_model_metadata_refresh(self) -> None:
-        """Background body of the auto-refresh: fetch, write atomically, log once."""
-        try:
-            from . import model_metadata
-
-            info = model_metadata.refresh_local_cache()
-            self._model_metadata_backoff_until = None
-            self.log.info(
-                f"Refreshed model metadata catalog from models.dev: "
-                f"{info['model_count']} models -> {info['path']}"
-            )
-        except Exception as e:
-            self._model_metadata_backoff_until = datetime.now() + timedelta(
-                seconds=self._model_metadata_failure_backoff
-            )
-            hours = self._model_metadata_failure_backoff / 3600
-            self.log.warn(
-                f"Model metadata auto-refresh failed; not retrying for {hours:g}h "
-                f"(lookups keep using the catalog already on disk): {e}"
-            )
 
     def _sync_session_ids(self, sessions: list, now: datetime) -> None:
         """Fast session ID detection every 10s (#116).
@@ -2545,35 +2361,6 @@ class MonitorDaemon:
         self._pane_tracker.forget(current_session_ids)
         self._capture_gate.forget({s.tmux_window for s in sessions})
 
-    def _archive_terminated_sessions(self, all_sessions, now: datetime) -> None:
-        """Stage terminated entries that have outstayed the grace for the archive.
-
-        Runs from the every-60-loops housekeeping over every entry in
-        sessions.json, whatever its tmux session: an entry left behind by
-        a tmux session with no daemon would otherwise stay forever, and
-        every TUI and daemon on the host parses the file whole. The clock
-        starts when this daemon first sees the entry terminated (a restart
-        starts it again, so an entry waits at most one extra grace) and is
-        dropped for an entry that is revived or removed. The move itself is
-        part of the tick's single commit, with the record ``overcode
-        cleanup`` writes.
-        """
-        from .config import get_session_archive_config
-
-        grace = get_session_archive_config()["terminated_grace_seconds"]
-        seen = set()
-        for session in all_sessions:
-            if session.status != STATUS_TERMINATED:
-                continue
-            seen.add(session.id)
-            since = self._terminated_since.setdefault(session.id, now)
-            if should_archive_terminated(since, now, grace):
-                self._pending.archive_session(session.id)
-                del self._terminated_since[session.id]
-                self.log.info(f"Archived terminated session: {session.name}")
-        for session_id in [sid for sid in self._terminated_since if sid not in seen]:
-            del self._terminated_since[session_id]
-
     def _publish_and_enforce(
         self,
         sessions: list,
@@ -2617,14 +2404,15 @@ class MonitorDaemon:
         # Auto-archive "done" agents after 1 hour (#244)
         # Count untracked tmux windows every 2 minutes (#344)
         # Move terminated sessions to the archive once past their grace
-        if self._housekeeping_due(now):
-            self._auto_archive_done_agents(sessions)
-            self.state.untracked_window_count = self._count_untracked_windows(sessions)
+        housekeeping = self.housekeeping
+        if housekeeping.due(now):
+            housekeeping.auto_archive_done_agents(sessions, self._pending)
+            self.state.untracked_window_count = housekeeping.count_untracked_windows(sessions)
             all_sessions = (
                 index.by_id.values() if index is not None else self.session_manager.list_sessions()
             )
-            self._archive_terminated_sessions(all_sessions, now)
-            self._prune_finished_jobs()
+            housekeeping.archive_terminated_sessions(all_sessions, now, self._pending)
+            housekeeping.prune_finished_jobs()
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

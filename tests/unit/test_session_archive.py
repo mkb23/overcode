@@ -373,7 +373,7 @@ class TestDaemonArchivesTerminatedSessions:
         t4, t5 = sessions[4].id, sessions[5].id
         # Loop 60: first sighting starts the clock; nothing moves
         self._tick(daemon, 60, start)
-        assert set(daemon._terminated_since) == {t4, t5, "old-0000", "old-0001"}
+        assert set(daemon.housekeeping.terminated_since) == {t4, t5, "old-0000", "old-0001"}
         assert {s.id for s in sm.list_sessions()} >= {t4, t5, "old-0000", "old-0001"}
         # Loop 120, 59 minutes later: still within the grace
         self._tick(daemon, 120, start + timedelta(minutes=59))
@@ -390,7 +390,7 @@ class TestDaemonArchivesTerminatedSessions:
         assert set(archived) == {t4, t5, "old-0000", "old-0001"}
         assert all(r["status"] == "archived" and r["end_time"] for r in archived.values())
         assert archived[t4]["name"] == "agent-04"
-        assert daemon._terminated_since == {}
+        assert daemon.housekeeping.terminated_since == {}
         # That tick published before its housekeeping staged the move; the
         # next tick's snapshot, and so its published state, no longer has them
         assert {s.session_id for s in daemon.state.sessions} >= {t4, t5}
@@ -401,12 +401,12 @@ class TestDaemonArchivesTerminatedSessions:
         daemon, sm, sessions, start = self._setup(env)
         t4 = sessions[4].id
         self._tick(daemon, 60, start)
-        assert t4 in daemon._terminated_since
+        assert t4 in daemon.housekeeping.terminated_since
         sm.update_session_status(t4, "running")
         settle(sm.state_file)
         daemon.detector.script = lambda tick, s: ("waiting_user", "Waiting", "pane")
         self._tick(daemon, 120, start + timedelta(hours=2))
-        assert t4 not in daemon._terminated_since
+        assert t4 not in daemon.housekeeping.terminated_since
         assert sm.get_session(t4).status == "running"
 
     def test_negative_grace_disables_archiving(self, env):

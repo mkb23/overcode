@@ -152,15 +152,27 @@ class ScriptedDetector:
 # ── frozen clock ─────────────────────────────────────────────────────────
 
 
+# The daemon's modules that read the wall clock; those missing from an older
+# tree are skipped
+CLOCK_MODULES = (
+    "overcode.monitor_daemon",
+    "overcode.daemon_housekeeping",
+    "overcode.daemon_stats_sync",
+    "overcode.daemon_process_probe",
+    "overcode.engine_recorders",
+    "overcode.engine_wake",
+)
+
+
 class FrozenClock:
-    """Patches ``overcode.monitor_daemon.datetime`` so ``now()`` is scripted."""
+    """Patches ``datetime`` in the daemon's modules so ``now()`` is scripted."""
 
     def __init__(self, start: datetime):
         self.now = start
 
     @contextlib.contextmanager
     def installed(self) -> Iterator["FrozenClock"]:
-        from overcode import monitor_daemon
+        import importlib
 
         clock = self
 
@@ -169,12 +181,20 @@ class FrozenClock:
             def now(cls, tz=None):  # noqa: D401 - datetime API
                 return clock.now
 
-        original = monitor_daemon.datetime
-        monitor_daemon.datetime = _Frozen
+        patched = []
+        for name in CLOCK_MODULES:
+            try:
+                module = importlib.import_module(name)
+            except ImportError:
+                continue
+            if hasattr(module, "datetime"):
+                patched.append((module, module.datetime))
+                module.datetime = _Frozen
         try:
             yield self
         finally:
-            monitor_daemon.datetime = original
+            for module, original in reversed(patched):
+                module.datetime = original
 
 
 # ── sessions.json I/O counters ───────────────────────────────────────────

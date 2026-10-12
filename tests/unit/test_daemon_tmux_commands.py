@@ -201,7 +201,6 @@ class TestOnePersistentClient:
     PERIODIC = (
         "_sync_process_resources",
         "_sync_sandbox_state",
-        "_count_untracked_windows",
         "_migrate_legacy_window_ids",
         "_panes_at",
         "_detect_and_enrich",
@@ -211,8 +210,11 @@ class TestOnePersistentClient:
     def test_no_periodic_method_builds_its_own_client(self):
         from overcode.monitor_daemon import MonitorDaemon
 
+        from overcode.daemon_housekeeping import Housekeeping
+
         for name in self.PERIODIC:
             assert "RealTmux(" not in inspect.getsource(getattr(MonitorDaemon, name)), name
+        assert "RealTmux(" not in inspect.getsource(Housekeeping.count_untracked_windows)
 
     def test_daemon_builds_one_real_client_when_none_is_injected(self, root):
         from overcode.implementations import TMUX_COMMAND_TIMEOUT_SECONDS
@@ -232,7 +234,7 @@ class TestOnePersistentClient:
     def test_injected_client_serves_the_untracked_count_and_the_migration(self, root):
         sm, sessions, tmux, detector, daemon = _fleet(root, 2)
         tmux.panes["rogue"] = "a shell"
-        assert daemon._count_untracked_windows(sessions) == 1
+        assert daemon.housekeeping.count_untracked_windows(sessions) == 1
         assert tmux.calls["has_session"] == 1 and tmux.calls["list_windows"] == 1
         daemon._migrate_legacy_window_ids(sessions)
         assert tmux.calls["list_windows"] == 2

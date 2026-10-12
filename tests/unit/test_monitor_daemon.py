@@ -1683,9 +1683,7 @@ class TestCountUntrackedWindows:
     def _make_daemon(self, tmux=None):
         """A bare daemon; ``tmux`` is its persistent client (the count reads it)."""
         from overcode.monitor_daemon import MonitorDaemon
-        daemon = MonitorDaemon.for_test(self.tmp_path)
-        daemon._tmux = tmux
-        return daemon
+        return MonitorDaemon.for_test(self.tmp_path, tmux=tmux)
 
     def test_no_untracked_windows(self):
         """Returns 0 when all windows are tracked."""
@@ -1701,7 +1699,7 @@ class TestCountUntrackedWindows:
         ]
 
         daemon = self._make_daemon(tmux=mock_tmux)
-        assert daemon._count_untracked_windows([session]) == 0
+        assert daemon.housekeeping.count_untracked_windows([session]) == 0
 
     def test_untracked_windows_detected(self):
         """Returns count of windows not tracked by any session."""
@@ -1719,7 +1717,7 @@ class TestCountUntrackedWindows:
         ]
 
         daemon = self._make_daemon(tmux=mock_tmux)
-        assert daemon._count_untracked_windows([session]) == 2
+        assert daemon.housekeeping.count_untracked_windows([session]) == 2
 
     def test_window_0_excluded(self):
         """Window 0 (default shell) is never counted as untracked."""
@@ -1730,7 +1728,7 @@ class TestCountUntrackedWindows:
         ]
 
         daemon = self._make_daemon(tmux=mock_tmux)
-        assert daemon._count_untracked_windows([]) == 0
+        assert daemon.housekeeping.count_untracked_windows([]) == 0
 
     def test_terminated_sessions_not_tracked(self):
         """Terminated sessions don't count as tracked windows."""
@@ -1746,7 +1744,7 @@ class TestCountUntrackedWindows:
         ]
 
         daemon = self._make_daemon(tmux=mock_tmux)
-        assert daemon._count_untracked_windows([session]) == 1
+        assert daemon.housekeeping.count_untracked_windows([session]) == 1
 
     def test_session_not_exists_returns_zero(self):
         """Returns 0 when tmux session doesn't exist."""
@@ -1754,7 +1752,7 @@ class TestCountUntrackedWindows:
         mock_tmux.has_session.return_value = False
 
         daemon = self._make_daemon(tmux=mock_tmux)
-        assert daemon._count_untracked_windows([]) == 0
+        assert daemon.housekeeping.count_untracked_windows([]) == 0
 
     def test_counts_against_the_fake_tmux(self):
         """Works on a real ``TmuxInterface`` implementation, not just MagicMock.
@@ -1775,13 +1773,13 @@ class TestCountUntrackedWindows:
         session.status = "running"
         session.tmux_window = "agent1"
 
-        assert daemon._count_untracked_windows([session], tmux=tmux) == 1
+        assert daemon.housekeeping.count_untracked_windows([session], tmux=tmux) == 1
 
     def test_fake_tmux_without_the_session_returns_zero(self):
         from overcode.mocks import MockTmux
 
         daemon = self._make_daemon()
-        assert daemon._count_untracked_windows([], tmux=MockTmux()) == 0
+        assert daemon.housekeeping.count_untracked_windows([], tmux=MockTmux()) == 0
 
     def test_overcode_owned_windows_are_not_untracked(self):
         """Parity with cleanup --untracked (#344): the count must never advertise
@@ -1809,15 +1807,15 @@ class TestCountUntrackedWindows:
         session.status = "running"
         session.tmux_window = "agent1"
 
-        assert daemon._count_untracked_windows([session], tmux=tmux) == 1
+        assert daemon.housekeeping.count_untracked_windows([session], tmux=tmux) == 1
 
     def test_count_uses_the_shared_predicate(self):
         """Both paths must go through tmux_utils.untracked_window_names."""
         import inspect
-        from overcode import launcher, monitor_daemon
+        from overcode import daemon_housekeeping, launcher
 
         assert "untracked_window_names(" in inspect.getsource(
-            monitor_daemon.MonitorDaemon._count_untracked_windows
+            daemon_housekeeping.Housekeeping.count_untracked_windows
         )
         assert "untracked_window_names(" in inspect.getsource(
             launcher.AgentLauncher.kill_untracked_windows
@@ -1858,7 +1856,7 @@ class TestMaybeRotateHistory:
 
         with patch('overcode.status_history.rotate_and_retain',
                    return_value={"archived": None, "deleted": []}) as mock_rotate:
-            daemon._maybe_rotate_history(now)
+            daemon.housekeeping.maybe_rotate_history(now)
 
         mock_rotate.assert_called_once()
         assert daemon.cadence.history_rotation.last == now
@@ -1870,7 +1868,7 @@ class TestMaybeRotateHistory:
         daemon.cadence.history_rotation.last = first
 
         with patch('overcode.status_history.rotate_and_retain') as mock_rotate:
-            daemon._maybe_rotate_history(first + timedelta(minutes=10))
+            daemon.housekeeping.maybe_rotate_history(first + timedelta(minutes=10))
 
         mock_rotate.assert_not_called()
 
@@ -1882,7 +1880,7 @@ class TestMaybeRotateHistory:
 
         with patch('overcode.status_history.rotate_and_retain',
                    return_value={"archived": None, "deleted": []}) as mock_rotate:
-            daemon._maybe_rotate_history(first + timedelta(hours=2))
+            daemon.housekeeping.maybe_rotate_history(first + timedelta(hours=2))
 
         mock_rotate.assert_called_once()
 
@@ -1893,7 +1891,7 @@ class TestMaybeRotateHistory:
 
         with patch('overcode.status_history.rotate_and_retain',
                    side_effect=RuntimeError("boom")):
-            daemon._maybe_rotate_history(now)  # should not raise
+            daemon.housekeeping.maybe_rotate_history(now)  # should not raise
 
         daemon.log.error.assert_called_once()
 
@@ -1905,7 +1903,7 @@ class TestMaybeRotateHistory:
 
         with patch('overcode.status_history.rotate_and_retain',
                    return_value={"archived": archive_path, "deleted": []}):
-            daemon._maybe_rotate_history(now)
+            daemon.housekeeping.maybe_rotate_history(now)
 
         daemon.log.info.assert_called()
 
@@ -1933,9 +1931,9 @@ class TestMaybeRefreshModelMetadata:
 
     @staticmethod
     def _join(daemon):
-        if daemon._model_metadata_thread is not None:
-            daemon._model_metadata_thread.join(timeout=5)
-            assert not daemon._model_metadata_thread.is_alive()
+        if daemon.housekeeping.model_metadata_thread is not None:
+            daemon.housekeeping.model_metadata_thread.join(timeout=5)
+            assert not daemon.housekeeping.model_metadata_thread.is_alive()
 
     ON = {"auto_refresh": True, "max_age_days": 7.0}
     OFF = {"auto_refresh": False, "max_age_days": 7.0}
@@ -1944,8 +1942,8 @@ class TestMaybeRefreshModelMetadata:
         daemon = self._make_daemon()
         with patch('overcode.config.get_model_metadata_config', return_value=self.OFF), \
              patch('overcode.model_metadata.refresh_local_cache') as mock_refresh:
-            daemon._maybe_refresh_model_metadata(datetime.now())
-        assert daemon._model_metadata_thread is None
+            daemon.housekeeping.maybe_refresh_model_metadata(datetime.now())
+        assert daemon.housekeeping.model_metadata_thread is None
         mock_refresh.assert_not_called()
 
     def test_refreshes_on_a_background_thread_when_enabled_and_cache_missing(self):
@@ -1954,13 +1952,13 @@ class TestMaybeRefreshModelMetadata:
              patch('overcode.model_metadata.local_cache_age_days', return_value=None), \
              patch('overcode.model_metadata.refresh_local_cache',
                    return_value={"model_count": 5, "path": "/x"}) as mock_refresh:
-            daemon._maybe_refresh_model_metadata(datetime.now())
-            assert daemon._model_metadata_thread is not None
-            assert daemon._model_metadata_thread.daemon is True
+            daemon.housekeeping.maybe_refresh_model_metadata(datetime.now())
+            assert daemon.housekeeping.model_metadata_thread is not None
+            assert daemon.housekeeping.model_metadata_thread.daemon is True
             self._join(daemon)
         mock_refresh.assert_called_once()
         daemon.log.info.assert_called()
-        assert daemon._model_metadata_backoff_until is None
+        assert daemon.housekeeping.model_metadata_backoff_until is None
 
     def test_loop_does_not_wait_on_a_slow_fetch(self):
         """A fetch that hangs (packet-dropping network) must not block the caller."""
@@ -1977,13 +1975,13 @@ class TestMaybeRefreshModelMetadata:
              patch('overcode.model_metadata.local_cache_age_days', return_value=None), \
              patch('overcode.model_metadata.refresh_local_cache', side_effect=slow_refresh):
             started = time.monotonic()
-            daemon._maybe_refresh_model_metadata(datetime.now())
+            daemon.housekeeping.maybe_refresh_model_metadata(datetime.now())
             assert time.monotonic() - started < 1.0
-            assert daemon._model_metadata_thread.is_alive()
+            assert daemon.housekeeping.model_metadata_thread.is_alive()
             # A later hourly tick while the fetch is in flight starts nothing new
-            first_thread = daemon._model_metadata_thread
-            daemon._maybe_refresh_model_metadata(datetime.now() + timedelta(hours=2))
-            assert daemon._model_metadata_thread is first_thread
+            first_thread = daemon.housekeeping.model_metadata_thread
+            daemon.housekeeping.maybe_refresh_model_metadata(datetime.now() + timedelta(hours=2))
+            assert daemon.housekeeping.model_metadata_thread is first_thread
             release.set()
             self._join(daemon)
 
@@ -1992,8 +1990,8 @@ class TestMaybeRefreshModelMetadata:
         with patch('overcode.config.get_model_metadata_config', return_value=self.ON), \
              patch('overcode.model_metadata.local_cache_age_days', return_value=2.0), \
              patch('overcode.model_metadata.refresh_local_cache') as mock_refresh:
-            daemon._maybe_refresh_model_metadata(datetime.now())
-        assert daemon._model_metadata_thread is None
+            daemon.housekeeping.maybe_refresh_model_metadata(datetime.now())
+        assert daemon.housekeeping.model_metadata_thread is None
         mock_refresh.assert_not_called()
 
     def test_failure_warns_once_and_backs_off(self):
@@ -2003,17 +2001,17 @@ class TestMaybeRefreshModelMetadata:
              patch('overcode.model_metadata.local_cache_age_days', return_value=30.0), \
              patch('overcode.model_metadata.refresh_local_cache',
                    side_effect=OSError("no network")) as mock_refresh:
-            daemon._maybe_refresh_model_metadata(now)
+            daemon.housekeeping.maybe_refresh_model_metadata(now)
             self._join(daemon)
             assert daemon.log.warn.call_count == 1
-            assert daemon._model_metadata_backoff_until is not None
+            assert daemon.housekeeping.model_metadata_backoff_until is not None
             # The next few hourly ticks stay quiet and fetch nothing
             for h in (1, 2, 5):
-                daemon._maybe_refresh_model_metadata(now + timedelta(hours=h))
+                daemon.housekeeping.maybe_refresh_model_metadata(now + timedelta(hours=h))
             assert mock_refresh.call_count == 1
             assert daemon.log.warn.call_count == 1
             # After the backoff window it tries again
-            daemon._maybe_refresh_model_metadata(daemon._model_metadata_backoff_until + timedelta(minutes=1))
+            daemon.housekeeping.maybe_refresh_model_metadata(daemon.housekeeping.model_metadata_backoff_until + timedelta(minutes=1))
             self._join(daemon)
             assert mock_refresh.call_count == 2
 
@@ -2022,5 +2020,5 @@ class TestMaybeRefreshModelMetadata:
         first = datetime.now()
         daemon.cadence.model_metadata.last = first
         with patch('overcode.config.get_model_metadata_config') as mock_cfg:
-            daemon._maybe_refresh_model_metadata(first + timedelta(minutes=10))
+            daemon.housekeeping.maybe_refresh_model_metadata(first + timedelta(minutes=10))
         mock_cfg.assert_not_called()

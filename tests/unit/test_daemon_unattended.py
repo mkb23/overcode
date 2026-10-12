@@ -215,9 +215,9 @@ class TestPublishedMode:
     def _publish(self, daemon, now=START):
         daemon.state.save = MagicMock()
         daemon._enforce_oversight_timeouts = MagicMock()
-        daemon._auto_archive_done_agents = MagicMock()
-        daemon._count_untracked_windows = MagicMock(return_value=0)
-        daemon._archive_terminated_sessions = MagicMock()
+        daemon.housekeeping.auto_archive_done_agents = MagicMock()
+        daemon.housekeeping.count_untracked_windows = MagicMock(return_value=0)
+        daemon.housekeeping.archive_terminated_sessions = MagicMock()
         with patch.object(daemon, "_publish_state") as publish:
             daemon._publish_and_enforce([], [], True, None, now)
         return publish
@@ -301,14 +301,14 @@ class TestHousekeepingIsWallClock:
         daemon.state.save = MagicMock()
         daemon._publish_state = MagicMock()
         daemon._enforce_oversight_timeouts = MagicMock()
-        daemon._auto_archive_done_agents = MagicMock()
-        daemon._count_untracked_windows = MagicMock(return_value=3)
-        daemon._archive_terminated_sessions = MagicMock()
+        daemon.housekeeping.auto_archive_done_agents = MagicMock()
+        daemon.housekeeping.count_untracked_windows = MagicMock(return_value=3)
+        daemon.housekeeping.archive_terminated_sessions = MagicMock()
         daemon.session_attached = 1
         return daemon
 
     def _passes(self, daemon):
-        return daemon._auto_archive_done_agents.call_count
+        return daemon.housekeeping.auto_archive_done_agents.call_count
 
     def test_first_pass_two_minutes_in_then_every_two_minutes_at_the_fast_loop(self, root):
         daemon = self._daemon(root)
@@ -320,7 +320,7 @@ class TestHousekeepingIsWallClock:
                 when.append(k)
         assert when == [120, 240]
         assert daemon.state.untracked_window_count == 3
-        assert daemon._archive_terminated_sessions.call_args.args[1] == START + timedelta(
+        assert daemon.housekeeping.archive_terminated_sessions.call_args.args[1] == START + timedelta(
             seconds=240
         )
 

@@ -528,8 +528,8 @@ class TestJobRetention:
         d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         with patch("overcode.job_manager.JobManager.cleanup_completed") as cleanup, \
                 patch("overcode.config.get_jobs_retention_hours", return_value=12.0):
-            d._prune_finished_jobs()
-            d._prune_finished_jobs()  # within the hour: not again
+            d.housekeeping.prune_finished_jobs()
+            d.housekeeping.prune_finished_jobs()  # within the hour: not again
         cleanup.assert_called_once_with(12.0)
 
     def test_a_failing_prune_is_logged_not_raised(self, tmp_path):
@@ -537,5 +537,5 @@ class TestJobRetention:
 
         d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         with patch("overcode.job_manager.JobManager.cleanup_completed", side_effect=OSError("ro")):
-            d._prune_finished_jobs()
+            d.housekeeping.prune_finished_jobs()
         assert "job retention" in d.log.warn.call_args.args[0]
