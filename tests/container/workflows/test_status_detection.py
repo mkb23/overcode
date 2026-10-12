@@ -44,14 +44,14 @@ def test_running_agent_detected_running(monitored, oc_wait):
 
 
 def test_permission_prompt_detected(monitored, oc_wait):
-    """Permission dialogs are waiting_user with a 'Permission: ...' activity
-    (waiting_approval is reserved for plan approval, status_detector.py:286)."""
+    """Permission dialogs are waiting_approval (orange) with a
+    'Permission: ...' activity, in polling mode as in hooks mode."""
     monitored.launch("asker", scenario="permission_bash")
 
     def detected():
         state = monitored.agent_daemon_state("asker")
         return (
-            state.get("current_status") == "waiting_user"
+            state.get("current_status") == "waiting_approval"
             and "permission" in state.get("current_activity", "").lower()
         )
 

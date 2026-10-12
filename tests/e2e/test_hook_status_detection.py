@@ -10,7 +10,7 @@ States exercised:
     UserPromptSubmit  → running ("Processing prompt")
     PostToolUse       → running ("Using {tool_name}")
     Stop              → waiting_user ("Waiting for user input")
-    PermissionRequest → waiting_user ("Permission: approval required")
+    PermissionRequest → waiting_approval ("Permission: approval required")
     Stop (child)      → waiting_oversight ("Waiting for oversight report")
 
 Requires:

@@ -6,7 +6,7 @@ opencode2 has its own file (tests/e2e/test_opencode2_backend.py) — this one
 gives the other four the same coverage: `overcode launch -B <backend>`
 must drive that backend's CLI grammar end to end — launch, pane chrome
 detection through the backend's own status patterns, the permission
-dialog surfacing as `waiting_user` with a `Permission:` activity, the
+dialog surfacing as `waiting_approval` with a `Permission:` activity, the
 backend-resolved `approve` / `reject` gestures landing on the mock's
 dialog with the right outcome, restart (graceful-exit keys + relaunch in
 the same window) and kill.
@@ -307,7 +307,7 @@ class TestBackendMatrix:
         for absent in self.spec.dialog_absent:
             assert absent not in content, absent
 
-        status, activity = self._wait_for_status(name, "waiting_user")
+        status, activity = self._wait_for_status(name, "waiting_approval")
         assert activity.startswith("Permission:"), activity
 
         # The gesture, not a raw key: overcode resolves it through the
@@ -327,7 +327,7 @@ class TestBackendMatrix:
         result = self._launch(name, self.spec.permission_scenario)
         assert result.returncode == 0, f"Launch failed: {result.stderr}"
         self._wait_for_pane(name, *self.spec.dialog_markers)
-        self._wait_for_status(name, "waiting_user")
+        self._wait_for_status(name, "waiting_approval")
 
         result = self._cli("send", name, "reject", "--session", self.session)
         assert result.returncode == 0, f"send reject failed: {result.stderr}"

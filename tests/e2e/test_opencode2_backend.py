@@ -204,9 +204,9 @@ class TestOpencode2Backend:
         assert "Always allow" in content
         assert "Allow always" not in content
 
-        # The detector reads the dialog as waiting_user with a
+        # The detector reads the dialog as waiting_approval with a
         # Permission activity (OPENCODE2_PATTERNS' permission branch).
-        status, activity = self._wait_for_status("oc2-perm", "waiting_user")
+        status, activity = self._wait_for_status("oc2-perm", "waiting_approval")
         assert activity.startswith("Permission:"), activity
 
         # Bare Enter approves the preselected "Allow once" (verified live

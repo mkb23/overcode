@@ -17,8 +17,8 @@ def test_supervisor_intervenes_on_stalled_agent(oc, oc_wait, sandbox):
     oc.ok("instruct", "stuck", "approve", "safe", "commands")
 
     oc.start_monitor_daemon(interval=1)
-    # Permission dialogs detect as waiting_user with a Permission activity —
-    # non-green either way, which is what the supervisor keys on.
+    # Permission dialogs detect as waiting_approval with a Permission
+    # activity: non-green, which is what the supervisor keys on.
     oc_wait(
         lambda: oc.agent_status("stuck") in ("waiting_user", "waiting_approval"),
         timeout=90,

@@ -576,7 +576,7 @@ class TestLiveBackend:
             # patterns must recognise today's chrome as a permission prompt,
             # and the daemon (hooks mode) must report waiting_approval.
             status, activity = self._status()
-            assert status == "waiting_user" and activity.startswith("Permission:"), (status, activity)
+            assert status == "waiting_approval" and activity.startswith("Permission:"), (status, activity)
             assert self._wait_daemon_status("waiting_approval") == "waiting_approval"
 
             result = self._cli("send", self.name, "approve")
