@@ -218,8 +218,8 @@ asked for and what they tried.
 
 
 def system_prompt_path() -> Path:
-    from .settings import get_overcode_dir
-    return get_overcode_dir() / "overagent" / "system-prompt.md"
+    from .paths import overcode_dir
+    return overcode_dir() / "overagent" / "system-prompt.md"
 
 
 def write_system_prompt() -> Path:
@@ -238,8 +238,8 @@ def write_system_prompt() -> Path:
 
 
 def plugin_dir() -> Path:
-    from .settings import get_overcode_dir
-    return get_overcode_dir() / "overagent" / "plugin"
+    from .paths import overcode_dir
+    return overcode_dir() / "overagent" / "plugin"
 
 
 def write_plugin() -> Path:

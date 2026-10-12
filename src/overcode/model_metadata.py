@@ -259,8 +259,8 @@ def local_cache_path() -> Path:
     explicit = os.environ.get(LOCAL_CACHE_ENV)
     if explicit:
         return Path(explicit)
-    from .settings import get_overcode_dir  # lazy: settings imports pricing imports this
-    return get_overcode_dir() / "cache" / "model_metadata.json"
+    from .paths import overcode_dir
+    return overcode_dir() / "cache" / "model_metadata.json"
 
 
 def opencode_models_cache_path() -> Path:

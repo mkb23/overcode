@@ -80,57 +80,6 @@ class TestDaemonIsolation:
             assert session2_monitor.parent.name == "session-2"
 
 
-class TestBasePaths:
-    """Test base path functions."""
-
-    def test_get_overcode_dir_default(self):
-        """get_overcode_dir should return ~/.overcode by default."""
-        from overcode.settings import get_overcode_dir
-
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("OVERCODE_DIR", None)
-            result = get_overcode_dir()
-            expected = Path.home() / ".overcode"
-            assert result == expected
-
-    def test_get_overcode_dir_respects_env(self, tmp_path):
-        """get_overcode_dir should respect OVERCODE_DIR environment variable."""
-        from overcode.settings import get_overcode_dir
-
-        with patch.dict(os.environ, {"OVERCODE_DIR": str(tmp_path)}):
-            result = get_overcode_dir()
-            assert result == tmp_path
-
-    def test_get_state_dir_default(self):
-        """get_state_dir should return ~/.overcode/sessions by default."""
-        from overcode.settings import get_state_dir
-
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("OVERCODE_STATE_DIR", None)
-            os.environ.pop("OVERCODE_DIR", None)
-            result = get_state_dir()
-            expected = Path.home() / ".overcode" / "sessions"
-            assert result == expected
-
-    def test_get_state_dir_respects_env(self, tmp_path):
-        """get_state_dir should respect OVERCODE_STATE_DIR environment variable."""
-        from overcode.settings import get_state_dir
-
-        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
-            result = get_state_dir()
-            assert result == tmp_path
-
-    def test_get_log_dir(self):
-        """get_log_dir should return logs subdirectory."""
-        from overcode.settings import get_log_dir
-
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("OVERCODE_DIR", None)
-            result = get_log_dir()
-            expected = Path.home() / ".overcode" / "logs"
-            assert result == expected
-
-
 class TestOvercodePaths:
     """Test OvercodePaths dataclass."""
 

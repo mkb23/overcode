@@ -453,9 +453,9 @@ class ShutdownReport:
 
 
 def _state_session_names() -> List[str]:
-    from .settings import get_state_dir
+    from .paths import sessions_root
     try:
-        return sorted(p.name for p in get_state_dir().iterdir() if p.is_dir())
+        return sorted(p.name for p in sessions_root().iterdir() if p.is_dir())
     except OSError:
         return []
 

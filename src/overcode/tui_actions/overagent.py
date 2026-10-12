@@ -42,13 +42,13 @@ class OveragentMixin:
 
     def _launch_overagent(self) -> None:
         from ..overagent import DEFAULT_NAME, OVERAGENT_BACKEND
-        from ..settings import get_overcode_dir
+        from ..paths import overcode_dir
 
         taken = {s.name for s in self.sessions}
         name, n = DEFAULT_NAME, 2
         while name in taken:
             name, n = f"{DEFAULT_NAME}-{n}", n + 1
-        directory = get_overcode_dir()
+        directory = overcode_dir()
         directory.mkdir(parents=True, exist_ok=True)
         self._overagent_pending = True
         self.notify(f"Starting the overagent ({name})…", severity="information")

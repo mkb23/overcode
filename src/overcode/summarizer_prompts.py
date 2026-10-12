@@ -21,7 +21,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Tuple
 
-from .settings import get_overcode_dir
+from .paths import overcode_dir
 
 MODES = ("short", "context")
 
@@ -89,7 +89,7 @@ def _check_mode(mode: str) -> None:
 def prompt_path(mode: str) -> Path:
     """Where the ``mode`` prompt is saved: ~/.overcode/prompts/summary-<mode>.md."""
     _check_mode(mode)
-    return get_overcode_dir() / "prompts" / f"summary-{mode}.md"
+    return overcode_dir() / "prompts" / f"summary-{mode}.md"
 
 
 def load_prompt(mode: str) -> str:

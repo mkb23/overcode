@@ -45,7 +45,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-from .settings import get_overcode_dir
+from .paths import overcode_dir
 
 try:
     import fcntl
@@ -66,7 +66,7 @@ REDACTED_CHAR = "<c>"
 
 
 def get_activity_dir() -> Path:
-    return get_overcode_dir() / "activity"
+    return overcode_dir() / "activity"
 
 
 # Days of full records kept; older days survive only as their day summary.

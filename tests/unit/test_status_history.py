@@ -607,8 +607,7 @@ class TestDiskUsageFindings:
     """Tests for the doctor disk-usage finding (#465, #468)."""
 
     def test_no_findings_below_threshold(self, tmp_path, monkeypatch):
-        from overcode import settings
-        monkeypatch.setattr(settings, "get_state_dir", lambda: tmp_path)
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
         history_path = tmp_path / "test-session" / "agent_status_history.csv"
         history_path.parent.mkdir(parents=True)
         history_path.write_text("timestamp,agent,status,activity\n")
@@ -618,8 +617,7 @@ class TestDiskUsageFindings:
         assert findings == []
 
     def test_finding_when_history_plus_archives_exceeds_threshold(self, tmp_path, monkeypatch):
-        from overcode import settings
-        monkeypatch.setattr(settings, "get_state_dir", lambda: tmp_path)
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
         session_dir = tmp_path / "test-session"
         session_dir.mkdir(parents=True)
         history_path = session_dir / "agent_status_history.csv"
@@ -637,8 +635,7 @@ class TestDiskUsageFindings:
         assert "status_history_max_days" in findings[0]
 
     def test_finding_when_event_loop_timing_exceeds_threshold(self, tmp_path, monkeypatch):
-        from overcode import settings
-        monkeypatch.setattr(settings, "get_state_dir", lambda: tmp_path)
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
         session_dir = tmp_path / "test-session" / "diagnostics"
         session_dir.mkdir(parents=True)
         diag_path = session_dir / "event_loop_timing.csv"

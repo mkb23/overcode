@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Iterable, List, Optional, Set
 
 import yaml
 
+from . import paths
 from .pricing import ModelPricing, MODEL_PRICING
 
 if TYPE_CHECKING:
@@ -33,37 +34,6 @@ DAEMON_VERSION = 3  # Increment when daemon behavior changes (3: engine.sock, 0.
 
 
 # =============================================================================
-# Base Paths
-# =============================================================================
-
-def get_overcode_dir() -> Path:
-    """Get the overcode data directory.
-
-    Can be overridden with OVERCODE_DIR environment variable.
-    """
-    env_dir = os.environ.get("OVERCODE_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return Path.home() / ".overcode"
-
-
-def get_state_dir() -> Path:
-    """Get the state directory for session files.
-
-    Can be overridden with OVERCODE_STATE_DIR environment variable.
-    """
-    env_dir = os.environ.get("OVERCODE_STATE_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return get_overcode_dir() / "sessions"
-
-
-def get_log_dir() -> Path:
-    """Get the log directory."""
-    return get_overcode_dir() / "logs"
-
-
-# =============================================================================
 # File Paths
 # =============================================================================
 
@@ -72,7 +42,7 @@ class OvercodePaths:
     """All file paths used by Overcode."""
 
     # Base directory
-    base_dir: Path = field(default_factory=get_overcode_dir)
+    base_dir: Path = field(default_factory=paths.overcode_dir)
 
     @property
     def config_file(self) -> Path:
@@ -82,7 +52,7 @@ class OvercodePaths:
     @property
     def state_dir(self) -> Path:
         """Session state directory."""
-        return get_state_dir()
+        return paths.sessions_root()
 
     @property
     def sessions_file(self) -> Path:
@@ -92,7 +62,7 @@ class OvercodePaths:
     @property
     def log_dir(self) -> Path:
         """Log directory."""
-        return get_log_dir()
+        return self.base_dir / "logs"
 
     @property
     def daemon_log(self) -> Path:
@@ -494,12 +464,9 @@ def get_session_dir(session: str) -> Path:
     for isolation. This allows running multiple overcode instances
     (e.g., one for work, one for development).
 
-    Respects OVERCODE_STATE_DIR environment variable for test isolation.
+    Under the sessions root (``OVERCODE_STATE_DIR``; see ``paths``).
     """
-    # Use get_state_dir() as base to respect OVERCODE_STATE_DIR
-    state_dir = get_state_dir()
-    # state_dir is already the sessions directory
-    return state_dir / session
+    return paths.session_dir(session)
 
 
 def get_monitor_daemon_pid_path(session: str) -> Path:

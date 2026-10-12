@@ -128,8 +128,8 @@ def _save_skills_config(section: dict) -> None:
 
 def library_dir() -> Path:
     """The library folder overcode owns: skills copied in directly."""
-    from .settings import get_overcode_dir
-    return get_overcode_dir() / "skills"
+    from .paths import overcode_dir
+    return overcode_dir() / "skills"
 
 
 def library_paths() -> List[str]:
@@ -429,8 +429,8 @@ class ProfileLaunch:
 
 
 def profile_dir(profile: str) -> Path:
-    from .settings import get_overcode_dir
-    return get_overcode_dir() / "skill-profiles" / profile
+    from .paths import overcode_dir
+    return overcode_dir() / "skill-profiles" / profile
 
 
 def resolve_skill_names(wanted: Iterable[str], known: set) -> List[str]:

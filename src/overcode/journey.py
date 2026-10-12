@@ -573,9 +573,10 @@ def gather_residue() -> Residue:
     except Exception:
         pass
     try:
-        from .settings import TUIPreferences, get_overcode_dir
+        from .paths import overcode_dir
+        from .settings import TUIPreferences
         r.column_overrides = int(bool(TUIPreferences.load("agents").column_config))
-        prompts = get_overcode_dir() / "summarizer_prompts"
+        prompts = overcode_dir() / "summarizer_prompts"
         r.summarizer_prompts = len(list(prompts.glob("*"))) if prompts.is_dir() else 0
     except Exception:
         pass

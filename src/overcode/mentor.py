@@ -52,8 +52,8 @@ class Nudge:
 
 
 def state_path() -> Path:
-    from .settings import get_overcode_dir
-    return get_overcode_dir() / "journey_state.json"
+    from .paths import overcode_dir
+    return overcode_dir() / "journey_state.json"
 
 
 def load_state() -> MentorState:
