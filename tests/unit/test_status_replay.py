@@ -16,7 +16,7 @@ Colours follow the #507 model — what happens if you do nothing?
 import pytest
 
 from tests.status_replay import (
-    GREEN, ORANGE, RED, YELLOW,
+    GREEN, ORANGE, RED, REST, YELLOW,
     Scenario, claude_pane, colour_changes, ev, frame, mismatches, replay, timeline,
 )
 
@@ -162,7 +162,7 @@ CHILD_WITH_BACKGROUND_AGENT = Scenario(
         ev(20.05, "UserPromptSubmit"),
         ev(22.0, "Stop"),
     ],
-    expect=[(0.0, 2.5, GREEN), (2.75, 19.75, YELLOW), (24.0, 30.0, ORANGE)],
+    expect=[(0.0, 2.5, GREEN), (2.75, 19.75, YELLOW), (24.0, 30.0, REST)],
     child=True,
 )
 
@@ -220,7 +220,7 @@ PERMISSION_PROMPT = Scenario(
 CHILD_REPORTS_BACK = Scenario(
     "child_reports_back",
     steps=[ev(0.0, "UserPromptSubmit"), ev(5.0, "Stop")],
-    expect=[(0.0, 4.75, GREEN), (7.0, 15.0, ORANGE)],
+    expect=[(0.0, 4.75, GREEN), (7.0, 15.0, REST)],
     child=True,
 )
 

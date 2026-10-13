@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.status_detector import PollingStatusDetector
 from tests.tmux_doubles import MockTmux
-from overcode.status_constants import STATUS_BUSY_SLEEPING, STATUS_RUNNING, STATUS_WAITING_USER, STATUS_WAITING_APPROVAL, STATUS_TERMINATED, STATUS_ERROR
+from overcode.status_constants import STATUS_BUSY_SLEEPING, STATUS_RUNNING, STATUS_WAITING_USER, STATUS_WAITING_APPROVAL, STATUS_TERMINATED, STATUS_ERROR, STATUS_UNKNOWN
 from tests.fixtures import (
     create_mock_session,
     create_mock_tmux_with_content,
@@ -339,15 +339,15 @@ class TestStatusDetectorEdgeCases:
     """Test edge cases and error handling"""
 
     def test_handles_empty_pane(self):
-        """Empty pane content should return waiting_user"""
+        """Empty pane content: starting, not known yet (not red)"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, "")
         detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
-        assert "Empty pane" in activity
+        assert status == STATUS_UNKNOWN
+        assert "empty pane" in activity
 
     def test_handles_missing_pane(self):
         """Missing pane (window gone) should return terminated"""
@@ -371,7 +371,7 @@ class TestStatusDetectorEdgeCases:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_UNKNOWN
 
     def test_ignores_ui_chrome_status_bar(self):
         """UI chrome like '⏵⏵ bypass permissions on' should not trigger permission detection.
@@ -599,6 +599,43 @@ class TestStatusDetectorSpawnFailure:
         assert "permission denied" in activity.lower(), (
             f"Activity should include 'permission denied', got: {activity}"
         )
+
+
+class TestStillLaunching:
+    """Only the typed launch line on screen: the CLI has not started yet."""
+
+    SID = "0f3c2a9e-1111-2222-3333-444455556666"
+
+    def _detect(self, pane):
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(id=self.SID, tmux_window=1)
+        return detector.detect_status(session)
+
+    def _launch_line(self):
+        return (f"mike@host proj % OVERCODE_SESSION_NAME=a1 OVERCODE_SESSION_ID={self.SID} "
+                "OVERCODE_TMUX_SESSION=agents claude --session-id abc")
+
+    def test_the_launch_line_alone_is_unknown(self):
+        status, activity, _ = self._detect(self._launch_line())
+        assert (status, activity) == (STATUS_UNKNOWN, "Starting")
+
+    def test_a_wrapped_launch_line_is_found(self):
+        line = self._launch_line()
+        wrapped = "\n".join(line[i:i + 40] for i in range(0, len(line), 40))
+        assert self._detect(wrapped)[0] == STATUS_UNKNOWN
+
+    def test_a_shell_prompt_after_it_is_an_exit(self):
+        pane = self._launch_line() + "\nclaude: oops\nmike@host proj % "
+        assert self._detect(pane)[0] == STATUS_TERMINATED
+
+    def test_the_cli_chrome_means_it_started(self):
+        pane = self._launch_line() + "\n" + PANE_CONTENT_WAITING_USER
+        assert self._detect(pane)[0] != STATUS_UNKNOWN
+
+    def test_another_agents_launch_line_is_not_this_one(self):
+        pane = self._launch_line().replace(self.SID, "someone-else")
+        assert self._detect(pane)[0] != STATUS_UNKNOWN
 
 
 class TestBusySleepingDetection:

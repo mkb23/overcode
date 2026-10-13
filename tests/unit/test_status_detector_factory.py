@@ -226,3 +226,17 @@ class TestDetailComesFromTheDetectorThatDecided:
         d.detect_status(session)
         detail = d.get_status_detail("a")
         assert detail is not None and detail.color != STATUS_COLOR_GREEN
+
+
+class TestChildrenWorkingIsShared:
+    """Every hook detector reads the one children-working dict the daemon fills."""
+
+    def test_every_backends_hook_detector_shares_the_dict(self):
+        from overcode.status_detector_factory import StatusDetectorDispatcher
+
+        counts = {}
+        d = StatusDetectorDispatcher("agents", children_working=counts)
+        _polling, other_hooks = d._pair_for("opencode")
+        counts["parent-id"] = 2
+        assert d.hooks.children_working is counts
+        assert other_hooks.children_working is counts

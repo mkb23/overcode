@@ -16,6 +16,7 @@ from .status_constants import (
     STATUS_TERMINATED,
     STATUS_WAITING_APPROVAL,
     STATUS_ERROR,
+    STATUS_UNKNOWN,
 )
 from .status_patterns import (
     get_patterns,
@@ -162,12 +163,19 @@ class PollingStatusDetector:
         last_lines = [ln.strip() for ln in lines[-10:] if ln.strip()]
 
         if not last_lines:
-            return STATUS_WAITING_USER, "No output", content
+            self._last_detect_phase[session.id] = "P1:no_output"
+            return STATUS_UNKNOWN, "Starting: no output yet", content
 
         # Phase 2: Spawn failure (before shell prompt — error appears first)
         spawn_error = self._detect_spawn_failure(lines)
         if spawn_error:
             return STATUS_WAITING_USER, spawn_error, content
+
+        # Phase 2b: the launch line is still the last thing on screen: the
+        # CLI has not drawn anything yet (it would otherwise read as idle)
+        if self._still_launching(session, last_lines):
+            self._last_detect_phase[session.id] = "P2b:launching"
+            return STATUS_UNKNOWN, "Starting", content
 
         # Phase 3: Shell prompt (agent exited)
         if self._is_shell_prompt(last_lines):
@@ -277,7 +285,7 @@ class PollingStatusDetector:
         if content is None:
             return (STATUS_TERMINATED, "Window no longer exists", ""), None
         if not content:
-            return (STATUS_WAITING_USER, "Empty pane", ""), None
+            return (STATUS_UNKNOWN, "Starting: empty pane", ""), None
 
         return None, content
 
@@ -567,6 +575,27 @@ class PollingStatusDetector:
             return "Spawn failed: agent command not found - is the agent CLI installed?"
 
         return None
+
+    def _still_launching(self, session, lines: list) -> bool:
+        """True while overcode's typed launch line is the last thing in the pane.
+
+        Every launch line carries ``OVERCODE_SESSION_ID=<id>`` near its
+        start (launcher._build_launch_cmd_str); a long line wraps, so the
+        tail is joined without separators to find it. Any CLI chrome (an
+        input hint, a busy marker) or a shell prompt back on the last line
+        means it has started, or already exited.
+        """
+        session_id = getattr(session, "id", None)
+        if not session_id or not lines:
+            return False
+        tail = lines[-6:]
+        if f"OVERCODE_SESSION_ID={session_id}" not in "".join(tail):
+            return False
+        if _is_shell_prompt_line(tail[-1].strip()):
+            return False
+        if self.patterns.shows_input_hint(" ".join(tail)) or self.patterns.is_busy(tail):
+            return False
+        return True
 
     def _is_shell_prompt(self, lines: list) -> bool:
         """Detect if we're at a shell prompt (Claude Code has exited).

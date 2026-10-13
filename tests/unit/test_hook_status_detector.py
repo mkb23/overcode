@@ -33,10 +33,12 @@ from overcode.status_constants import (
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
     STATUS_ERROR,
+    STATUS_UNKNOWN,
     STATUS_COLOR_GREEN,
     STATUS_COLOR_ORANGE,
     STATUS_COLOR_YELLOW,
     STATUS_COLOR_RED,
+    STATUS_COLOR_REST,
 )
 from tests.tmux_doubles import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
@@ -445,16 +447,18 @@ class TestNoHookState:
     """Test behaviour when no hook state file exists."""
 
     def test_no_state_file_with_window_alive(self, tmp_path):
-        """No hook state + window alive → WAITING_USER."""
+        """No hook state + window alive → unknown: starting, not red."""
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True)
         mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
 
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
-        status, _, _ = detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_UNKNOWN
+        assert activity.startswith("Starting")
+        assert detector.get_status_detail("test-agent") is None
 
     def test_no_state_file_with_window_gone(self, tmp_path):
         """No hook state + window gone → TERMINATED."""
@@ -954,10 +958,11 @@ class TestVerdicts:
         assert d.badges[0].label == "Bash"
         assert d.legacy_status == STATUS_WAITING_APPROVAL
 
-    def test_child_stop_is_orange_oversight(self):
+    # ---- REST — a child whose turn is over ----
+    def test_child_stop_is_at_rest(self):
         d = _detail("Stop", child=True)
-        assert d.color == STATUS_COLOR_ORANGE
-        assert d.badges[0].kind == "oversight"
+        assert d.color == STATUS_COLOR_REST
+        assert d.badges == []
         assert d.legacy_status == STATUS_WAITING_OVERSIGHT
 
     # ---- YELLOW — armed ----
@@ -990,9 +995,34 @@ class TestVerdicts:
         assert d.color == STATUS_COLOR_YELLOW
         assert (d.badges[0].kind, d.badges[0].count) == ("monitor", 2)
 
-    def test_a_child_with_only_a_cron_is_ready_to_report(self):
+    def test_a_child_with_only_a_cron_is_at_rest(self):
         d = _detail("Stop", child=True, state={"pending_obligations": [{"kind": "cron"}]})
-        assert d.color == STATUS_COLOR_ORANGE
+        assert d.color == STATUS_COLOR_REST
+
+    # ---- A parent waiting on its children ----
+    def test_a_parent_whose_children_work_is_yellow(self):
+        verdict, rule = _decide("Stop", children=2)
+        assert rule == "armed"
+        assert (verdict.color, verdict.legacy_status) == (STATUS_COLOR_YELLOW, STATUS_BUSY_SLEEPING)
+        assert [(b.kind, b.count) for b in verdict.badges] == [("children", 2)]
+        assert verdict.activity == "Waiting on 2 children"
+        assert _decide("Stop", children=1)[0].activity == "Waiting on 1 child"
+
+    def test_a_parent_whose_children_rest_needs_input(self):
+        d = _detail("Stop", children=0)
+        assert (d.color, d.legacy_status) == (STATUS_COLOR_RED, STATUS_WAITING_USER)
+
+    def test_an_interrupted_parent_stays_red_while_children_work(self):
+        d = _detail("Stop", children=2, interrupted=True)
+        assert (d.color, d.badges[0].kind) == (STATUS_COLOR_RED, "awaiting_input")
+
+    def test_a_working_parent_stays_green_while_children_work(self):
+        d = _detail("PreToolUse", children=2, state={"tool_name": "Read"})
+        assert d.color == STATUS_COLOR_GREEN
+
+    def test_a_child_whose_own_children_work_is_yellow(self):
+        d = _detail("Stop", child=True, children=1)
+        assert (d.color, d.legacy_status) == (STATUS_COLOR_YELLOW, STATUS_BUSY_SLEEPING)
 
     def test_a_child_with_background_work_is_armed(self):
         d = _detail("Stop", child=True, monitors=1)
@@ -1084,7 +1114,7 @@ class TestRules:
         ("turn ended without a Stop", "UserPromptSubmit", {"idle_confirmed": True}, "idle_confirmed",
          STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
         ("a child's turn ended without a Stop", "PreToolUse", {"idle_confirmed": True, "child": True},
-         "idle_confirmed", STATUS_COLOR_ORANGE, "oversight", STATUS_WAITING_OVERSIGHT),
+         "idle_confirmed", STATUS_COLOR_REST, None, STATUS_WAITING_OVERSIGHT),
         ("turn ended without a Stop, monitor armed", "UserPromptSubmit",
          {"idle_confirmed": True, "monitors": 1}, "armed",
          STATUS_COLOR_YELLOW, "monitor", STATUS_BUSY_SLEEPING),
@@ -1107,10 +1137,12 @@ class TestRules:
         ("overdue", "Stop",
          {"state": {"pending_obligations": [{"kind": "schedule_wakeup", "eta_absolute": NOW - 600}]}},
          "overdue", STATUS_COLOR_RED, "overdue", STATUS_WAITING_USER),
-        ("overdue child stays ready to report", "Stop",
+        ("overdue child stays at rest", "Stop",
          {"child": True,
           "state": {"pending_obligations": [{"kind": "schedule_wakeup", "eta_absolute": NOW - 600}]}},
-         "base", STATUS_COLOR_ORANGE, "oversight", STATUS_WAITING_OVERSIGHT),
+         "base", STATUS_COLOR_REST, None, STATUS_WAITING_OVERSIGHT),
+        ("armed: children", "Stop", {"children": 3}, "armed",
+         STATUS_COLOR_YELLOW, "children", STATUS_BUSY_SLEEPING),
         ("unknown event", "Notification", {}, "base",
          STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
     ]
@@ -1141,7 +1173,7 @@ class TestRules:
         (STATUS_COLOR_GREEN, "blocked_sleep", STATUS_BUSY_SLEEPING),
         (STATUS_COLOR_YELLOW, "monitor", STATUS_BUSY_SLEEPING),
         (STATUS_COLOR_YELLOW, "cron", STATUS_BUSY_SLEEPING),
-        (STATUS_COLOR_ORANGE, "oversight", STATUS_WAITING_OVERSIGHT),
+        (STATUS_COLOR_REST, None, STATUS_WAITING_OVERSIGHT),
         (STATUS_COLOR_ORANGE, "permission", STATUS_WAITING_APPROVAL),
         (STATUS_COLOR_ORANGE, "plan_approval", STATUS_WAITING_APPROVAL),
         (STATUS_COLOR_RED, "error", STATUS_ERROR),
@@ -1381,10 +1413,18 @@ class TestSynthesizeStatusDetailFromLegacy:
         assert d.color == STATUS_COLOR_ORANGE
         assert d.badges[0].kind == "permission"
 
-    def test_waiting_oversight_is_orange_oversight(self):
+    def test_waiting_oversight_is_at_rest(self):
         d = synthesize_status_detail_from_legacy(STATUS_WAITING_OVERSIGHT)
-        assert d.color == STATUS_COLOR_ORANGE
-        assert d.badges[0].kind == "oversight"
+        assert d.color == STATUS_COLOR_REST
+        assert d.badges == []
+
+    def test_waiting_on_children_is_yellow(self):
+        d = synthesize_status_detail_from_legacy(STATUS_BUSY_SLEEPING, "Waiting on 2 children")
+        assert d.color == STATUS_COLOR_YELLOW
+        assert (d.badges[0].kind, d.badges[0].count) == ("children", 2)
+
+    def test_unknown_has_no_colour(self):
+        assert synthesize_status_detail_from_legacy(STATUS_UNKNOWN) is None
 
     def test_waiting_heartbeat_is_yellow_heartbeat(self):
         d = synthesize_status_detail_from_legacy(STATUS_WAITING_HEARTBEAT)
@@ -1787,12 +1827,12 @@ class TestTurnEndedWithoutStop:
         assert status == STATUS_WAITING_USER
 
     def test_a_child_settles_to_waiting_oversight(self, tmp_path, monkeypatch):
-        """Like a child's Stop: ready for oversight, orange (was red, review item 25)."""
+        """Like a child's Stop: at rest, never red (review item 25)."""
         _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, parent="parent-id")
         assert later[0] == STATUS_WAITING_OVERSIGHT
-        assert later[1] == "Waiting for oversight report (turn ended without a Stop)"
-        assert later[2].color == STATUS_COLOR_ORANGE
-        assert [b.kind for b in later[2].badges] == ["oversight"]
+        assert later[1] == "At rest: stopped (turn ended without a Stop)"
+        assert later[2].color == STATUS_COLOR_REST
+        assert later[2].badges == []
 
     def test_a_stop_is_unaffected(self, tmp_path, monkeypatch):
         _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, event="Stop")

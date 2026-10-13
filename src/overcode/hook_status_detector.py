@@ -39,10 +39,12 @@ from .status_constants import (
     STATUS_ERROR,
     STATUS_RUNNING_HEARTBEAT,
     STATUS_WAITING_HEARTBEAT,
+    STATUS_UNKNOWN,
     STATUS_COLOR_GREEN,
     STATUS_COLOR_ORANGE,
     STATUS_COLOR_YELLOW,
     STATUS_COLOR_RED,
+    STATUS_COLOR_REST,
     StatusBadge,
     StatusDetail,
 )
@@ -347,6 +349,7 @@ _ARMED_WORDS = {
     "bg_task": "background task",
     "subagent": "background agent",
     "heartbeat": "heartbeat",
+    "children": "child agents",
 }
 
 
@@ -379,6 +382,7 @@ class TickContext:
     monitors: int = 0                     # status-bar counts, held while the bar is covered
     shells: int = 0
     subagents: Optional[int] = None       # default: live entries in the hook state's map
+    children: int = 0                     # its child agents still working (last tick's)
     obligations: list = field(init=False)  # pending obligations that can still fire
     overdue: int = field(init=False)       # wakeups that never came
 
@@ -440,8 +444,8 @@ _LEGACY_BY_VERDICT: Dict[Tuple[Optional[str], Optional[str]], str] = {
     (STATUS_COLOR_GREEN, "blocked_sleep"): STATUS_BUSY_SLEEPING,  # a foreground sleep
     (STATUS_COLOR_GREEN, None): STATUS_RUNNING,                   # generating, a tool
     (STATUS_COLOR_YELLOW, None): STATUS_BUSY_SLEEPING,            # armed: background work
-    (STATUS_COLOR_ORANGE, "oversight"): STATUS_WAITING_OVERSIGHT, # a child that is done
     (STATUS_COLOR_ORANGE, None): STATUS_WAITING_APPROVAL,         # permission, plan
+    (STATUS_COLOR_REST, None): STATUS_WAITING_OVERSIGHT,          # a child whose turn is over
     (STATUS_COLOR_RED, "error"): STATUS_ERROR,
     (STATUS_COLOR_RED, None): STATUS_WAITING_USER,                # awaiting input, question, overdue
 }
@@ -460,9 +464,9 @@ def _awaiting(activity: str, armable: bool = True) -> Verdict:
 
 
 def _turn_over(ctx: TickContext, activity: str) -> Verdict:
-    """A turn that ended: a child is ready for oversight, anyone else needs input."""
+    """A turn that ended: a child is at rest, anyone else needs input."""
     if ctx.is_child:
-        return Verdict(STATUS_COLOR_ORANGE, [StatusBadge(kind="oversight")], activity, armable=True)
+        return Verdict(STATUS_COLOR_REST, [], activity, armable=True)
     return _awaiting(activity)
 
 
@@ -562,12 +566,13 @@ def rule_interrupt(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
 def rule_idle_confirmed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     """A turn that ended without a Stop reads like a Stop (engine-0.6.md).
 
-    A child's reads like a child's Stop: ready for oversight.
+    A child's reads like a child's Stop: at rest.
     """
     if not ctx.idle_confirmed or v.color != STATUS_COLOR_GREEN:
         return None
-    who = "oversight report" if ctx.is_child else "user input"
-    return _turn_over(ctx, f"Waiting for {who} (turn ended without a Stop)")
+    activity = ("At rest: stopped (turn ended without a Stop)" if ctx.is_child
+                else "Waiting for user input (turn ended without a Stop)")
+    return _turn_over(ctx, activity)
 
 
 def rule_sticky_green(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
@@ -588,13 +593,15 @@ def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     """A turn that is over, with something that will wake it: yellow (#441, #507).
 
     Obligations (wakeups, crons, registered monitors) and the status bar's
-    live counts (monitors, background shells) plus subagents all arm it. A
-    child is lifted only by its own background work: one with just a cron
-    is ready to report.
+    live counts (monitors, background shells) plus subagents all arm it,
+    and so do its own child agents still working: a parent whose turn ended
+    while they work waits on them, not on you. A child is lifted only by
+    its own background work: one with just a cron is at rest.
     """
     if not v.armable:
         return None
-    if v.color == STATUS_COLOR_ORANGE and not (ctx.monitors or ctx.shells or ctx.subagents):
+    if v.color == STATUS_COLOR_REST and not (
+            ctx.monitors or ctx.shells or ctx.subagents or ctx.children):
         return None
     badges = _badges_from_obligations(ctx.obligations, ctx.now)
     # Monitor streams and background shells seen in the status bar but not
@@ -614,19 +621,23 @@ def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
             badges.append(StatusBadge(kind=kind, count=extra))
     if ctx.subagents:
         badges.append(StatusBadge(kind="subagent", count=ctx.subagents))
+    if ctx.children:
+        badges.append(StatusBadge(kind="children", count=ctx.children))
     if not badges:
         return None
     if ctx.monitors:
         activity = f"Watching {_plural(ctx.monitors, 'monitor')}"
+    elif ctx.children:
+        activity = f"Waiting on {ctx.children} child{'' if ctx.children == 1 else 'ren'}"
     elif ctx.subagents:
         activity = f"Waiting on {_plural(ctx.subagents, 'background agent')}"
     elif ctx.shells:
         activity = f"Waiting on {_plural(ctx.shells, 'background shell')}"
     else:
         activity = "Armed: " + ", ".join(_ARMED_WORDS.get(b.kind, b.kind) for b in badges)
-    # Only scheduled to wake (no monitor, shell, subagent or background
-    # task running): the turn is still over, so the status stays the one
-    # it rests in (waiting, or oversight for a child); only the colour arms
+    # Only scheduled to wake (no monitor, shell, subagent, child or
+    # background task running): the turn is still over, so the status stays
+    # the one it rests in (waiting, or at rest for a child); only the colour arms
     working = any(b.kind not in _SCHEDULED_KINDS for b in badges)
     return Verdict(STATUS_COLOR_YELLOW, badges, activity,
                    rests_as=None if working else v.legacy_status)
@@ -699,7 +710,7 @@ def build_activity(event: str, hook_state: dict, is_child: bool = False) -> str:
 
     if event == "Stop":
         if is_child:
-            return "Waiting for oversight report"
+            return "At rest: stopped"
         return "Waiting for user input"
 
     if event == "StopFailure":
@@ -746,7 +757,8 @@ def _parse_bash_activity(hook_state: dict) -> str | None:
 # BUSY_SLEEPING's activity says which kind it is: armed (yellow) or a
 # foreground sleep (green), as the verdict table has it
 _ARMED_ACTIVITY_RE = re.compile(
-    r"^(?:Watching (\d+) monitor|Waiting on (\d+) background agent|Waiting on (\d+) background shell)"
+    r"^(?:Watching (\d+) monitor|Waiting on (\d+) background agent|Waiting on (\d+) background shell"
+    r"|Waiting on (\d+) child)"
 )
 
 
@@ -766,8 +778,9 @@ def synthesize_status_detail_from_legacy(
         STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT, STATUS_ERROR,
         STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT,
         STATUS_HEARTBEAT_START, STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE,
+        STATUS_UNKNOWN,
     )
-    if status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE):
+    if status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE, STATUS_UNKNOWN):
         return None
     if status in (STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START):
         return StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="heartbeat")], status)
@@ -785,7 +798,8 @@ def synthesize_status_detail_from_legacy(
         # every polling-mode BUSY_SLEEPING, is a foreground sleep (green)
         m = _ARMED_ACTIVITY_RE.match(activity or "")
         if m:
-            kind = ("monitor", "subagent", "bg_task")[[g is not None for g in m.groups()].index(True)]
+            kind = ("monitor", "subagent", "bg_task", "children")[
+                [g is not None for g in m.groups()].index(True)]
             count = int(next(g for g in m.groups() if g is not None))
             return StatusDetail(STATUS_COLOR_YELLOW, [StatusBadge(kind=kind, count=count)], status)
         if (activity or "").startswith("Armed: "):
@@ -796,7 +810,7 @@ def synthesize_status_detail_from_legacy(
     if status == STATUS_WAITING_APPROVAL:
         return StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind="permission")], status)
     if status == STATUS_WAITING_OVERSIGHT:
-        return StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind="oversight")], status)
+        return StatusDetail(STATUS_COLOR_REST, [], status)
     if status == STATUS_WAITING_HEARTBEAT:
         return StatusDetail(STATUS_COLOR_YELLOW, [StatusBadge(kind="heartbeat")], status)
     if status == STATUS_ERROR:
@@ -891,6 +905,10 @@ class HookStatusDetector:
         self._content_changed: Dict[str, bool] = {}
         # Skills observed via Skill tool_use events, keyed by session name (#252)
         self._loaded_skills: Dict[str, set] = {}
+        # Child agents still working, by parent session id: the monitor
+        # daemon fills it from its last published tick (the dispatcher
+        # shares one dict across every backend's detector)
+        self.children_working: Dict[str, int] = {}
         # Structured 2-column status detail, populated by detect_status and
         # consumed by the ⏰ column. Keyed by session name (#TBD).
         self._status_details: Dict[str, StatusDetail] = {}
@@ -1098,9 +1116,9 @@ class HookStatusDetector:
                 # binary) and the window is back at the shell.
                 self._last_detect_phase[session.id] = "hook:no_state+dead_shell"
                 return STATUS_TERMINATED, "Agent exited - shell prompt", pane_content
-            # Window alive, no hooks yet — assume waiting for input
+            # Window alive, no hooks yet: starting up, not known yet
             self._last_detect_phase[session.id] = "hook:no_state"
-            return STATUS_WAITING_USER, "Waiting for first hook event", pane_content
+            return STATUS_UNKNOWN, "Starting: waiting for first hook event", pane_content
 
         # Track loaded skills from persisted hook state (#252)
         # hook_handler.py accumulates skills in the "loaded_skills" field,
@@ -1137,6 +1155,7 @@ class HookStatusDetector:
         base = dict(
             hook_state=hook_state, now=now, event=event, pane=pane_content, clean=clean,
             is_child=session.parent_session_id is not None, patterns=patterns,
+            children=self.children_working.get(session.id, 0),
         )
         if event == "SessionEnd":
             return TickContext(**base)

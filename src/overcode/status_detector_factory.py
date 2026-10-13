@@ -120,9 +120,15 @@ class StatusDetectorDispatcher:
         hook_detector: Optional[StatusDetectorProtocol] = None,
         mode: str = "polling",
         capture_gate: Optional["PaneCaptureGate"] = None,
+        children_working: Optional[Dict[str, int]] = None,
     ):
         self.tmux_session = tmux_session
         self._tmux = tmux
+        # Child agents still working, by parent session id: one dict, filled
+        # by the caller each tick and shared with every hook detector (a
+        # parent whose turn ended while they work waits on them)
+        self.children_working: Dict[str, int] = (
+            children_working if children_working is not None else {})
         # One pane_capture_gate.PaneCaptureGate for every detector this
         # dispatcher holds or creates, so the caller's per-loop capture plan
         # covers every backend's pair.
@@ -186,10 +192,12 @@ class StatusDetectorDispatcher:
         return pair
 
     def _install_gate(self, *detectors: StatusDetectorProtocol) -> None:
-        if self._capture_gate is None:
-            return
+        """Share the capture gate and the children-working counts with ``detectors``."""
         for detector in detectors:
-            detector.capture_gate = self._capture_gate
+            if hasattr(detector, "children_working"):
+                detector.children_working = self.children_working
+            if self._capture_gate is not None:
+                detector.capture_gate = self._capture_gate
 
     def resolve_mode(self, session: "Session") -> str:
         """Detection mode this session will be watched with."""

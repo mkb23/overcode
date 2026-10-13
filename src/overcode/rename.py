@@ -167,8 +167,11 @@ class RenameMixin:
             try:
                 status = self._live_status(session)
             except Exception:
-                status = "unknown"  # can't tell it is idle, so don't assume it
-            if status in self.RENAME_BUSY_STATUSES or status == "unknown":
+                # can't tell it is idle, so don't assume it
+                raise AgentBusyError(old_name, "unknown") from None
+            # A detected "unknown" is an agent still starting (nothing on
+            # screen but its launch line): as renameable as an idle one
+            if status in self.RENAME_BUSY_STATUSES:
                 raise AgentBusyError(old_name, status)
 
         if window_exists:

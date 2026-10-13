@@ -46,7 +46,7 @@ from pathlib import Path
 import pytest
 
 from tests.status_replay import (
-    AGENT, GREEN, ORANGE, RED, TMUX_SESSION,
+    AGENT, GREEN, ORANGE, RED, REST, TMUX_SESSION,
     Scenario, Step, colour_changes, frame, mismatches, node_available, rec, replay,
     timeline,
 )
@@ -318,7 +318,7 @@ RESUMED = Scenario(
     expect=[(0.0, 3.75, RED), (4.0, 5.25, GREEN), (5.5, 12.0, RED)],
 )
 
-# A child agent's Stop means "ready to report back": oversight orange.
+# A child agent's Stop means its turn is over: at rest (white), never red.
 CHILD_REPORTS_BACK = Scenario(
     "oc_child_reports_back",
     backend="opencode",
@@ -328,7 +328,7 @@ CHILD_REPORTS_BACK = Scenario(
         frame(0.0, pane("busy")),
         frame(4.85, pane("idle_after_response")),
     ],
-    expect=[(0.0, 4.75, GREEN), (5.0, 15.0, ORANGE)],
+    expect=[(0.0, 4.75, GREEN), (5.0, 15.0, REST)],
 )
 
 # A child interrupted from the keyboard has not finished: the Stop the
@@ -532,7 +532,7 @@ V2_CHILD_REPORTS_BACK = Scenario(
         *v2_shell(2.0, 4.0),
         v2_end(6.0),
     ],
-    expect=[(1.0, 5.75, GREEN), (8.0, 15.0, ORANGE)],
+    expect=[(1.0, 5.75, GREEN), (8.0, 15.0, REST)],
 )
 
 V2_PLUGIN_MISSING_HOOKS_FLEET = Scenario(
