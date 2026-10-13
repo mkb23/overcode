@@ -160,6 +160,36 @@ class TestJsonlArchive:
         assert [r["id"] for r in _archived_lines(sm)] == ["old-1", s.id]
         assert not sm.legacy_archive_file.exists()
 
+    def test_an_archive_jsonl_that_cannot_be_read_is_kept(self, tmp_path, monkeypatch):
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        old = _session("old-1", "old-1")
+        sm.old_archive_file.write_text(json.dumps(_legacy_record(old)) + "\n")
+        real = Path.read_bytes
+
+        def failing(self):
+            if self == sm.old_archive_file:
+                raise OSError("I/O error")
+            return real(self)
+
+        monkeypatch.setattr(Path, "read_bytes", failing)
+        assert sm.list_archived_sessions() == []
+        assert sm.old_archive_file.exists()  # not deleted unread
+        monkeypatch.setattr(Path, "read_bytes", real)
+        assert [s.id for s in sm.list_archived_sessions()] == ["old-1"]
+        assert not sm.old_archive_file.exists()
+
+    def test_records_reaching_a_closed_month_are_added_to_its_gzip(self, tmp_path):
+        """A re-run migration (after a downgrade) writes into a gzipped month."""
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        a, b = _session("a", "a"), _session("b", "b")
+        sm.legacy_archive_file.write_text(json.dumps({a.id: _legacy_record(a)}))
+        assert [s.id for s in sm.list_archived_sessions()] == ["a"]
+        assert (sm.archive_dir / "2026-01.jsonl.gz").exists()
+        sm.old_archive_file.write_text(json.dumps(_legacy_record(b)) + "\n")
+        assert sorted(s.id for s in sm.list_archived_sessions()) == ["a", "b"]
+        assert not (sm.archive_dir / "2026-01.jsonl").exists()
+        assert sorted(r["id"] for r in _archived_lines(sm)) == ["a", "b"]
+
     def test_unreadable_legacy_archive_is_set_aside(self, tmp_path, caplog):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         sm.legacy_archive_file.write_text("{not json")

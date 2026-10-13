@@ -287,6 +287,17 @@ class SessionArchiveMixin:
                             with open(tmp, "rb") as f:
                                 os.fsync(f.fileno())
                             os.replace(tmp, target)
+                        else:
+                            # Records reached a closed month (a re-run migration):
+                            # add them as one more gzip member, never drop them. A
+                            # crash between this and the unlink repeats them, and
+                            # readers keep one record per id.
+                            with open(plain, "rb") as src, open(target, "ab") as raw:
+                                with gzip.GzipFile(fileobj=raw, mode="wb") as dst:
+                                    while chunk := src.read(1 << 20):
+                                        dst.write(chunk)
+                                raw.flush()
+                                os.fsync(raw.fileno())
                         plain.unlink()
                         done.append(month)
                     except OSError as e:
@@ -335,9 +346,13 @@ class SessionArchiveMixin:
         with self._archive_lock():
             by_month: Dict[str, List[dict]] = {}
             default = datetime.now().strftime("%Y-%m")
-            for record in self._read_old_archives():
-                month = month_of(record.get("end_time") or record.get("start_time"), default)
-                by_month.setdefault(month, []).append(slim_record(record))
+            try:
+                for record in self._read_old_archives():
+                    month = month_of(record.get("end_time") or record.get("start_time"), default)
+                    by_month.setdefault(month, []).append(slim_record(record))
+            except OSError as e:
+                logger.warning("could not read %s, leaving it for next time: %s", old_jsonl, e)
+                return
             for month in sorted(by_month):
                 self._append_month_records(month, by_month[month])
             for path in (old_jsonl, legacy, legacy.with_name(legacy.name + ".migrated")):
@@ -366,10 +381,10 @@ class SessionArchiveMixin:
             if isinstance(records, dict):
                 yield from (r for r in records.values()
                             if isinstance(r, dict) and isinstance(r.get("id"), str))
-        try:
-            data = self.old_archive_file.read_bytes()
-        except OSError:
+        if not self.old_archive_file.exists():
             return
+        # An unreadable archive.jsonl raises: the migration must not delete it
+        data = self.old_archive_file.read_bytes()
         for line in _complete_lines(data):
             record = _archive_record(line)
             if record is not None:
