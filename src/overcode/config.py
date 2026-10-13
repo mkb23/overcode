@@ -53,6 +53,12 @@ def _clear_config_cache() -> None:
 _TOP_LEVEL_KEY = re.compile(r"^([^\s#][^:]*):")
 
 
+def _is_list_item(line: str) -> bool:
+    """A column-0 ``- item`` line: YAML (and PyYAML's default dump) allows a
+    key's list items unindented, and they belong to that key's block."""
+    return line[:1] == "-" and line[1:2] in (" ", "\t", "\n", "\r", "")
+
+
 def _top_level_blocks(lines: List[str]) -> dict:
     """{key: (start, end)} line ranges of each top-level mapping entry.
 
@@ -70,11 +76,11 @@ def _top_level_blocks(lines: List[str]) -> dict:
         start, i = i, i + 1
         while i < len(lines):
             line = lines[i]
-            if line[:1] in (" ", "\t"):
+            if line[:1] in (" ", "\t") or _is_list_item(line):
                 i += 1
             elif not line.strip():
                 nxt = next((ln for ln in lines[i:] if ln.strip()), "")
-                if nxt[:1] in (" ", "\t"):
+                if nxt[:1] in (" ", "\t") or _is_list_item(nxt):
                     i += 1
                 else:
                     break
@@ -113,7 +119,15 @@ def _merge_into_text(text: str, config: dict) -> str:
             edits.append(((len(lines), len(lines)), rendered))
     for (start, end), rendered in sorted(edits, key=lambda e: e[0], reverse=True):
         lines[start:end] = [rendered] if rendered else []
-    return "".join(lines)
+    merged = "".join(lines)
+    # Never write a file that doesn't read back as ``config``: a layout the
+    # block finder misreads costs the comments, not the config.
+    try:
+        if yaml.safe_load(merged) == config:
+            return merged
+    except yaml.YAMLError:
+        pass
+    return yaml.dump(config, default_flow_style=False, sort_keys=False)
 
 
 def save_config(config: dict) -> None:

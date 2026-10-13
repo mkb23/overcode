@@ -835,6 +835,29 @@ class TestSaveKeepsComments:
         assert "# Sister machines" in out and "# my laptop" in out
         assert yaml.safe_load(out) == config
 
+    def test_a_column_0_list_is_one_block(self):
+        """PyYAML's default dump puts a key's list items at column 0."""
+        from overcode.config import _merge_into_text
+        import yaml
+
+        text = ("# keep me\nsisters:\n- name: a\n  url: http://a\n\n- name: b\n"
+                "  url: http://b\nweb:\n  port: 8080\n")
+        config = yaml.safe_load(text)
+        config["sisters"] = config["sisters"][1:]
+        out = _merge_into_text(text, config)
+        assert yaml.safe_load(out) == config
+        assert "# keep me" in out and "http://a" not in out
+
+    def test_a_merge_that_would_not_read_back_falls_back_to_a_full_dump(self, monkeypatch):
+        from overcode import config as config_mod
+        import yaml
+
+        monkeypatch.setattr(config_mod, "_top_level_blocks", lambda lines: {})
+        config = yaml.safe_load(self.TEXT)
+        del config["web"]
+        out = config_mod._merge_into_text(self.TEXT, config)
+        assert yaml.safe_load(out) == config
+
     def test_new_and_removed_entries(self):
         from overcode.config import _merge_into_text
         import yaml

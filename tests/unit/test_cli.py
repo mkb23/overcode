@@ -1909,11 +1909,6 @@ class TestSisterCommands:
         assert "Removed sister" in result.output
         assert config_yaml.read().get("sisters", []) == []
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "src bug: config._top_level_blocks ends a key's block at a column-0 "
-        "'- item' line (valid YAML, and PyYAML's own default style), so "
-        "save_config rewrites only the 'sisters:' line and leaves the old items "
-        "after it: the saved config.yaml no longer parses"))
     def test_sister_remove_from_a_column_0_list(self, config_yaml):
         config_yaml.write("sisters:\n- name: macbook\n  url: http://localhost:5337\n")
         result = runner.invoke(app, ["sister", "remove", "macbook"])
