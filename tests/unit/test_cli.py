@@ -63,16 +63,20 @@ class Fleet:
         fields = {"repo_name": "test-repo", "branch": "main", **fields}
         return self.add(name, stats=stats, **fields)
 
-    def publish(self, **by_name):
-        """Publish a fresh monitor-daemon state: ``name={SessionDaemonState fields}``."""
+    def publish(self, daemon=None, **by_name):
+        """Publish a fresh monitor-daemon state: ``name={SessionDaemonState fields}``.
+
+        ``daemon`` holds MonitorDaemonState fields to set on it.
+        """
         from datetime import datetime
         from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
         from overcode.settings import get_monitor_daemon_state_path
 
         sessions = [SessionDaemonState(session_id=self.get(name).id, name=name, **fields)
                     for name, fields in by_name.items()]
-        MonitorDaemonState(pid=1, status="active", last_loop_time=datetime.now().isoformat(),
-                           sessions=sessions).save(get_monitor_daemon_state_path("agents"))
+        fields = dict(pid=1, status="active", last_loop_time=datetime.now().isoformat())
+        fields.update(daemon or {})
+        MonitorDaemonState(sessions=sessions, **fields).save(get_monitor_daemon_state_path("agents"))
 
     def get(self, name):
         return self.sm.resolve_session_name(name)
@@ -1660,12 +1664,11 @@ class TestMonitorDaemonStartCommand:
 class TestMonitorDaemonStopCommand:
     """Test monitor-daemon stop command."""
 
-    def test_daemon_stop_not_running(self):
+    def test_daemon_stop_not_running(self, fleet):
         """Stop when not running shows message."""
-        with patch('overcode.monitor_daemon.is_monitor_daemon_running', return_value=False):
-            result = runner.invoke(app, ["monitor-daemon", "stop"])
-            assert result.exit_code == 0
-            assert "not running" in result.output
+        result = runner.invoke(app, ["monitor-daemon", "stop"])
+        assert result.exit_code == 0
+        assert "not running" in result.output
 
     def test_daemon_stop_success(self):
         """Stop successfully stops daemon."""
@@ -1689,71 +1692,52 @@ class TestMonitorDaemonStopCommand:
 class TestMonitorDaemonStatusCommand:
     """Test monitor-daemon status command."""
 
-    def test_daemon_status_stopped(self):
-        """Status when stopped."""
-        with patch('overcode.monitor_daemon.is_monitor_daemon_running', return_value=False):
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                with patch('overcode.settings.get_monitor_daemon_state_path', return_value=Path("/tmp/test")):
-                    result = runner.invoke(app, ["monitor-daemon", "status"])
-                    assert result.exit_code == 0
-                    assert "stopped" in result.output
+    def test_daemon_status_stopped(self, fleet):
+        """Status when stopped, with the last state it published."""
+        fleet.publish(daemon={"last_loop_time": "2026-02-06T12:00:00"})
+        result = runner.invoke(app, ["monitor-daemon", "status"])
+        assert result.exit_code == 0
+        assert "stopped" in result.output
+        assert "Last active" in result.output
 
-    def test_daemon_status_running(self):
+    @staticmethod
+    def _running(pid):
+        """The daemon process is alive (a PID check against a real process)."""
+        from contextlib import ExitStack
+        stack = ExitStack()
+        stack.enter_context(patch('overcode.monitor_daemon.is_monitor_daemon_running', return_value=True))
+        stack.enter_context(patch('overcode.monitor_daemon.get_monitor_daemon_pid', return_value=pid))
+        return stack
+
+    def test_daemon_status_running(self, fleet):
         """Status when running."""
-        mock_state = MagicMock()
-        mock_state.status = "running"
-        mock_state.loop_count = 42
-        mock_state.current_interval = 10
-        mock_state.sessions = [MagicMock()]
-        mock_state.last_loop_time = None
-        mock_state.presence_available = False
+        fleet.add("one")
+        fleet.publish(daemon={"loop_count": 42, "current_interval": 10}, one={})
+        with self._running(5678):
+            result = runner.invoke(app, ["monitor-daemon", "status"])
+        assert result.exit_code == 0
+        assert "running (PID 5678)" in result.output
+        assert "Loop count: 42" in result.output
+        assert "Sessions: 1" in result.output
 
-        with patch('overcode.monitor_daemon.is_monitor_daemon_running', return_value=True):
-            with patch('overcode.monitor_daemon.get_monitor_daemon_pid', return_value=5678):
-                with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=mock_state):
-                    with patch('overcode.settings.get_monitor_daemon_state_path', return_value=Path("/tmp/test")):
-                        result = runner.invoke(app, ["monitor-daemon", "status"])
-                        assert result.exit_code == 0
-                        assert "running" in result.output
-                        assert "5678" in result.output
-
-    def test_daemon_status_with_presence(self):
+    def test_daemon_status_with_presence(self, fleet):
         """Status shows presence info when available."""
-        from datetime import datetime
-        mock_state = MagicMock()
-        mock_state.status = "running"
-        mock_state.loop_count = 10
-        mock_state.current_interval = 10
-        mock_state.sessions = []
-        mock_state.last_loop_time = datetime(2026, 2, 6, 12, 0, 0)
-        mock_state.presence_available = True
-        mock_state.presence_state = "active"
-        mock_state.presence_idle_seconds = 0.0
-
-        with patch('overcode.monitor_daemon.is_monitor_daemon_running', return_value=True):
-            with patch('overcode.monitor_daemon.get_monitor_daemon_pid', return_value=1234):
-                with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=mock_state):
-                    with patch('overcode.settings.get_monitor_daemon_state_path', return_value=Path("/tmp/test")):
-                        result = runner.invoke(app, ["monitor-daemon", "status"])
-                        assert result.exit_code == 0
-                        assert "Presence" in result.output
+        fleet.publish(daemon={"presence_available": True, "presence_state": 3,
+                              "presence_idle_seconds": 12.0})
+        with self._running(1234):
+            result = runner.invoke(app, ["monitor-daemon", "status"])
+        assert result.exit_code == 0
+        assert "Presence: state=3, idle=12s" in result.output
 
 
 class TestMonitorDaemonWatchCommand:
     """Test monitor-daemon watch command."""
 
-    def test_watch_no_log(self):
+    def test_watch_no_log(self, fleet):
         """Watch errors when log file doesn't exist."""
-        with patch('overcode.settings.get_session_dir') as mock_dir:
-            mock_path = MagicMock()
-            mock_log = MagicMock()
-            mock_log.exists.return_value = False
-            mock_path.__truediv__ = MagicMock(return_value=mock_log)
-            mock_dir.return_value = mock_path
-
-            result = runner.invoke(app, ["monitor-daemon", "watch"])
-            assert result.exit_code == 1
-            assert "Log file not found" in result.output
+        result = runner.invoke(app, ["monitor-daemon", "watch"])
+        assert result.exit_code == 1
+        assert "Log file not found" in result.output
 
 
 class TestSupervisorDaemonStartCommand:
@@ -1782,12 +1766,11 @@ class TestSupervisorDaemonStartCommand:
 class TestSupervisorDaemonStopCommand:
     """Test supervisor-daemon stop command."""
 
-    def test_stop_not_running(self):
+    def test_stop_not_running(self, fleet):
         """Stop when not running."""
-        with patch('overcode.supervisor_daemon.is_supervisor_daemon_running', return_value=False):
-            result = runner.invoke(app, ["supervisor-daemon", "stop"])
-            assert result.exit_code == 0
-            assert "not running" in result.output
+        result = runner.invoke(app, ["supervisor-daemon", "stop"])
+        assert result.exit_code == 0
+        assert "not running" in result.output
 
     def test_stop_success(self):
         """Stop successfully."""
@@ -1811,12 +1794,11 @@ class TestSupervisorDaemonStopCommand:
 class TestSupervisorDaemonStatusCommand:
     """Test supervisor-daemon status command."""
 
-    def test_status_stopped(self):
+    def test_status_stopped(self, fleet):
         """Status when stopped."""
-        with patch('overcode.supervisor_daemon.is_supervisor_daemon_running', return_value=False):
-            result = runner.invoke(app, ["supervisor-daemon", "status"])
-            assert result.exit_code == 0
-            assert "stopped" in result.output
+        result = runner.invoke(app, ["supervisor-daemon", "status"])
+        assert result.exit_code == 0
+        assert "stopped" in result.output
 
     def test_status_running(self):
         """Status when running."""
@@ -1831,18 +1813,11 @@ class TestSupervisorDaemonStatusCommand:
 class TestSupervisorDaemonWatchCommand:
     """Test supervisor-daemon watch command."""
 
-    def test_watch_no_log(self):
+    def test_watch_no_log(self, fleet):
         """Watch errors when log file doesn't exist."""
-        with patch('overcode.settings.get_session_dir') as mock_dir:
-            mock_path = MagicMock()
-            mock_log = MagicMock()
-            mock_log.exists.return_value = False
-            mock_path.__truediv__ = MagicMock(return_value=mock_log)
-            mock_dir.return_value = mock_path
-
-            result = runner.invoke(app, ["supervisor-daemon", "watch"])
-            assert result.exit_code == 1
-            assert "Log file not found" in result.output
+        result = runner.invoke(app, ["supervisor-daemon", "watch"])
+        assert result.exit_code == 1
+        assert "Log file not found" in result.output
 
 
 @pytest.fixture
