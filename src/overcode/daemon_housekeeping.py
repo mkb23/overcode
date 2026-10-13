@@ -80,6 +80,8 @@ class Housekeeping:
         self.last_storage_tidy: Optional[float] = None
         # Each live agent's last ledger checkpoint: (when, cumulative cost)
         self.last_checkpoint: Dict[str, tuple] = {}
+        # Whether this session's storage is on the 0.6 layout (layout_migration)
+        self.layout_migrated = False
 
     def due(self, now: datetime) -> bool:
         """Wall-clock replacement for ``loop_count % 60 == 0``.
@@ -246,6 +248,26 @@ class Housekeeping:
         done = {k: v for k, v in (counts or {}).items() if v and k != "kept"}
         if done:
             self.log.info(f"Agent storage tidied: {done}")
+
+    def migrate_storage(self, session_manager) -> None:
+        """Move this session's storage to the 0.6 layout, one batch per pass.
+
+        Runs at daemon start and on every housekeeping pass until done
+        (``layout_migration``); then never again in this process.
+        """
+        if self.layout_migrated:
+            return
+        try:
+            from .layout_migration import LAYOUT_VERSION, layout_version, migrate_layout
+
+            if layout_version(self.tmux_session) == LAYOUT_VERSION:
+                self.layout_migrated = True
+                return
+            moved = migrate_layout(self.tmux_session, session_manager)
+            self.layout_migrated = bool(moved.get("done"))
+            self.log.info(f"Storage layout migration: {moved}")
+        except Exception as e:  # housekeeping must never fail the tick
+            self.log.warn(f"storage layout not migrated: {e}")
 
     def prune_finished_jobs(self) -> None:
         """Drop finished jobs past their retention, at most hourly."""

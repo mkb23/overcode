@@ -1968,6 +1968,7 @@ class MonitorDaemon:
                                                      window_gone=window_gone)
             housekeeping.prune_finished_jobs()
             housekeeping.tidy_storage(self.session_manager)
+            housekeeping.migrate_storage(self.session_manager)
             ledger = getattr(self.session_manager, "ledger", None)
             if ledger is not None:
                 housekeeping.checkpoint_spend(
@@ -2017,6 +2018,7 @@ class MonitorDaemon:
         self._start_engine_socket()
         # Agent directories a crash or an older overcode left (bounded)
         self.housekeeping.tidy_storage(self.session_manager, force=True)
+        self.housekeeping.migrate_storage(self.session_manager)
 
         try:
             while not self._shutdown:
