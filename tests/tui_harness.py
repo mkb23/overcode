@@ -15,12 +15,13 @@ every pilot test needs it:
   real ``EngineClient`` for tests of the socket path (run an
   ``EngineServer`` on ``tui_engine.engine_socket_path(session)``).
 
-The helpers below (``three_agents``, ``ready``, ``until``, ``palette``)
-are what the pilot tests share.
+The helpers below (``three_agents``, ``ready``, ``until``, ``palette``,
+``CountedWork``) are what the pilot tests share.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Callable, Optional
 
 from overcode.engine_protocol import Snapshot
@@ -185,3 +186,94 @@ async def ready(pilot) -> None:
 def palette(app):
     from overcode.tui_widgets import CommandPalette
     return app.query_one("#command-palette", CommandPalette)
+
+
+class CountedWork:
+    """Counts of the TUI's real work, by kind (and by row name for row work).
+
+    Wraps the real methods (quality review item 37: count work, not time):
+    ``SessionSummary.apply_engine`` (a row takes its view), ``_full_builds``
+    (its cells built from scratch), ``_compose_line`` (its line padded
+    again), ``Widget.refresh`` on a row or the status bar (``"bar"``),
+    ``app._repaint`` and ``tui_engine.monitor_state`` (the bar rebuilt).
+    ``total()`` is all of it; ``NO_WORK`` is a quiet stretch's total.
+    """
+
+    def __init__(self, app, monkeypatch):
+        from textual.widget import Widget
+
+        from overcode import tui_engine
+        from overcode.tui_widgets import DaemonStatusBar, SessionSummary
+
+        self.app = app
+        self.applies = Counter()
+        self.refreshes = Counter()  # row name, or "bar"
+        self.composes = Counter()
+        self.repaints = []  # the rows each _repaint was asked for
+        self.bar_builds = 0
+        work = self
+
+        real_apply = SessionSummary.apply_engine
+
+        def apply_engine(row, *a, **kw):
+            work.applies[row.session.name] += 1
+            return real_apply(row, *a, **kw)
+
+        real_compose = SessionSummary._compose_line
+
+        def compose_line(row, *a, **kw):
+            work.composes[row.session.name] += 1
+            return real_compose(row, *a, **kw)
+
+        real_refresh = Widget.refresh
+
+        def refresh(widget, *a, **kw):
+            if isinstance(widget, SessionSummary):
+                work.refreshes[widget.session.name] += 1
+            elif isinstance(widget, DaemonStatusBar):
+                work.refreshes["bar"] += 1
+            return real_refresh(widget, *a, **kw)
+
+        real_monitor_state = tui_engine.monitor_state
+
+        def monitor_state(*a, **kw):
+            work.bar_builds += 1
+            return real_monitor_state(*a, **kw)
+
+        real_repaint = app._repaint
+
+        def repaint(changed):
+            work.repaints.append(sorted(w.session.name for w in changed))
+            return real_repaint(changed)
+
+        monkeypatch.setattr(SessionSummary, "apply_engine", apply_engine)
+        monkeypatch.setattr(SessionSummary, "_compose_line", compose_line)
+        monkeypatch.setattr(Widget, "refresh", refresh)
+        monkeypatch.setattr(tui_engine, "monitor_state", monitor_state)
+        monkeypatch.setattr(app, "_repaint", repaint)
+        self.reset()
+
+    def full_builds(self) -> Counter:
+        from overcode.tui_widgets import SessionSummary
+
+        return Counter({w.session.name: w._full_builds - self._builds0.get(w.session.name, 0)
+                        for w in self.app.query(SessionSummary)}) + Counter()
+
+    def reset(self) -> None:
+        from overcode.tui_widgets import SessionSummary
+
+        self.applies.clear()
+        self.refreshes.clear()
+        self.composes.clear()
+        self.repaints.clear()
+        self.bar_builds = 0
+        self._builds0 = {w.session.name: w._full_builds for w in self.app.query(SessionSummary)}
+
+    def total(self) -> dict:
+        return {"applies": dict(self.applies), "refreshes": dict(self.refreshes),
+                "composes": dict(self.composes), "repaints": list(self.repaints),
+                "bar_builds": self.bar_builds, "full_builds": dict(self.full_builds())}
+
+
+NO_WORK = {"applies": {}, "refreshes": {}, "composes": {}, "repaints": [],
+           "bar_builds": 0, "full_builds": {}}

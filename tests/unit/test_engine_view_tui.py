@@ -170,14 +170,37 @@ class TestRendersWhatTheEnginePublishes:
             assert await _until(pilot, lambda: app.column_widths != widths)
             assert recomputes
 
-    async def test_a_quiet_engine_repaints_nothing(self, app, engine):
+    async def test_a_quiet_engine_repaints_nothing(self, app, engine, monkeypatch):
+        """Republishing what the view shows sends no delta, and the view
+        does no work: no snapshot applied, no row applied, rebuilt or
+        repainted, no status-bar rebuild (counted, quality review item 37)."""
+        from tests.tui_harness import NO_WORK, CountedWork
+
         engine.publish(_snapshot())
         async with app.run_test(size=(200, 40)) as pilot:
             await _connected(pilot, app)
-            seq = app.engine_link.client.state.snapshot.seq
-            engine.publish(_snapshot())  # nothing changed: no delta at all
+            await pilot.pause(0.1)
+            link = app.engine_link
+            seq = link.client.state.snapshot.seq
+            snapshots = []
+            real_apply_snapshot = link.apply_snapshot
+            monkeypatch.setattr(link, "apply_snapshot",
+                                lambda snap: (snapshots.append(snap.seq),
+                                              real_apply_snapshot(snap))[1])
+            work = CountedWork(app, monkeypatch)
+            for _ in range(5):
+                engine.publish(_snapshot())  # nothing changed: no delta at all
             await pilot.pause(0.3)
-            assert app.engine_link.client.state.snapshot.seq == seq
+            assert link.client.state.snapshot.seq == seq
+            assert snapshots == []
+            assert work.total() == NO_WORK
+            # The counters are live: one real change is one row's work
+            engine.publish(_snapshot(bravo=dict(current_activity="Reading files")))
+            assert await _until(pilot, lambda: snapshots)
+            await pilot.pause(0.1)
+            assert len(snapshots) == 1
+            assert work.applies == {"bravo": 1} and work.repaints == [["bravo"]]
+            assert work.bar_builds == 0 and work.full_builds() == {"bravo": 1}
 
 
 @pytest.mark.asyncio
