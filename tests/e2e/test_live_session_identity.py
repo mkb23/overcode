@@ -49,7 +49,9 @@ def test_a_second_claude_in_the_repo_is_not_adopted(spec, live_env):
 
     def hook_state():
         try:
-            return json.loads((state_dir / session / f"hook_state_{NAME}.json").read_text())
+            from tests.agent_file_lookup import agent_state_file
+
+            return json.loads(agent_state_file(state_dir, session, NAME, "hook_state").read_text())
         except (OSError, ValueError):
             return {}
 

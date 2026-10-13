@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.agent_file_lookup import agent_state_file
+
 # Isolated tmux socket for tests
 TEST_TMUX_SOCKET = "overcode-test"
 
@@ -236,8 +238,8 @@ def _wait_for_daemon_status(
 
 
 def _read_hook_state_file(state_dir: str, session_name: str, agent_name: str) -> dict | None:
-    """Read hook_state_{name}.json to verify hooks actually fired."""
-    path = Path(state_dir) / session_name / f"hook_state_{agent_name}.json"
+    """Read the agent's hook_state.json to verify hooks actually fired."""
+    path = agent_state_file(state_dir, session_name, agent_name, "hook_state")
     try:
         with open(path) as f:
             return json.load(f)
@@ -259,7 +261,7 @@ def _history_rows(state_dir: str, session_name: str, agent_name: str) -> list[tu
 
 
 def _hook_events(state_dir: str, session_name: str, agent_name: str) -> list[dict]:
-    path = Path(state_dir) / session_name / f"hook_events_{agent_name}.jsonl"
+    path = agent_state_file(state_dir, session_name, agent_name, "hook_events")
     try:
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     except FileNotFoundError:
@@ -392,7 +394,7 @@ class TestHookStatusDetection:
         # Hook state file must exist
         hook_state = _read_hook_state_file(state_dir, session, "hook-test")
         assert hook_state is not None, (
-            f"Hook state file not found at {state_dir}/{session}/hook_state_hook-test.json"
+            f"Hook state file not found at {agent_state_file(state_dir, session, 'hook-test', 'hook_state')}"
         )
         print(f"  Hook state file: {hook_state}")
 

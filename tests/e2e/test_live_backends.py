@@ -449,7 +449,9 @@ class TestLiveBackend:
             time.sleep(0.5)
 
     def _hook_state_path(self) -> Path:
-        return Path(self.live["state_dir"]) / self.session / f"hook_state_{self.name}.json"
+        from tests.agent_file_lookup import agent_state_file
+
+        return agent_state_file(self.live["state_dir"], self.session, self.name, "hook_state")
 
     def _hook_state(self) -> Optional[dict]:
         try:

@@ -180,13 +180,17 @@ class Driver:
 
     def hook_state(self, agent=AGENT):
         try:
-            return json.loads((self.state_dir / SESSION / f"hook_state_{agent}.json").read_text())
+            from tests.agent_file_lookup import agent_state_file
+
+            return json.loads(agent_state_file(self.state_dir, SESSION, agent, "hook_state").read_text())
         except (OSError, ValueError):
             return None
 
     def hook_events(self, agent=AGENT):
         try:
-            lines = (self.state_dir / SESSION / f"hook_events_{agent}.jsonl").read_text().splitlines()
+            from tests.agent_file_lookup import agent_state_file
+
+            lines = agent_state_file(self.state_dir, SESSION, agent, "hook_events").read_text().splitlines()
         except OSError:
             return []
         return [json.loads(l) for l in lines if l.strip()]

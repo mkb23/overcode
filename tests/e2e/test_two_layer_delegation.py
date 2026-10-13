@@ -251,22 +251,36 @@ def _verify_hierarchy(state_dir: str) -> dict:
 
 
 def _find_report_files(state_dir: str) -> dict:
-    """Find all report_*.json files in the state dir and parse them.
+    """Find every agent's report in the state dir and parse it.
 
-    Returns dict: agent_name → parsed report data (or error info).
+    Reports live in each agent's own directory (agents/<id>/report.json,
+    named through sessions.json); a name-keyed report_<name>.json from an
+    older layout is read too. Returns dict: agent_name → parsed report data
+    (or error info).
     """
-    reports = {}
-    pattern = os.path.join(state_dir, "**", "report_*.json")
-    for path in glob_mod.glob(pattern, recursive=True):
+    names = {}
+    for candidate in (os.path.join(state_dir, "sessions.json"),
+                      os.path.join(state_dir, "sessions", "sessions.json")):
+        try:
+            with open(candidate) as f:
+                names.update({r.get("id"): r.get("name") for r in json.load(f).values()})
+        except (OSError, ValueError, AttributeError):
+            continue
+    found = []
+    for path in glob_mod.glob(os.path.join(state_dir, "**", "agents", "*", "report.json"),
+                              recursive=True):
+        sid = os.path.basename(os.path.dirname(path))
+        found.append((names.get(sid, sid), path))
+    for path in glob_mod.glob(os.path.join(state_dir, "**", "report_*.json"), recursive=True):
         filename = os.path.basename(path)
-        if filename.startswith("report_") and filename.endswith(".json"):
-            agent_name = filename[len("report_"):-len(".json")]
-            try:
-                with open(path) as f:
-                    data = json.load(f)
-                reports[agent_name] = data
-            except (json.JSONDecodeError, IOError) as exc:
-                reports[agent_name] = {"error": str(exc)}
+        found.append((filename[len("report_"):-len(".json")], path))
+    reports = {}
+    for agent_name, path in found:
+        try:
+            with open(path) as f:
+                reports[agent_name] = json.load(f)
+        except (json.JSONDecodeError, IOError) as exc:
+            reports[agent_name] = {"error": str(exc)}
     return reports
 
 
