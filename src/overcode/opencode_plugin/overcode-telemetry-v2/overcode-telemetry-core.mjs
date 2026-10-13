@@ -186,16 +186,27 @@ function resolveStateDir(env, homedir) {
 /**
  * The pure-ish writer.
  *
+ * The files live in the agent's own directory,
+ * <state-dir>/<tmux-session>/agents/<OVERCODE_SESSION_ID>/, like overcode's
+ * paths.agent_file (item 35); without OVERCODE_SESSION_ID (an older launcher)
+ * they are keyed by the agent's name in the session directory.
+ *
  * `env` needs OVERCODE_SESSION_NAME + OVERCODE_TMUX_SESSION (and optionally
  * OVERCODE_STATE_DIR). `now` is injectable for deterministic tests.
  */
 function createWriter(env, options = {}) {
   const homedir = options.homedir || os.homedir()
   const now = options.now || (() => Date.now() / 1000)
-  const dir = resolveStateDir(env, homedir)
+  const sessionDir = resolveStateDir(env, homedir)
   const agent = env.OVERCODE_SESSION_NAME
-  const statePath = path.join(dir, `hook_state_${agent}.json`)
-  const logPath = path.join(dir, `hook_events_${agent}.jsonl`)
+  const sid = env.OVERCODE_SESSION_ID
+  const dir = sid ? path.join(sessionDir, "agents", sid) : sessionDir
+  const statePath = sid
+    ? path.join(dir, "hook_state.json")
+    : path.join(dir, `hook_state_${agent}.json`)
+  const logPath = sid
+    ? path.join(dir, "hook_events.jsonl")
+    : path.join(dir, `hook_events_${agent}.jsonl`)
 
   function readPrevious() {
     try {

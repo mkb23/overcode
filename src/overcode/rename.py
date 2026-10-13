@@ -1,20 +1,16 @@
 """
 Renaming an agent (#478).
 
-An agent's name is load-bearing: its tmux window, the per-agent files keyed
-by it, and its session record. ``RenameMixin`` is the part of
-``AgentLauncher`` that stops a live agent, rekeys all of those and resumes
-it under the new name. It uses the launcher's ``tmux``, ``sessions``,
-``tmux_session``, ``backend_for``, ``_send_graceful_exit`` and
+An agent's name is load-bearing for its tmux window and its session record
+(and the ``OVERCODE_SESSION_NAME`` baked into its process). ``RenameMixin``
+is the part of ``AgentLauncher`` that stops a live agent, renames those and
+resumes it under the new name. It uses the launcher's ``tmux``,
+``sessions``, ``tmux_session``, ``backend_for``, ``_send_graceful_exit`` and
 ``_send_launch_for_session``.
 
-The name keys exist because per-agent files are keyed by name, not id;
-keying them by session id (quality review item 35) would retire most of this.
+The agent's files are not renamed: they live in its own directory, keyed by
+its session id (``agents/<id>/``, quality review item 35).
 """
-
-import os
-from pathlib import Path
-from typing import List, Tuple
 
 from .exceptions import AgentBusyError
 from .session_manager import Session
@@ -56,43 +52,6 @@ class RenameMixin:
         )
         status, _, _ = detector.detect_status(session)
         return status
-
-    @staticmethod
-    def _name_keyed_paths(tmux_session: str, name: str) -> List[Path]:
-        """Every per-agent file whose name is the agent's name.
-
-        Hook state and event log (status detection, stats, opencode's
-        conversation ids) and the child's ``overcode report`` file.
-        """
-        from .paths import legacy_agent_file
-
-        return [legacy_agent_file(tmux_session, name, kind)
-                for kind in ("hook_state", "hook_events", "report")]
-
-    def _move_name_keyed_files(
-        self, tmux_session: str, old_name: str, new_name: str,
-    ) -> List[Tuple[Path, Path]]:
-        """Rekey the agent's name-keyed files to ``new_name``; returns the moves.
-
-        A file already at a new-name path belongs to no agent (nobody is
-        called ``new_name``) — a leftover from an earlier agent of that name
-        — and is removed, so the renamed agent cannot inherit a stale status
-        or a stale report that would mark it done.
-        """
-        moved: List[Tuple[Path, Path]] = []
-        for old_path, new_path in zip(
-            self._name_keyed_paths(tmux_session, old_name),
-            self._name_keyed_paths(tmux_session, new_name),
-        ):
-            try:
-                new_path.unlink(missing_ok=True)
-                if old_path.exists():
-                    new_path.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(old_path, new_path)
-                    moved.append((old_path, new_path))
-            except OSError:
-                pass  # telemetry continuity is best-effort, not blocking
-        return moved
 
     def rename(
         self,
@@ -184,53 +143,65 @@ class RenameMixin:
             self._send_launch_for_session(session, old_window, fresh=False)
             return False
 
-        moved = self._move_name_keyed_files(self.tmux_session, old_name, new_name)
-
         # Locked duplicate check + write: a concurrent rename of another
-        # agent to `new_name` cannot slip between check and update.
+        # agent to `new_name` cannot slip between check and update. The
+        # agent's files are in its own directory (agents/<id>/, item 35),
+        # keyed by its id, so nothing on disk moves.
         if not self.sessions.rename_session(
             session.id, new_name, tmux_window=new_window
         ):
             # Lost the race — restore the pre-rename identity before bailing.
-            for old_path, new_path in reversed(moved):
-                try:
-                    os.replace(new_path, old_path)
-                except OSError:
-                    pass
             if window_exists:
                 self.tmux.rename_window(new_window, old_window)
                 self._send_launch_for_session(session, old_window, fresh=False)
             raise ValueError(f"an agent named '{new_name}' already exists")
 
-        self._write_rename_notice(old_name, new_name)
+        self._write_rename_notice(session, old_name, new_name)
         if not window_exists:
+            self._drop_name_keyed_files(old_name)
             return True
 
         refreshed = self.sessions.get_session(session.id)
         if not self._send_launch_for_session(refreshed, new_window, fresh=False):
             return False
-        # The old process may have fired a last hook on its way out, after
-        # the files moved; nobody is called old_name any more, so anything
-        # under it now is stale and would mislead a later agent of that name.
-        if self.sessions.get_session_by_name(old_name) is None:
-            for path in self._name_keyed_paths(self.tmux_session, old_name):
-                path.unlink(missing_ok=True)
+        # After the relaunch: the old process may have fired a last hook on
+        # its way out
+        self._drop_name_keyed_files(old_name)
         self.sessions.update_stats(session.id, current_task=f"Renamed from {old_name}")
         return True
 
-    def _write_rename_notice(self, old_name: str, new_name: str) -> None:
+    def _drop_name_keyed_files(self, old_name: str) -> None:
+        """Remove what an agent launched before per-agent directories left under ``old_name``.
+
+        The renamed agent now lives in its own directory (its relaunch and
+        its rename notice create it); nobody is called ``old_name`` any
+        more, so a name-keyed file under it would only mislead an older
+        reader.
+        """
+        if self.sessions.get_session_by_name(old_name) is not None:
+            return
+        from .paths import legacy_agent_file
+
+        for kind in ("hook_state", "hook_events", "report", "rename_notice"):
+            try:
+                legacy_agent_file(self.tmux_session, old_name, kind).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _write_rename_notice(self, session: Session, old_name: str, new_name: str) -> None:
         """Leave the agent a note of its new name for its next prompt (#478).
 
         Delivered as prompt context by the UserPromptSubmit hook
         (``hook_handler._emit_rename_notice``), so it costs no extra turn;
         its resumed conversation otherwise still calls it ``old_name``.
+        Written in the agent's own directory, created here if it has none
+        yet (an agent launched before them moves to it with this rename).
         """
-        from .hook_handler import get_rename_notice_path
+        from .paths import agent_dir, agent_file
 
-        get_rename_notice_path(self.tmux_session, old_name).unlink(missing_ok=True)
-        path = get_rename_notice_path(self.tmux_session, new_name)
+        path = agent_file(self.tmux_session, session.id, "rename_notice")
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            agent_dir(self.tmux_session, session.id).mkdir(parents=True, exist_ok=True)
             path.write_text(
                 f"[overcode] This agent was renamed from '{old_name}' to "
                 f"'{new_name}'. Use '{new_name}' as your name from now on; "

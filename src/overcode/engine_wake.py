@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
-from .paths import legacy_agent_file_name
+from .paths import agent_path
 from .settings import DAEMON, get_activity_signal_path
 
 # Wake scan (docs/design/engine-0.6.md): between ticks the daemon stats each
@@ -64,16 +64,18 @@ class WakeScan:
     """Each agent's hook state file signature, and the sticky-green rechecks."""
 
     def __init__(self):
-        # Each agent's hook state file signature, by agent name
+        # Each agent's hook state file signature, by overcode session id
         self.signatures: Dict[str, Optional[Tuple[int, int]]] = {}
         # Agents to re-detect once the sticky-green window has passed
-        # (agent name -> monotonic deadline)
+        # (session id -> monotonic deadline)
         self.rechecks: Dict[str, float] = {}
 
     def changes(self, directory, states) -> set:
-        """Names of agents whose hook state file changed since the last scan.
+        """Session ids of agents whose hook state file changed since the last scan.
 
-        One stat per live agent (``states``: the published agent states);
+        One stat per live agent (``states``: the published agent states),
+        of the file in its own directory (``agents/<id>/``, or the
+        name-keyed file of an agent launched before those: paths.agent_path);
         an agent seen for the first time is recorded, not reported (the next
         full tick covers it). An agent whose file changed is reported once
         more when the detector's sticky-green window has passed
@@ -84,36 +86,37 @@ class WakeScan:
         rechecks = self.rechecks
         now = time.monotonic()
         for state in states:
-            name = state.name
-            if not name:
+            sid = state.session_id
+            if not sid:
                 continue
-            seen.add(name)
+            seen.add(sid)
+            path = agent_path("", sid, state.name, "hook_state", base=directory)
             try:
-                st = os.stat(directory / legacy_agent_file_name(name, "hook_state"))
+                st = os.stat(path)
                 sig = (st.st_mtime_ns, st.st_size)
             except OSError:
                 sig = None
-            previous = self.signatures.get(name, sig)
-            self.signatures[name] = sig
+            previous = self.signatures.get(sid, sig)
+            self.signatures[sid] = sig
             if sig != previous:
-                changed.add(name)
-                if self.hook_event(directory, name) == "Stop":
-                    rechecks[name] = now + sticky_recheck_seconds()
+                changed.add(sid)
+                if self.hook_event(path) == "Stop":
+                    rechecks[sid] = now + sticky_recheck_seconds()
                 else:
-                    rechecks.pop(name, None)
-            elif name in rechecks and now >= rechecks[name]:
-                changed.add(name)
-                del rechecks[name]
-        for name in [n for n in self.signatures if n not in seen]:
-            del self.signatures[name]
-            rechecks.pop(name, None)
+                    rechecks.pop(sid, None)
+            elif sid in rechecks and now >= rechecks[sid]:
+                changed.add(sid)
+                del rechecks[sid]
+        for sid in [s for s in self.signatures if s not in seen]:
+            del self.signatures[sid]
+            rechecks.pop(sid, None)
         return changed
 
     @staticmethod
-    def hook_event(directory, name: str) -> Optional[str]:
+    def hook_event(path) -> Optional[str]:
         """The event a changed hook state file holds (one small read, on change only)."""
         try:
-            with open(directory / legacy_agent_file_name(name, "hook_state")) as f:
+            with open(path) as f:
                 event = json.load(f).get("event")
         except (OSError, ValueError, AttributeError):
             return None
@@ -185,14 +188,14 @@ class WakeLoop:
                 except Exception as e:  # the full tick will retry
                     daemon.log.warn(f"quick tick failed: {e}")
 
-    def quick_tick(self, names: set, now: datetime) -> None:
-        """Re-detect only ``names`` and publish, between full ticks."""
+    def quick_tick(self, ids: set, now: datetime) -> None:
+        """Re-detect only the agents ``ids`` and publish, between full ticks."""
         daemon = self.daemon
         if daemon.detector.mode != "hooks":
             daemon._refresh_detection_mode()
         index = daemon._session_index()
         changed = [s for s in index.by_id.values()
-                   if s.tmux_session == daemon.tmux_session and s.name in names]
+                   if s.tmux_session == daemon.tmux_session and s.id in ids]
         if not changed:
             return
         try:

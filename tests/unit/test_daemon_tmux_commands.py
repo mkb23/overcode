@@ -13,6 +13,7 @@ from __future__ import annotations
 import inspect
 import json
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -426,12 +427,13 @@ class TestHookStateGating:
 
     def test_hook_state_stamp_reads_the_detectors_file(self, root):
         sm, sessions, tmux, daemon = _gated_fleet(root, 2, "hooks")
-        name = sessions[0].name
-        stamp = daemon._hook_state_stamp(name)
+        target = sessions[0]
+        stamp = daemon._hook_state_stamp(target)
         assert stamp is not None
-        _write_hook_state(root, name, "PostToolUse", START.timestamp() + 1)
-        assert daemon._hook_state_stamp(name) != stamp
-        assert daemon._hook_state_stamp("no-such-agent") is None
+        _write_hook_state(root, target.name, "PostToolUse", START.timestamp() + 1)
+        assert daemon._hook_state_stamp(target) != stamp
+        ghost = SimpleNamespace(id="no-such-id", name="no-such-agent")
+        assert daemon._hook_state_stamp(ghost) is None
 
 
 class TestGatedIdentity:

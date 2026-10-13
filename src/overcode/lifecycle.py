@@ -108,7 +108,7 @@ class AgentLifecycleMixin:
             if session.status == "done":
                 continue
             stopped_child = (session.parent_session_id is not None
-                             and hook_stopped(session.tmux_session, session.name))
+                             and hook_stopped(session.tmux_session, session.name, session.id))
             new_status = settled_child_status(session, stopped=stopped_child)
             # A stopped child is settled above, never terminated: its window
             # going is how a finished child ends (the daemon's
@@ -282,7 +282,7 @@ def _has_report(session) -> bool:
         return False
     from .child_lifecycle import read_report
     try:
-        return read_report(session.tmux_session, session.name) is not None
+        return read_report(session.tmux_session, session.name, session.id) is not None
     except Exception:
         return False
 

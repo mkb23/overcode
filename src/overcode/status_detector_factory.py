@@ -232,6 +232,9 @@ class StatusDetectorDispatcher:
         path_for = getattr(hooks, "_hook_state_path", None)
         if path_for is None:
             return True  # a detector without files (tests): trust it
+        note = getattr(hooks, "note_agent", None)
+        if note is not None:
+            note(session.name, getattr(session, "id", None))
         try:
             return path_for(session.name).exists()
         except OSError:

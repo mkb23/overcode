@@ -16,7 +16,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from .paths import legacy_agent_file
+from .paths import agent_dir, agent_file, legacy_agent_file
 from . import hook_dialects
 
 try:
@@ -383,22 +383,65 @@ def _detect_from_tmux_pane() -> tuple[str | None, str | None]:
     return session_name, tmux_session
 
 
+def _agent_session_id() -> str | None:
+    """This agent's overcode session id (``OVERCODE_SESSION_ID``), or None."""
+    return os.environ.get("OVERCODE_SESSION_ID") or None
+
+
+def _session_id_for_name(tmux_session: str, session_name: str) -> str | None:
+    """The overcode session id of the live agent ``session_name``, from sessions.json.
+
+    For the pane-detection fallback, whose environment lost the id.
+    """
+    try:
+        from .session_manager import SessionManager
+
+        for session in SessionManager(skip_git_detection=True).list_sessions():
+            if session.name == session_name and session.tmux_session == tmux_session:
+                return session.id
+    except Exception:  # never fail a hook over the lookup
+        return None
+    return None
+
+
+def agent_file_for_write(tmux_session: str, session_name: str, kind: str,
+                         session_id: str | None = None) -> Path:
+    """Where the agent's ``kind`` file is written (item 35).
+
+    The agent's own directory, ``agents/<session id>/`` (``session_id``,
+    else ``OVERCODE_SESSION_ID``): every launch creates it, so a new agent
+    never reads what an earlier agent of its name left. The name-keyed
+    file is kept for an agent with no session id in its environment, and
+    for an agent launched before per-agent directories (no directory, but
+    a name-keyed hook state file) until it is relaunched. A hook arriving
+    after the agent was archived and its directory removed recreates it;
+    the orphan sweep removes it again.
+    """
+    sid = session_id or _agent_session_id()
+    if sid:
+        if agent_dir(tmux_session, sid).is_dir() or not legacy_agent_file(
+                tmux_session, session_name, "hook_state").exists():
+            return agent_file(tmux_session, sid, kind)
+    return legacy_agent_file(tmux_session, session_name, kind)
+
+
 def _get_hook_state_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for a hook state file.
 
-    Returns <sessions root>/{tmux_session}/hook_state_{session_name}.json
-    (see ``paths``).
+    ``<sessions root>/<tmux_session>/agents/<session id>/hook_state.json``
+    (see ``agent_file_for_write``).
     """
-    return legacy_agent_file(tmux_session, session_name, "hook_state")
+    return agent_file_for_write(tmux_session, session_name, "hook_state")
 
 
-def get_rename_notice_path(tmux_session: str, session_name: str) -> Path:
+def get_rename_notice_path(tmux_session: str, session_name: str,
+                           session_id: str | None = None) -> Path:
     """One-shot note telling a renamed agent its new name (#478).
 
-    ``overcode rename`` writes it under the *new* name; the agent's next
-    UserPromptSubmit prints it as prompt context and deletes it.
+    ``overcode rename`` writes it in the agent's directory; the agent's
+    next UserPromptSubmit prints it as prompt context and deletes it.
     """
-    return legacy_agent_file(tmux_session, session_name, "rename_notice")
+    return agent_file_for_write(tmux_session, session_name, "rename_notice", session_id)
 
 
 def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
@@ -416,9 +459,9 @@ def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
 def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for the append-only hook event log (#448).
 
-    Returns <sessions root>/{tmux_session}/hook_events_{session_name}.jsonl
+    ``agents/<session id>/hook_events.jsonl`` (see ``agent_file_for_write``).
     """
-    return legacy_agent_file(tmux_session, session_name, "hook_events")
+    return agent_file_for_write(tmux_session, session_name, "hook_events")
 
 
 # Rotate the event log when it grows past _EVENT_LOG_ROTATE_BYTES, down to
@@ -904,6 +947,11 @@ def handle_hook_event(backend: str | None = None) -> None:
         session_name, tmux_session = _detect_from_tmux_pane()
         if not session_name or not tmux_session:
             return
+        if not _agent_session_id():
+            # The files are keyed by session id: find it from the record
+            sid = _session_id_for_name(tmux_session, session_name)
+            if sid:
+                os.environ["OVERCODE_SESSION_ID"] = sid
 
     # Read stdin JSON
     try:

@@ -12,10 +12,11 @@ All functions are pure (no Rich/Typer dependencies) for easy testing.
 """
 
 import json
+import os
 from datetime import datetime
 from typing import Optional
 
-from .paths import legacy_agent_file, session_dir
+from .paths import agent_path, session_dir
 
 
 def format_clock(now: datetime) -> str:
@@ -153,7 +154,8 @@ def read_heartbeat_timestamp(tmux_session: str, session_name: str) -> Optional[s
     Returns:
         ISO timestamp string, or None if file doesn't exist
     """
-    path = legacy_agent_file(tmux_session, session_name, "heartbeat")
+    sid = os.environ.get("OVERCODE_SESSION_ID") or None
+    path = agent_path(tmux_session, sid, session_name, "heartbeat")
     try:
         return path.read_text().strip()
     except (FileNotFoundError, IOError):

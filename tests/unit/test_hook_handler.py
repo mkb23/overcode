@@ -54,6 +54,64 @@ class TestGetHookStatePath:
         assert path == tmp_path / "custom" / "agents" / "hook_state_my-agent.json"
 
 
+class TestAgentDirectory:
+    """Item 35: the files of an agent with a session id live in agents/<id>/."""
+
+    @pytest.fixture
+    def state(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        monkeypatch.setenv("OVERCODE_SESSION_ID", "sid-1")
+        return tmp_path
+
+    def test_writes_in_the_agents_own_directory(self, state):
+        write_hook_state("Stop", "agents", "my-agent")
+        append_hook_event("Stop", "agents", "my-agent")
+        own = state / "agents" / "agents" / "sid-1"
+        assert json.loads((own / "hook_state.json").read_text())["event"] == "Stop"
+        assert (own / "hook_events.jsonl").exists()
+        assert not (state / "agents" / "hook_state_my-agent.json").exists()
+
+    def test_a_new_agent_ignores_a_dead_namesakes_file(self, state):
+        # Launched by this overcode: the launcher made its directory
+        (state / "agents" / "agents" / "sid-1").mkdir(parents=True)
+        stale = state / "agents" / "hook_state_my-agent.json"
+        stale.write_text(json.dumps({"event": "Stop", "timestamp": 1.0,
+                                     "agent_session_ids": ["dead-conversation"]}))
+        write_hook_state("UserPromptSubmit", "agents", "my-agent", session_id="mine")
+        own = json.loads((state / "agents" / "agents" / "sid-1" / "hook_state.json").read_text())
+        assert own["agent_session_ids"] == ["mine"]
+
+    def test_an_agent_launched_before_keeps_its_name_keyed_files(self, state):
+        # No directory, and its hooks already wrote by name: keep doing so
+        legacy = state / "agents" / "hook_state_my-agent.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(json.dumps({"event": "Stop", "timestamp": 1.0}))
+        write_hook_state("UserPromptSubmit", "agents", "my-agent")
+        assert json.loads(legacy.read_text())["event"] == "UserPromptSubmit"
+        assert not (state / "agents" / "agents").exists()
+
+    def test_a_late_hook_after_archiving_recreates_the_directory(self, state):
+        """The directory was packed and removed; the orphan sweep takes this one."""
+        write_hook_state("SessionEnd", "agents", "my-agent")
+        assert (state / "agents" / "agents" / "sid-1" / "hook_state.json").exists()
+
+    def test_pane_fallback_finds_the_session_id(self, state, monkeypatch, capsys):
+        from overcode.session_manager import SessionManager
+
+        monkeypatch.delenv("OVERCODE_SESSION_ID")
+        monkeypatch.delenv("OVERCODE_SESSION_NAME", raising=False)
+        monkeypatch.delenv("OVERCODE_TMUX_SESSION", raising=False)
+        sm = SessionManager(skip_git_detection=True)
+        session = sm.create_session(name="my-agent", tmux_session="agents",
+                                    tmux_window="my-agent-abcd", command=["claude"])
+        with patch("overcode.hook_handler._detect_from_tmux_pane",
+                   return_value=("my-agent", "agents")), \
+                patch("sys.stdin.read", return_value=json.dumps({"hook_event_name": "Stop"})):
+            handle_hook_event()
+        own = state / "agents" / "agents" / session.id / "hook_state.json"
+        assert json.loads(own.read_text())["event"] == "Stop"
+
+
 class TestWriteHookState:
 
     def test_writes_state_file(self, monkeypatch, tmp_path):

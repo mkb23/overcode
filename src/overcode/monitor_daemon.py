@@ -472,7 +472,7 @@ class MonitorDaemon:
 
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
         # The last tick's live agent names, for detection-mode checks between ticks
-        self._live_names: Optional[List[str]] = None
+        self._live_names: Optional[List[Tuple[str, str]]] = None
         # Finished agents the id and stats syncs have read since they finished
         self._ids_settled: set = set()
         self._stats_settled: set = set()
@@ -1071,7 +1071,7 @@ class MonitorDaemon:
         """
         from .settings import resolve_detection_mode
         if sessions is not None:
-            self._live_names = [s.name for s in sessions]
+            self._live_names = [(s.id, s.name) for s in sessions]
         current_mode = resolve_detection_mode(self.tmux_session, self._live_names)
         self.state.detection_mode = current_mode
         if self.detector.mode != current_mode:
@@ -1446,7 +1446,7 @@ class MonitorDaemon:
                 if new_status == "done":
                     newly_done.append(session.id)
                     if not session.report_status:
-                        report = read_report(session.tmux_session, session.name)
+                        report = read_report(session.tmux_session, session.name, session.id)
                         if report and report.get("status") in ("success", "failure"):
                             self._pending.update_session(
                                 session.id, report_status=report["status"],
@@ -1738,11 +1738,11 @@ class MonitorDaemon:
             pane = pane_for_window(panes, session.tmux_window)
             signature = pane.signature if pane is not None else None
             capture = tracker.due(
-                session.id, signature, self._hook_state_stamp(session.name), clock
+                session.id, signature, self._hook_state_stamp(session), clock
             )
             gate.plan(session.tmux_window, capture)
 
-    def _hook_state_stamp(self, session_name: str) -> Optional[tuple]:
+    def _hook_state_stamp(self, session) -> Optional[tuple]:
         """(mtime_ns, size) of the session's hook_state file; None without one.
 
         The file the hook detector reads for status: any hook event rewrites
@@ -1752,8 +1752,9 @@ class MonitorDaemon:
         path_of = getattr(getattr(self.detector, "hooks", None), "_hook_state_path", None)
         if path_of is None:
             return None
+        self._note_agent(session)
         try:
-            st = os.stat(path_of(session_name))
+            st = os.stat(path_of(session.name))
         except OSError:
             return None
         return (st.st_mtime_ns, st.st_size)
@@ -1794,12 +1795,19 @@ class MonitorDaemon:
         read = getattr(getattr(self.detector, "hooks", None), "_read_hook_state", None)
         if read is None:
             from .child_lifecycle import hook_stopped
-            return hook_stopped(session.tmux_session, session.name)
+            return hook_stopped(session.tmux_session, session.name, session.id)
+        self._note_agent(session)
         try:
             hook_state = read(session.name)
         except Exception:
             return False
         return isinstance(hook_state, dict) and hook_state.get("event") == "Stop"
+
+    def _note_agent(self, session) -> None:
+        """Tell the hook detector whose files ``session``'s are (agents/<id>/, item 35)."""
+        note = getattr(getattr(self.detector, "hooks", None), "note_agent", None)
+        if note is not None:
+            note(session.name, session.id)
 
     def _log_hook_event(self, session, status: str, activity: str) -> None:
         """Log hook events to the daemon log when they change.

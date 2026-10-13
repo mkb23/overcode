@@ -177,7 +177,10 @@ def restart_agent(tmux_session: str, name: str) -> dict:
             time.sleep(press.delay_after)
     time.sleep(3.0)
 
-    env_prefix = f"OVERCODE_SESSION_NAME={session.name} OVERCODE_TMUX_SESSION={tmux_session}"
+    from .agent_files import prepare_agent_dir
+    prepare_agent_dir(tmux_session, session.id, reset=True)
+    env_prefix = (f"OVERCODE_SESSION_NAME={session.name} OVERCODE_SESSION_ID={session.id} "
+                  f"OVERCODE_TMUX_SESSION={tmux_session}")
     restart_cmd = f"{env_prefix} {cmd_str}"
 
     if tmux.send_keys(session.tmux_window, restart_cmd, enter=True):

@@ -200,33 +200,42 @@ class TestLauncherRename:
         assert "--resume" in keys  # same conversation, not a fresh one
         assert sm.get_session(sess.id).stats.current_task == "Renamed from alpha"
 
-    def test_every_name_keyed_file_moves(self, tmp_path):
+    def test_the_agents_files_stay_in_its_directory(self, tmp_path):
+        """Item 35: files are keyed by session id, so nothing moves."""
+        from overcode.child_lifecycle import hook_stopped, read_report
+        from overcode.paths import agent_file
+
         launcher, _ = self._launcher(tmp_path)
         sess = launcher.launch(name="alpha")
-        self._seed_files(tmp_path, "alpha")
+        agent_file("agents", sess.id, "hook_state").write_text('{"event": "Stop"}')
+        agent_file("agents", sess.id, "report").write_text('{"status": "success"}')
 
         assert launcher.rename(sess, "beta", graceful_exit_wait=0) is True
 
-        assert all(p.exists() for p in self._files(tmp_path, "beta"))
-        assert not any(p.exists() for p in self._files(tmp_path, "alpha"))
+        assert hook_stopped("agents", "beta", sess.id)
+        assert read_report("agents", "beta", sess.id) == {"status": "success"}
 
     def test_leftover_files_under_the_new_name_are_not_inherited(self, tmp_path):
         """A stale report_<new>.json would mark the renamed agent done."""
+        from overcode.child_lifecycle import hook_stopped, read_report
+
         launcher, _ = self._launcher(tmp_path)
         sess = launcher.launch(name="alpha")
         self._seed_files(tmp_path, "beta")  # left by an earlier agent called beta
 
         assert launcher.rename(sess, "beta", graceful_exit_wait=0) is True
 
-        assert not any(p.exists() for p in self._files(tmp_path, "beta"))
+        assert read_report("agents", "beta", sess.id) is None
+        assert not hook_stopped("agents", "beta", sess.id)
 
     def test_hooks_the_old_process_fires_on_its_way_out_are_cleared(self, tmp_path):
+        """An agent launched before per-agent directories wrote by name."""
         launcher, _ = self._launcher(tmp_path)
         sess = launcher.launch(name="alpha")
         real_send = launcher._send_launch_for_session
 
         def late_hook_then_relaunch(session, window, **kw):
-            # The old process's last hook lands after the files moved.
+            # The old process's last hook lands as it exits.
             self._files(tmp_path, "alpha")[0].write_text('{"event": "SessionEnd"}')
             return real_send(session, window, **kw)
 
@@ -240,7 +249,7 @@ class TestLauncherRename:
         launcher, _ = self._launcher(tmp_path)
         sess = launcher.launch(name="alpha")
         assert launcher.rename(sess, "beta", graceful_exit_wait=0) is True
-        note = get_rename_notice_path("agents", "beta").read_text()
+        note = get_rename_notice_path("agents", "beta", sess.id).read_text()
         assert "renamed from 'alpha' to 'beta'" in note
 
     @pytest.mark.parametrize("status", [
@@ -344,16 +353,17 @@ class TestLauncherRename:
         other = AgentLauncher("work", TmuxManager("work", tmux=mock), sm)
         other._live_status = lambda session: "waiting_user"
         sess = other.launch(name="alpha")
-        (tmp_path / "work").mkdir(exist_ok=True)
-        (tmp_path / "work" / "hook_state_alpha.json").write_text('{"event": "Stop"}')
+        from overcode.paths import agent_file
+        agent_file("work", sess.id, "hook_state").write_text('{"event": "Stop"}')
 
         launcher = AgentLauncher("agents", TmuxManager("agents", tmux=mock), sm)
         with patch.object(AgentLauncher, "_live_status", lambda self, s: "waiting_user"):
             assert launcher.rename(sess, "beta", graceful_exit_wait=0) is True
 
         assert f"beta-{sess.id[:4]}" in mock.sessions["work"]
-        assert (tmp_path / "work" / "hook_state_beta.json").exists()
-        assert not (tmp_path / "agents" / "hook_state_beta.json").exists()
+        assert agent_file("work", sess.id, "hook_state").exists()
+        assert agent_file("work", sess.id, "rename_notice").exists()
+        assert not (tmp_path / "agents" / "agents").exists()
 
     @pytest.mark.parametrize("bad, match", [
         ("daemon_claude", "reserved"),
@@ -445,7 +455,7 @@ class TestRealTmux:
         assert f"beta-{sess.id[:4]}" in names
         assert sess.tmux_window not in names
         assert sess.tmux_window + "x" in names  # the look-alike is untouched
-        assert (tmp_path / "agents" / "hook_state_beta.json").exists()
+        assert not (tmp_path / "agents" / "hook_state_alpha.json").exists()  # an older layout's, dropped
         assert relaunched == [("beta", f"beta-{sess.id[:4]}")]
 
     def test_end_to_end_window_gone_mid_rename_restores_old_identity(self, real_tmux, tmp_path):
@@ -630,7 +640,7 @@ class TestFollowAcrossRename:
         sm = self._sessions(["alpha", "beta"])
         looked_for = []
 
-        def check_report(tmux_session, name):
+        def check_report(tmux_session, name, *a):
             looked_for.append(name)
             return {"status": "success"} if name == "beta" else None
 

@@ -231,11 +231,11 @@ def follow_agent(
             _emit_new_lines(raw, recent_lines)
 
             # Check for Stop event via hook state
-            if _check_hook_stop(tmux_session, name):
+            if _check_hook_stop(tmux_session, name, session_id):
                 _stream_final_output(tmux_session, window_name, poll_interval, recent_lines)
 
                 # Check if report already filed before Stop
-                report = _check_report(tmux_session, name)
+                report = _check_report(tmux_session, name, session_id)
                 if report:
                     return _handle_report(report, name, sessions, session_id)
 
@@ -327,7 +327,7 @@ def _poll_for_report(
     while True:
         name, window_name = _current_identity(sessions, session_id, name, window_name)
         # Check for report
-        report = _check_report(tmux_session, name)
+        report = _check_report(tmux_session, name, session_id)
         if report:
             return _handle_report(report, name, sessions, session_id)
 

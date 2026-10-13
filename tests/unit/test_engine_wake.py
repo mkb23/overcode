@@ -48,7 +48,7 @@ class TestHookChanges:
         _touch(tmp_path, "b", "{}")
         d.wake.changes()
         _touch(tmp_path, "a", '{"event": "Stop"}')
-        assert d.wake.changes() == {"a"}
+        assert d.wake.changes() == {"s1"}
         assert d.wake.changes() == set()
 
     def test_a_hook_file_appearing_or_vanishing_counts(self, tmp_path):
@@ -56,9 +56,21 @@ class TestHookChanges:
         d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
         d.wake.changes()  # no file yet
         _touch(tmp_path, "a", "{}")
-        assert d.wake.changes() == {"a"}
+        assert d.wake.changes() == {"s1"}
         os.unlink(tmp_path / "hook_state_a.json")
-        assert d.wake.changes() == {"a"}
+        assert d.wake.changes() == {"s1"}
+
+    def test_an_agent_with_its_own_directory_is_scanned_there(self, tmp_path):
+        """Item 35: a stale name-keyed file of a dead namesake is never scanned."""
+        d = _daemon(tmp_path)
+        own = tmp_path / "agents" / "s1"
+        own.mkdir(parents=True)
+        d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
+        d.wake.changes()
+        _touch(tmp_path, "a", '{"event": "Stop"}')  # the dead namesake's file
+        assert d.wake.changes() == set()
+        (own / "hook_state.json").write_text('{"event": "Stop"}')
+        assert d.wake.changes() == {"s1"}
 
     def test_departed_agents_are_forgotten(self, tmp_path):
         d = _daemon(tmp_path)
@@ -85,11 +97,11 @@ class TestStickyRecheck:
         with patch.object(engine_wake.time, "monotonic", lambda: clock[0]):
             d.wake.changes()
             _touch(tmp_path, "a", '{"event": "Stop"}')
-            assert d.wake.changes() == {"a"}
+            assert d.wake.changes() == {"s1"}
             clock[0] += 0.5
             assert d.wake.changes() == set()  # still inside the window
             clock[0] += engine_wake.sticky_recheck_seconds()
-            assert d.wake.changes() == {"a"}  # once, at the window's end
+            assert d.wake.changes() == {"s1"}  # once, at the window's end
             clock[0] += 5
             assert d.wake.changes() == set()
 
@@ -107,12 +119,12 @@ class TestStickyRecheck:
         calls = []
         d._refresh_detection_mode = lambda: calls.append(1)
         d._session_index = lambda: SimpleNamespace(by_id={})
-        d.wake.quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"s1"}, datetime.now())
         assert calls == [1]
         # Once the fleet is on hooks, a quick tick does not re-read it (the
         # full tick still does, for a mode the user changes by hand)
         d.detector.mode = "hooks"
-        d.wake.quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"s1"}, datetime.now())
         assert calls == [1]
 
     def test_the_resolved_mode_is_published_in_the_fleet(self, tmp_path):
@@ -136,7 +148,7 @@ class TestStickyRecheck:
         with patch.object(engine_wake.time, "monotonic", lambda: clock[0]):
             d.wake.changes()
             _touch(tmp_path, "a", '{"event": "PostToolUse", "tool_name": "Read"}')
-            assert d.wake.changes() == {"a"}
+            assert d.wake.changes() == {"s1"}
             clock[0] += 5
             assert d.wake.changes() == set()
 
@@ -159,7 +171,7 @@ class TestQuickTick:
         d._flush_pending_writes = MagicMock()
         published = []
         d._publish_state = lambda states, save=True: published.append((states, save))
-        d.wake.quick_tick({"b"}, datetime.now())
+        d.wake.quick_tick({"s2"}, datetime.now())
         assert detected == ["b"]
         states, save = published[0]
         assert [(s.name, s.current_status) for s in states] == [("a", "running"), ("b", "waiting_user")]
@@ -182,7 +194,7 @@ class TestQuickTick:
         d._flush_pending_writes = MagicMock()
         published = []
         d._publish_state = lambda states, save=True: published.append(states)
-        d.wake.quick_tick({"parent"}, datetime.now())
+        d.wake.quick_tick({"p"}, datetime.now())
         parent = next(s for s in published[0] if s.name == "parent")
         assert parent.subtree_cost_usd == 3.5
 
@@ -198,9 +210,9 @@ class TestQuickTick:
         saves = []
         d._publish_state = lambda states, save=True: saves.append(save)
         d._last_state_save = time.monotonic()
-        d.wake.quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"s1"}, datetime.now())
         d._last_state_save = time.monotonic() - 5
-        d.wake.quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"s1"}, datetime.now())
         assert saves == [False, True]
 
     def test_the_sleep_runs_quick_ticks_and_keeps_its_length(self, tmp_path):

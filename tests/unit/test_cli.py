@@ -962,35 +962,34 @@ class TestReportCommand:
             assert "env vars required" in result.output
 
     def test_report_success(self):
-        """Report writes file and updates session."""
+        """Report writes the file in the agent's own directory and updates the session."""
+        import json
         import os
+        from overcode.paths import agent_file
         env = {
             "OVERCODE_SESSION_NAME": "child-agent",
+            "OVERCODE_SESSION_ID": "child-id",
             "OVERCODE_TMUX_SESSION": "agents",
         }
         with patch.dict(os.environ, env):
-            with patch('overcode.settings.get_session_dir') as mock_dir:
-                mock_path = MagicMock()
-                mock_dir.return_value = mock_path
-                mock_file = MagicMock()
-                mock_path.__truediv__ = MagicMock(return_value=mock_file)
+            with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
+                mock_sm = MagicMock()
+                mock_session = MagicMock()
+                mock_session.id = "child-id"
+                mock_sm.resolve_session_name.return_value = mock_session
+                mock_sm_cls.return_value = mock_sm
 
-                with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-                    mock_sm = MagicMock()
-                    mock_session = MagicMock()
-                    mock_session.id = "child-id"
-                    mock_sm.resolve_session_name.return_value = mock_session
-                    mock_sm_cls.return_value = mock_sm
-
-                    result = runner.invoke(app, ["report", "--status", "success", "--reason", "All tests passed"])
-                    assert result.exit_code == 0
-                    assert "Report filed: success" in result.output
-                    assert "All tests passed" in result.output
-                    mock_sm.update_session.assert_called_once_with(
-                        "child-id",
-                        report_status="success",
-                        report_reason="All tests passed",
-                    )
+                result = runner.invoke(app, ["report", "--status", "success", "--reason", "All tests passed"])
+                assert result.exit_code == 0
+                assert "Report filed: success" in result.output
+                assert "All tests passed" in result.output
+                mock_sm.update_session.assert_called_once_with(
+                    "child-id",
+                    report_status="success",
+                    report_reason="All tests passed",
+                )
+            report = json.loads(agent_file("agents", "child-id", "report").read_text())
+        assert report["status"] == "success"
 
     def test_report_failure_no_reason(self):
         """Report failure without reason."""
@@ -1000,20 +999,14 @@ class TestReportCommand:
             "OVERCODE_TMUX_SESSION": "agents",
         }
         with patch.dict(os.environ, env):
-            with patch('overcode.settings.get_session_dir') as mock_dir:
-                mock_path = MagicMock()
-                mock_dir.return_value = mock_path
-                mock_file = MagicMock()
-                mock_path.__truediv__ = MagicMock(return_value=mock_file)
+            with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
+                mock_sm = MagicMock()
+                mock_sm.resolve_session_name.return_value = None
+                mock_sm_cls.return_value = mock_sm
 
-                with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-                    mock_sm = MagicMock()
-                    mock_sm.resolve_session_name.return_value = None
-                    mock_sm_cls.return_value = mock_sm
-
-                    result = runner.invoke(app, ["report", "--status", "failure"])
-                    assert result.exit_code == 0
-                    assert "Report filed: failure" in result.output
+                result = runner.invoke(app, ["report", "--status", "failure"])
+                assert result.exit_code == 0
+                assert "Report filed: failure" in result.output
 
 
 class TestCleanupExtended:

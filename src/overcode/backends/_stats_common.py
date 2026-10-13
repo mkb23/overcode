@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Tuple
 
-from ..paths import legacy_agent_file
+from ..paths import agent_path
 
 # -- the session record ----------------------------------------------------
 
@@ -93,7 +93,8 @@ def hook_state_path(session: Any) -> Optional[Path]:
         return None
     if not tmux_session or not name:
         return None
-    return legacy_agent_file(tmux_session, name, "hook_state")
+    sid = getattr(session, "id", None)
+    return agent_path(tmux_session, sid if isinstance(sid, str) else None, name, "hook_state")
 
 
 def read_hook_state(session: Any) -> Optional[dict]:

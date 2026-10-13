@@ -173,6 +173,19 @@ class TestNoOpGuard:
 
 
 @node
+class TestAgentDirectory:
+    """Item 35: with OVERCODE_SESSION_ID the files live in agents/<id>/."""
+
+    def test_writes_in_the_agents_own_directory(self, plugin_module, env):
+        env = dict(env, OVERCODE_SESSION_ID="sid-oc")
+        run_plugin(plugin_module, env, [SESSION_CREATED, USER_PROMPT])
+        own = Path(env["OVERCODE_STATE_DIR"]) / "agents" / "agents" / "sid-oc"
+        assert json.loads((own / "hook_state.json").read_text())["event"] == "UserPromptSubmit"
+        assert (own / "hook_events.jsonl").read_text().strip()
+        assert not state_file(env).exists()  # nothing keyed by name
+
+
+@node
 class TestEventMapping:
     def test_user_prompt_writes_running(self, plugin_module, env):
         run_plugin(plugin_module, env, [SESSION_CREATED, USER_PROMPT])

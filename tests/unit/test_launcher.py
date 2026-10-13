@@ -2987,20 +2987,23 @@ class TestRename:
         # session record — so the record's name is the contract.
         assert sm.get_session(sess.id).name == "newname"
 
-    def test_rename_moves_hook_state_files(self, tmp_path):
+    def test_rename_leaves_the_agents_files_in_place(self, tmp_path):
+        """Item 35: the files are keyed by session id, so a rename moves none."""
+        from overcode.paths import agent_file, legacy_agent_file
+
         launcher, sm = self._launcher(tmp_path)
         sess = launcher.launch(name="oldname")
-        hook_dir = tmp_path / "agents"
-        hook_dir.mkdir(exist_ok=True)
-        (hook_dir / "hook_state_oldname.json").write_text('{"event": "Stop"}')
-        (hook_dir / "hook_events_oldname.jsonl").write_text('{"event": "Stop"}\n')
+        own = agent_file("agents", sess.id, "hook_state")
+        own.write_text('{"event": "Stop"}')
+        # An older overcode's name-keyed leftovers under the old name go
+        legacy = legacy_agent_file("agents", "oldname", "hook_events")
+        legacy.write_text('{"event": "Stop"}\n')
 
         assert launcher.rename(sess, "newname", graceful_exit_wait=0) is True
 
-        assert (hook_dir / "hook_state_newname.json").exists()
-        assert (hook_dir / "hook_events_newname.jsonl").exists()
-        assert not (hook_dir / "hook_state_oldname.json").exists()
-        assert not (hook_dir / "hook_events_oldname.jsonl").exists()
+        assert own.read_text() == '{"event": "Stop"}'
+        assert not legacy.exists()
+        assert not legacy_agent_file("agents", "newname", "hook_state").exists()
 
     def test_rename_rejects_invalid_name(self, tmp_path):
         launcher, _ = self._launcher(tmp_path)

@@ -43,6 +43,7 @@ from .exceptions import (
     AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
     TmuxNotFoundError,
 )
+from .agent_files import prepare_agent_dir, remove_agent_dir
 from .agent_io import AgentIOMixin
 from .lifecycle import (  # noqa: F401  (window_* and LifecycleReconcile re-exported)
     AgentLifecycleMixin,
@@ -469,6 +470,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             self._remove_prompt_file(prompt_file)
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
+            remove_agent_dir(self.tmux.session_name, session.id)
             raise LaunchError(f"failed to send command to window {window_name}")
 
         # Reload so caller sees the active_agent_session_id / command set by the helper.
@@ -643,6 +645,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         ):
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
+            remove_agent_dir(self.tmux.session_name, session.id)
             raise LaunchError(f"failed to send command to window {window_name}", "fork")
 
         session = self.sessions.get_session(session.id)
@@ -663,6 +666,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         fresh: bool = False,
         fork_from: Optional[str] = None,
         initial_prompt_file: Optional[str] = None,
+        reset_agent_state: bool = False,
     ) -> bool:
         """Rebuild the full launch command from a Session and send it to a window.
 
@@ -766,6 +770,12 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         )
         self._apply_skill_profile(backend, session, spec)
 
+        # The agent's own directory (agents/<id>/, item 35): every launch
+        # makes it, which is what tells readers this agent's files are there
+        # and not name-keyed. A restart or revive of the same id starts it
+        # clean, so the new process is not read through the old one's Stop.
+        prepare_agent_dir(self.tmux.session_name, session.id, reset=reset_agent_state)
+
         # Stage anything the CLI needs on disk before it starts — for opencode,
         # the telemetry plugin in the project's .opencode/plugins/. Failure here
         # costs telemetry, never the launch.
@@ -846,7 +856,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         self._send_graceful_exit(self.backend_for(session), session.tmux_window)
         self.sleep(graceful_exit_wait)
 
-        if not self._send_launch_for_session(session, session.tmux_window, fresh=fresh):
+        if not self._send_launch_for_session(session, session.tmux_window, fresh=fresh,
+                                             reset_agent_state=True):
             return False
 
         self.sessions.update_stats(session.id, current_task="Restarting...")
@@ -885,7 +896,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         if window_name is None:
             return False
 
-        if not self._send_launch_for_session(session, window_name, fresh=fresh):
+        if not self._send_launch_for_session(session, window_name, fresh=fresh,
+                                             reset_agent_state=True):
             self.tmux.kill_window(window_name)
             return False
 

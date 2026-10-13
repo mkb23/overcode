@@ -339,12 +339,11 @@ def status_detail_view(detail, now: float) -> Optional[dict]:
     return {"color": detail.color, "badges": badges, "legacy_status": detail.legacy_status}
 
 
-def episode_log_path(state_dir, agent_name: str):
-    from pathlib import Path
+def episode_log_path(state_dir, agent_name: str, session_id: Optional[str] = None):
+    """The agent's episode log: in its own directory (agents/<id>/), else by name."""
+    from .paths import agent_path
 
-    from .paths import legacy_agent_file_name
-
-    return Path(state_dir) / legacy_agent_file_name(agent_name, "episodes")
+    return agent_path("", session_id, agent_name, "episodes", base=state_dir)
 
 
 def append_episode(state_dir, agent_name: str, session_id: str, episode: Episode) -> None:
@@ -352,7 +351,7 @@ def append_episode(state_dir, agent_name: str, session_id: str, episode: Episode
     import json
     import os
 
-    path = episode_log_path(state_dir, agent_name)
+    path = episode_log_path(state_dir, agent_name, session_id)
     record = dict(episode.to_dict(), session_id=session_id)
     try:
         try:
@@ -366,11 +365,11 @@ def append_episode(state_dir, agent_name: str, session_id: str, episode: Episode
         pass
 
 
-def read_episodes(state_dir, agent_name: str) -> List[dict]:
+def read_episodes(state_dir, agent_name: str, session_id: Optional[str] = None) -> List[dict]:
     """Every logged episode for an agent, oldest first (rotated file included)."""
     import json
 
-    path = episode_log_path(state_dir, agent_name)
+    path = episode_log_path(state_dir, agent_name, session_id)
     out: List[dict] = []
     for candidate in (path.with_suffix(".jsonl.1"), path):
         try:

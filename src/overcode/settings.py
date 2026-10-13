@@ -16,7 +16,7 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, List, Optional, Set
+from typing import TYPE_CHECKING, Iterable, List, Optional, Set, Tuple, Union
 
 
 from . import paths
@@ -463,7 +463,7 @@ def read_detection_mode(session: str) -> str:
 
 
 def resolve_detection_mode(
-    session: str, live_names: Optional[Iterable[str]] = None
+    session: str, live_names: Optional[Iterable[Union[str, Tuple[str, str]]]] = None
 ) -> str:
     """Resolve 'auto' to 'hooks' or 'polling' (#TBD).
 
@@ -476,8 +476,9 @@ def resolve_detection_mode(
       3. User-level Claude config (legacy fallback for manually-run
          Claude Code sessions that read ~/.claude/settings.json).
 
-    ``live_names`` are the session's live agents (the daemon passes its
-    tick's); without them sessions.json is read.
+    ``live_names`` are the session's live agents, as (session id, name)
+    pairs or bare names (the daemon passes its tick's); without them
+    sessions.json is read.
     """
     mode = read_detection_mode(session)
     if mode in ("hooks", "polling"):
@@ -488,14 +489,15 @@ def resolve_detection_mode(
     return "hooks" if ClaudeConfigEditor.are_overcode_hooks_installed() else "polling"
 
 
-def _live_agent_names(session: str) -> List[str]:
+def _live_agent_names(session: str) -> List[Tuple[str, str]]:
     from .session_manager import SessionManager
 
-    return [s.name for s in SessionManager().list_sessions() if s.tmux_session == session]
+    return [(s.id, s.name) for s in SessionManager().list_sessions()
+            if s.tmux_session == session]
 
 
 def _session_has_hook_activity(
-    session: str, live_names: Optional[Iterable[str]] = None
+    session: str, live_names: Optional[Iterable[Union[str, Tuple[str, str]]]] = None
 ) -> bool:
     """True if a live agent of ``session`` has a hook_state file.
 
@@ -507,8 +509,9 @@ def _session_has_hook_activity(
     if live_names is None:
         live_names = _live_agent_names(session)
     session_dir = get_session_dir(session)
-    for name in live_names:
-        if (session_dir / paths.legacy_agent_file_name(name, "hook_state")).exists():
+    for live in live_names:
+        sid, name = live if isinstance(live, tuple) else (None, live)
+        if paths.agent_path(session, sid, name, "hook_state", base=session_dir).exists():
             return True
     return False
 

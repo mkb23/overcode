@@ -80,7 +80,7 @@ class TestFindDeadAgents:
         grandchild = sm.get_session_by_name("grandchild")
         sm.update_session_status(grandchild.id, "done")
         with patch("overcode.child_lifecycle.read_report",
-                   side_effect=lambda ts, name: {"status": "success"} if name == "child" else None):
+                   side_effect=lambda ts, name, *a: {"status": "success"} if name == "child" else None):
             names = [s.name for s in find_dead_agents(launcher)]
         assert names == ["parent"]
 

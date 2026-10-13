@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from .paths import legacy_agent_file_name, session_dir
+from .paths import agent_path, session_dir
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
     STATUS_RUNNING,
@@ -870,8 +870,10 @@ def augment_with_legacy_heartbeat(
 class HookStatusDetector:
     """Detects session status from hook state files.
 
-    Hook state files are JSON files written by Claude Code hooks at:
-        ~/.overcode/sessions/{tmux_session}/hook_state_{session_name}.json
+    Hook state files are JSON files written by the agent's hooks at:
+        ~/.overcode/sessions/{tmux_session}/agents/{session_id}/hook_state.json
+    (or hook_state_{session_name}.json beside it, for an agent launched
+    before per-agent directories: paths.agent_path)
 
     Format:
         {
@@ -936,16 +938,30 @@ class HookStatusDetector:
         # so the dialog going away is the signal.
         self._permission_prompt_seen: Dict[str, float] = {}
 
-        # The session directory the hook handler writes into (paths.legacy_agent_file)
+        # The session directory the hook handler writes into (paths.agent_path)
         self._state_dir = state_dir if state_dir is not None else session_dir(tmux_session)
+        # Each agent's overcode session id, by name: its files live in its
+        # own directory (agents/<id>/, item 35). Learnt from every session
+        # detected, or told through note_agent.
+        self._agent_ids: Dict[str, str] = {}
 
-    def _hook_state_path(self, session_name: str) -> Path:
+    def note_agent(self, session_name: str, session_id: Optional[str]) -> None:
+        """Remember that ``session_name`` is agent ``session_id`` (whose files to read)."""
+        if isinstance(session_id, str) and session_id:
+            self._agent_ids[session_name] = session_id
+
+    def _agent_file(self, session_name: str, kind: str) -> Path:
+        return agent_path(self.tmux_session, self._agent_ids.get(session_name),
+                          session_name, kind, base=self._state_dir)
+
+    def _hook_state_path(self, session_name: str, session_id: Optional[str] = None) -> Path:
         """Get the hook state file path for a session."""
-        return self._state_dir / legacy_agent_file_name(session_name, "hook_state")
+        self.note_agent(session_name, session_id)
+        return self._agent_file(session_name, "hook_state")
 
     def _hook_event_log_path(self, session_name: str) -> Path:
         """Get the hook event log path for a session (#448)."""
-        return self._state_dir / legacy_agent_file_name(session_name, "hook_events")
+        return self._agent_file(session_name, "hook_events")
 
     def _read_recent_events(self, session_name: str, limit: int = _RECENT_EVENTS_LIMIT) -> list:
         """Return recent event records from the append-only log (#448).
@@ -1098,6 +1114,7 @@ class HookStatusDetector:
         """
         if now is None:
             now = time.time()
+        self.note_agent(session.name, getattr(session, "id", None))
         hook_state = self._read_hook_state(session.name)
         # This call decides the detail afresh: a path that returns early
         # leaves none, so a previous tick's colour can never stand in

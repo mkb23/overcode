@@ -1054,11 +1054,11 @@ def report(
         rprint("[dim]This command should be run from within a child agent launched by overcode[/dim]")
         raise typer.Exit(code=1)
 
-    # Write report file
-    from ..paths import legacy_agent_file_name
-    from ..settings import get_session_dir
-    session_dir = get_session_dir(tmux_session)
-    report_file = session_dir / legacy_agent_file_name(agent_name, "report")
+    # Write the report in the agent's own directory (agents/<id>/, item 35)
+    from ..hook_handler import agent_file_for_write
+    report_file = agent_file_for_write(
+        tmux_session, agent_name, "report", os.environ.get("OVERCODE_SESSION_ID") or None)
+    report_file.parent.mkdir(parents=True, exist_ok=True)
     report_data = {
         "status": status,
         "reason": reason or "",

@@ -16,7 +16,7 @@ Either way the child is *at rest* (⚪): the light says it stopped, and
 import json
 from typing import Iterable, Optional, Tuple
 
-from .paths import legacy_agent_file_name
+from .paths import agent_path
 from .settings import get_session_dir
 from .status_constants import (
     AT_REST_STATUSES,
@@ -45,9 +45,14 @@ CHILD_NOT_WORKING = AT_REST_STATUSES | {STATUS_TERMINATED, STATUS_ASLEEP, STATUS
 OVERSIGHT_TIMEOUT_REASON = "Oversight timeout expired"
 
 
-def hook_stopped(tmux_session: str, agent_name: str) -> bool:
-    """True if the agent's hook state file shows a Stop event."""
-    hook_state_file = get_session_dir(tmux_session) / legacy_agent_file_name(agent_name, "hook_state")
+def hook_stopped(tmux_session: str, agent_name: str, session_id: Optional[str] = None) -> bool:
+    """True if the agent's hook state file shows a Stop event.
+
+    ``session_id`` finds the agent's own file (``paths.agent_path``); a
+    file another agent of the same name left is never read.
+    """
+    hook_state_file = agent_path(tmux_session, session_id, agent_name, "hook_state",
+                                 base=get_session_dir(tmux_session))
     if not hook_state_file.exists():
         return False
     try:
@@ -58,9 +63,11 @@ def hook_stopped(tmux_session: str, agent_name: str) -> bool:
         return False
 
 
-def read_report(tmux_session: str, agent_name: str) -> Optional[dict]:
+def read_report(tmux_session: str, agent_name: str,
+                session_id: Optional[str] = None) -> Optional[dict]:
     """The agent's filed report ({'status', 'reason', 'timestamp'}), or None."""
-    report_file = get_session_dir(tmux_session) / legacy_agent_file_name(agent_name, "report")
+    report_file = agent_path(tmux_session, session_id, agent_name, "report",
+                             base=get_session_dir(tmux_session))
     if not report_file.exists():
         return None
     try:
@@ -85,10 +92,10 @@ def settled_child_status(session, stopped: Optional[bool] = None) -> Optional[st
     if session.parent_session_id is None or session.status not in SETTLEABLE_STATUSES:
         return None
     if stopped is None:
-        stopped = hook_stopped(session.tmux_session, session.name)
+        stopped = hook_stopped(session.tmux_session, session.name, session.id)
     if not stopped:
         return None
-    if read_report(session.tmux_session, session.name) is not None:
+    if read_report(session.tmux_session, session.name, session.id) is not None:
         status = "done"
     else:
         status = STATUS_WAITING_OVERSIGHT

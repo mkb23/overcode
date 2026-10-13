@@ -10,8 +10,11 @@
  * It translates opencode's bus events into the JSON files overcode's
  * HookStatusDetector already reads for Claude Code:
  *
- *   <state-dir>/<tmux-session>/hook_state_<agent>.json    (latest snapshot)
- *   <state-dir>/<tmux-session>/hook_events_<agent>.jsonl  (append-only log)
+ *   <state-dir>/<tmux-session>/agents/<session-id>/hook_state.json    (latest snapshot)
+ *   <state-dir>/<tmux-session>/agents/<session-id>/hook_events.jsonl  (append-only log)
+ *
+ * (keyed by OVERCODE_SESSION_ID; by the agent's name, hook_state_<agent>.json,
+ * when an older launcher did not set it)
  *
  * It is a NO-OP unless OVERCODE_SESSION_NAME and OVERCODE_TMUX_SESSION are both
  * in the environment, so it is inert in any opencode session overcode did not
