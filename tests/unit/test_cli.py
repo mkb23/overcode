@@ -24,6 +24,62 @@ def strip_ansi(text: str) -> str:
 runner = CliRunner()
 
 
+class Fleet:
+    """Real agents in a private state dir, their windows on a ``MockTmux``.
+
+    The CLI builds its own ``SessionManager()`` per command, which reads the
+    same sessions.json, so a test sets agents up here and reads back what
+    the command wrote. ``launcher()`` is a real ``AgentLauncher`` whose tmux
+    is the double: commands run their real logic and touch no tmux server.
+    """
+
+    def __init__(self):
+        from overcode.session_manager import SessionManager
+        from tests.tmux_doubles import MockTmux
+
+        self.sm = SessionManager(skip_git_detection=True)
+        self.tmux = MockTmux()
+        self.tmux.new_session("agents")
+
+    def add(self, name="test-agent", *, window=True, stats=None, **fields):
+        """Register an agent (with a live window unless ``window=False``)."""
+        s = self.sm.create_session(
+            name=name, tmux_session="agents", tmux_window=f"{name}-w",
+            command=["claude"], start_directory=None)
+        if fields:
+            self.sm.update_session(s.id, **fields)
+        if stats:
+            self.sm.update_stats(s.id, **stats)
+        if window:
+            self.tmux.new_window("agents", s.tmux_window)
+        return self.sm.get_session(s.id)
+
+    def get(self, name):
+        return self.sm.resolve_session_name(name)
+
+    def launcher(self, tmux_session="agents"):
+        from overcode.launcher import AgentLauncher
+        from overcode.tmux_manager import TmuxManager
+
+        launcher = AgentLauncher(tmux_session, TmuxManager(tmux_session, tmux=self.tmux), self.sm)
+        launcher.sleep = lambda seconds: None
+        return launcher
+
+
+@pytest.fixture
+def fleet(tmp_path, monkeypatch):
+    """A ``Fleet`` on this test's own state dir; the CLI's launcher uses it."""
+    monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+    monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "oc" / "sessions"))
+    f = Fleet()
+    # The agent CLI is never started: its window is a MockTmux one.
+    monkeypatch.setattr("overcode.launcher.require_tmux", lambda *a, **kw: None)
+    monkeypatch.setattr("overcode.launcher.require_agent_cli", lambda *a, **kw: None)
+    monkeypatch.setattr("overcode.cli.agent.AgentLauncher",
+                        lambda tmux_session="agents", *a, **kw: f.launcher(tmux_session))
+    return f
+
+
 class TestCLICommands:
     """Test CLI commands"""
 
@@ -386,23 +442,16 @@ class TestKillCommandWithMocks:
 
 
 class TestLaunchCommandWithMocks:
-    """Test launch command with mocked AgentLauncher"""
+    """Launch registers the agent and opens its window (MockTmux)."""
 
-    def test_launch_creates_session(self):
+    def test_launch_creates_session(self, fleet):
         """Launch creates new session"""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_session = MagicMock()
-            mock_session.name = "new-agent"
-            mock_session.tmux_window = 1
+        result = runner.invoke(app, ["launch", "--name", "new-agent", "--directory", "/tmp"])
 
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_session
-            mock_launcher_class.return_value = mock_launcher
-
-            result = runner.invoke(app, ["launch", "--name", "new-agent"])
-
-            assert result.exit_code == 0
-            mock_launcher.launch.assert_called()
+        assert result.exit_code == 0, result.output
+        agent = fleet.get("new-agent")
+        assert agent is not None
+        assert agent.tmux_window in fleet.tmux.sessions["agents"]
 
 
 class TestInstructCommandWithMocks:
@@ -429,33 +478,26 @@ class TestInstructCommandWithMocks:
         assert result.exit_code == 1
         assert "Agent name required" in result.output
 
-    def test_instruct_agent_not_found(self):
+    def test_instruct_agent_not_found(self, fleet):
         """Should error when agent not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm:
-            mock_instance = MagicMock()
-            mock_instance.resolve_session_name.return_value = None
-            mock_sm.return_value = mock_instance
+        result = runner.invoke(app, ["instruct", "nonexistent", "DO_NOTHING"])
 
-            result = runner.invoke(app, ["instruct", "nonexistent", "DO_NOTHING"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
-            assert result.exit_code == 1
-            assert "not found" in result.output
-
-    def test_instruct_clears_instructions(self):
+    def test_instruct_clears_instructions(self, fleet):
         """Should clear instructions with --clear flag."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm:
-            mock_session = MagicMock()
-            mock_session.id = "test-id"
+        fleet.add("test-agent", standing_instructions="Old orders",
+                  standing_instructions_preset="CODING", standing_orders_complete=True)
 
-            mock_instance = MagicMock()
-            mock_instance.resolve_session_name.return_value = mock_session
-            mock_sm.return_value = mock_instance
+        result = runner.invoke(app, ["instruct", "test-agent", "--clear"])
 
-            result = runner.invoke(app, ["instruct", "test-agent", "--clear"])
-
-            assert result.exit_code == 0
-            assert "Cleared" in result.output
-            mock_instance.set_standing_instructions.assert_called_with("test-id", "", preset_name=None)
+        assert result.exit_code == 0
+        assert "Cleared" in result.output
+        agent = fleet.get("test-agent")
+        assert agent.standing_instructions == ""
+        assert agent.standing_instructions_preset is None
+        assert agent.standing_orders_complete is False
 
 
 class TestCleanupCommandWithMocks:
@@ -589,71 +631,43 @@ class TestParseDuration:
 
 
 class TestLaunchExtended:
-    """Extended launch command tests covering oversight policies and follow mode."""
+    """Launch runs a real AgentLauncher over MockTmux (the ``fleet`` fixture);
+    what the command stored is read back from sessions.json."""
 
-    def test_launch_with_prompt(self):
-        """Launch with --prompt sends initial prompt."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "agent"
-            mock_sess.parent_session_id = None
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
+    @staticmethod
+    def _launch(*args, name="agent"):
+        return runner.invoke(app, ["launch", "--name", name, "--directory", "/tmp", *args])
 
-            result = runner.invoke(app, ["launch", "--name", "agent", "--prompt", "do stuff"])
-            assert result.exit_code == 0
-            assert "Initial prompt sent" in result.output
+    def test_launch_with_prompt(self, fleet):
+        """Launch with --prompt puts the prompt on the agent's command line."""
+        from overcode.launcher import AgentLauncher
 
-    def test_launch_backend_arg_reaches_the_launcher(self):
+        # The startup-dialog wait polls the real tmux server, not the double
+        # (agent_io uses tmux_utils directly), so it would spin for its 30 s.
+        with patch.object(AgentLauncher, "_wait_for_prompt", return_value=True):
+            result = self._launch("--prompt", "do stuff")
+        assert result.exit_code == 0, result.output
+        assert "Initial prompt sent" in result.output
+        agent = fleet.get("agent")
+        typed = [keys for _, window, keys, _ in fleet.tmux.sent_keys if window == agent.tmux_window]
+        assert any(f"prompts/{agent.id}.txt" in keys for keys in typed)
+
+    def test_launch_backend_arg_reaches_the_launcher(self, fleet):
         """--backend-arg is the neutral spelling of the old --claude-arg."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "agent"
-            mock_sess.parent_session_id = None
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--backend-arg", "--verbose")
+        assert result.exit_code == 0, result.output
+        assert fleet.get("agent").extra_cli_args == ["--verbose"]
 
-            result = runner.invoke(app, [
-                "launch", "--name", "agent", "--backend-arg", "--verbose",
-            ])
-            assert result.exit_code == 0
-            assert mock_launcher.launch.call_args.kwargs["extra_cli_args"] == ["--verbose"]
-
-    def test_launch_deprecated_claude_arg_still_works(self):
+    def test_launch_deprecated_claude_arg_still_works(self, fleet):
         """The pre-Phase-6 flag keeps working (hidden from --help)."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "agent"
-            mock_sess.parent_session_id = None
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--claude-arg", "--verbose")
+        assert result.exit_code == 0, result.output
+        assert fleet.get("agent").extra_cli_args == ["--verbose"]
 
-            result = runner.invoke(app, [
-                "launch", "--name", "agent", "--claude-arg", "--verbose",
-            ])
-            assert result.exit_code == 0
-            assert mock_launcher.launch.call_args.kwargs["extra_cli_args"] == ["--verbose"]
-
-    def test_launch_merges_both_arg_spellings(self):
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "agent"
-            mock_sess.parent_session_id = None
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
-
-            result = runner.invoke(app, [
-                "launch", "--name", "agent",
-                "--backend-arg", "--new", "--claude-arg", "--old",
-            ])
-            assert result.exit_code == 0
-            assert mock_launcher.launch.call_args.kwargs["extra_cli_args"] == [
-                "--new", "--old",
-            ]
+    def test_launch_merges_both_arg_spellings(self, fleet):
+        result = self._launch("--backend-arg", "--new", "--claude-arg", "--old")
+        assert result.exit_code == 0, result.output
+        assert fleet.get("agent").extra_cli_args == ["--new", "--old"]
 
     def test_deprecated_claude_arg_is_hidden_from_help(self):
         result = runner.invoke(app, ["launch", "--help"])
@@ -661,163 +675,82 @@ class TestLaunchExtended:
         assert "--backend-arg" in output
         assert "--claude-arg" not in output
 
-    def test_launch_with_parent(self):
+    def test_launch_with_parent(self, fleet):
         """Launch with --parent sets parent info."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "child"
-            mock_sess.parent_session_id = "parent-id"
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
+        dad = fleet.add("dad")
+        result = self._launch("--parent", "dad", name="child")
+        assert result.exit_code == 0, result.output
+        assert "Parent: dad" in result.output
+        assert fleet.get("child").parent_session_id == dad.id
 
-            result = runner.invoke(app, ["launch", "--name", "child", "--parent", "dad"])
-            assert result.exit_code == 0
-            assert "Parent: dad" in result.output
-
-    def test_launch_with_oversight_timeout(self):
+    def test_launch_with_oversight_timeout(self, fleet):
         """Launch with --oversight-timeout stores policy."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "child"
-            mock_sess.parent_session_id = None
-            mock_sess.id = "child-id"
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--oversight-timeout", "5m", name="child")
+        assert result.exit_code == 0, result.output
+        assert "Oversight: timeout" in result.output
+        child = fleet.get("child")
+        assert child.oversight_policy == "timeout"
+        assert child.oversight_timeout_seconds == 300.0
 
-            with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-                mock_sm = MagicMock()
-                mock_sm_cls.return_value = mock_sm
+    def test_a_refused_launch_prints_why_and_exits_1(self, fleet):
+        result = self._launch("--wrapper", "no-such-wrapper", name="child")
+        assert result.exit_code == 1
+        assert "Cannot launch: wrapper 'no-such-wrapper' not found" in result.output
+        assert "launched" not in result.output
+        assert fleet.get("child") is None
 
-                result = runner.invoke(app, ["launch", "--name", "child", "--oversight-timeout", "5m"])
-                assert result.exit_code == 0
-                assert "Oversight: timeout" in result.output
-                mock_sm.update_session.assert_called_once_with(
-                    "child-id",
-                    oversight_policy="timeout",
-                    oversight_timeout_seconds=300.0,
-                )
-
-    def test_a_refused_launch_prints_why_and_exits_1(self):
-        from overcode.exceptions import LaunchError
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_cls.return_value.launch.side_effect = LaunchError("wrapper 'w' not found or not executable")
-
-            result = runner.invoke(app, ["launch", "--name", "child"])
-            assert result.exit_code == 1
-            assert "Cannot launch: wrapper 'w' not found" in result.output
-            assert "launched" not in result.output
-
-    def test_launch_invalid_oversight_timeout(self):
+    def test_launch_invalid_oversight_timeout(self, fleet):
         """Launch with invalid --oversight-timeout errors."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = None
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--oversight-timeout", "abc", name="child")
+        assert result.exit_code == 1
+        assert "Invalid duration" in result.output
+        assert fleet.get("child") is None
 
-            result = runner.invoke(app, ["launch", "--name", "child", "--oversight-timeout", "abc"])
-            assert result.exit_code == 1
-            assert "Invalid duration" in result.output
-
-    def test_launch_on_stuck_fail(self):
+    def test_launch_on_stuck_fail(self, fleet):
         """Launch with --on-stuck fail."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "child"
-            mock_sess.parent_session_id = None
-            mock_sess.id = "child-id"
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--on-stuck", "fail", name="child")
+        assert result.exit_code == 0, result.output
+        assert "Oversight: fail" in result.output
+        assert fleet.get("child").oversight_policy == "fail"
 
-            with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-                mock_sm = MagicMock()
-                mock_sm_cls.return_value = mock_sm
+    def test_launch_on_stuck_wait(self, fleet):
+        """Launch with --on-stuck wait keeps the default (no oversight line)."""
+        result = self._launch("--on-stuck", "wait", name="child")
+        assert result.exit_code == 0, result.output
+        assert "Oversight" not in result.output
+        assert fleet.get("child").oversight_policy == "wait"
 
-                result = runner.invoke(app, ["launch", "--name", "child", "--on-stuck", "fail"])
-                assert result.exit_code == 0
-                assert "Oversight: fail" in result.output
-
-    def test_launch_on_stuck_wait(self):
-        """Launch with --on-stuck wait uses default (no oversight update)."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "child"
-            mock_sess.parent_session_id = None
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
-
-            result = runner.invoke(app, ["launch", "--name", "child", "--on-stuck", "wait"])
-            assert result.exit_code == 0
-
-    def test_launch_on_stuck_timeout(self):
+    def test_launch_on_stuck_timeout(self, fleet):
         """Launch with --on-stuck timeout:1h."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "child"
-            mock_sess.parent_session_id = None
-            mock_sess.id = "child-id"
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--on-stuck", "timeout:1h", name="child")
+        assert result.exit_code == 0, result.output
+        child = fleet.get("child")
+        assert child.oversight_policy == "timeout"
+        assert child.oversight_timeout_seconds == 3600.0
 
-            with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-                mock_sm = MagicMock()
-                mock_sm_cls.return_value = mock_sm
-
-                result = runner.invoke(app, ["launch", "--name", "child", "--on-stuck", "timeout:1h"])
-                assert result.exit_code == 0
-                mock_sm.update_session.assert_called_once_with(
-                    "child-id",
-                    oversight_policy="timeout",
-                    oversight_timeout_seconds=3600.0,
-                )
-
-    def test_launch_on_stuck_timeout_invalid(self):
+    def test_launch_on_stuck_timeout_invalid(self, fleet):
         """Launch with --on-stuck timeout:bad errors."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = None
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--on-stuck", "timeout:bad", name="child")
+        assert result.exit_code == 1
+        assert "Invalid duration" in result.output
 
-            result = runner.invoke(app, ["launch", "--name", "child", "--on-stuck", "timeout:bad"])
-            assert result.exit_code == 1
-            assert "Invalid duration" in result.output
-
-    def test_launch_on_stuck_invalid_value(self):
+    def test_launch_on_stuck_invalid_value(self, fleet):
         """Launch with --on-stuck bogus errors."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = None
-            mock_cls.return_value = mock_launcher
+        result = self._launch("--on-stuck", "bogus", name="child")
+        assert result.exit_code == 1
+        assert "Invalid --on-stuck" in result.output
 
-            result = runner.invoke(app, ["launch", "--name", "child", "--on-stuck", "bogus"])
-            assert result.exit_code == 1
-            assert "Invalid --on-stuck" in result.output
-
-    def test_launch_with_follow(self):
-        """Launch with --follow calls follow_agent."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_sess = MagicMock()
-            mock_sess.name = "child"
-            mock_sess.parent_session_id = None
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = mock_sess
-            mock_cls.return_value = mock_launcher
-
-            with patch('overcode.follow_mode.follow_agent', return_value=0) as mock_follow:
-                result = runner.invoke(app, ["launch", "--name", "child", "--follow"])
-                assert result.exit_code == 0
-                mock_follow.assert_called_once_with("child", "agents")
+    def test_launch_with_follow(self, fleet):
+        """Launch with --follow hands over to follow mode (patched: it blocks)."""
+        with patch('overcode.follow_mode.follow_agent', return_value=0) as mock_follow:
+            result = self._launch("--follow", name="child")
+        assert result.exit_code == 0, result.output
+        mock_follow.assert_called_once_with("child", "agents")
 
     def test_launch_returns_none(self):
-        """Launch returns None when launch fails."""
+        """The CLI's no-result branch (launch raises today, but is typed Optional)."""
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.launch.return_value = None
-            mock_cls.return_value = mock_launcher
+            mock_cls.return_value.launch.return_value = None
 
             result = runner.invoke(app, ["launch", "--name", "agent"])
             assert result.exit_code == 0
@@ -961,435 +894,263 @@ class TestReportCommand:
             assert result.exit_code == 1
             assert "env vars required" in result.output
 
-    def test_report_success(self):
+    def test_report_success(self, fleet, monkeypatch):
         """Report writes the file in the agent's own directory and updates the session."""
         import json
-        import os
         from overcode.paths import agent_file
-        env = {
-            "OVERCODE_SESSION_NAME": "child-agent",
-            "OVERCODE_SESSION_ID": "child-id",
-            "OVERCODE_TMUX_SESSION": "agents",
-        }
-        with patch.dict(os.environ, env):
-            with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-                mock_sm = MagicMock()
-                mock_session = MagicMock()
-                mock_session.id = "child-id"
-                mock_sm.resolve_session_name.return_value = mock_session
-                mock_sm_cls.return_value = mock_sm
+        child = fleet.add("child-agent")
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "child-agent")
+        monkeypatch.setenv("OVERCODE_SESSION_ID", child.id)
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
 
-                result = runner.invoke(app, ["report", "--status", "success", "--reason", "All tests passed"])
-                assert result.exit_code == 0
-                assert "Report filed: success" in result.output
-                assert "All tests passed" in result.output
-                mock_sm.update_session.assert_called_once_with(
-                    "child-id",
-                    report_status="success",
-                    report_reason="All tests passed",
-                )
-            report = json.loads(agent_file("agents", "child-id", "report").read_text())
+        result = runner.invoke(app, ["report", "--status", "success", "--reason", "All tests passed"])
+        assert result.exit_code == 0
+        assert "Report filed: success" in result.output
+        assert "All tests passed" in result.output
+        child = fleet.get("child-agent")
+        assert (child.report_status, child.report_reason) == ("success", "All tests passed")
+        report = json.loads(agent_file("agents", child.id, "report").read_text())
         assert report["status"] == "success"
 
-    def test_report_failure_no_reason(self):
-        """Report failure without reason."""
-        import os
-        env = {
-            "OVERCODE_SESSION_NAME": "child-agent",
-            "OVERCODE_TMUX_SESSION": "agents",
-        }
-        with patch.dict(os.environ, env):
-            with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-                mock_sm = MagicMock()
-                mock_sm.resolve_session_name.return_value = None
-                mock_sm_cls.return_value = mock_sm
+    def test_report_failure_no_reason(self, fleet, monkeypatch):
+        """Report failure without reason, from an agent the registry no longer has."""
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "child-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
 
-                result = runner.invoke(app, ["report", "--status", "failure"])
-                assert result.exit_code == 0
-                assert "Report filed: failure" in result.output
+        result = runner.invoke(app, ["report", "--status", "failure"])
+        assert result.exit_code == 0
+        assert "Report filed: failure" in result.output
 
 
 class TestCleanupExtended:
     """Test cleanup with --done flag."""
 
-    def test_cleanup_with_done_flag(self):
+    def test_cleanup_with_done_flag(self, fleet):
         """Cleanup with --done also archives done agents."""
-        mock_done_session = MagicMock()
-        mock_done_session.status = "done"
+        parent = fleet.add("parent")
+        done = fleet.add("finished", status="done", parent_session_id=parent.id)
+        fleet.add("gone", window=False)  # its window is gone: terminated
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.cleanup_terminated_sessions.return_value = 1
-            mock_launcher.sessions.list_sessions.return_value = [mock_done_session]
-            mock_cls.return_value = mock_launcher
-
-            result = runner.invoke(app, ["cleanup", "--done"])
-            assert result.exit_code == 0
-            assert "1 terminated" in result.output
-            assert "1 done" in result.output
-            mock_launcher._kill_single_session.assert_called_once_with(mock_done_session)
+        result = runner.invoke(app, ["cleanup", "--done"])
+        assert result.exit_code == 0, result.output
+        assert "1 terminated" in result.output
+        assert "1 done" in result.output
+        assert [s.name for s in fleet.sm.list_sessions()] == ["parent"]
+        assert done.tmux_window not in fleet.tmux.sessions["agents"]
 
 
 class TestSetValueExtended:
     """Test set-value command execution."""
 
-    def test_set_value_success(self):
+    def test_set_value_success(self, fleet):
         """Set value successfully updates agent."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent")
+        result = runner.invoke(app, ["set-value", "my-agent", "2000"])
+        assert result.exit_code == 0
+        assert "Set my-agent value to 2000" in result.output
+        assert fleet.get("my-agent").agent_value == 2000
 
-            result = runner.invoke(app, ["set-value", "my-agent", "2000"])
-            assert result.exit_code == 0
-            assert "Set my-agent value to 2000" in result.output
-            mock_sm.set_agent_value.assert_called_once_with("agent-id", 2000)
-
-    def test_set_value_agent_not_found(self):
+    def test_set_value_agent_not_found(self, fleet):
         """Set value errors when agent not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = None
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["set-value", "missing", "2000"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
+        result = runner.invoke(app, ["set-value", "missing", "2000"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
 
 class TestSetBudgetCommand:
     """Test set-budget command (deprecated)."""
 
-    def test_set_budget_success(self):
+    def test_set_budget_success(self, fleet):
         """Set budget successfully."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent")
+        result = runner.invoke(app, ["set-budget", "my-agent", "5.00"])
+        assert result.exit_code == 0
+        assert "$5.00" in result.output
+        assert fleet.get("my-agent").cost_budget_usd == 5.0
 
-            result = runner.invoke(app, ["set-budget", "my-agent", "5.00"])
-            assert result.exit_code == 0
-            assert "$5.00" in result.output
-            mock_sm.set_cost_budget.assert_called_once_with("agent-id", 5.0)
-
-    def test_set_budget_clear(self):
+    def test_set_budget_clear(self, fleet):
         """Set budget to 0 clears it."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent", cost_budget_usd=5.0)
+        result = runner.invoke(app, ["set-budget", "my-agent", "0"])
+        assert result.exit_code == 0
+        assert "Cleared budget" in result.output
+        assert fleet.get("my-agent").cost_budget_usd == 0.0
 
-            result = runner.invoke(app, ["set-budget", "my-agent", "0"])
-            assert result.exit_code == 0
-            assert "Cleared budget" in result.output
-
-    def test_set_budget_agent_not_found(self):
+    def test_set_budget_agent_not_found(self, fleet):
         """Set budget errors when agent not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = None
-            mock_sm_cls.return_value = mock_sm
+        result = runner.invoke(app, ["set-budget", "missing", "5.00"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
-            result = runner.invoke(app, ["set-budget", "missing", "5.00"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
-
-    def test_set_budget_negative(self):
+    def test_set_budget_negative(self, fleet):
         """Set budget rejects negative values."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["set-budget", "my-agent", "-1"])
-            # Typer may reject negative float at parsing level (exit code 2)
-            assert result.exit_code != 0
+        fleet.add("my-agent", cost_budget_usd=5.0)
+        result = runner.invoke(app, ["set-budget", "my-agent", "-1"])
+        # Typer may reject negative float at parsing level (exit code 2)
+        assert result.exit_code != 0
+        assert fleet.get("my-agent").cost_budget_usd == 5.0
 
 
 class TestBudgetSetCommand:
     """Test budget set subcommand."""
 
-    def test_budget_set_success(self):
+    def test_budget_set_success(self, fleet):
         """Budget set works."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_agent.parent_session_id = None
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent")
+        result = runner.invoke(app, ["budget", "set", "my-agent", "10.0"])
+        assert result.exit_code == 0
+        assert "$10.00" in result.output
+        assert fleet.get("my-agent").cost_budget_usd == 10.0
 
-            result = runner.invoke(app, ["budget", "set", "my-agent", "10.0"])
-            assert result.exit_code == 0
-            assert "$10.00" in result.output
-
-    def test_budget_set_clear(self):
+    def test_budget_set_clear(self, fleet):
         """Budget set to 0 clears."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_agent.parent_session_id = None
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent", cost_budget_usd=10.0)
+        result = runner.invoke(app, ["budget", "set", "my-agent", "0"])
+        assert result.exit_code == 0
+        assert "Cleared budget" in result.output
+        assert fleet.get("my-agent").cost_budget_usd == 0.0
 
-            result = runner.invoke(app, ["budget", "set", "my-agent", "0"])
-            assert result.exit_code == 0
-            assert "Cleared budget" in result.output
-
-    def test_budget_set_not_found(self):
+    def test_budget_set_not_found(self, fleet):
         """Budget set errors when agent not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = None
-            mock_sm_cls.return_value = mock_sm
+        result = runner.invoke(app, ["budget", "set", "missing", "5"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
-            result = runner.invoke(app, ["budget", "set", "missing", "5"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
-
-    def test_budget_set_negative(self):
+    def test_budget_set_negative(self, fleet):
         """Budget set rejects negative."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_agent.parent_session_id = None
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["budget", "set", "my-agent", "-5"])
-            # Typer may reject negative float at parsing level (exit code 2)
-            assert result.exit_code != 0
+        fleet.add("my-agent")
+        result = runner.invoke(app, ["budget", "set", "my-agent", "-5"])
+        # Typer may reject negative float at parsing level (exit code 2)
+        assert result.exit_code != 0
+        assert fleet.get("my-agent").cost_budget_usd == 0.0
 
 
 class TestBudgetTransferCommand:
     """Test budget transfer subcommand."""
 
-    def test_budget_transfer_success(self):
+    @staticmethod
+    def _family(fleet, parent_budget=5.0, related=True):
+        parent = fleet.add("parent", cost_budget_usd=parent_budget)
+        fleet.add("child", parent_session_id=parent.id if related else None)
+
+    def test_budget_transfer_success(self, fleet):
         """Budget transfer works."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_src = MagicMock()
-            mock_src.id = "src-id"
-            mock_tgt = MagicMock()
-            mock_tgt.id = "tgt-id"
-            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
-            mock_sm.is_ancestor.return_value = True
-            mock_sm.transfer_budget.return_value = True
-            mock_sm_cls.return_value = mock_sm
+        self._family(fleet)
+        result = runner.invoke(app, ["budget", "transfer", "parent", "child", "2.0"])
+        assert result.exit_code == 0
+        assert "Transferred $2.00" in result.output
+        assert fleet.get("parent").cost_budget_usd == 3.0
+        assert fleet.get("child").cost_budget_usd == 2.0
 
-            result = runner.invoke(app, ["budget", "transfer", "parent", "child", "2.0"])
-            assert result.exit_code == 0
-            assert "Transferred $2.00" in result.output
-
-    def test_budget_transfer_source_not_found(self):
+    def test_budget_transfer_source_not_found(self, fleet):
         """Budget transfer errors when source not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = None
-            mock_sm_cls.return_value = mock_sm
+        result = runner.invoke(app, ["budget", "transfer", "missing", "child", "2.0"])
+        assert result.exit_code == 1
+        assert "Source agent" in result.output
 
-            result = runner.invoke(app, ["budget", "transfer", "missing", "child", "2.0"])
-            assert result.exit_code == 1
-            assert "Source agent" in result.output
-
-    def test_budget_transfer_target_not_found(self):
+    def test_budget_transfer_target_not_found(self, fleet):
         """Budget transfer errors when target not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_src = MagicMock()
-            mock_src.id = "src-id"
-            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else None
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("parent")
+        result = runner.invoke(app, ["budget", "transfer", "parent", "missing", "2.0"])
+        assert result.exit_code == 1
+        assert "Target agent" in result.output
 
-            result = runner.invoke(app, ["budget", "transfer", "parent", "missing", "2.0"])
-            assert result.exit_code == 1
-            assert "Target agent" in result.output
-
-    def test_budget_transfer_non_positive(self):
+    def test_budget_transfer_non_positive(self, fleet):
         """Budget transfer rejects zero/negative amount."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_src = MagicMock()
-            mock_src.id = "src-id"
-            mock_tgt = MagicMock()
-            mock_tgt.id = "tgt-id"
-            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
-            mock_sm_cls.return_value = mock_sm
+        self._family(fleet)
+        result = runner.invoke(app, ["budget", "transfer", "parent", "child", "0"])
+        assert result.exit_code == 1
+        assert "must be positive" in result.output
 
-            result = runner.invoke(app, ["budget", "transfer", "parent", "child", "0"])
-            assert result.exit_code == 1
-            assert "must be positive" in result.output
-
-    def test_budget_transfer_not_ancestor(self):
+    def test_budget_transfer_not_ancestor(self, fleet):
         """Budget transfer errors when source is not ancestor."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_src = MagicMock()
-            mock_src.id = "src-id"
-            mock_tgt = MagicMock()
-            mock_tgt.id = "tgt-id"
-            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
-            mock_sm.is_ancestor.return_value = False
-            mock_sm_cls.return_value = mock_sm
+        self._family(fleet, related=False)
+        result = runner.invoke(app, ["budget", "transfer", "parent", "child", "2.0"])
+        assert result.exit_code == 1
+        assert "not an ancestor" in result.output
 
-            result = runner.invoke(app, ["budget", "transfer", "parent", "child", "2.0"])
-            assert result.exit_code == 1
-            assert "not an ancestor" in result.output
-
-    def test_budget_transfer_insufficient(self):
+    def test_budget_transfer_insufficient(self, fleet):
         """Budget transfer fails on insufficient budget."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_src = MagicMock()
-            mock_src.id = "src-id"
-            mock_tgt = MagicMock()
-            mock_tgt.id = "tgt-id"
-            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
-            mock_sm.is_ancestor.return_value = True
-            mock_sm.transfer_budget.return_value = False
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["budget", "transfer", "parent", "child", "99.0"])
-            assert result.exit_code == 1
-            assert "insufficient budget" in result.output
+        self._family(fleet)
+        result = runner.invoke(app, ["budget", "transfer", "parent", "child", "99.0"])
+        assert result.exit_code == 1
+        assert "insufficient budget" in result.output
+        assert fleet.get("parent").cost_budget_usd == 5.0
 
 
 class TestBudgetShowCommand:
     """Test budget show subcommand."""
 
-    def test_budget_show_all_agents(self):
+    def test_budget_show_all_agents(self, fleet):
         """Budget show with no name shows all agents."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            agent = _make_session(name="a1", cost_budget_usd=10.0)
-            mock_sm.list_sessions.return_value = [agent]
-            mock_sm.get_descendants.return_value = []
-            mock_sm.compute_depth.return_value = 0
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("a1", cost_budget_usd=10.0, stats={"estimated_cost_usd": 2.5})
+        result = runner.invoke(app, ["budget", "show"])
+        assert result.exit_code == 0
+        assert "a1" in result.output
+        assert "$7.50 remaining (25% used)" in result.output
 
-            result = runner.invoke(app, ["budget", "show"])
-            assert result.exit_code == 0
-            assert "a1" in result.output
-            assert "remaining" in result.output
-
-    def test_budget_show_no_agents(self):
+    def test_budget_show_no_agents(self, fleet):
         """Budget show with no agents."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.list_sessions.return_value = []
-            mock_sm_cls.return_value = mock_sm
+        result = runner.invoke(app, ["budget", "show"])
+        assert result.exit_code == 0
+        assert "No running agents" in result.output
 
-            result = runner.invoke(app, ["budget", "show"])
-            assert result.exit_code == 0
-            assert "No running agents" in result.output
-
-    def test_budget_show_specific_agent(self):
+    def test_budget_show_specific_agent(self, fleet):
         """Budget show for specific agent."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            agent = _make_session(name="my-agent", cost_budget_usd=5.0)
-            mock_sm.resolve_session_name.return_value = agent
-            mock_sm.get_descendants.return_value = []
-            mock_sm.compute_depth.return_value = 0
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent", cost_budget_usd=5.0)
+        fleet.add("other-agent", cost_budget_usd=5.0)
+        result = runner.invoke(app, ["budget", "show", "my-agent"])
+        assert result.exit_code == 0
+        assert "my-agent" in result.output
+        assert "other-agent" not in result.output
 
-            result = runner.invoke(app, ["budget", "show", "my-agent"])
-            assert result.exit_code == 0
-            assert "my-agent" in result.output
-
-    def test_budget_show_agent_not_found(self):
+    def test_budget_show_agent_not_found(self, fleet):
         """Budget show errors when agent not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = None
-            mock_sm_cls.return_value = mock_sm
+        result = runner.invoke(app, ["budget", "show", "missing"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
-            result = runner.invoke(app, ["budget", "show", "missing"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
-
-    def test_budget_show_unlimited(self):
+    def test_budget_show_unlimited(self, fleet):
         """Budget show for agent with no budget (unlimited)."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            agent = _make_session(name="free", cost_budget_usd=0.0)
-            mock_sm.resolve_session_name.return_value = agent
-            mock_sm.get_descendants.return_value = []
-            mock_sm.compute_depth.return_value = 0
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("free")
+        result = runner.invoke(app, ["budget", "show", "free"])
+        assert result.exit_code == 0
+        assert "unlimited" in result.output
+        assert "no limit" in result.output
 
-            result = runner.invoke(app, ["budget", "show", "free"])
-            assert result.exit_code == 0
-            assert "unlimited" in result.output
-            assert "no limit" in result.output
-
-    def test_budget_show_with_children(self):
+    def test_budget_show_with_children(self, fleet):
         """Budget show includes subtree spend for parent."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            parent_agent = _make_session(name="parent", cost_budget_usd=10.0)
-            child_agent = _make_session(name="child")
-            mock_sm.resolve_session_name.return_value = parent_agent
-            mock_sm.get_descendants.return_value = [child_agent]
-            mock_sm.compute_depth.return_value = 0
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["budget", "show", "parent"])
-            assert result.exit_code == 0
-            assert "subtree" in result.output
+        parent = fleet.add("parent", cost_budget_usd=10.0, stats={"estimated_cost_usd": 1.0})
+        fleet.add("child", parent_session_id=parent.id, stats={"estimated_cost_usd": 0.5})
+        result = runner.invoke(app, ["budget", "show", "parent"])
+        assert result.exit_code == 0
+        assert "(subtree: $1.5000)" in result.output
 
 
 class TestAnnotateCommand:
     """Test annotate command."""
 
-    def test_annotate_set(self):
+    def test_annotate_set(self, fleet):
         """Annotate sets annotation text."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent")
+        result = runner.invoke(app, ["annotate", "my-agent", "Working", "on", "auth"])
+        assert result.exit_code == 0
+        assert "Annotation set" in result.output
+        assert fleet.get("my-agent").human_annotation == "Working on auth"
 
-            result = runner.invoke(app, ["annotate", "my-agent", "Working", "on", "auth"])
-            assert result.exit_code == 0
-            assert "Annotation set" in result.output
-            mock_sm.set_human_annotation.assert_called_once_with("agent-id", "Working on auth")
-
-    def test_annotate_clear(self):
+    def test_annotate_clear(self, fleet):
         """Annotate with no text clears annotation."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_agent = MagicMock()
-            mock_agent.id = "agent-id"
-            mock_sm.resolve_session_name.return_value = mock_agent
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent", human_annotation="old note")
+        result = runner.invoke(app, ["annotate", "my-agent"])
+        assert result.exit_code == 0
+        assert "Annotation cleared" in result.output
+        assert fleet.get("my-agent").human_annotation == ""
 
-            result = runner.invoke(app, ["annotate", "my-agent"])
-            assert result.exit_code == 0
-            assert "Annotation cleared" in result.output
-            mock_sm.set_human_annotation.assert_called_once_with("agent-id", "")
-
-    def test_annotate_not_found(self):
+    def test_annotate_not_found(self, fleet):
         """Annotate errors when agent not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = None
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["annotate", "missing"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
+        result = runner.invoke(app, ["annotate", "missing"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
 
 class TestSendExtended:
@@ -1867,352 +1628,210 @@ class TestHookHandlerCommand:
 class TestInstructExtended:
     """Extended instruct command tests."""
 
-    def test_instruct_set_preset(self):
+    def test_instruct_set_preset(self, fleet):
         """Instruct sets a preset."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "test-id"
-            mock_sm.resolve_session_name.return_value = mock_session
-            mock_sm_cls.return_value = mock_sm
+        from overcode.standing_instructions import DEFAULT_PRESETS
+        fleet.add("my-agent")
 
-            with patch('overcode.standing_instructions.resolve_instructions') as mock_resolve:
-                mock_resolve.return_value = ("Do absolutely nothing", "DO_NOTHING")
+        result = runner.invoke(app, ["instruct", "my-agent", "DO_NOTHING"])
+        assert result.exit_code == 0
+        assert "DO_NOTHING" in result.output
+        agent = fleet.get("my-agent")
+        assert agent.standing_instructions_preset == "DO_NOTHING"
+        assert agent.standing_instructions == DEFAULT_PRESETS["DO_NOTHING"].instructions
 
-                result = runner.invoke(app, ["instruct", "my-agent", "DO_NOTHING"])
-                assert result.exit_code == 0
-                assert "DO_NOTHING" in result.output
-                mock_sm.set_standing_instructions.assert_called_once_with(
-                    "test-id", "Do absolutely nothing", preset_name="DO_NOTHING"
-                )
-
-    def test_instruct_set_custom(self):
+    def test_instruct_set_custom(self, fleet):
         """Instruct sets custom instructions."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "test-id"
-            mock_sm.resolve_session_name.return_value = mock_session
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent")
 
-            with patch('overcode.standing_instructions.resolve_instructions') as mock_resolve:
-                mock_resolve.return_value = ("Focus on tests", None)
+        result = runner.invoke(app, ["instruct", "my-agent", "Focus", "on", "tests"])
+        assert result.exit_code == 0
+        assert "standing instructions" in result.output
+        agent = fleet.get("my-agent")
+        assert agent.standing_instructions == "Focus on tests"
+        assert agent.standing_instructions_preset is None
 
-                result = runner.invoke(app, ["instruct", "my-agent", "Focus", "on", "tests"])
-                assert result.exit_code == 0
-                assert "standing instructions" in result.output
-
-    def test_instruct_show_current_preset(self):
+    def test_instruct_show_current_preset(self, fleet):
         """Instruct shows current preset instructions."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "test-id"
-            mock_session.standing_instructions = "Do nothing"
-            mock_session.standing_instructions_preset = "DO_NOTHING"
-            mock_sm.resolve_session_name.return_value = mock_session
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent", standing_instructions="Do nothing",
+                  standing_instructions_preset="DO_NOTHING")
 
-            result = runner.invoke(app, ["instruct", "my-agent"])
-            assert result.exit_code == 0
-            assert "DO_NOTHING" in result.output
+        result = runner.invoke(app, ["instruct", "my-agent"])
+        assert result.exit_code == 0
+        assert "DO_NOTHING" in result.output
 
-    def test_instruct_show_current_custom(self):
+    def test_instruct_show_current_custom(self, fleet):
         """Instruct shows current custom instructions."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "test-id"
-            mock_session.standing_instructions = "Custom stuff"
-            mock_session.standing_instructions_preset = None
-            mock_sm.resolve_session_name.return_value = mock_session
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent", standing_instructions="Custom stuff")
 
-            result = runner.invoke(app, ["instruct", "my-agent"])
-            assert result.exit_code == 0
-            assert "Custom stuff" in result.output
+        result = runner.invoke(app, ["instruct", "my-agent"])
+        assert result.exit_code == 0
+        assert "Custom stuff" in result.output
 
-    def test_instruct_show_no_instructions(self):
+    def test_instruct_show_no_instructions(self, fleet):
         """Instruct shows message when no instructions set."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "test-id"
-            mock_session.standing_instructions = ""
-            mock_sm.resolve_session_name.return_value = mock_session
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("my-agent")
 
-            result = runner.invoke(app, ["instruct", "my-agent"])
-            assert result.exit_code == 0
-            assert "No standing instructions" in result.output
+        result = runner.invoke(app, ["instruct", "my-agent"])
+        assert result.exit_code == 0
+        assert "No standing instructions" in result.output
 
 
 class TestHeartbeatCommand:
-    """Test heartbeat command."""
+    """Test heartbeat command, against a real agent record."""
 
-    def _mock_agent(self, **kwargs):
-        defaults = dict(
-            id="agent-id",
-            name="test-agent",
-            heartbeat_enabled=False,
-            heartbeat_frequency_seconds=300,
-            heartbeat_instruction="",
-            heartbeat_paused=False,
-            last_heartbeat_time=None,
-        )
-        defaults.update(kwargs)
-        agent = MagicMock()
-        for k, v in defaults.items():
-            setattr(agent, k, v)
-        return agent
+    @staticmethod
+    def _heartbeat(*args):
+        return runner.invoke(app, ["heartbeat", "test-agent", *args])
 
-    def test_heartbeat_show_disabled(self):
+    def test_heartbeat_show_disabled(self, fleet):
         """Show heartbeat when disabled."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent()
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat("--show")
+        assert result.exit_code == 0
+        assert "disabled" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--show"])
-            assert result.exit_code == 0
-            assert "disabled" in result.output
-
-    def test_heartbeat_show_enabled(self):
+    def test_heartbeat_show_enabled(self, fleet):
         """Show heartbeat when enabled."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(
-                heartbeat_enabled=True,
-                heartbeat_instruction="Check status",
-                last_heartbeat_time="2026-02-06T12:00:00",
-            )
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_enabled=True, heartbeat_instruction="Check status",
+                  last_heartbeat_time="2026-02-06T12:00:00")
+        result = self._heartbeat("--show")
+        assert result.exit_code == 0
+        assert "enabled" in result.output
+        assert "Check status" in result.output
+        assert "2026-02-06T12:00:00" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--show"])
-            assert result.exit_code == 0
-            assert "enabled" in result.output
-            assert "Check status" in result.output
-
-    def test_heartbeat_show_paused(self):
+    def test_heartbeat_show_paused(self, fleet):
         """Show heartbeat when paused."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(
-                heartbeat_enabled=True,
-                heartbeat_paused=True,
-                heartbeat_instruction="Check",
-            )
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_enabled=True, heartbeat_paused=True,
+                  heartbeat_instruction="Check")
+        result = self._heartbeat("--show")
+        assert result.exit_code == 0
+        assert "paused" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--show"])
-            assert result.exit_code == 0
-            assert "paused" in result.output
-
-    def test_heartbeat_default_shows_config(self):
+    def test_heartbeat_default_shows_config(self, fleet):
         """Heartbeat with no flags shows config."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent()
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat()
+        assert result.exit_code == 0
+        assert "disabled" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "test-agent"])
-            assert result.exit_code == 0
-            assert "disabled" in result.output
-
-    def test_heartbeat_enable(self):
+    def test_heartbeat_enable(self, fleet):
         """Enable heartbeat."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent()
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat("--enable", "--frequency", "5m", "--instruction", "Status check")
+        assert result.exit_code == 0
+        assert "enabled" in result.output
+        assert "Status check" in result.output
+        agent = fleet.get("test-agent")
+        assert agent.heartbeat_enabled is True
+        assert agent.heartbeat_instruction == "Status check"
+        assert agent.heartbeat_frequency_seconds == 300
 
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, [
-                    "heartbeat", "test-agent",
-                    "--enable", "--frequency", "5m",
-                    "--instruction", "Status check"
-                ])
-                assert result.exit_code == 0
-                assert "enabled" in result.output
-                assert "Status check" in result.output
-
-    def test_heartbeat_enable_default_frequency(self):
+    def test_heartbeat_enable_default_frequency(self, fleet):
         """Enable heartbeat uses default 5min frequency."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent()
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_frequency_seconds=900)
+        result = self._heartbeat("--enable", "--instruction", "Check")
+        assert result.exit_code == 0
+        assert fleet.get("test-agent").heartbeat_frequency_seconds == 300
 
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, [
-                    "heartbeat", "test-agent",
-                    "--enable", "--instruction", "Check"
-                ])
-                assert result.exit_code == 0
-                mock_sm.update_session.assert_called_once()
-                call_kwargs = mock_sm.update_session.call_args[1]
-                assert call_kwargs['heartbeat_frequency_seconds'] == 300
-
-    def test_heartbeat_enable_requires_instruction(self):
+    def test_heartbeat_enable_requires_instruction(self, fleet):
         """Enable heartbeat requires --instruction."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent()
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat("--enable")
+        assert result.exit_code == 1
+        assert "instruction required" in result.output
+        assert fleet.get("test-agent").heartbeat_enabled is False
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--enable"])
-            assert result.exit_code == 1
-            assert "instruction required" in result.output
-
-    def test_heartbeat_disable(self):
+    def test_heartbeat_disable(self, fleet):
         """Disable heartbeat."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_enabled=True, heartbeat_paused=True,
+                  heartbeat_instruction="Check")
+        result = self._heartbeat("--disable")
+        assert result.exit_code == 0
+        assert "disabled" in result.output
+        agent = fleet.get("test-agent")
+        assert (agent.heartbeat_enabled, agent.heartbeat_paused, agent.heartbeat_instruction) == (
+            False, False, "")
 
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--disable"])
-                assert result.exit_code == 0
-                assert "disabled" in result.output
-
-    def test_heartbeat_pause(self):
+    def test_heartbeat_pause(self, fleet):
         """Pause heartbeat."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_enabled=True)
+        result = self._heartbeat("--pause")
+        assert result.exit_code == 0
+        assert "paused" in result.output
+        assert fleet.get("test-agent").heartbeat_paused is True
 
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--pause"])
-                assert result.exit_code == 0
-                assert "paused" in result.output
-
-    def test_heartbeat_pause_not_enabled(self):
+    def test_heartbeat_pause_not_enabled(self, fleet):
         """Pause heartbeat when not enabled."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=False)
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat("--pause")
+        assert result.exit_code == 0
+        assert "not enabled" in result.output
+        assert fleet.get("test-agent").heartbeat_paused is False
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--pause"])
-            assert result.exit_code == 0
-            assert "not enabled" in result.output
-
-    def test_heartbeat_resume(self):
+    def test_heartbeat_resume(self, fleet):
         """Resume heartbeat."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(
-                heartbeat_enabled=True, heartbeat_paused=True
-            )
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_enabled=True, heartbeat_paused=True)
+        result = self._heartbeat("--resume")
+        assert result.exit_code == 0
+        assert "resumed" in result.output
+        assert fleet.get("test-agent").heartbeat_paused is False
 
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--resume"])
-                assert result.exit_code == 0
-                assert "resumed" in result.output
-
-    def test_heartbeat_resume_not_enabled(self):
+    def test_heartbeat_resume_not_enabled(self, fleet):
         """Resume heartbeat when not enabled."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=False)
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat("--resume")
+        assert result.exit_code == 0
+        assert "not enabled" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--resume"])
-            assert result.exit_code == 0
-            assert "not enabled" in result.output
-
-    def test_heartbeat_update_frequency_only(self):
+    def test_heartbeat_update_frequency_only(self, fleet):
         """Update just frequency without full enable."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_enabled=True, heartbeat_instruction="Check")
+        result = self._heartbeat("--frequency", "10m")
+        assert result.exit_code == 0
+        assert "updated" in result.output
+        agent = fleet.get("test-agent")
+        assert agent.heartbeat_frequency_seconds == 600
+        assert agent.heartbeat_instruction == "Check"
 
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "10m"])
-                assert result.exit_code == 0
-                assert "updated" in result.output
-
-    def test_heartbeat_update_instruction_only(self):
+    def test_heartbeat_update_instruction_only(self, fleet):
         """Update just instruction without full enable."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent", heartbeat_enabled=True, heartbeat_frequency_seconds=600)
+        result = self._heartbeat("--instruction", "New instruction")
+        assert result.exit_code == 0
+        assert "updated" in result.output
+        agent = fleet.get("test-agent")
+        assert agent.heartbeat_instruction == "New instruction"
+        assert agent.heartbeat_frequency_seconds == 600
 
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--instruction", "New instruction"])
-                assert result.exit_code == 0
-                assert "updated" in result.output
-
-    def test_heartbeat_not_found(self):
+    def test_heartbeat_not_found(self, fleet):
         """Heartbeat errors when agent not found."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = None
-            mock_sm_cls.return_value = mock_sm
+        result = runner.invoke(app, ["heartbeat", "missing"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "missing"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
-
-    def test_heartbeat_invalid_frequency(self):
+    def test_heartbeat_invalid_frequency(self, fleet):
         """Heartbeat rejects invalid frequency."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent()
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat("--frequency", "abc")
+        assert result.exit_code == 1
+        assert "Invalid frequency" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "abc"])
-            assert result.exit_code == 1
-            assert "Invalid frequency" in result.output
-
-    def test_heartbeat_frequency_too_low(self):
+    def test_heartbeat_frequency_too_low(self, fleet):
         """Heartbeat rejects frequency below 30s."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent()
-            mock_sm_cls.return_value = mock_sm
+        fleet.add("test-agent")
+        result = self._heartbeat("--frequency", "10s")
+        assert result.exit_code == 1
+        assert "Minimum" in result.output
 
-            result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "10s"])
-            assert result.exit_code == 1
-            assert "Minimum" in result.output
-
-    def test_heartbeat_frequency_seconds_suffix(self):
-        """Heartbeat parses seconds suffix."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
-            mock_sm_cls.return_value = mock_sm
-
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "60s"])
-                assert result.exit_code == 0
-
-    def test_heartbeat_frequency_hours_suffix(self):
-        """Heartbeat parses hours suffix."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
-            mock_sm_cls.return_value = mock_sm
-
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "1h"])
-                assert result.exit_code == 0
-
-    def test_heartbeat_frequency_bare_number(self):
-        """Heartbeat parses bare number as seconds."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
-            mock_sm_cls.return_value = mock_sm
-
-            with patch('overcode.settings.signal_activity'):
-                result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "120"])
-                assert result.exit_code == 0
+    @pytest.mark.parametrize("frequency, seconds", [("60s", 60), ("1h", 3600), ("120", 120)])
+    def test_heartbeat_frequency_formats(self, fleet, frequency, seconds):
+        """Heartbeat parses a seconds or hours suffix, or a bare number of seconds."""
+        fleet.add("test-agent", heartbeat_enabled=True)
+        result = self._heartbeat("--frequency", frequency)
+        assert result.exit_code == 0
+        assert fleet.get("test-agent").heartbeat_frequency_seconds == seconds
 
 
 class TestMonitorDaemonStartCommand:
@@ -2715,16 +2334,12 @@ class TestExportExtended:
 class TestHistoryExtended:
     """Extended history command tests."""
 
-    def test_history_no_archived(self):
+    def test_history_no_archived(self, fleet):
         """History shows message when no archived sessions."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.list_archived_sessions.return_value = []
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["history"])
-            assert result.exit_code == 0
-            assert "No archived sessions" in result.output
+        fleet.add("still-live")
+        result = runner.invoke(app, ["history"])
+        assert result.exit_code == 0
+        assert "No archived sessions" in result.output
 
     @pytest.fixture
     def archive(self, tmp_path, monkeypatch):
