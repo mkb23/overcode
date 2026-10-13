@@ -78,6 +78,8 @@ class Housekeeping:
         self.last_job_prune: Optional[float] = None
         # Agent storage tidy: monotonic time of the last pass (hourly)
         self.last_storage_tidy: Optional[float] = None
+        # Each live agent's last ledger checkpoint: (when, cumulative cost)
+        self.last_checkpoint: Dict[str, tuple] = {}
 
     def due(self, now: datetime) -> bool:
         """Wall-clock replacement for ``loop_count % 60 == 0``.
@@ -190,6 +192,40 @@ class Housekeeping:
                 self.log.info(f"Archived terminated session: {session.name}")
         for session_id in [sid for sid in self.terminated_since if sid not in seen]:
             del self.terminated_since[session_id]
+
+    def checkpoint_spend(self, sessions, ledger, now: datetime) -> int:
+        """Ledger ``checkpoint`` rows for agents whose spend moved; returns how many.
+
+        An agent gets one at most every ``ledger.checkpoint_minutes`` (60),
+        and only when its spend changed since the last, so a long-running
+        agent's spend reaches ``overcode billing`` without waiting for it
+        to be archived. The first comes a full interval after this daemon
+        first saw the agent (a restart starts the clock again; the rows are
+        cumulative, so an extra one is harmless).
+        """
+        from .config import get_ledger_config
+        from .ledger import make_row, spend_of
+
+        every = timedelta(minutes=get_ledger_config()["checkpoint_minutes"])
+        rows = []
+        seen = set()
+        for session in sessions:
+            seen.add(session.id)
+            cost = spend_of(session)["cost"]
+            since, last_cost = self.last_checkpoint.setdefault(session.id, (now, None))
+            if now - since < every or cost == last_cost or cost <= 0:
+                continue
+            rows.append(make_row(session, "checkpoint", now=now))
+            self.last_checkpoint[session.id] = (now, cost)
+        for session_id in [sid for sid in self.last_checkpoint if sid not in seen]:
+            del self.last_checkpoint[session_id]
+        if rows:
+            try:
+                ledger.append(rows, now=now)
+            except Exception as e:  # housekeeping must never fail the tick
+                self.log.warn(f"spend checkpoint not written: {e}")
+                return 0
+        return len(rows)
 
     def tidy_storage(self, session_manager, *, force: bool = False) -> None:
         """Sweep orphaned agent directories and apply bundle retention, hourly.

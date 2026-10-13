@@ -15,6 +15,7 @@ from . import paths
 from .agent_files import remove_agent_dir
 from .exceptions import StateWriteError
 from .json_store import JsonStore, Transaction
+from .ledger import Ledger, billing_code_of, make_row
 from .git_context import GitContextMixin, read_git_context_from_disk  # noqa: F401  (re-export)
 from .session_archive import SessionArchiveMixin
 from .session_identity import SessionIdentityMixin
@@ -152,6 +153,17 @@ class Session:
 
     # Cost budget (#173) - 0.0 means no budget/unlimited
     cost_budget_usd: float = 0.0
+
+    # Billing code: what the ledger files this agent's spend under. Sticky:
+    # its launch name unless `launch --billing-code` set one, and always its
+    # parent's for a child or a fork. `overcode rebill` changes it forward
+    # only: a new segment (billing_seg) starts from the spend so far
+    # (billing_base_*), which stays on the old code. None (a record from
+    # before billing codes) reads as the agent's name.
+    billing_code: Optional[str] = None
+    billing_seg: int = 0
+    billing_base_cost: float = 0.0
+    billing_base_tokens: int = 0
 
     # Hook-based status detection - per-agent toggle (#5).
     # False = never use hooks for this agent (web API's hook-detection switch).
@@ -490,6 +502,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         self.archive_dir = paths.archive_dir(self.state_dir)
         self.old_archive_file = self.state_dir / "archive.jsonl"
         self.legacy_archive_file = self.state_dir / "archive.json"
+        # The spend ledger, beside the archive (ledger)
+        self.ledger = Ledger(self.state_dir)
         self._skip_git_detection = skip_git_detection
         # The Session objects built from the last parse of each file, keyed
         # by entry id and reused while the file's stat signature is unchanged
@@ -646,6 +660,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             # file (which the transaction writes on exit)
             if archived:
                 self._append_archive_records(archived)
+                self.ledger.append([make_row(r, "final") for r in archived])
             removed_dirs = []
             for session_id in pending.removed:
                 entry = state.pop(session_id, None)
@@ -718,7 +733,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                       session_id: Optional[str] = None,
                       wrapper: Optional[str] = None,
                       skill_profile: Optional[str] = None,
-                      launcher_version: str = "") -> Session:
+                      launcher_version: str = "",
+                      billing_code: Optional[str] = None) -> Session:
         """Create and register a new session.
 
         Args:
@@ -762,6 +778,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             wrapper=wrapper,
             skill_profile=skill_profile,
             launcher_version=launcher_version,
+            billing_code=billing_code or name,
         )
 
         with self._locked_state() as state:
@@ -873,6 +890,38 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 pending.remove_session(session_id)
         self.commit_pending(pending)
         return pending.archived
+
+    def rebill(self, session_id: str, billing_code: str) -> Optional[str]:
+        """Move an agent to another billing code, forward only; returns the old code.
+
+        Under the state lock, write-ahead: the ledger gets a ``close`` row
+        for the old code (the agent's spend so far stays there) and an
+        ``open`` row for the new one, then the record starts a new segment
+        whose base is the spend so far. None if the agent is unknown; the
+        code unchanged (no rows) if it already is ``billing_code``.
+        """
+        billing_code = billing_code.strip()
+        if not billing_code:
+            raise ValueError("a billing code cannot be empty")
+        with self._state_transaction() as txn:
+            entry = txn.state.get(session_id)
+            if entry is None:
+                return None
+            old = billing_code_of(entry)
+            if old == billing_code:
+                return old
+            from .ledger import spend_of
+
+            spend = spend_of(entry)
+            seg = int(entry.get("billing_seg", 0) or 0)
+            close = make_row(entry, "close", billing_code=old)
+            opened = make_row(entry, "open", billing_code=billing_code, seg=seg + 1,
+                              base={"cost": spend["cost"], "tokens": spend["tokens"]})
+            self.ledger.append([close, opened])
+            entry.update(billing_code=billing_code, billing_seg=seg + 1,
+                         billing_base_cost=spend["cost"], billing_base_tokens=spend["tokens"])
+            txn.dirty = True
+        return old
 
     def tidy_agent_storage(
         self,

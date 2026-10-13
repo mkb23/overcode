@@ -270,6 +270,13 @@ def launch(
             help="Don't inherit provider/model/wrapper/permissions from the parent agent (#433)",
         ),
     ] = False,
+    billing_code: Annotated[
+        Optional[str],
+        typer.Option(
+            "--billing-code",
+            help="Bill this agent's spend to this code (default: its name; a child always takes its parent's)",
+        ),
+    ] = None,
     sister: Annotated[
         Optional[str],
         typer.Option("--sister", "-S", help="Launch on a remote sister machine (by name from config)"),
@@ -374,6 +381,7 @@ def launch(
             inherit_parent_settings=not no_inherit,
             no_parent=no_parent,
             skill_profile=skills,
+            billing_code=billing_code,
         )
     except LaunchError as e:
         print(e)

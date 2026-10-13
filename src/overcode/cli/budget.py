@@ -7,7 +7,7 @@ from typing import Annotated, Optional
 import typer
 from rich import print as rprint
 
-from ._shared import budget_app, SessionOption, find_agent
+from ._shared import app, budget_app, SessionOption, find_agent
 
 
 @budget_app.command("set")
@@ -196,3 +196,102 @@ def budget_show(
         if children:
             line += f"  (subtree: ${subtree_spend:.4f})"
         print(line)
+
+
+# ── Billing codes and the spend ledger ────────────────────────────────────
+
+
+@app.command()
+def rebill(
+    name: Annotated[str, typer.Argument(help="Name of agent")],
+    code: Annotated[str, typer.Argument(help="The new billing code")],
+):
+    """Bill an agent's spend to another code from now on.
+
+    Forward only: what it spent so far stays on its old code. Children it
+    launches from now on take the new code; children already running keep
+    theirs (rebill them too if they should move).
+
+    Examples:
+        overcode rebill my-agent client-x
+    """
+    from ..session_manager import SessionManager
+
+    manager = SessionManager()
+    agent = find_agent(manager, name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+    try:
+        old = manager.rebill(agent.id, code)
+    except ValueError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    if old is None:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+    if old == code.strip():
+        rprint(f"'{agent.name}' is already billed to {old}")
+        return
+    rprint(f"[green]✓[/green] '{agent.name}' billed to [bold]{code.strip()}[/bold] from now on "
+           f"(its spend so far stays on {old})")
+
+
+@app.command()
+def billing(
+    since: Annotated[
+        Optional[str],
+        typer.Option("--since", help="Spend since: 30d, 2w, 12h, 2026-09, 2026-09-15"),
+    ] = None,
+    month: Annotated[
+        Optional[str], typer.Option("--month", help="Spend in one month: 2026-09"),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON")] = False,
+):
+    """Spend per billing code, from the ledger.
+
+    Every agent is billed to a code: its launch name unless launched with
+    --billing-code, and always its parent's for a child. With no filter,
+    everything ever recorded; --since and --month narrow it to a period.
+    """
+    import json
+    from datetime import datetime
+
+    from ..session_archive import parse_since
+    from ..session_manager import SessionManager
+
+    ledger = SessionManager().ledger
+    try:
+        if month:
+            start = datetime.strptime(month, "%Y-%m")
+            end = (start.replace(year=start.year + 1, month=1) if start.month == 12
+                   else start.replace(month=start.month + 1))
+            report = ledger.report(since=start, until=end)
+            scope = f"in {month}"
+        elif since:
+            report = ledger.report(since=parse_since(since))
+            scope = f"since {since}"
+        else:
+            report = ledger.totals()
+            scope = "all time"
+    except ValueError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    if as_json:
+        print(json.dumps({"scope": scope, "codes": report}, indent=2, sort_keys=True))
+        return
+    if not report:
+        rprint(f"[dim]No spend recorded ({scope})[/dim]")
+        return
+    from ..tui_helpers import format_tokens
+
+    rprint(f"\n[bold]Spend by billing code ({scope}):[/bold]\n")
+    rows = sorted(report.items(), key=lambda kv: (-kv[1]["cost"], kv[0]))
+    width = max(12, *(len(code) for code, _ in rows))
+    print(f"  {'code':<{width}}  {'cost':>10}  {'tokens':>8}  {'agents':>6}  running")
+    for code, entry in rows:
+        print(f"  {code:<{width}}  ${entry['cost']:>9.2f}  {format_tokens(entry['tokens']):>8}  "
+              f"{entry['agents']:>6}  {entry['running']:>7}")
+    total = sum(e["cost"] for _, e in rows)
+    print(f"  {'total':<{width}}  ${total:>9.2f}")

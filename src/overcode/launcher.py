@@ -38,6 +38,7 @@ from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
 from .launch_settings import LaunchArgs, resolve_launch_settings
+from .ledger import billing_code_of
 from .dependency_check import require_tmux, require_agent_cli
 from .exceptions import (
     AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
@@ -194,6 +195,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         wrapper: Optional[str] = None,
         backend: str = DEFAULT_BACKEND,
         skill_profile: Optional[str] = None,
+        billing_code: Optional[str] = None,
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -219,6 +221,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             backend=backend,
             skill_profile=skill_profile,
             launcher_version=get_full_version(),
+            billing_code=billing_code or name,
         )
 
     def _build_launch_cmd_str(
@@ -287,6 +290,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         backend: Optional[str] = None,
         no_parent: bool = False,
         skill_profile: Optional[str] = None,
+        billing_code: Optional[str] = None,
     ) -> Session:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -317,6 +321,9 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             no_parent: Launch top-level instead of as a child of the calling
                 agent. Only the overagent may do this: it launches agents the
                 person will drive themselves.
+            billing_code: The billing code the ledger files this agent's spend
+                under (default: its name). A child always takes its
+                parent's, whatever is passed (a warning says so).
 
         Returns:
             The new Session, or the existing one if an agent called ``name``
@@ -358,6 +365,15 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             if parent_depth + 1 >= self.MAX_HIERARCHY_DEPTH:
                 raise LaunchError(
                     f"maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
+
+        # Billing code: a child is always billed to its parent's code, even
+        # with --no-inherit; its own is ignored
+        if parent_session is not None:
+            inherited = billing_code_of(parent_session)
+            if billing_code and billing_code != inherited:
+                print(f"Warning: --billing-code {billing_code} ignored: a child is billed "
+                      f"to its parent's code ({inherited})", file=sys.stderr)
+            billing_code = inherited
 
         # Settings resolution (#433, #499): explicit arg > parent setting >
         # config default > built-in default (see launch_settings).
@@ -453,7 +469,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             extra_cli_args=extra_cli_args, agent_teams=plan.agent_teams,
             agent_persona=agent_persona, model=model, provider=provider,
             wrapper=resolved_wrapper, backend=agent_backend.name,
-            skill_profile=skill_profile,
+            skill_profile=skill_profile, billing_code=billing_code,
         )
 
         session = self.sessions.create_session(**metadata)
@@ -628,6 +644,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             model=source_session.model, provider=source_session.provider,
             wrapper=source_session.wrapper, backend=agent_backend.name,
             skill_profile=getattr(source_session, "skill_profile", None),
+            billing_code=billing_code_of(source_session),
         )
 
         session = self.sessions.create_session(**metadata)

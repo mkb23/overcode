@@ -1968,6 +1968,10 @@ class MonitorDaemon:
                                                      window_gone=window_gone)
             housekeeping.prune_finished_jobs()
             housekeeping.tidy_storage(self.session_manager)
+            ledger = getattr(self.session_manager, "ledger", None)
+            if ledger is not None:
+                housekeeping.checkpoint_spend(
+                    [self._pending.view(s) for s in sessions], ledger, now)
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

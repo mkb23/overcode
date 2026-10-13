@@ -56,7 +56,8 @@ except ImportError:
 # counts, the ledger backfill and a report read.
 ARCHIVE_KEYS = (
     "id", "name", "previous_names", "tmux_session", "tmux_window",
-    "parent_session_id", "billing_code", "tags",
+    "parent_session_id", "billing_code", "billing_seg", "billing_base_cost",
+    "billing_base_tokens", "tags",
     "backend", "model", "provider", "skill_profile", "wrapper",
     "heartbeat_enabled", "cost_budget_usd", "human_annotation", "agent_value",
     "start_directory", "repo_name", "branch",
