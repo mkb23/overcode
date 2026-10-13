@@ -26,19 +26,19 @@ class TestDefaultInstall:
         assert paths.jobs_dir() == home / "jobs"
         assert paths.config_file() == home / "config.yaml"
 
-    def test_agent_files(self, no_env):
+    def test_legacy_agent_files(self, no_env):
         d = no_env / ".overcode" / "sessions" / "agents"
-        assert paths.agent_file("agents", "a1", "hook_state") == d / "hook_state_a1.json"
-        assert paths.agent_file("agents", "a1", "hook_events") == d / "hook_events_a1.jsonl"
-        assert paths.agent_file("agents", "a1", "report") == d / "report_a1.json"
-        assert paths.agent_file("agents", "a1", "episodes") == d / "episodes_a1.jsonl"
-        assert paths.agent_file("agents", "a1", "rename_notice") == d / "rename_notice_a1.txt"
-        assert paths.agent_file("agents", "a1", "heartbeat") == d / "heartbeat_a1.last"
-        assert paths.agent_file_name("a1", "hook_state") == "hook_state_a1.json"
+        assert paths.legacy_agent_file("agents", "a1", "hook_state") == d / "hook_state_a1.json"
+        assert paths.legacy_agent_file("agents", "a1", "hook_events") == d / "hook_events_a1.jsonl"
+        assert paths.legacy_agent_file("agents", "a1", "report") == d / "report_a1.json"
+        assert paths.legacy_agent_file("agents", "a1", "episodes") == d / "episodes_a1.jsonl"
+        assert paths.legacy_agent_file("agents", "a1", "rename_notice") == d / "rename_notice_a1.txt"
+        assert paths.legacy_agent_file("agents", "a1", "heartbeat") == d / "heartbeat_a1.last"
+        assert paths.legacy_agent_file_name("a1", "hook_state") == "hook_state_a1.json"
 
     def test_unknown_kind_raises(self, no_env):
         with pytest.raises(KeyError):
-            paths.agent_file("agents", "a1", "nope")
+            paths.agent_file("agents", "sid-1", "nope")
 
 
 class TestOvercodeDir:
@@ -64,7 +64,7 @@ class TestStateDir:
         assert paths.sessions_root() == env / "state"
         assert paths.session_dir("agents") == env / "state" / "agents"
         assert paths.sessions_registry_dir() == env / "state"
-        assert paths.agent_file("agents", "a", "hook_state") == \
+        assert paths.legacy_agent_file("agents", "a", "hook_state") == \
             env / "state" / "agents" / "hook_state_a.json"
 
     def test_jobs_stay_under_overcode_dir(self, env):
@@ -99,6 +99,91 @@ class TestStateDir:
         (root / "jobs" / "jobs.json").write_text("{}")
         assert paths.sessions_registry_dir() == root
         assert paths.jobs_dir() == no_env / ".overcode" / "jobs"
+
+
+class TestAgentDirs:
+    """Each agent's files live in agents/<session id>/ (item 35)."""
+
+    def test_layout(self, no_env):
+        d = no_env / ".overcode" / "sessions" / "agents" / "agents" / "sid-1"
+        assert paths.agents_dir("agents") == d.parent
+        assert paths.agent_dir("agents", "sid-1") == d
+        assert paths.agent_file("agents", "sid-1", "hook_state") == d / "hook_state.json"
+        assert paths.agent_file("agents", "sid-1", "hook_events") == d / "hook_events.jsonl"
+        assert paths.agent_file("agents", "sid-1", "report") == d / "report.json"
+        assert paths.agent_file("agents", "sid-1", "episodes") == d / "episodes.jsonl"
+        assert paths.agent_file("agents", "sid-1", "rename_notice") == d / "rename_notice.txt"
+        assert paths.agent_file("agents", "sid-1", "heartbeat") == d / "heartbeat.last"
+        assert set(paths.AGENT_DIR_FILES) == set(paths.AGENT_FILES)
+
+    def test_agent_path_own_dir_when_it_exists(self, no_env):
+        own = paths.agent_file("agents", "sid-1", "hook_state")
+        own.parent.mkdir(parents=True)
+        # A file a dead agent of the same name left is never read
+        legacy = paths.legacy_agent_file("agents", "a1", "hook_state")
+        legacy.write_text("{}")
+        assert paths.agent_path("agents", "sid-1", "a1", "hook_state") == own
+        own.write_text("{}")
+        assert paths.agent_path("agents", "sid-1", "a1", "hook_state") == own
+
+    def test_agent_path_falls_back_for_an_agent_launched_before(self, no_env):
+        # No agents/<sid>/: launched by an older overcode, its hooks write by name
+        assert paths.agent_path("agents", "sid-1", "a1", "report") == \
+            paths.legacy_agent_file("agents", "a1", "report")
+        assert paths.agent_path("agents", None, "a1", "report") == \
+            paths.legacy_agent_file("agents", "a1", "report")
+
+    def test_agent_path_without_a_name_is_the_own_file(self, no_env):
+        assert paths.agent_path("agents", "sid-1", None, "report") == \
+            paths.agent_file("agents", "sid-1", "report")
+        with pytest.raises(ValueError):
+            paths.agent_path("agents", None, None, "report")
+
+    def test_agent_path_on_another_base(self, tmp_path):
+        assert paths.agent_path("x", "sid-1", None, "report", base=tmp_path) == \
+            tmp_path / "agents" / "sid-1" / "report.json"
+        assert paths.agent_path("x", "sid-1", "a", "report", base=tmp_path) == \
+            tmp_path / "report_a.json"
+
+    def test_bundles(self, no_env):
+        d = no_env / ".overcode" / "sessions" / "agents" / "bundles"
+        assert paths.bundles_dir("agents") == d
+        assert paths.bundle_path("agents", "2026-10-12") == d / "2026-10-12.agents.gz"
+
+
+class TestArchiveAndLedger:
+    """The archive and the ledger never sit where a tmux session's directory would."""
+
+    def test_default_install_beside_sessions(self, no_env):
+        home = no_env / ".overcode"
+        assert paths.archive_dir() == home / "archive"
+        assert paths.archive_month_path("2026-10") == home / "archive" / "2026-10.jsonl"
+        assert paths.ledger_dir() == home / "ledger"
+        assert paths.ledger_month_path("2026-10") == home / "ledger" / "2026-10.jsonl"
+        assert paths.ledger_totals_path() == home / "ledger" / "totals.json"
+
+    def test_overcode_dir_moves_them(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+        monkeypatch.delenv("OVERCODE_STATE_DIR", raising=False)
+        assert paths.archive_dir() == tmp_path / "oc" / "archive"
+        assert paths.ledger_dir() == tmp_path / "oc" / "ledger"
+
+    def test_custom_state_dir_keeps_them_inside_it(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "state"))
+        assert paths.archive_dir() == tmp_path / "state" / "archive"
+        assert paths.ledger_dir() == tmp_path / "state" / "ledger"
+        assert {"archive", "ledger"} <= paths.RESERVED_DIR_NAMES
+
+    def test_state_dir_called_sessions(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "x" / "sessions"))
+        assert paths.archive_dir() == tmp_path / "x" / "archive"
+
+    def test_explicit_registry(self, tmp_path):
+        assert paths.archive_dir(tmp_path / "reg") == tmp_path / "reg" / "archive"
+        assert paths.ledger_month_path("2026-01", tmp_path / "sessions") == \
+            tmp_path / "ledger" / "2026-01.jsonl"
 
 
 def test_imports_nothing_from_overcode():

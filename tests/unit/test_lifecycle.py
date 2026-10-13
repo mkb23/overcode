@@ -263,6 +263,17 @@ class TestShutdown:
         assert report.count("agents", "would-stop") == 3
         assert any("supervisor daemon [agents]" in line for line in lines)
 
+    def test_dry_run_never_names_the_archive_or_the_ledger(self, fleet, tmp_path):
+        # With a custom OVERCODE_STATE_DIR the archive and the ledger sit
+        # among the session directories (paths.data_dir_for)
+        root = tmp_path / "state"
+        for name in ("agents", "archive", "ledger"):
+            (root / name).mkdir(parents=True, exist_ok=True)
+        ops = FakeOps(["agents"], running={"monitor_daemon.pid": 12})
+        report, lines = _run_shutdown(fleet, ops, dry_run=True, all_sessions=True)
+        named = " ".join(lines) + " ".join(s.target for s in report.steps)
+        assert "archive" not in named and "ledger" not in named
+
     def test_supervisor_stopped_before_agents_and_monitor_after(self, fleet):
         _, mock_tmux, _ = fleet
         ops = FakeOps(["agents"], running={"supervisor_daemon.pid": 11,

@@ -10,13 +10,19 @@ a default install sets neither):
 
 ``OVERCODE_STATE_DIR``
     The sessions root, default ``$OVERCODE_DIR/sessions``. It holds
-    ``sessions.json`` and the session archive, and one directory per tmux
-    session (``<root>/<tmux_session>/``) with that session's daemon state
-    and the per-agent files the hooks write. Hook handlers and plugins
-    running inside an agent's process (including inside a container, where
-    the session directory is mounted at ``<root>/<tmux_session>``) are
-    given this variable so they write where the daemon reads. The bundled
-    opencode plugins read it with the same meaning.
+    ``sessions.json`` and one directory per tmux session
+    (``<root>/<tmux_session>/``) with that session's daemon state, one
+    directory per live agent (``agents/<session id>/``, the files the hooks
+    write) and the day bundles of archived agents' files (``bundles/``).
+    Hook handlers and plugins running inside an agent's process (including
+    inside a container, where the session directory is mounted at
+    ``<root>/<tmux_session>``) are given this variable so they write where
+    the daemon reads. The bundled opencode plugins read it with the same
+    meaning.
+
+The session archive (``archive/``) and the spend ledger (``ledger/``) sit
+beside the sessions root (``~/.overcode/archive``), never inside it where
+they would be taken for tmux sessions: see :func:`data_dir_for`.
 
 Before 0.6.0 ``OVERCODE_STATE_DIR`` also meant "the parent of
 ``sessions/``" to ``SessionManager`` and "the parent of ``jobs/``" to
@@ -30,16 +36,36 @@ every agent event.
 import os
 from pathlib import Path
 
-# The per-agent files in a session directory, keyed by the agent's name
-# (``kind`` -> file name pattern).
-AGENT_FILES = {
-    "hook_state": "hook_state_{}.json",        # hook_handler / plugins -> detector
-    "hook_events": "hook_events_{}.jsonl",     # append-only hook event log (#448)
-    "report": "report_{}.json",                # `overcode report` from a child
-    "episodes": "episodes_{}.jsonl",           # engine episode log
-    "rename_notice": "rename_notice_{}.txt",   # one-shot note after a rename (#478)
-    "heartbeat": "heartbeat_{}.last",          # last heartbeat (time context)
+# The per-agent files, by kind. An agent's files live in its own directory,
+# ``<session dir>/agents/<overcode session id>/`` (``agent_dir``), so a new
+# agent never sees files an earlier agent of the same name left, and a
+# rename moves nothing (quality review item 35).
+AGENT_DIR_FILES = {
+    "hook_state": "hook_state.json",        # hook_handler / plugins -> detector
+    "hook_events": "hook_events.jsonl",     # append-only hook event log (#448)
+    "report": "report.json",                # `overcode report` from a child
+    "episodes": "episodes.jsonl",           # engine episode log
+    "rename_notice": "rename_notice.txt",   # one-shot note after a rename (#478)
+    "heartbeat": "heartbeat.last",          # last heartbeat (time context)
 }
+
+# Before 0.6.0 the same files sat directly in the session directory, keyed
+# by the agent's name (``kind`` -> file name pattern). Still read for an
+# agent launched before the upgrade (one with no ``agent_dir``) until it is
+# relaunched; ``agent_path`` picks the right one.
+AGENT_FILES = {
+    "hook_state": "hook_state_{}.json",
+    "hook_events": "hook_events_{}.jsonl",
+    "report": "report_{}.json",
+    "episodes": "episodes_{}.jsonl",
+    "rename_notice": "rename_notice_{}.txt",
+    "heartbeat": "heartbeat_{}.last",
+}
+
+# Directory names that are never a tmux session's: the archive and the
+# ledger sit among the session directories when they cannot go one level
+# up (see ``data_dir_for``).
+RESERVED_DIR_NAMES = frozenset({"archive", "ledger"})
 
 
 def overcode_dir() -> Path:
@@ -96,11 +122,111 @@ def config_file() -> Path:
     return overcode_dir() / "config.yaml"
 
 
-def agent_file_name(name: str, kind: str) -> str:
-    """The file name of one agent's ``kind`` file (see :data:`AGENT_FILES`)."""
+def legacy_agent_file_name(name: str, kind: str) -> str:
+    """The pre-0.6.0 name-keyed file name of agent ``name``'s ``kind`` file."""
     return AGENT_FILES[kind].format(name)
 
 
-def agent_file(tmux_session: str, name: str, kind: str) -> Path:
-    """The path of agent ``name``'s ``kind`` file in its session directory."""
+def legacy_agent_file(tmux_session: str, name: str, kind: str) -> Path:
+    """The pre-0.6.0 path of agent ``name``'s ``kind`` file (see :data:`AGENT_FILES`)."""
     return session_dir(tmux_session) / AGENT_FILES[kind].format(name)
+
+
+def agents_dir(tmux_session: str) -> Path:
+    """The directory holding one directory per agent of a tmux session."""
+    return session_dir(tmux_session) / "agents"
+
+
+def agent_dir(tmux_session: str, session_id: str) -> Path:
+    """Agent ``session_id``'s own directory: its hook state, report and logs."""
+    return agents_dir(tmux_session) / session_id
+
+
+def agent_file(tmux_session: str, session_id: str, kind: str) -> Path:
+    """The path of agent ``session_id``'s ``kind`` file (see :data:`AGENT_DIR_FILES`)."""
+    return agent_dir(tmux_session, session_id) / AGENT_DIR_FILES[kind]
+
+
+def agent_path(
+    tmux_session: str,
+    session_id: "str | None",
+    name: "str | None",
+    kind: str,
+    *,
+    base: "Path | None" = None,
+) -> Path:
+    """Where agent (``session_id``, ``name``)'s ``kind`` file is, to read or write.
+
+    The file in the agent's own directory, unless that directory does not
+    exist and the agent has a name: then the name-keyed file of an agent
+    launched before per-agent directories, whose hooks keep writing there
+    until it is relaunched. Every launch creates the directory, so an agent
+    launched since never reads a file an earlier agent of its name left.
+    The common case costs one ``stat``. ``base`` stands in for the tmux
+    session's directory (a detector built on another one).
+    """
+    directory = Path(base) if base is not None else session_dir(tmux_session)
+    if session_id:
+        own_dir = directory / "agents" / session_id
+        own = own_dir / AGENT_DIR_FILES[kind]
+        if not name:
+            return own
+        try:
+            os.stat(own)
+            return own
+        except OSError:
+            pass
+        if os.path.isdir(own_dir):
+            return own
+    if name:
+        return directory / AGENT_FILES[kind].format(name)
+    raise ValueError("an agent's path needs its session id or its name")
+
+
+def bundles_dir(tmux_session: str) -> Path:
+    """Where a tmux session's archived agents' files are kept, one file per day."""
+    return session_dir(tmux_session) / "bundles"
+
+
+def bundle_path(tmux_session: str, day: str) -> Path:
+    """The bundle of the agents of ``tmux_session`` archived on ``day`` (YYYY-MM-DD)."""
+    return bundles_dir(tmux_session) / f"{day}.agents.gz"
+
+
+def data_dir_for(registry_dir: Path) -> Path:
+    """Where the archive and the ledger live, for a sessions registry directory.
+
+    One level up from a registry called ``sessions`` (the default:
+    ``~/.overcode``), so neither is ever taken for a tmux session's
+    directory; the registry directory itself otherwise (a custom
+    ``OVERCODE_STATE_DIR``, a test's directory), where
+    :data:`RESERVED_DIR_NAMES` keeps them apart from the session
+    directories.
+    """
+    registry_dir = Path(registry_dir)
+    return registry_dir.parent if registry_dir.name == "sessions" else registry_dir
+
+
+def archive_dir(registry_dir: "Path | None" = None) -> Path:
+    """The session archive: one JSONL file per month (:func:`archive_month_path`)."""
+    return data_dir_for(registry_dir or sessions_registry_dir()) / "archive"
+
+
+def archive_month_path(month: str, registry_dir: "Path | None" = None) -> Path:
+    """The archive file of ``month`` (YYYY-MM); a closed month is gzipped (``.gz``)."""
+    return archive_dir(registry_dir) / f"{month}.jsonl"
+
+
+def ledger_dir(registry_dir: "Path | None" = None) -> Path:
+    """The spend ledger: one JSONL file per month, kept for ever."""
+    return data_dir_for(registry_dir or sessions_registry_dir()) / "ledger"
+
+
+def ledger_month_path(month: str, registry_dir: "Path | None" = None) -> Path:
+    """The ledger file of ``month`` (YYYY-MM); a closed month is gzipped (``.gz``)."""
+    return ledger_dir(registry_dir) / f"{month}.jsonl"
+
+
+def ledger_totals_path(registry_dir: "Path | None" = None) -> Path:
+    """The ledger's running totals per billing code."""
+    return ledger_dir(registry_dir) / "totals.json"

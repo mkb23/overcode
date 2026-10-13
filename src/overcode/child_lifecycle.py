@@ -16,7 +16,7 @@ Either way the child is *at rest* (⚪): the light says it stopped, and
 import json
 from typing import Iterable, Optional, Tuple
 
-from .paths import agent_file_name
+from .paths import legacy_agent_file_name
 from .settings import get_session_dir
 from .status_constants import (
     AT_REST_STATUSES,
@@ -47,7 +47,7 @@ OVERSIGHT_TIMEOUT_REASON = "Oversight timeout expired"
 
 def hook_stopped(tmux_session: str, agent_name: str) -> bool:
     """True if the agent's hook state file shows a Stop event."""
-    hook_state_file = get_session_dir(tmux_session) / agent_file_name(agent_name, "hook_state")
+    hook_state_file = get_session_dir(tmux_session) / legacy_agent_file_name(agent_name, "hook_state")
     if not hook_state_file.exists():
         return False
     try:
@@ -60,7 +60,7 @@ def hook_stopped(tmux_session: str, agent_name: str) -> bool:
 
 def read_report(tmux_session: str, agent_name: str) -> Optional[dict]:
     """The agent's filed report ({'status', 'reason', 'timestamp'}), or None."""
-    report_file = get_session_dir(tmux_session) / agent_file_name(agent_name, "report")
+    report_file = get_session_dir(tmux_session) / legacy_agent_file_name(agent_name, "report")
     if not report_file.exists():
         return None
     try:

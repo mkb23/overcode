@@ -342,9 +342,9 @@ def status_detail_view(detail, now: float) -> Optional[dict]:
 def episode_log_path(state_dir, agent_name: str):
     from pathlib import Path
 
-    from .paths import agent_file_name
+    from .paths import legacy_agent_file_name
 
-    return Path(state_dir) / agent_file_name(agent_name, "episodes")
+    return Path(state_dir) / legacy_agent_file_name(agent_name, "episodes")
 
 
 def append_episode(state_dir, agent_name: str, session_id: str, episode: Episode) -> None:

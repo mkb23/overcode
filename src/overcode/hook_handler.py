@@ -16,7 +16,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from .paths import agent_file
+from .paths import legacy_agent_file
 from . import hook_dialects
 
 try:
@@ -389,7 +389,7 @@ def _get_hook_state_path(tmux_session: str, session_name: str) -> Path:
     Returns <sessions root>/{tmux_session}/hook_state_{session_name}.json
     (see ``paths``).
     """
-    return agent_file(tmux_session, session_name, "hook_state")
+    return legacy_agent_file(tmux_session, session_name, "hook_state")
 
 
 def get_rename_notice_path(tmux_session: str, session_name: str) -> Path:
@@ -398,7 +398,7 @@ def get_rename_notice_path(tmux_session: str, session_name: str) -> Path:
     ``overcode rename`` writes it under the *new* name; the agent's next
     UserPromptSubmit prints it as prompt context and deletes it.
     """
-    return agent_file(tmux_session, session_name, "rename_notice")
+    return legacy_agent_file(tmux_session, session_name, "rename_notice")
 
 
 def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
@@ -418,7 +418,7 @@ def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
 
     Returns <sessions root>/{tmux_session}/hook_events_{session_name}.jsonl
     """
-    return agent_file(tmux_session, session_name, "hook_events")
+    return legacy_agent_file(tmux_session, session_name, "hook_events")
 
 
 # Rotate the event log when it grows past _EVENT_LOG_ROTATE_BYTES, down to

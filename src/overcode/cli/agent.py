@@ -1055,10 +1055,10 @@ def report(
         raise typer.Exit(code=1)
 
     # Write report file
-    from ..paths import agent_file_name
+    from ..paths import legacy_agent_file_name
     from ..settings import get_session_dir
     session_dir = get_session_dir(tmux_session)
-    report_file = session_dir / agent_file_name(agent_name, "report")
+    report_file = session_dir / legacy_agent_file_name(agent_name, "report")
     report_data = {
         "status": status,
         "reason": reason or "",

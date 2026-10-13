@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from .paths import agent_file, session_dir
+from .paths import legacy_agent_file, session_dir
 
 
 def format_clock(now: datetime) -> str:
@@ -153,7 +153,7 @@ def read_heartbeat_timestamp(tmux_session: str, session_name: str) -> Optional[s
     Returns:
         ISO timestamp string, or None if file doesn't exist
     """
-    path = agent_file(tmux_session, session_name, "heartbeat")
+    path = legacy_agent_file(tmux_session, session_name, "heartbeat")
     try:
         return path.read_text().strip()
     except (FileNotFoundError, IOError):
