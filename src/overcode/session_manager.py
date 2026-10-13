@@ -948,8 +948,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         def live_ids() -> set:
             return set(self._snapshot())
 
-        def archived(session_id: str) -> bool:
-            return self.is_archived(session_id)
+        def archived(session_ids: set) -> set:
+            return self.archived_ids(session_ids)
 
         def record(session_id: str, pointer: dict) -> None:
             now = datetime.now().isoformat()

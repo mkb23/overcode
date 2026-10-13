@@ -467,9 +467,32 @@ class SessionArchiveMixin:
 
     def is_archived(self, session_id: str) -> bool:
         """Whether the archive holds a record of ``session_id`` (newest months first)."""
-        needle = session_id.encode("utf-8")
-        return any(r["id"] == session_id for r in
-                   self.iter_archived_records(newest_first=True, needle=needle))
+        return session_id in self.archived_ids({session_id})
+
+    def archived_ids(self, session_ids: Iterable[str]) -> set:
+        """Those of ``session_ids`` the archive holds: one pass, newest month first.
+
+        Stops as soon as all are found. A record's id is its first key
+        (``slim_record``), so a line is matched without parsing it.
+        """
+        wanted = set(session_ids)
+        found: set = set()
+        if not wanted:
+            return found
+        prefix = b'{"id": "'
+        for _, path in reversed(self._months_since(None)):
+            for line in self._month_lines(path):
+                if line.startswith(prefix):
+                    end = line.find(b'"', len(prefix))
+                    sid = line[len(prefix):end].decode("utf-8", "replace")
+                else:
+                    record = _archive_record(line)
+                    sid = record["id"] if record else None
+                if sid in wanted:
+                    found.add(sid)
+                    if found == wanted:
+                        return found
+        return found
 
     def read_archive_month(self, path: Path, *, offset: int = 0) -> Tuple[List[dict], int, int]:
         """Records of one month file from byte ``offset`` (plain files only; 0 for a gzip).

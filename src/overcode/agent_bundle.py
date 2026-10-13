@@ -333,7 +333,7 @@ def sweep_orphans(
     tmux_session: str,
     live_ids: Callable[[], set],
     *,
-    archived: Callable[[str], bool],
+    archived: Callable[[set], set],
     record: Callable[[str, dict], None],
     now: Optional[float] = None,
     min_age: float = ORPHAN_MIN_AGE_SECONDS,
@@ -344,8 +344,9 @@ def sweep_orphans(
     One scandir of ``agents/`` (the size of the live fleet once orphans
     are gone). A directory is an orphan when its session id is not in a
     sessions.json snapshot taken after the scandir (``live_ids``) and it
-    has not changed for ``min_age`` seconds. An orphan already archived
-    (``archived(sid)``) is removed; any other is packed first and
+    has not changed for ``min_age`` seconds. The archive is asked once,
+    for all of them, which are archived already (``archived(ids)`` returns
+    those): they are removed. Any other is packed first and
     ``record(sid, pointer)`` writes its archive record before the
     directory goes. At most ``limit`` orphans per call.
 
@@ -366,12 +367,11 @@ def sweep_orphans(
         live = live_ids()
     except Exception:
         return counts  # can't tell what is live: touch nothing
-    handled = 0
+    orphans = []
     for entry in entries:
-        if handled >= limit:
+        if len(orphans) >= limit:
             break
-        sid = entry.name
-        if sid in live:
+        if entry.name in live:
             continue
         try:
             if now - entry.stat().st_mtime < min_age:
@@ -379,9 +379,17 @@ def sweep_orphans(
                 continue
         except OSError:
             continue
-        handled += 1
+        orphans.append(entry)
+    if not orphans:
+        return counts
+    try:
+        already = archived({e.name for e in orphans})
+    except Exception:
+        return counts
+    for entry in orphans:
+        sid = entry.name
         try:
-            if archived(sid):
+            if sid in already:
                 shutil.rmtree(entry.path, ignore_errors=True)
                 counts["removed"] += 1
                 continue

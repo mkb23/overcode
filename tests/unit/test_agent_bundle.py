@@ -156,7 +156,7 @@ class TestWriteAhead:
         assert sm.get_session(session.id) is None
         assert agent_dir("agents", session.id).is_dir()  # an orphan
         counts = agent_bundle.sweep_orphans(
-            "agents", lambda: set(sm.sessions_by_id()), archived=sm.is_archived,
+            "agents", lambda: set(sm.sessions_by_id()), archived=sm.archived_ids,
             record=lambda *a: pytest.fail("already archived"), min_age=0)
         assert counts["removed"] == 1
         assert not agent_dir("agents", session.id).exists()
@@ -236,7 +236,7 @@ class TestOrphanSweep:
         d.mkdir(parents=True)
         self._old(d)  # an old directory, revived just now
         counts = agent_bundle.sweep_orphans(
-            "agents", lambda: {"racing-sid"}, archived=lambda sid: True,
+            "agents", lambda: {"racing-sid"}, archived=lambda ids: set(ids),
             record=lambda *a: None)
         assert d.is_dir() and counts["removed"] == 0
 
@@ -246,7 +246,7 @@ class TestOrphanSweep:
             d.mkdir(parents=True)
             self._old(d)
         counts = agent_bundle.sweep_orphans(
-            "agents", set, archived=lambda sid: True, record=lambda *a: None, limit=2)
+            "agents", set, archived=lambda ids: set(ids), record=lambda *a: None, limit=2)
         assert counts["removed"] == 2
 
 
