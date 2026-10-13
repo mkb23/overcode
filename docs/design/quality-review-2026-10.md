@@ -296,6 +296,7 @@ move-only commits.
 | 31 summary_columns | done: metadata on each column; plain text by default; `mono()` gone; one `FleetFlags` for the TUI and `overcode list`; the `overcode.columns` package behind a facade | (see log) |
 | 32 Session model | part: canonical names only on write, aliases gone; old files still load | (see log) |
 | 33 tmux layers | done: TmuxManager a bounded facade over RealTmux; `MockTmux` moved to tests; a libtmux pin-safety test; `RealTmux.resize_window` fixed (it called a method that never existed) | (see log) |
+| 35 files by session id | done: per-agent `agents/<id>/` from launch to archive, packed into day bundles write-ahead, an orphan sweep, a slim monthly archive, billing codes and a spend ledger, the 0.5 layout migrated in batches; rename moves no files (branch item35-billing-storage) | (see log) |
 | 36 shared pilot harness | done: `make_tui` (tests/tui_harness.py), no timers unless asked, an in-memory engine connected from mount; 17 files moved onto it | (see log) |
 | 38 less mocking | part: `test_tui_actions_session` builds real `Session`s | (see log) |
 | 39 test speed | done: launcher waits injectable (26 s → 15 s); leaked presence threads stopped (CI unit 937 s timeout → 420 s) | 37c83f3, c217e74 |
@@ -312,8 +313,7 @@ Also: the 250 ms tick no longer queries the DOM to keep focus (dba2254); a
 flaky test counted other threads' sleeps (see log).
 
 Still open: 34 (one clock beyond the
-detector), 35 (files keyed by session id: designed with billing codes and
-bounded storage, see below), 37
+detector), 37
 (work-counting tests beyond the row cache and status bar), and the rest of
 32 (cpu/rss/sandbox into daemon state, sister-only fields) and 38
 (test_cli's mocking).
@@ -340,9 +340,12 @@ drift:
 A heavy fan-out user runs about 15K sessions a quarter. Fixed now: "auto"
 detection no longer lists every hook file each tick, finished agents cost
 the per-tick syncs and history nothing (661bc9c), and children that stopped
-without a report are archived once their window is gone (fa4cdaa). Next,
+without a report are archived once their window is gone (fa4cdaa). Then,
 with item 35: per-agent directories by session id for live agents only,
 finished agents packed into compressed day bundles kept for good (the
 owner's call: permanent retention), a slim monthly archive, and a spend
-ledger by billing code.
+ledger by billing code. The scale tier (`tests/scale/test_storage_budgets.py`)
+holds a synthetic year (60,000 agents) to the live fleet's size on the
+hot paths. Still undecided: a max-age cap for children left waiting for
+oversight with their window open.
 

@@ -31,6 +31,7 @@ overcode launch --name <name> [options]
 | `--wrapper` | `-w` | Wrapper script: path or name from `~/.overcode/wrappers/` (e.g., `devcontainer`) |
 | `--no-inherit` | | Don't inherit settings from the parent agent (see below) |
 | `--skills` | | Skill profile to switch on; `none` for none. Default: the parent's, then the folder's pinned profile. See [Skill Profiles](skill-profiles.md) |
+| `--billing-code` | | Bill this agent's spend to this code (default: its name). A child always takes its parent's. See [Billing Codes](configuration.md#billing-codes) |
 | `--session` | | Tmux session name (default: `agents`) |
 
 **Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only.
@@ -270,6 +271,28 @@ overcode budget show [name]                      # Show budget status
 
 The `transfer` command requires the source to be an ancestor of the target.
 
+### `overcode rebill`
+
+Bill an agent's spend to another code from now on. Forward only: what it
+spent so far stays on its old code.
+
+```bash
+overcode rebill <name> <code>
+```
+
+### `overcode billing`
+
+Spend per billing code, from the ledger (all time by default).
+
+```bash
+overcode billing                 # all time
+overcode billing --since 30d     # or 2w, 12h, 2026-09, 2026-09-15
+overcode billing --month 2026-09
+overcode billing --json
+```
+
+See [Billing Codes](configuration.md#billing-codes).
+
 ### `overcode send`
 
 Send input to an agent.
@@ -463,10 +486,13 @@ overcode export <output-file.parquet> [options]
 Show archived session history.
 
 ```bash
-overcode history [agent-name]
+overcode history                     # agents archived in the last 30 days
+overcode history --since 2026-09     # or 2w, 12h, 2026-09-15; --all for every one
+overcode history <name-or-id>        # the newest archived agent of that name (or former name, or id)
+overcode history <name> --files      # and whether its own files are kept (in a day bundle)
 ```
 
-Omit agent name to see all archived sessions.
+`overcode show <name>` falls back to the archive for an agent no longer live.
 
 ---
 

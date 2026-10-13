@@ -197,8 +197,8 @@ predates this reports nothing and is read as claude-code with everything on.
   `GrokStatsReader` reads a full, genuinely billing-accurate token/cost split
   from `updates.jsonl`; `NullStatsReader` answers "unknown" for backends with
   neither.
-- *Telemetry* — the hook-state file format (`hook_state_<agent>.json`,
-  `hook_events_<agent>.jsonl`) is overcode's own neutral schema. Claude Code
+- *Telemetry* — the hook-state file format (`agents/<session id>/hook_state.json`,
+  `hook_events.jsonl`; name-keyed `hook_state_<agent>.json` before 0.6) is overcode's own neutral schema. Claude Code
   fills it via `--settings` hooks calling `overcode hook-handler`; opencode
   fills it from the bundled plugin; codex fills it from per-launch `-c
   'hooks.<Event>=[...]'` config overrides plus

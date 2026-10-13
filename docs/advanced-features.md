@@ -138,6 +138,18 @@ Heartbeats and supervision resume automatically on the next daemon loop (~10s).
 
 Budgets are per-agent only. There is no global default budget in config.
 
+## Billing Codes
+
+Every agent's spend is filed under a billing code in a ledger that is kept
+for ever: its launch name by default (all the runs named `shirka` add up
+under `shirka`), or `overcode launch --billing-code client-x`. A child or a
+fork always takes its parent's code, so a whole tree of delegated work adds
+up under the code its root was launched with. `overcode rebill <agent>
+<code>` moves an agent to another code from now on (its spend so far stays
+where it was), and `overcode billing` prints spend per code (`--since 30d`,
+`--month 2026-09`). Codes have no limits of their own: budgets stay per
+agent. Details: [Billing Codes](configuration.md#billing-codes).
+
 ## Agent Hierarchy
 
 Agents can spawn child agents, creating a parent/child tree. This enables delegation patterns where a parent agent launches children to handle subtasks.

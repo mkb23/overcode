@@ -23,7 +23,7 @@ not capture that tick, and only while the file is fresh. The cost is:
 
 | Role | Who | Does |
 |---|---|---|
-| **Sensors** | hook handler, opencode/hermes plugins, grok hooks | write `hook_state_<agent>.json` and append `hook_events_<agent>.jsonl`, as today |
+| **Sensors** | hook handler, opencode/hermes plugins, grok hooks | write `agents/<session id>/hook_state.json` and append `agents/<session id>/hook_events.jsonl` (keyed by `OVERCODE_SESSION_ID`, item 35) |
 | **Engine** | the monitor daemon | the only place status, stats, cost, energy, burn, episodes, the bell and history are computed |
 | **Views** | TUI, CLI, sister API | render what the engine publishes; compute nothing about agents |
 
@@ -50,7 +50,7 @@ rather than shipping (the #476/#517 lesson).
 ## The sensor path: wake on change, not on a timer
 
 The engine keeps a stat signature `(st_mtime_ns, st_size)` for each agent's
-hook state file and event log. Its wake loop stats them, 2 per agent:
+hook state file (`agents/<session id>/hook_state.json`, by session id). Its wake loop stats them, 2 per agent:
 - every 0.25 s while attended
 - every 2 s while unattended
 
@@ -187,6 +187,33 @@ rings the bell and enforces budgets. It skips git, burn and all pane
 captures except ambiguous agents every 10 s. Budget:
 `test_unattended_idle_fleet_is_nearly_free`, for 50 idle agents, ≤ 0.5% of
 a core.
+
+## Storage: live, archived, billed (item 35)
+
+Everything the engine reads per agent is the size of the live fleet:
+
+- **Live**: each agent's files are in `sessions/<tmux>/agents/<session id>/`
+  (hook state, event log, report, episodes), made at launch and keyed by
+  `OVERCODE_SESSION_ID`, so a reused name never inherits a dead agent's Stop
+  or report. The wake scan, detection-mode check and child settling stat
+  exactly those paths from the tick's list; nothing lists a directory. An
+  agent launched before 0.6 (no directory) is read from its name-keyed
+  files until it is relaunched (`paths.agent_path`).
+- **Archived**: housekeeping archives a terminated record (at most 50 a
+  pass) write-ahead: pack its directory into the day bundle
+  (`bundles/<day>.agents.gz`), append its slim archive record
+  (`~/.overcode/archive/<month>.jsonl`) and its final ledger row, drop it
+  from `sessions.json`, remove the directory. A crash leaves a duplicate,
+  never a loss; the hourly orphan sweep clears directories with no record.
+- **Billed**: the ledger (`~/.overcode/ledger/<month>.jsonl`) gets a
+  checkpoint row for a running agent whose spend moved, at most hourly, and
+  a final row at archive; rows are cumulative, so totals keep the last per
+  agent segment.
+
+Bundles, archive and ledger are kept for ever unless a retention knob is
+set; closed months are gzipped once. At start and each housekeeping pass
+until done, the daemon migrates a session's pre-0.6 name-keyed files into
+a bundle in batches (`layout_migration`).
 
 ## Restart and replay
 

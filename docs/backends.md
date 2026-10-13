@@ -228,7 +228,7 @@ Two things to know about what each route leaves behind:
   server `index.js` entrypoint, and the TUI entrypoint `tui.js` is
   `{id, setup(api)}` — not v1's named-export factory, and not `api.event`:
   the bus is `api.client.event.subscribe({directory})` SSE. It writes the
-  same `hook_state_<agent>.json` / `hook_events_<agent>.jsonl` files as
+  same `agents/<session id>/hook_state.json` / `hook_events.jsonl` files as
   v1's plugin, so `HookStatusDetector` is unchanged. Opt out with
   `backend_telemetry.opencode2: off` (see the telemetry section below).
   Like v1, opencode2 auto-loads every file in the project's
@@ -560,7 +560,7 @@ core missing the plugin registers nothing and status falls back to pane
 polling.
 
 The plugin subscribes to opencode's event bus and writes the *same*
-`hook_state_<agent>.json` / `hook_events_<agent>.jsonl` files Claude Code's
+`agents/<session id>/hook_state.json` / `hook_events.jsonl` files Claude Code's
 hooks produce, so `HookStatusDetector` — obligation badges, foreground
 classification, the status-detail column — works unchanged.
 
@@ -730,7 +730,7 @@ either one):
   prescribes the id up front — this is the only event that can introduce it.
   It is not the only channel for recording one, though: `handle_hook_event`
   reads `session_id` off *every* hook event that carries one, for every
-  backend, and folds it into `hook_state_<agent>.json`'s `agent_session_ids`
+  backend, and folds it into `hook_state.json`'s `agent_session_ids`
   / `agent_session_id`. That is what makes restart-resume and fork target the
   right conversation, and it is also `CodexStatsReader`'s primary lookup key
   (below). Reading it from every event matters because a prescribed id does
@@ -841,7 +841,7 @@ since the last call, so a quiet agent costs one `stat` (#524; see
 | cost | **not a dash — a list-price estimate, not a billed figure.** codex is subscription/API billed with no local per-turn charge (matches Claude's transcript, which also carries none), so there is nothing to compare an estimate against. `pricing.py`'s `MODEL_PRICING` table carries a `gpt-5.6-sol` entry (codex's account-default model — Appendix A), sourced from OpenAI's own pricing docs and standard-tier/short-context only (batch/flex/fast-mode and long-context tiers aren't modelled, since overcode has no signal for which tier a turn ran under). A codex turn on a different model than `gpt-5.6-sol` still falls back to your configured *default* per-token price (`settings.get_model_pricing`), the same behaviour every backend gets for an unrecognized model — live-verified during Phase 2 smoke testing. Either way the column always shows a real dollar figure, never a dash; treat it as informative, not as billing-accurate |
 
 Rows are located by the codex session id recorded into
-`hook_state_<agent>.json` (`agent_session_id` / `agent_session_ids` — the
+`hook_state.json` (`agent_session_id` / `agent_session_ids` — the
 exact field names and mechanism opencode's plugin also writes, since both
 ride the same `hook_handler.write_hook_state()` code path). `SessionStart` is
 where codex's first id arrives, but the id is re-read from every hook event
@@ -973,7 +973,7 @@ Phase 4 smoke testing):
   `StopFailure` report can be dispatched after the *next* turn's
   `UserPromptSubmit` already started (grok's own command loop, not
   overcode's). `hook_handler` tracks the newest `promptId` seen on
-  `UserPromptSubmit` (`active_prompt_id` in `hook_state_<agent>.json`) and
+  `UserPromptSubmit` (`active_prompt_id` in `hook_state.json`) and
   drops a turn-end report whose `promptId` doesn't match it. Events with no
   `promptId` at all (the `idle_prompt` backstop, the session-end `Stop`)
   always settle unconditionally — that's grok reporting on the *session*,
@@ -1301,7 +1301,7 @@ As of Phase 2, a codex agent whose hook injection fired gets the same
 hooks-grade status Claude Code and opencode get — including the
 `waiting_approval` distinction pane polling cannot make. Per-session
 dispatch (`status_detector_factory.py`) picks hooks mode automatically once
-`hook_state_<agent>.json` exists and is fresh; nothing to configure. **Pane
+`hook_state.json` exists and is fresh; nothing to configure. **Pane
 polling is still the fallback** for the gap between process start and the
 first hook firing, and for a codex agent whose hook injection was stripped
 out of its argv some other way (a manual relaunch outside overcode, for
@@ -1350,7 +1350,7 @@ As of Phase 4, a grok agent whose global hooks file is installed and firing
 gets the same hooks-grade status Claude Code, opencode and codex get —
 including the `waiting_approval` distinction pane polling cannot make.
 Per-session dispatch (`status_detector_factory.py`) picks hooks mode
-automatically once `hook_state_<agent>.json` exists and is fresh; nothing to
+automatically once `hook_state.json` exists and is fresh; nothing to
 configure. **Pane polling is still the fallback** for the gap between
 process start and the first hook firing, and for a grok agent whose global
 hooks file was deleted or de-markered some other way. The pattern set lives

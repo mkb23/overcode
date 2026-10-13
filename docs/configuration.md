@@ -72,10 +72,23 @@ history_retention:
   event_loop_timing_cap_mb: 100   # hard cap for diagnostics/event_loop_timing.csv
   event_loop_timing_enabled: true # false disables the heartbeat probe entirely
 
-# When terminated agents leave sessions.json for archive.jsonl
+# When terminated agents leave sessions.json for the archive
 # See "Session Archive" below
 session_archive:
   terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
+archive:
+  retention_months: 0             # 0 keeps every month (the default)
+
+# Archived agents' own files (day bundles); kept for ever by default
+# See "Agent Files and Retention" below
+agent_history:
+  retention_days: 0               # 0 keeps every day (the default)
+  max_bytes: 0                    # 0: no cap (e.g. 1GB)
+  keep_hook_events: true
+
+# Spend rows for running agents; see "Billing Codes" below
+ledger:
+  checkpoint_minutes: 60
 
 # Monitor daemon loop interval while nobody is watching
 # See "Unattended Low-Power Mode" below
@@ -386,12 +399,26 @@ These persist across TUI restarts.
 
 ### Session Data
 ```
+~/.overcode/
+├── archive/                             # The session archive (see Session Archive)
+│   ├── 2026-10.jsonl                    # This month: one slim record per archived agent
+│   ├── 2026-09.jsonl.gz                 # Closed months, gzipped once
+│   └── cursor.json                      # How far the journey's counts have read
+└── ledger/                              # Spend by billing code, kept for ever (see Billing Codes)
+    ├── 2026-10.jsonl                    # This month's spend rows
+    ├── 2026-09.jsonl.gz                 # Closed months, gzipped once
+    └── totals.json                      # Running totals per billing code
 ~/.overcode/sessions/
-├── sessions.json                        # Live sessions (all tmux sessions), plus terminated ones for the grace
-├── archive.jsonl                        # Archived sessions, one JSON record per line, append-only
-└── archive.json.migrated                # The pre-JSONL archive, kept after its one-time migration
+└── sessions.json                        # Live sessions (all tmux sessions), plus terminated ones for the grace
 ~/.overcode/sessions/{session}/
-├── {agent-id}.json                      # Individual agent state
+├── agents/{session-id}/                 # One live agent's files (removed when it is archived)
+│   ├── hook_state.json                  # Latest hook event (status detection)
+│   ├── hook_events.jsonl                # Recent hook events (rotated at 100 KB)
+│   ├── report.json                      # `overcode report` from a child
+│   └── episodes.jsonl                   # Status episodes
+├── bundles/
+│   └── 2026-10-12.agents.gz             # The files of every agent archived that day, one gzip member each
+├── .layout                              # "2" once the pre-0.6 files are migrated
 ├── agent_status_history.csv             # Status timeline (active window)
 ├── agent_status_history.<ts>.csv.gz     # Rotated archives (#468)
 ├── monitor_daemon_state.json            # Current metrics
@@ -403,6 +430,9 @@ These persist across TUI restarts.
     ├── event_loop_timing.csv            # TUI heartbeat probe, hard-capped (#465)
     └── status_changes.csv               # Per-agent status transition log
 ```
+
+With a custom `OVERCODE_STATE_DIR`, `archive/` and `ledger/` sit beside the
+session directories inside it (or beside it, when it is called `sessions`).
 
 ### Global Data
 ```
@@ -458,29 +488,118 @@ parses it whole while every write rewrites it whole. Left alone it grows
 with every agent ever launched: a killed agent stays in it as
 `status: terminated` until `overcode cleanup` moves it to the archive.
 
-The monitor daemon now does that move itself. Once a session's status has
+The monitor daemon does that move itself. Once a session's status has
 been `terminated` for `terminated_grace_seconds` (default one hour; the
-check runs every 60 daemon loops, so allow up to two minutes on top) the
-daemon removes it from `sessions.json` and appends it to `archive.jsonl`
-with the same record `overcode cleanup` writes (`end_time`, `status:
-archived`). Any daemon does this for terminated entries in any tmux
-session, so entries left behind by a tmux session that no longer has a
-daemon are cleared too. During the grace the TUI's "show killed" ghost
-rows (`g`) still list the agent, and `overcode revive` can still find it;
-after it, the agent is in the archive (`overcode history`).
+check runs every housekeeping pass, so allow up to two minutes on top) the
+daemon removes it from `sessions.json` and adds it to the archive with the
+same record `overcode cleanup` writes (`end_time`, `status: archived`). A
+child that stopped without reporting and whose window has gone goes the
+same way. Any daemon does this for terminated entries in any tmux session,
+so entries left behind by a tmux session that no longer has a daemon are
+cleared too; at most 50 are archived per pass. During the grace the TUI's
+"show killed" ghost rows (`g`) still list the agent, and `overcode revive`
+can still find it; after it, the agent is in the archive (`overcode
+history`, and `overcode show` of a name no longer live).
 
 ```yaml
 session_archive:
   terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
+archive:
+  retention_months: 0             # 0 (default) keeps every month; N deletes months older than N
 ```
 
-`archive.jsonl` holds one JSON record per line and is append-only, so
-archiving an agent costs one line regardless of how many are archived
-already (the previous `archive.json` was rewritten whole on every
-archive). An existing `archive.json` is migrated into `archive.jsonl` the
-first time the archive is touched and renamed to `archive.json.migrated`.
-Everything that reads the archive (`overcode history`, `overcode export`)
-reads the JSONL.
+The archive is a JSONL file per month, `~/.overcode/archive/YYYY-MM.jsonl`,
+named by when agents were archived; the first archive of a new month gzips
+the months before it, which never change again. A record is slim (about
+1 KB): the agent's identity, parent, billing code, tags, backend and model,
+directory and branch, times, report and the whole `stats`, plus a pointer
+to its own files in the day bundle. It never holds the launch command, a
+sister's API key or the standing instructions (only whether there were
+any). `overcode history` lists the last 30 days by default (`--since 2w`,
+`--since 2026-09`, `--all`); `overcode history <name>` finds the newest
+agent of that name (or former name, or id), newest month first.
+
+An `archive.json` or `archive.jsonl` from an earlier version is split into
+months (by each record's end time), slimmed, and deleted the first time the
+archive is touched: the old files held every launch command and any
+sister's API key, so no copy is kept.
+
+## Agent Files and Retention
+
+While an agent is live its own files (hook state and event log, report,
+episode log) are in `sessions/<tmux>/agents/<session-id>/`, keyed by its
+session id so a new agent of a reused name never reads what an earlier one
+left. When it is archived the directory is packed into one gzip member of
+that day's bundle, `sessions/<tmux>/bundles/YYYY-MM-DD.agents.gz`, and
+removed, in a crash-safe order (pack, then the archive record, then out of
+`sessions.json`, then the directory). `agents/` therefore stays the size of
+the live fleet. `overcode history <name> --files` says whether an agent's
+files are kept and lists them; `zcat <day>.agents.gz` streams a whole day,
+one JSON object per agent.
+
+A directory whose record has gone (a crash part-way, a hook arriving after
+the agent was archived) is an orphan: the daemon's hourly sweep, `overcode
+cleanup` and `overcode kill` pack it (or remove it, if its archive record
+exists) once it has been still for ten minutes.
+
+Bundles, the archive and the ledger are kept for ever by default. Set a
+limit to prune the bundles:
+
+```yaml
+agent_history:
+  retention_days: 0        # 0 (default) keeps every day; N deletes bundle days older than N
+  max_bytes: 0             # 0 (default) no cap; e.g. 1GB drops the oldest days past it
+  keep_hook_events: true   # false packs only hook state, report and episodes
+```
+
+With `terminated_grace_seconds` negative nothing is archived, so neither
+`sessions.json` nor `agents/` is bounded; `overcode doctor` says so, and
+warns when `agents/` holds far more directories than there are live
+agents. Its storage section lists the directories, bundles, archive and
+ledger with their sizes.
+
+Upgrading from 0.5: the monitor daemon moves each tmux session's old
+name-keyed files (`hook_state_<name>.json` and the rest) into a bundle a
+batch at a time and writes `sessions/<tmux>/.layout`. An agent launched
+before the upgrade keeps writing its name-keyed files until it is
+relaunched (restart, revive), and they are left in place until then.
+
+## Billing Codes
+
+Every agent's spend is filed under a billing code, kept in a ledger for
+ever. The code is the agent's launch name unless set at launch, so every
+run named `shirka` rolls up under `shirka`; a child or a fork always takes
+its parent's code (also with `--no-inherit`; a child's own `--billing-code`
+is ignored with a warning). The code is sticky: a rename keeps it.
+
+```bash
+overcode launch -n research --billing-code client-x   # set it at launch
+overcode rebill research client-y                     # from now on; the spend so far stays on client-x
+overcode billing                                      # spend per code, all time
+overcode billing --since 30d                          # or --month 2026-09, --json
+```
+
+`overcode rebill` is forward only: the ledger closes the old code with the
+agent's spend so far and starts a new segment under the new one. Children
+launched afterwards take the new code; children already running keep
+theirs.
+
+The ledger, `~/.overcode/ledger/YYYY-MM.jsonl`, has one row per spend event,
+each carrying the agent's cumulative spend so far: a final row when the
+agent is archived, and a checkpoint for a running agent whose spend moved,
+at most every `checkpoint_minutes`, so a long-running agent's spend shows
+before it ends. `ledger/totals.json` folds the rows incrementally, keeping
+the last row of each agent, so a repeated row is never counted twice.
+Agents archived before the ledger existed are added once, under their own
+name, when the daemon first migrates.
+
+```yaml
+ledger:
+  checkpoint_minutes: 60   # a running agent's spend row, at most this often
+```
+
+There are no per-code limits: the per-agent budget (`overcode budget`) and
+the child-spend rollup are unchanged.
 
 ## Usage Log
 
