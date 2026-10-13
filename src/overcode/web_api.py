@@ -10,7 +10,7 @@ import subprocess
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from .clock import from_iso
+from .clock import from_iso, local_naive
 from .monitor_daemon_state import (
     get_monitor_daemon_state,
     MonitorDaemonState,
@@ -44,6 +44,24 @@ WEB_COLORS = {
     "cyan": "#06b6d4",
 }
 
+
+
+def _wire_time(value: Any) -> Any:
+    """A stored time as the API sends it: naive local ISO, as before 0.6.
+
+    Stored stamps are timezone-aware now; a sister peer on an older
+    version parses these with ``datetime.fromisoformat`` and subtracts
+    them from a naive ``datetime.now()``, so they go out naive.
+    """
+    if isinstance(value, datetime):
+        return local_naive(value).isoformat() if value.tzinfo else value.isoformat()
+    if not isinstance(value, str) or not value:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    return local_naive(parsed).isoformat() if parsed.tzinfo else value
 
 def get_web_color(status_color: str) -> str:
     """Convert Rich color name to CSS hex color."""
@@ -124,7 +142,7 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
                 pane_contents[s.tmux_window] = content
 
     result = {
-        "timestamp": now.isoformat(),
+        "timestamp": _wire_time(now),
         "hostname": get_hostname(),
         "version": _get_version(),
         "daemon": _build_daemon_info(state),
@@ -190,7 +208,7 @@ def _build_daemon_info(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
         "status": state.status if running else "stopped",
         "loop_count": state.loop_count,
         "interval": state.current_interval,
-        "last_loop": state.last_loop_time,
+        "last_loop": _wire_time(state.last_loop_time),
         "supervisor_claude_running": state.supervisor_claude_running,
         "summarizer_enabled": state.summarizer_enabled,
         "summarizer_available": state.summarizer_available,
@@ -261,16 +279,16 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "git_untracked": git_untracked,
         "activity_summary": s.activity_summary or "",
         "activity_summary_context": s.activity_summary_context or "",
-        "activity_summary_updated": s.activity_summary_updated,
+        "activity_summary_updated": _wire_time(s.activity_summary_updated),
         "heartbeat_enabled": s.heartbeat_enabled,
         "heartbeat_frequency_seconds": s.heartbeat_frequency_seconds,
         "heartbeat_paused": s.heartbeat_paused,
-        "last_heartbeat_time": s.last_heartbeat_time,
+        "last_heartbeat_time": _wire_time(s.last_heartbeat_time),
         "is_asleep": s.is_asleep,
         "sleep_time_raw": s.sleep_time_seconds,
         "enhanced_context_enabled": s.enhanced_context_enabled,
         "human_annotation": getattr(s, "human_annotation", ""),
-        "start_time": s.start_time or "",
+        "start_time": _wire_time(s.start_time or ""),
         "parent_name": s.parent_name or "",
         "model": getattr(s, "model", "") or "",
         "effort": getattr(s, "effort", "") or "",
@@ -381,7 +399,7 @@ def get_raw_timeline_data(tmux_session: str, hours: float = 3.0) -> Dict[str, An
     for ts, agent, status, activity, *_ in all_history:
         if agent not in agents:
             agents[agent] = []
-        agents[agent].append({"t": ts.isoformat(), "s": status})
+        agents[agent].append({"t": _wire_time(ts), "s": status})
 
     return {"hours": hours, "agents": agents}
 

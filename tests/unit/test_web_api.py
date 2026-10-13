@@ -440,3 +440,36 @@ class TestGetRawTimelineData:
             mock_history.assert_called_once_with(
                 hours=6.0, history_file="/fake/session/path", carry=True
             )
+
+
+class TestWireTimesStayNaive:
+    """Stored stamps are aware since 0.6; older sister peers subtract the
+    API's stamps from a naive now(), so the API sends naive local times."""
+
+    def test_aware_stamps_go_out_naive_local(self):
+        from datetime import timezone
+        from overcode.monitor_daemon_state import SessionDaemonState
+        from overcode.web_api import _build_agent_info
+
+        stamp = datetime(2026, 10, 14, 9, 30, tzinfo=timezone.utc)
+        session = SessionDaemonState(
+            session_id="s", name="a", current_status="running",
+            last_heartbeat_time=stamp.isoformat(),
+            start_time=stamp.isoformat(),
+            activity_summary_updated=stamp.isoformat(),
+        )
+        result = _build_agent_info(session, datetime.now())
+        local = stamp.astimezone().replace(tzinfo=None)
+        for key in ("last_heartbeat_time", "start_time", "activity_summary_updated"):
+            parsed = datetime.fromisoformat(result[key])
+            assert parsed.tzinfo is None, key
+            assert parsed == local, key
+            datetime.now() - parsed  # what an older peer does: must not raise
+
+    def test_naive_and_missing_stamps_pass_through(self):
+        from overcode.web_api import _wire_time
+
+        assert _wire_time("2026-10-14T09:30:00") == "2026-10-14T09:30:00"
+        assert _wire_time(None) is None
+        assert _wire_time("") == ""
+        assert _wire_time("not a time") == "not a time"
