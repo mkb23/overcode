@@ -363,11 +363,10 @@ PLUGIN_MISSING_POLLING_FLEET = Scenario(
 )
 
 # Same agent in a fleet whose default is hooks (any Claude agent with hooks
-# makes it so — settings.resolve_detection_mode). The opencode agent is then
-# read by HookStatusDetector, which with no hook file at all reports
-# "Waiting for first hook event" — red — however busy the pane is.
-# `overcode doctor` says this case "falls back to pane polling"
-# (OpencodeBackend.refine_health_verdict); it does not.
+# makes it so — settings.resolve_detection_mode). With no hook file at all
+# the dispatcher reads the agent's pane instead (the hook detector alone
+# would say only "Starting: waiting for first hook event", however busy
+# the pane is), so it shows what polling mode shows.
 PLUGIN_MISSING_HOOKS_FLEET = Scenario(
     "oc_plugin_missing_hooks_fleet",
     backend="opencode",
