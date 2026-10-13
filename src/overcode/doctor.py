@@ -632,6 +632,91 @@ def inspect_agent(
     )
 
 
+def _dir_usage(path, *, depth: int = 0) -> tuple[int, int]:
+    """(entries, bytes) of a directory: one scandir, plus one per subdirectory if ``depth``."""
+    count = size = 0
+    try:
+        entries = list(os.scandir(path))
+    except OSError:
+        return 0, 0
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                count += 1
+                if depth:
+                    size += _dir_usage(entry.path, depth=depth - 1)[1]
+            else:
+                count += 1
+                size += entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
+    return count, size
+
+
+# agents/ holding more than this many directories beyond the live agents
+# (and more than twice their number) is worth a warning: the orphan sweep
+# or archiving is not keeping up
+AGENT_DIRS_SLACK = 50
+
+
+def storage_report(tmux_session: str, session_manager) -> dict:
+    """Where a tmux session's agent storage stands (``overcode doctor``).
+
+    Counts and bytes of the live agents' directories (``agents/``), the
+    day bundles, the archive and the ledger, the layout version, the
+    name-keyed files still to migrate, and orphan directories (no live
+    record). One scandir per directory: the size of the live fleet, plus
+    one per day, month and agent.
+    """
+    from .layout_migration import layout_version, legacy_files
+    from .paths import agents_dir, bundles_dir
+
+    live = {s.id for s in session_manager.list_sessions() if s.tmux_session == tmux_session}
+    try:
+        agent_ids = [e.name for e in os.scandir(agents_dir(tmux_session)) if e.is_dir()]
+    except OSError:
+        agent_ids = []
+    _, agent_bytes = _dir_usage(agents_dir(tmux_session), depth=1)
+    bundles, bundle_bytes = _dir_usage(bundles_dir(tmux_session))
+    archive_files, archive_bytes = _dir_usage(session_manager.archive_dir)
+    ledger_files, ledger_bytes = _dir_usage(session_manager.ledger.dir)
+    return {
+        "live": len(live),
+        "agent_dirs": len(agent_ids),
+        "agent_bytes": agent_bytes,
+        "orphans": sum(1 for sid in agent_ids if sid not in live),
+        "bundles": bundles,
+        "bundle_bytes": bundle_bytes,
+        "archive_files": archive_files,
+        "archive_bytes": archive_bytes,
+        "ledger_files": ledger_files,
+        "ledger_bytes": ledger_bytes,
+        "layout": layout_version(tmux_session),
+        "legacy_names": len(legacy_files(tmux_session)),
+    }
+
+
+def storage_findings(report: dict, *, terminated_grace_seconds: float = 0.0) -> List[str]:
+    """Warnings about a ``storage_report``: agents/ far above the live count, and why."""
+    findings = []
+    live, dirs = report["live"], report["agent_dirs"]
+    if dirs > max(2 * live, live + AGENT_DIRS_SLACK):
+        why = ("archiving is off (session_archive.terminated_grace_seconds < 0), so nothing "
+               "bounds it" if terminated_grace_seconds < 0 else
+               "the hourly orphan sweep (and `overcode cleanup`) packs and removes them")
+        findings.append(f"agents/ holds {dirs} directories for {live} live agents "
+                        f"({report['orphans']} orphaned): {why}")
+    elif terminated_grace_seconds < 0:
+        findings.append("archiving is off (session_archive.terminated_grace_seconds < 0): "
+                        "sessions.json and agents/ grow with every agent ever launched")
+    if report["legacy_names"] and report["layout"] != "2":
+        findings.append(f"{report['legacy_names']} agents' files are still in the pre-0.6 "
+                        "layout; the monitor daemon moves them a batch at a time")
+    return findings
+
+
 def snapshot_process_table() -> tuple[Dict[int, List[int]], Dict[int, str]]:
     """Public wrapper used by the CLI — snapshot once, index once."""
     rows = _snapshot_process_table()

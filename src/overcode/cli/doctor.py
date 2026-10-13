@@ -74,6 +74,7 @@ def doctor(
 
     if not sessions:
         rprint("[dim]No running agents in session '[bold]{}[/bold]'[/dim]".format(session))
+        _print_storage(session, launcher.sessions)
         return
 
     # Single ps snapshot shared across all agents.
@@ -225,6 +226,8 @@ def doctor(
     except Exception:
         pass
 
+    _print_storage(session, launcher.sessions)
+
     if fix and broken:
         rprint()
         rprint("[bold]Restarting broken agents...[/bold]")
@@ -241,3 +244,29 @@ def doctor(
                 rprint(f"  [green]✓[/green] restarted {r.name}")
             else:
                 rprint(f"  [red]✗[/red] failed to restart {r.name}")
+
+
+def _print_storage(session: str, session_manager) -> None:
+    """The session's storage: agent directories, bundles, archive, ledger (never fails)."""
+    try:
+        from ..config import get_session_archive_config
+        from ..doctor import storage_findings, storage_report
+
+        report = storage_report(session, session_manager)
+        grace = get_session_archive_config()["terminated_grace_seconds"]
+    except Exception:
+        return
+
+    def mb(n):
+        return f"{n / (1024 * 1024):.1f} MB" if n >= 1024 * 1024 else f"{n / 1024:.0f} KB"
+
+    rprint()
+    rprint(f"[bold]Storage[/bold] [dim](layout {report['layout']})[/dim]")
+    rprint(f"  agents/   {report['agent_dirs']} directories for {report['live']} live agents, "
+           f"{mb(report['agent_bytes'])}"
+           + (f", {report['orphans']} orphaned" if report["orphans"] else ""))
+    rprint(f"  bundles/  {report['bundles']} days, {mb(report['bundle_bytes'])}")
+    rprint(f"  archive/  {report['archive_files']} files, {mb(report['archive_bytes'])}")
+    rprint(f"  ledger/   {report['ledger_files']} files, {mb(report['ledger_bytes'])}")
+    for finding in storage_findings(report, terminated_grace_seconds=grace):
+        rprint(f"[yellow]⚠[/yellow] {finding}")
