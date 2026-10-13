@@ -769,3 +769,21 @@ class TestRelaunchSwitchesCallerClient:
             terminal_features="xterm*:clipboard\n*:sync\n",
         )
         assert self._sync_appends(calls) == []
+
+
+class TestFitWindow:
+    """Selecting an agent fits its window to the bottom pane, never the TUI's own size."""
+
+    def test_fit_goes_through_the_bottom_pane_resize(self):
+        from types import SimpleNamespace
+        from overcode.tui_split import make_split
+
+        app = MagicMock()
+        app.size = SimpleNamespace(width=200, height=10)  # the TUI's top pane
+        split = make_split(app, "agents-linked")
+        split._tmux = MagicMock()
+        widget = SimpleNamespace(session=SimpleNamespace(
+            is_remote=False, source_ssh=None, name="a", tmux_window="a-1234"))
+        split.fit_window(widget)
+        app._resize_agent_windows_async.assert_called_once_with(["a-1234"])
+        split._tmux.resize_window.assert_not_called()

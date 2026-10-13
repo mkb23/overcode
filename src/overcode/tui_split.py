@@ -288,35 +288,24 @@ class TmuxSplit(NullSplit):
     # ── Window sizes ───────────────────────────────────────────────────
 
     def fit_window(self, widget: "SessionSummary") -> None:
-        """Auto-fix tmux window size mismatch when switching sessions.
+        """Fit the selected agent's window to the bottom pane, off the main thread.
 
-        When terminal is resized while a session is not active, only the active
-        window gets resized. When switching to that session, its window might be
-        the wrong size. This sends a tmux command to resize it to match the
-        current terminal dimensions.
-
-        For remote agents with SSH, sends a resize command via the sister API
-        so the remote tmux window matches the local proxy pane dimensions.
-
-        The fix is silent and non-blocking — if it fails, navigation continues.
+        A window resized while it was not shown can be the wrong size when
+        it is switched in. The size is the bottom pane's, read from tmux:
+        the app's own size is the TUI's top pane, and fitting to it squashed
+        each agent to the TUI's height on selection (dormant until 0.6.0,
+        when ``RealTmux.resize_window`` started working). Remote agents with
+        SSH get the same size through the sister API.
         """
-        size = self.app.size
-        if not size or size.height <= 0:
-            return
         try:
             session = widget.session
-
-            # Remote agents with SSH: resize via API
             if session.is_remote and session.source_ssh and session.name:
                 self._resize_remote_agent(session)
                 return
-
-            window_index = session.tmux_window
-            if not window_index or window_index == "":
-                return
-            self._tmux.resize_window(self.sync_target, window_index, size.width, size.height)
+            if session.tmux_window:
+                self.app._resize_agent_windows_async([session.tmux_window])
         except Exception:
-            pass  # Silent fail - size mismatch isn't critical
+            pass  # a size mismatch isn't worth failing navigation
 
     def _resize_remote_agent(self, session: "Session") -> None:
         """Resize a remote agent's tmux window via the sister API, off the main thread."""
