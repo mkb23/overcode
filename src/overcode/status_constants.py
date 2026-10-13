@@ -164,6 +164,7 @@ EMOJI_ASCII = {
     "💰": "$$",
     "⏳": "~~",
     "⌛": "TO",  # oversight timeout expired (Result column)
+    "⌚": "Md",  # median work time (was ⏱, text-default: an outline glyph)
     "🤖": "Ro",
     "👤": "Hu",
     "🤿": "Su",

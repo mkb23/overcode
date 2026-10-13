@@ -1253,7 +1253,7 @@ class TestRenderWorkPlain:
         stats = _make_claude_stats(interaction_count=10, median_work_time=120)
         ctx = _make_ctx(claude_stats=stats, stats=_make_stats(steers_count=3), median_work=120)
         result = render_work_plain(ctx)
-        assert "⏱" in result
+        assert "⌚" in result
         assert "👤 7 human" in result
         assert "🤖 3 robot" in result
 

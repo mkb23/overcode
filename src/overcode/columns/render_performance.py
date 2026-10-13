@@ -8,10 +8,11 @@ from .context import ColumnContext, ColumnOutput
 
 def render_median_work_time(ctx: ColumnContext) -> ColumnOutput:
     """Median work-cycle time. Dashed when the backend reports no stats."""
+    w = ctx.e("⌚")
     if ctx.claude_stats is None:
-        return [(f" ⏱{'-':>5}", f"dim blue{ctx.bg}")]
+        return [(f" {w}{'-':>5}", f"dim blue{ctx.bg}")]
     return [(
-        f" ⏱{format_duration(ctx.median_work):>5}",
+        f" {w}{format_duration(ctx.median_work):>5}",
         f"bold blue{ctx.bg}",
     )]
 
@@ -105,7 +106,7 @@ def render_work_plain(ctx: ColumnContext) -> Optional[str]:
     median_work = ctx.median_work
     work_str = format_duration(median_work) if median_work > 0 else "-"
     human_count = max(0, ctx.claude_stats.interaction_count - ctx.stats.steers_count)
-    return f"⏱ {work_str} median  👤 {human_count} human 🤖 {ctx.stats.steers_count} robot"
+    return f"⌚ {work_str} median  👤 {human_count} human 🤖 {ctx.stats.steers_count} robot"
 
 
 def render_agents_plain(ctx: ColumnContext) -> Optional[str]:

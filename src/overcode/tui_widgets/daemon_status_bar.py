@@ -289,7 +289,7 @@ class DaemonStatusBar(Static):
                 # Show cumulative daemon Claude run time
                 if self.monitor_state.supervisor_claude_total_run_seconds > 0:
                     total_run = format_duration(self.monitor_state.supervisor_claude_total_run_seconds)
-                    content.append(f" ⏱{total_run}", style="dim")
+                    content.append(f" ⌚{total_run}", style="dim")
             else:
                 content.append("ready", style="green")
         elif getattr(self.app, "emoji_free", False) is True:
