@@ -5,9 +5,11 @@ Quartz) for the published state; ``attendance`` decides whether the daemon
 runs its attended cadences or the unattended ones.
 """
 
+import time
 from datetime import datetime
 from typing import Optional
 
+from .clock import to_epoch
 from .settings import (
     get_tui_heartbeat_path,
     tui_attended_age_seconds,
@@ -60,10 +62,11 @@ class PresenceComponent:
             heartbeat_path = get_tui_heartbeat_path(self._tmux_session)
             if not heartbeat_path.exists():
                 return False
-            ts_str = heartbeat_path.read_text().strip()
-            ts = datetime.fromisoformat(ts_str)
-            age = (datetime.now() - ts).total_seconds()
-            return age <= self.TUI_HEARTBEAT_FRESHNESS
+            written_at = to_epoch(heartbeat_path.read_text().strip())
+            if written_at is None:
+                return False
+            # Epoch seconds: the stamp may be naive (local) or aware
+            return time.time() - written_at <= self.TUI_HEARTBEAT_FRESHNESS
         except (ValueError, OSError):
             return False
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Iterable, List, Optional, Tuple
 
+from ..clock import from_iso
 from ..status_constants import StatusDetail, get_permissiveness_emoji
 from ..status_patterns import extract_sleep_duration
 from ..tui_helpers import calculate_uptime, get_current_state_times, get_status_symbol
@@ -254,7 +255,7 @@ def build_cli_context(
     status_changed_at = None
     if stats.state_since:
         try:
-            status_changed_at = datetime.fromisoformat(stats.state_since)
+            status_changed_at = from_iso(stats.state_since)
         except (ValueError, TypeError):
             pass
 

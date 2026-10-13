@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Callable, List, Optional, TYPE_CHECKING, Tuple
 
+from ..clock import from_iso
 from .column import ALL, HIGH_PLUS, MED_PLUS, SummaryColumn
 from .context import ColumnContext
 from .hover import (
@@ -129,7 +130,7 @@ def _age_seconds(when) -> Optional[float]:
         return None
     if isinstance(when, str):
         try:
-            when = datetime.fromisoformat(when)
+            when = from_iso(when)
         except (ValueError, TypeError):
             return None
     return (datetime.now() - when).total_seconds()

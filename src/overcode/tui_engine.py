@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
+from .clock import from_iso
 from .history_reader import AgentSessionStats
 from .status_constants import (
     STATUS_ASLEEP,
@@ -170,7 +171,7 @@ def status_changed_at(view: AgentView) -> Optional[datetime]:
     since = view.get("status_since")
     if since:
         try:
-            return datetime.fromisoformat(since)
+            return from_iso(since)
         except (TypeError, ValueError):
             return None
     return None

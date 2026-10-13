@@ -13,6 +13,7 @@ from textual.reactive import reactive
 from textual import events
 from rich.text import Text
 
+from ..clock import from_iso
 from ..session_manager import Session
 from ..status_patterns import extract_from_pane, extract_sleep_duration
 from ..history_reader import AgentSessionStats, synthesize_remote_stats
@@ -161,7 +162,7 @@ class SessionSummary(Static, can_focus=True):
         self._status_changed_at: Optional[datetime] = None
         if session.stats.state_since:
             try:
-                self._status_changed_at = datetime.fromisoformat(session.stats.state_since)
+                self._status_changed_at = from_iso(session.stats.state_since)
             except (ValueError, TypeError):
                 pass
         self.last_command: str = ""  # Last instruction sent to this agent (#413)

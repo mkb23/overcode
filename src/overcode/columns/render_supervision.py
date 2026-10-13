@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+from ..clock import from_iso
 from ..tui_helpers import format_duration
 from .column import _make_simple_render, _make_simple_render_plain
 from .context import ColumnContext, ColumnOutput
@@ -181,7 +182,7 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
 
     try:
         hg = ctx.e("⏳")
-        deadline = datetime.fromisoformat(deadline_str)
+        deadline = from_iso(deadline_str)
         remaining = (deadline - datetime.now()).total_seconds()
         if remaining <= 0:
             return [(f" {hg} 0s  ", f"bold blink red{ctx.bg}")]
@@ -213,7 +214,7 @@ def _compute_next_heartbeat(session) -> Optional[str]:
     now = datetime.now()
     if session.last_heartbeat_time:
         try:
-            last_hb = datetime.fromisoformat(session.last_heartbeat_time)
+            last_hb = from_iso(session.last_heartbeat_time)
             next_due = last_hb + timedelta(seconds=session.heartbeat_frequency_seconds)
             # If next due is in the past (stale timestamp), show "now"
             if next_due < now:

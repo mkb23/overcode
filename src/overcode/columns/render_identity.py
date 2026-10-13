@@ -4,6 +4,7 @@ import unicodedata
 from datetime import datetime
 from typing import Optional
 
+from ..clock import from_iso
 from ..status_constants import (
     BADGE_KINDS,
     STATUS_COLOR_GREEN,
@@ -40,7 +41,7 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
     state_start = ctx.status_changed_at
     if state_start is None and ctx.stats.state_since:
         try:
-            state_start = datetime.fromisoformat(ctx.stats.state_since)
+            state_start = from_iso(ctx.stats.state_since)
         except (ValueError, TypeError):
             pass
     if state_start:
@@ -185,7 +186,7 @@ def render_status_plain(ctx: ColumnContext) -> Optional[str]:
     state_start = ctx.status_changed_at
     if state_start is None and ctx.stats.state_since:
         try:
-            state_start = datetime.fromisoformat(ctx.stats.state_since)
+            state_start = from_iso(ctx.stats.state_since)
         except (ValueError, TypeError):
             pass
 

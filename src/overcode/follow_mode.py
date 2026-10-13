@@ -14,6 +14,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional
 
+from .clock import from_iso
 from .session_manager import Session, SessionManager, rename_notice
 from .status_patterns import strip_ansi
 from .child_lifecycle import OVERSIGHT_TIMEOUT_REASON, hook_stopped, read_report
@@ -320,7 +321,7 @@ def _poll_for_report(
         set_deadline = getattr(session, "oversight_deadline", None)
         if isinstance(set_deadline, str) and set_deadline:
             try:
-                deadline = datetime.fromisoformat(set_deadline)
+                deadline = from_iso(set_deadline)
             except ValueError:
                 pass
 

@@ -6,6 +6,7 @@ and business logic.
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
+from .clock import from_iso, to_epoch
 from .status_constants import (
     get_status_symbol as _get_status_symbol,
     get_status_color as _get_status_color,
@@ -248,8 +249,9 @@ def get_current_state_times(stats, now: Optional[datetime] = None, is_asleep: bo
     time_anchor = stats.last_time_accumulation or stats.state_since
     if time_anchor:
         try:
-            anchor_time = datetime.fromisoformat(time_anchor)
-            current_elapsed = (now - anchor_time).total_seconds()
+            # Epoch seconds: the anchor is aware (naive when an older
+            # daemon wrote it), ``now`` either
+            current_elapsed = now.timestamp() - to_epoch(time_anchor)
 
             # Only add positive elapsed time
             if current_elapsed > 0:
@@ -514,7 +516,7 @@ def calculate_safe_break_duration(sessions: list, now: Optional[datetime] = None
         time_in_state = 0.0
         if s.status_since:
             try:
-                state_start = datetime.fromisoformat(s.status_since)
+                state_start = from_iso(s.status_since)
                 time_in_state = (now - state_start).total_seconds()
             except (ValueError, TypeError):
                 pass

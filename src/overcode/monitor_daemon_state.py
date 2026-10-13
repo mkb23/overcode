@@ -16,9 +16,9 @@ import logging
 import os
 import tempfile
 import threading
+import time
 import dataclasses
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -372,8 +372,6 @@ class MonitorDaemonState:
         """
         from .engine_protocol import Snapshot
 
-        import time
-
         fleet = {
             k: v for k, v in self.to_dict().items()
             if k != "sessions" and k not in self.ENGINE_TICK_FIELDS
@@ -499,7 +497,7 @@ class MonitorDaemonState:
             duration = 0.0
         return float(self.current_interval) + float(duration)
 
-    def is_stale(self, buffer_seconds: float = 30.0) -> bool:
+    def is_stale(self, buffer_seconds: float = 30.0, now: Optional[float] = None) -> bool:
         """Check if the state is stale (daemon may have crashed).
 
         The state is fresh while its age is at most the expected gap between
@@ -514,16 +512,15 @@ class MonitorDaemonState:
         Returns:
             True if state is older than (expected gap + buffer_seconds)
         """
-        if not self.last_loop_time:
-            return True
+        from .clock import to_epoch
 
-        try:
-            last_time = datetime.fromisoformat(self.last_loop_time)
-            age = (datetime.now() - last_time).total_seconds()
-            max_age = self.expected_publish_gap() + buffer_seconds
-            return age > max_age
-        except (ValueError, TypeError):
+        # Epoch seconds: the stamp is aware (naive in a file an older daemon
+        # wrote), ``now`` the caller's wall clock in epoch seconds
+        last_at = to_epoch(self.last_loop_time)
+        if last_at is None:
             return True
+        age = (time.time() if now is None else now) - last_at
+        return age > self.expected_publish_gap() + buffer_seconds
 
 
 def get_monitor_daemon_state(session: Optional[str] = None) -> Optional[MonitorDaemonState]:

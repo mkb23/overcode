@@ -103,11 +103,11 @@ def monitor_daemon_status_cmd(session: SessionOption = "agents"):
 
 def _format_loop_time_ago(last_loop_time: str) -> str:
     """MonitorDaemonState timestamps are ISO strings; format_ago needs datetime."""
-    from datetime import datetime
+    from ..clock import from_iso
     from ..tui_helpers import format_ago
 
     try:
-        return format_ago(datetime.fromisoformat(last_loop_time))
+        return format_ago(from_iso(last_loop_time))
     except (ValueError, TypeError):
         return str(last_loop_time)
 

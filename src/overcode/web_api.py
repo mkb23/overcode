@@ -10,6 +10,7 @@ import subprocess
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from .clock import from_iso
 from .monitor_daemon_state import (
     get_monitor_daemon_state,
     MonitorDaemonState,
@@ -297,7 +298,7 @@ def _build_time_info(s: SessionDaemonState, now: datetime) -> Dict[str, Any]:
     time_in_state = 0.0
     if s.status_since:
         try:
-            state_start = datetime.fromisoformat(s.status_since)
+            state_start = from_iso(s.status_since)
             time_in_state = (now - state_start).total_seconds()
         except ValueError:
             pass

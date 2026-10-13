@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
+from .clock import from_iso
 from .session_manager import Session
 
 if TYPE_CHECKING:
@@ -391,7 +392,7 @@ def gather_data_findings(
         and not session.is_asleep
     ):
         try:
-            last = datetime.fromisoformat(session.stats.last_activity)
+            last = from_iso(session.stats.last_activity)
             age = (now_dt - last).total_seconds()
             if age > stale_threshold_seconds:
                 findings.append(Finding(
@@ -407,7 +408,7 @@ def gather_data_findings(
 
     if session.status == "running" and session.oversight_deadline:
         try:
-            deadline = datetime.fromisoformat(session.oversight_deadline)
+            deadline = from_iso(session.oversight_deadline)
             overdue = (now_dt - deadline).total_seconds()
             if overdue > 0:
                 findings.append(Finding(
@@ -445,7 +446,7 @@ def gather_data_findings(
         and session.heartbeat_frequency_seconds > 0
     ):
         try:
-            last_hb = datetime.fromisoformat(session.last_heartbeat_time)
+            last_hb = from_iso(session.last_heartbeat_time)
             overdue_by = (
                 (now_dt - last_hb).total_seconds()
                 - session.heartbeat_frequency_seconds

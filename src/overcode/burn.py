@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional, Set
 
+from .clock import local_naive
+
 
 @dataclass
 class WindowBurnStats:
@@ -78,8 +80,8 @@ def compute_window_burn(
     if hours <= 0:
         return stats
 
-    if now is None:
-        now = datetime.now()
+    # The daemon's tick time is aware: local-naive, like everything below
+    now = datetime.now() if now is None else local_naive(now)
     # `since` is local-naive to match read_window_token_usage, which normalises
     # message timestamps to the local zone via .astimezone() before dropping
     # tzinfo. Mixing naive UTC with local-naive (as some older callers in

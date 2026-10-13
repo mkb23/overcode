@@ -6,13 +6,13 @@ Toggled with 'd'. Shows the monitor daemon's log file, which records
 status detection, stats tracking, and heartbeat activity.
 """
 
-from datetime import datetime
 from typing import Optional
 
 from textual.widgets import Static
 from textual import work
 from rich.text import Text
 
+from ..clock import from_iso
 from ..daemon_logging import follow_log
 from ..monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from ..settings import get_session_dir
@@ -149,7 +149,7 @@ class DaemonPanel(Static):
             content.append(f"loop #{state.loop_count}", style="cyan")
             content.append(f" @{format_interval(state.current_interval)}", style="dim")
             try:
-                last_loop = datetime.fromisoformat(state.last_loop_time) if state.last_loop_time else None
+                last_loop = from_iso(state.last_loop_time) if state.last_loop_time else None
             except (ValueError, TypeError):
                 last_loop = None
             content.append(f" ({format_ago(last_loop)})", style="dim")
@@ -160,7 +160,7 @@ class DaemonPanel(Static):
             content.append("stopped", style="red")
             if self.monitor_state and self.monitor_state.last_loop_time:
                 try:
-                    last_time = datetime.fromisoformat(self.monitor_state.last_loop_time)
+                    last_time = from_iso(self.monitor_state.last_loop_time)
                     content.append(f" (last: {format_ago(last_time)})", style="dim")
                 except ValueError:
                     pass
