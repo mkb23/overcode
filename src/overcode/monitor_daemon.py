@@ -1967,6 +1967,7 @@ class MonitorDaemon:
             housekeeping.archive_terminated_sessions(all_sessions, now, self._pending,
                                                      window_gone=window_gone)
             housekeeping.prune_finished_jobs()
+            housekeeping.tidy_storage(self.session_manager)
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)
@@ -2010,6 +2011,8 @@ class MonitorDaemon:
         self.state.save(self.state_path)
         self.recorder_store.load()
         self._start_engine_socket()
+        # Agent directories a crash or an older overcode left (bounded)
+        self.housekeeping.tidy_storage(self.session_manager, force=True)
 
         try:
             while not self._shutdown:

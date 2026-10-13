@@ -26,6 +26,15 @@ if TYPE_CHECKING:
 # this often (it otherwise grew without limit)
 JOB_PRUNE_INTERVAL_SECONDS = 3600.0
 
+# At most this many records are archived per housekeeping pass: each packs
+# its agent's directory into the day bundle on the tick's thread. The rest
+# wait for the next pass (their grace clock keeps running).
+ARCHIVE_PER_PASS = 50
+
+# The orphan sweep and bundle retention (SessionManager.tidy_agent_storage)
+# run at daemon start and then this often
+STORAGE_TIDY_INTERVAL_SECONDS = 3600.0
+
 
 class Housekeeping:
     """Housekeeping for one daemon: its tmux client, history file and log.
@@ -67,6 +76,8 @@ class Housekeeping:
         self.model_metadata_failure_backoff = 6 * 3600  # seconds
         # Finished-job pruning: monotonic time of the last pass (hourly)
         self.last_job_prune: Optional[float] = None
+        # Agent storage tidy: monotonic time of the last pass (hourly)
+        self.last_storage_tidy: Optional[float] = None
 
     def due(self, now: datetime) -> bool:
         """Wall-clock replacement for ``loop_count % 60 == 0``.
@@ -166,17 +177,39 @@ class Housekeeping:
 
         grace = get_session_archive_config()["terminated_grace_seconds"]
         seen = set()
+        staged = 0
         for session in all_sessions:
             if session.status != STATUS_TERMINATED and session.id not in window_gone:
                 continue
             seen.add(session.id)
             since = self.terminated_since.setdefault(session.id, now)
-            if should_archive_terminated(since, now, grace):
+            if staged < ARCHIVE_PER_PASS and should_archive_terminated(since, now, grace):
+                staged += 1
                 pending.archive_session(session.id)
                 del self.terminated_since[session.id]
                 self.log.info(f"Archived terminated session: {session.name}")
         for session_id in [sid for sid in self.terminated_since if sid not in seen]:
             del self.terminated_since[session_id]
+
+    def tidy_storage(self, session_manager, *, force: bool = False) -> None:
+        """Sweep orphaned agent directories and apply bundle retention, hourly.
+
+        ``force`` runs it now (daemon start). Bounded per pass
+        (``SessionManager.tidy_agent_storage``); never fails the tick.
+        """
+        last = self.last_storage_tidy
+        if (not force and last is not None
+                and time.monotonic() - last < STORAGE_TIDY_INTERVAL_SECONDS):
+            return
+        self.last_storage_tidy = time.monotonic()
+        try:
+            counts = session_manager.tidy_agent_storage(self.tmux_session)
+        except Exception as e:  # housekeeping must never fail the tick
+            self.log.warn(f"agent storage not tidied: {e}")
+            return
+        done = {k: v for k, v in (counts or {}).items() if v and k != "kept"}
+        if done:
+            self.log.info(f"Agent storage tidied: {done}")
 
     def prune_finished_jobs(self) -> None:
         """Drop finished jobs past their retention, at most hourly."""

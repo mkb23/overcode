@@ -156,10 +156,17 @@ class AgentLifecycleMixin:
         all_sessions = self.sessions.list_sessions()
         terminated = [s for s in all_sessions if s.status == "terminated"]
 
-        for session in terminated:
-            self.sessions.delete_session(session.id)
+        # One commit for all of them (agent_bundle's write-ahead order)
+        self.sessions.delete_sessions([s.id for s in terminated])
+        self.tidy_agent_storage()
 
         return len(terminated)
+
+    def tidy_agent_storage(self) -> None:
+        """Orphaned agent directories and a bounded bundle prune (``SessionManager.tidy_agent_storage``)."""
+        tidy = getattr(self.sessions, "tidy_agent_storage", None)
+        if tidy is not None:
+            tidy(self.tmux_session, prune_limit=31)
 
     def kill_session(self, name: str, cascade: bool = True) -> bool:
         """Kill a session by name.
@@ -190,7 +197,9 @@ class AgentLifecycleMixin:
             for child in children:
                 self.sessions.update_session(child.id, parent_session_id=None)
 
-        return self._kill_single_session(session)
+        killed = self._kill_single_session(session)
+        self.tidy_agent_storage()
+        return killed
 
     def _kill_single_session(self, session: Session) -> bool:
         """Kill a single session (no cascade). Internal helper."""

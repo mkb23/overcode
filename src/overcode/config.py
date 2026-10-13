@@ -695,6 +695,97 @@ def get_session_archive_config() -> dict:
     return {"terminated_grace_seconds": grace}
 
 
+_SIZE_UNITS = {"": 1, "B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
+
+
+def parse_size(value) -> int:
+    """Bytes from ``1073741824``, ``"1GB"``, ``"500 MB"`` or ``"64kb"``; 0 if unreadable."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    if not isinstance(value, str):
+        return 0
+    text = value.strip().upper().replace(" ", "")
+    number = text.rstrip("KMGTB")
+    unit = text[len(number):]
+    try:
+        return max(0, int(float(number) * _SIZE_UNITS[unit]))
+    except (KeyError, ValueError):
+        return 0
+
+
+def _non_negative(value, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number >= 0 else default
+
+
+def get_agent_history_config() -> dict:
+    """How long archived agents' own files (the day bundles) are kept.
+
+    When an agent is archived its directory (hook state, event log, report,
+    episode log) is packed into one gzip member of its tmux session's day
+    bundle, ``sessions/<tmux>/bundles/<day>.agents.gz``, and removed. Bundles
+    are kept for ever unless a limit is set.
+
+    Config format in ~/.overcode/config.yaml:
+        agent_history:
+          retention_days: 0       # 0 (default) keeps every day; N deletes days older than N
+          max_bytes: 0            # 0 (default) no cap; e.g. 1GB drops the oldest days past it
+          keep_hook_events: true  # false packs only state, report and episodes
+
+    Returns:
+        Dict with ``retention_days`` (float, 0 = for ever), ``max_bytes``
+        (int, 0 = no cap) and ``keep_hook_events`` (bool).
+    """
+    cfg = _get_config_value("agent_history", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {
+        "retention_days": _non_negative(cfg.get("retention_days", 0), 0.0),
+        "max_bytes": parse_size(cfg.get("max_bytes", 0)),
+        "keep_hook_events": bool(cfg.get("keep_hook_events", True)),
+    }
+
+
+def get_archive_config() -> dict:
+    """How long the session archive's months are kept.
+
+    Config format in ~/.overcode/config.yaml:
+        archive:
+          retention_months: 0     # 0 (default) keeps every month; N deletes older months
+
+    Returns:
+        Dict with ``retention_months`` (int, 0 = for ever).
+    """
+    cfg = _get_config_value("archive", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {"retention_months": int(_non_negative(cfg.get("retention_months", 0), 0))}
+
+
+def get_ledger_config() -> dict:
+    """The spend ledger: how often a long-running agent's spend is checkpointed.
+
+    The ledger itself is kept for ever (there is no retention knob).
+
+    Config format in ~/.overcode/config.yaml:
+        ledger:
+          checkpoint_minutes: 60  # a row for an agent still running, at most this often
+
+    Returns:
+        Dict with ``checkpoint_minutes`` (float, > 0).
+    """
+    cfg = _get_config_value("ledger", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    minutes = _non_negative(cfg.get("checkpoint_minutes", 60), 60.0)
+    return {"checkpoint_minutes": minutes if minutes > 0 else 60.0}
+
+
 def get_monitor_daemon_config() -> dict:
     """The monitor daemon's loop interval while nobody is watching.
 

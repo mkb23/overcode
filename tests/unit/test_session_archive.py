@@ -265,7 +265,9 @@ class TestCommitPendingArchive:
         assert pending
         with count_sessions_io(sm.state_file) as io:
             assert sm.commit_pending(pending) is True
-        assert (io.reads, io.writes) == (1, 1)
+        # One read more than a plain commit: the agents' directories are
+        # packed first, outside the lock, from the (stat-gated) snapshot
+        assert (io.reads, io.writes) == (2, 1)
         raw = json.loads(sm.state_file.read_text())
         assert list(raw) == ["live"] and raw["live"]["stats"]["current_task"] == "still here"
         records = _lines(sm.archive_file)

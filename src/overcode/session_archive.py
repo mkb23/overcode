@@ -225,6 +225,10 @@ class SessionArchiveMixin:
         self._archive_tail = (st.st_ino, offset + end, by_id)
         return FileSignature.of(st), by_id
 
+    def is_archived(self, session_id: str) -> bool:
+        """Whether the archive holds a record of ``session_id``."""
+        return session_id in self._archive_snapshot()
+
     def list_archived_sessions(self) -> List[Session]:
         """List all archived sessions (skips corrupted entries).
 

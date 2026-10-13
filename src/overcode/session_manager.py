@@ -9,13 +9,18 @@ from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields, replace
 import uuid
 
+import logging
+
 from . import paths
+from .agent_files import remove_agent_dir
 from .exceptions import StateWriteError
 from .json_store import JsonStore, Transaction
 from .git_context import GitContextMixin, read_git_context_from_disk  # noqa: F401  (re-export)
 from .session_archive import SessionArchiveMixin
 from .session_identity import SessionIdentityMixin
 from .stat_gate import FileSignature, StatGatedCache
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -317,9 +322,17 @@ class PendingUpdates:
         self.fields: Dict[str, Dict[str, object]] = {}
         self.stats: Dict[str, Dict[str, object]] = {}
         self.archive: List[str] = []  # ids to move from the live file to the archive
+        self.removed: List[str] = []  # ids to drop with no archive record (a failed launch)
+        # Filled by commit_pending: the ids it actually moved to the archive
+        self.archived: List[str] = []
 
     def __bool__(self) -> bool:
-        return bool(self.fields or self.stats or self.archive)
+        return bool(self.fields or self.stats or self.archive or self.removed)
+
+    def remove_session(self, session_id: str) -> None:
+        """Stage dropping ``session_id`` with no archive record, and its directory."""
+        if session_id not in self.removed:
+            self.removed.append(session_id)
 
     def archive_session(self, session_id: str) -> None:
         """Stage moving ``session_id`` to the archive (the ``delete_session`` record)."""
@@ -583,13 +596,21 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         Every staged field and stat is compared with the entry on disk and
         the file is rewritten — one ``json.dump``, one fsync — only if at
         least one differs. Entries that vanished since they were staged are
-        skipped, as ``update_session`` skips an unknown id. Entries staged
-        for the archive leave the live file in the same write and are
-        appended to the archive once the lock is released, with the record
-        ``delete_session`` writes. Returns True if the file was written.
+        skipped, as ``update_session`` skips an unknown id.
+
+        Entries staged for the archive go write-ahead (``agent_bundle``):
+        each agent's directory is packed into its day bundle first (outside
+        the lock), then, under the state lock, the archive records (with
+        their bundle pointers) are appended and fsynced *before* the live
+        file drops them, and only then is each directory removed. A crash
+        anywhere leaves a duplicate, never a loss. ``pending.archived``
+        lists the ids this call moved (a daemon that lost the race to
+        another moves none, and leaves the directories alone). Returns True
+        if the file was written.
         """
         if not pending:
             return False
+        pointers = self._pack_for_archive(pending.archive)
         archived: List[dict] = []
         with self._state_transaction() as txn:
             state = txn.state
@@ -600,6 +621,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 record = entry.copy()
                 record['end_time'] = datetime.now().isoformat()
                 record['status'] = 'archived'
+                if session_id in pointers:
+                    record['bundle'] = pointers[session_id]
                 archived.append(record)
                 txn.dirty = True
             for session_id, values in pending.fields.items():
@@ -622,11 +645,67 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                     if key not in stats or stats[key] != value:
                         stats[key] = value
                         txn.dirty = True
+            # Write-ahead: durable in the archive before it leaves the live
+            # file (which the transaction writes on exit)
+            if archived:
+                self._append_archive_records(archived)
+            removed_dirs = []
+            for session_id in pending.removed:
+                entry = state.pop(session_id, None)
+                if entry is not None:
+                    removed_dirs.append((session_id, entry.get("tmux_session")))
+                    txn.dirty = True
             written = txn.dirty
-        # Archive after the lock is released (separate file, separate lock)
-        if archived:
-            self._append_archive_records(archived)
+        pending.archived = [r['id'] for r in archived if isinstance(r.get('id'), str)]
+        for record in archived:
+            self._remove_archived_dir(record, packed=record.get('id') in pointers)
+        for session_id, tmux_session in removed_dirs:
+            if isinstance(tmux_session, str) and tmux_session:
+                remove_agent_dir(tmux_session, session_id)
         return written
+
+    def _pack_for_archive(self, session_ids: Iterable[str]) -> Dict[str, dict]:
+        """Pack each staged agent's directory into its day bundle: {id: pointer}.
+
+        An agent with no directory (launched before them, remote, or
+        already packed) gets no pointer; one whose packing failed keeps its
+        directory for the orphan sweep to retry.
+        """
+        ids = list(session_ids)
+        if not ids:
+            return {}
+        from .agent_bundle import pack_agent_dir
+
+        snapshot = self._snapshot()
+        pointers: Dict[str, dict] = {}
+        for session_id in ids:
+            session = snapshot.get(session_id)
+            if session is None or not session.tmux_session:
+                continue
+            try:
+                pointer = pack_agent_dir(session.tmux_session, session_id, {
+                    "name": session.name,
+                    "parent": session.parent_session_id,
+                })
+            except Exception as e:  # never block archiving on the bundle
+                logger.warning("could not pack agent %s: %s", session_id, e)
+                continue
+            if pointer is not None:
+                pointers[session_id] = pointer
+        return pointers
+
+    @staticmethod
+    def _remove_archived_dir(record: dict, *, packed: bool) -> None:
+        """The last write-ahead step: remove an archived agent's directory.
+
+        Kept when it exists but was not packed (packing failed): the orphan
+        sweep packs it later.
+        """
+        session_id, tmux_session = record.get('id'), record.get('tmux_session')
+        if not isinstance(session_id, str) or not isinstance(tmux_session, str) or not tmux_session:
+            return
+        if packed or not paths.agent_dir(tmux_session, session_id).is_dir():
+            remove_agent_dir(tmux_session, session_id)
 
     def create_session(self, name: str, tmux_session: str, tmux_window: str,
                       command: List[str], start_directory: Optional[str] = None,
@@ -775,23 +854,81 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
     def delete_session(self, session_id: str, archive: bool = True):
         """Delete a session, optionally archiving it first.
 
+        The same write-ahead path as the daemon's archive pass
+        (``commit_pending``): the agent's directory is packed, the archive
+        record written, the record removed, the directory removed. Without
+        ``archive`` (a launch that failed) the record and the directory
+        simply go.
+
         Args:
             session_id: The session ID to delete
             archive: If True (default), archive the session before removing
         """
-        archived_data = None
+        self.delete_sessions([session_id], archive=archive)
 
-        with self._locked_state() as state:
-            if session_id in state:
-                if archive:
-                    archived_data = state[session_id].copy()
-                    archived_data['end_time'] = datetime.now().isoformat()
-                    archived_data['status'] = 'archived'
-                del state[session_id]
+    def delete_sessions(self, session_ids: Iterable[str], archive: bool = True) -> List[str]:
+        """Delete many sessions in one commit (``overcode cleanup``); returns those archived."""
+        pending = PendingUpdates()
+        for session_id in session_ids:
+            if archive:
+                pending.archive_session(session_id)
+            else:
+                pending.remove_session(session_id)
+        self.commit_pending(pending)
+        return pending.archived
 
-        # Archive after the lock is released (separate file, separate lock)
-        if archived_data is not None:
-            self._archive_session(archived_data)
+    def tidy_agent_storage(
+        self,
+        tmux_session: str,
+        *,
+        sweep_limit: int = 200,
+        prune_limit: Optional[int] = None,
+    ) -> Dict[str, int]:
+        """Clear orphaned agent directories and apply bundle retention; never raises.
+
+        The orphan sweep (``agent_bundle.sweep_orphans``): a directory
+        whose record has gone (a crash between the archive commit and its
+        removal, a hook after it, an older overcode's cleanup) is packed,
+        recorded in the archive and removed, or just removed when the
+        archive has it already. Then the bundle retention
+        (``agent_history``; off by default). Run by the daemon at start
+        and hourly, and by ``overcode cleanup`` and ``kill``, so a user
+        without a daemon stays bounded too. Returns the sweep's counts plus
+        ``pruned`` (bundle days deleted).
+        """
+        from . import agent_bundle
+        from .config import get_agent_history_config
+
+        def live_ids() -> set:
+            return set(self._snapshot())
+
+        def archived(session_id: str) -> bool:
+            return self.is_archived(session_id)
+
+        def record(session_id: str, pointer: dict) -> None:
+            now = datetime.now().isoformat()
+            self._append_archive_records([{
+                "id": session_id, "name": f"orphan-{session_id[:8]}",
+                "tmux_session": tmux_session, "tmux_window": "", "command": [],
+                "start_directory": None, "start_time": now, "end_time": now,
+                "status": "archived", "orphan": True, "bundle": pointer,
+            }])
+
+        counts: Dict[str, int] = {}
+        try:
+            if sweep_limit > 0:
+                counts.update(agent_bundle.sweep_orphans(
+                    tmux_session, live_ids, archived=archived, record=record, limit=sweep_limit))
+        except Exception as e:
+            logger.warning("agent directory sweep failed: %s", e)
+        try:
+            cfg = get_agent_history_config()
+            counts["pruned"] = len(agent_bundle.prune(
+                retention_days=cfg["retention_days"], max_bytes=cfg["max_bytes"],
+                limit=prune_limit))
+        except Exception as e:
+            logger.warning("bundle retention failed: %s", e)
+        return counts
 
     def update_session(self, session_id: str, **kwargs):
         """Update session fields.

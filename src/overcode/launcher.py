@@ -43,7 +43,7 @@ from .exceptions import (
     AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
     TmuxNotFoundError,
 )
-from .agent_files import prepare_agent_dir, remove_agent_dir
+from .agent_files import prepare_agent_dir
 from .agent_io import AgentIOMixin
 from .lifecycle import (  # noqa: F401  (window_* and LifecycleReconcile re-exported)
     AgentLifecycleMixin,
@@ -470,7 +470,6 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             self._remove_prompt_file(prompt_file)
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
-            remove_agent_dir(self.tmux.session_name, session.id)
             raise LaunchError(f"failed to send command to window {window_name}")
 
         # Reload so caller sees the active_agent_session_id / command set by the helper.
@@ -490,6 +489,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                 self.sessions.set_cost_budget(session.id, budget_usd)
 
         print(f"✓ Launched '{name}' in tmux window {window_name}")
+        # Bundle retention, bounded, so a user with no daemon stays bounded too
+        tidy = getattr(self.sessions, "tidy_agent_storage", None)
+        if tidy is not None:
+            tidy(self.tmux_session, sweep_limit=0, prune_limit=31)
 
         # Send initial prompt if provided (after Claude starts)
         if prompt_file:
@@ -645,7 +648,6 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         ):
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
-            remove_agent_dir(self.tmux.session_name, session.id)
             raise LaunchError(f"failed to send command to window {window_name}", "fork")
 
         session = self.sessions.get_session(session.id)
