@@ -1149,6 +1149,36 @@ class TestShowExtended:
         output.assert_called_once_with("test-agent", lines=50)
 
 
+@pytest.fixture
+def claude_settings(tmp_path, monkeypatch):
+    """Claude's user and project settings files, in this test's own HOME and cwd.
+
+    Returns ``write(level, data_or_text)`` and the two paths.
+    """
+    import json
+    from types import SimpleNamespace
+
+    home, project = tmp_path / "home", tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(project)
+    paths = {"user": home / ".claude" / "settings.json",
+             "project": project / ".claude" / "settings.json"}
+
+    def write(level, data):
+        paths[level].parent.mkdir(parents=True, exist_ok=True)
+        paths[level].write_text(data if isinstance(data, str) else json.dumps(data))
+
+    def read(level):
+        return json.loads(paths[level].read_text())
+
+    return SimpleNamespace(write=write, read=read, home=home, **paths)
+
+
+def _hooks(*events, command="overcode hook-handler"):
+    return {"hooks": {e: [{"hooks": [{"type": "command", "command": command}]}] for e in events}}
+
+
 class TestHooksInstallCommand:
     """Test hooks install command (deprecated)."""
 
@@ -1160,95 +1190,61 @@ class TestHooksInstallCommand:
 
 
 class TestHooksUninstallCommand:
-    """Test hooks uninstall command."""
+    """Test hooks uninstall command, on a real settings file."""
 
-    def test_hooks_uninstall_success(self):
-        """Hooks uninstall removes hooks."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.remove_hook.return_value = True
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
+    def test_hooks_uninstall_success(self, claude_settings):
+        """Hooks uninstall removes overcode's hooks and keeps the user's own."""
+        settings = _hooks("Stop", "PreToolUse")
+        settings["hooks"]["Notification"] = [{"hooks": [{"type": "command", "command": "my-notifier"}]}]
+        claude_settings.write("user", settings)
 
-            with patch('overcode.hook_handler.OVERCODE_HOOKS', [("TestEvent", "test-cmd")]):
-                result = runner.invoke(app, ["hooks", "uninstall"])
-                assert result.exit_code == 0
-                assert "Removed 1 hook" in result.output
+        result = runner.invoke(app, ["hooks", "uninstall"])
+        assert result.exit_code == 0
+        assert "Removed 2 hook" in result.output
+        assert claude_settings.read("user") == {"hooks": {"Notification": [
+            {"hooks": [{"type": "command", "command": "my-notifier"}]}]}}
 
-    def test_hooks_uninstall_none_found(self):
+    def test_hooks_uninstall_none_found(self, claude_settings):
         """Hooks uninstall when none found."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.remove_hook.return_value = False
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
+        claude_settings.write("user", {"model": "opus"})
+        result = runner.invoke(app, ["hooks", "uninstall"])
+        assert result.exit_code == 0
+        assert "No overcode hooks found" in result.output
 
-            with patch('overcode.hook_handler.OVERCODE_HOOKS', [("TestEvent", "test-cmd")]):
-                result = runner.invoke(app, ["hooks", "uninstall"])
-                assert result.exit_code == 0
-                assert "No overcode hooks found" in result.output
-
-    def test_hooks_uninstall_invalid_json(self):
+    def test_hooks_uninstall_invalid_json(self, claude_settings):
         """Hooks uninstall handles invalid JSON."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.side_effect = ValueError("broken")
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            result = runner.invoke(app, ["hooks", "uninstall"])
-            assert result.exit_code == 1
+        claude_settings.write("user", "{broken")
+        result = runner.invoke(app, ["hooks", "uninstall"])
+        assert result.exit_code == 1
+        assert claude_settings.user.read_text() == "{broken"
 
 
 class TestHooksStatusCommand:
     """Test hooks status command."""
 
-    def test_hooks_status(self):
+    def test_hooks_status(self, claude_settings):
         """Hooks status shows installed/not installed."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_user = MagicMock()
-            mock_user.load.return_value = {}
-            mock_user.path = MagicMock()
-            mock_user.path.exists.return_value = True
-            mock_user.has_hook.return_value = True
+        claude_settings.write("user", _hooks("Stop"))
+        result = runner.invoke(app, ["hooks", "status"])
+        out = strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "User-level" in out
+        assert "Project-level" in out and "(no settings file)" in out
 
-            mock_proj = MagicMock()
-            mock_proj.load.return_value = {}
-            mock_proj.path = MagicMock()
-            mock_proj.path.exists.return_value = False
-
-            mock_editor_cls.user_level.return_value = mock_user
-            mock_editor_cls.project_level.return_value = mock_proj
-
-            with patch('overcode.hook_handler.OVERCODE_HOOKS', [("TestEvent", "test-cmd")]):
-                result = runner.invoke(app, ["hooks", "status"])
-                assert result.exit_code == 0
-                assert "User-level" in result.output
-
-    def test_hooks_status_invalid_json(self):
+    def test_hooks_status_invalid_json(self, claude_settings):
         """Hooks status handles invalid JSON."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_user = MagicMock()
-            mock_user.load.side_effect = ValueError("bad json")
-            mock_user.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_user
-
-            mock_proj = MagicMock()
-            mock_proj.load.return_value = {}
-            mock_proj.path = MagicMock()
-            mock_proj.path.exists.return_value = False
-            mock_editor_cls.project_level.return_value = mock_proj
-
-            with patch('overcode.hook_handler.OVERCODE_HOOKS', [("TestEvent", "test-cmd")]):
-                result = runner.invoke(app, ["hooks", "status"])
-                assert result.exit_code == 0
-                assert "invalid JSON" in result.output
+        claude_settings.write("user", "{bad json")
+        result = runner.invoke(app, ["hooks", "status"])
+        assert result.exit_code == 0
+        assert "invalid JSON" in result.output
 
 
 class TestSkillsInstallCommand:
-    """Test skills install command."""
+    """Test skills install command, into this test's own HOME."""
+
+    @pytest.fixture(autouse=True)
+    def home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
 
     def test_skills_install_new(self, tmp_path):
         """Skills install creates new skill files."""
@@ -1256,13 +1252,11 @@ class TestSkillsInstallCommand:
 
         with patch('overcode.bundled_skills.OVERCODE_SKILLS', {
             "test-skill": {"content": "# Test Skill"},
-        }):
-            with patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', []):
-                with patch('pathlib.Path.home', return_value=tmp_path):
-                    result = runner.invoke(app, ["skills", "install"])
-                    assert result.exit_code == 0
-                    assert "1 installed" in result.output
-                    assert (base / "test-skill" / "SKILL.md").read_text() == "# Test Skill"
+        }), patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', []):
+            result = runner.invoke(app, ["skills", "install"])
+        assert result.exit_code == 0
+        assert "1 installed" in result.output
+        assert (base / "test-skill" / "SKILL.md").read_text() == "# Test Skill"
 
     def test_skills_install_up_to_date(self, tmp_path):
         """Skills install skips up-to-date skills."""
@@ -1272,12 +1266,10 @@ class TestSkillsInstallCommand:
 
         with patch('overcode.bundled_skills.OVERCODE_SKILLS', {
             "test-skill": {"content": "# Test Skill"},
-        }):
-            with patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', []):
-                with patch('pathlib.Path.home', return_value=tmp_path):
-                    result = runner.invoke(app, ["skills", "install"])
-                    assert result.exit_code == 0
-                    assert "up-to-date" in result.output
+        }), patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', []):
+            result = runner.invoke(app, ["skills", "install"])
+        assert result.exit_code == 0
+        assert "up-to-date" in result.output
 
     def test_skills_install_updated(self, tmp_path):
         """Skills install updates modified skills."""
@@ -1287,12 +1279,11 @@ class TestSkillsInstallCommand:
 
         with patch('overcode.bundled_skills.OVERCODE_SKILLS', {
             "test-skill": {"content": "# New content"},
-        }):
-            with patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', []):
-                with patch('pathlib.Path.home', return_value=tmp_path):
-                    result = runner.invoke(app, ["skills", "install"])
-                    assert result.exit_code == 0
-                    assert "1 updated" in result.output
+        }), patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', []):
+            result = runner.invoke(app, ["skills", "install"])
+        assert result.exit_code == 0
+        assert "1 updated" in result.output
+        assert (base / "SKILL.md").read_text() == "# New content"
 
     def test_skills_install_removes_deprecated(self, tmp_path):
         """Skills install removes deprecated skills."""
@@ -1300,17 +1291,20 @@ class TestSkillsInstallCommand:
         deprecated_dir.mkdir(parents=True)
         (deprecated_dir / "SKILL.md").write_text("# Old")
 
-        with patch('overcode.bundled_skills.OVERCODE_SKILLS', {}):
-            with patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', ["old-skill"]):
-                with patch('pathlib.Path.home', return_value=tmp_path):
-                    result = runner.invoke(app, ["skills", "install"])
-                    assert result.exit_code == 0
-                    assert "Removed deprecated" in result.output
-                    assert not deprecated_dir.exists()
+        with patch('overcode.bundled_skills.OVERCODE_SKILLS', {}), \
+                patch('overcode.bundled_skills.DEPRECATED_SKILL_NAMES', ["old-skill"]):
+            result = runner.invoke(app, ["skills", "install"])
+        assert result.exit_code == 0
+        assert "Removed deprecated" in result.output
+        assert not deprecated_dir.exists()
 
 
 class TestSkillsUninstallCommand:
-    """Test skills uninstall command."""
+    """Test skills uninstall command, in this test's own HOME."""
+
+    @pytest.fixture(autouse=True)
+    def home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
 
     def test_skills_uninstall_matching(self, tmp_path):
         """Skills uninstall removes matching skills."""
@@ -1321,11 +1315,10 @@ class TestSkillsUninstallCommand:
         with patch('overcode.bundled_skills.OVERCODE_SKILLS', {
             "test-skill": {"content": "# Test Skill"},
         }):
-            with patch('pathlib.Path.home', return_value=tmp_path):
-                result = runner.invoke(app, ["skills", "uninstall"])
-                assert result.exit_code == 0
-                assert "Removed 1 skill" in result.output
-                assert not base.exists()
+            result = runner.invoke(app, ["skills", "uninstall"])
+        assert result.exit_code == 0
+        assert "Removed 1 skill" in result.output
+        assert not base.exists()
 
     def test_skills_uninstall_skips_modified(self, tmp_path):
         """Skills uninstall skips modified skills."""
@@ -1336,28 +1329,27 @@ class TestSkillsUninstallCommand:
         with patch('overcode.bundled_skills.OVERCODE_SKILLS', {
             "test-skill": {"content": "# Original content"},
         }):
-            with patch('pathlib.Path.home', return_value=tmp_path):
-                result = runner.invoke(app, ["skills", "uninstall"])
-                assert result.exit_code == 0
-                assert "modified" in result.output
-                assert base.exists()
+            result = runner.invoke(app, ["skills", "uninstall"])
+        assert result.exit_code == 0
+        assert "modified" in result.output
+        assert base.exists()
 
-    def test_skills_uninstall_none_found(self, tmp_path):
+    def test_skills_uninstall_none_found(self):
         """Skills uninstall when no skills found."""
         with patch('overcode.bundled_skills.OVERCODE_SKILLS', {
             "test-skill": {"content": "# Test"},
         }):
-            with patch('pathlib.Path.home', return_value=tmp_path):
-                result = runner.invoke(app, ["skills", "uninstall"])
-                assert result.exit_code == 0
-                assert "No overcode skills found" in result.output
+            result = runner.invoke(app, ["skills", "uninstall"])
+        assert result.exit_code == 0
+        assert "No overcode skills found" in result.output
 
 
 class TestSkillsStatusCommand:
     """Test skills status command."""
 
-    def test_skills_status(self, tmp_path):
+    def test_skills_status(self, tmp_path, monkeypatch):
         """Skills status shows installed/not installed."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         base = tmp_path / ".claude" / "skills" / "test-skill"
         base.mkdir(parents=True)
         (base / "SKILL.md").write_text("# Test Skill")
@@ -1365,10 +1357,9 @@ class TestSkillsStatusCommand:
         with patch('overcode.bundled_skills.OVERCODE_SKILLS', {
             "test-skill": {"content": "# Test Skill"},
         }):
-            with patch('pathlib.Path.home', return_value=tmp_path):
-                result = runner.invoke(app, ["skills", "status"])
-                assert result.exit_code == 0
-                assert "installed" in result.output
+            result = runner.invoke(app, ["skills", "status"])
+        assert result.exit_code == 0
+        assert "installed" in result.output
 
 
 class TestPermsInstallCommand:
@@ -1382,76 +1373,45 @@ class TestPermsInstallCommand:
 
 
 class TestPermsUninstallCommand:
-    """Test perms uninstall command."""
+    """Test perms uninstall command, on a real settings file."""
 
-    def test_perms_uninstall_success(self):
-        """Perms uninstall removes permissions."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.remove_permission.return_value = True
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
+    def test_perms_uninstall_success(self, claude_settings):
+        """Perms uninstall removes overcode's permissions and keeps the user's own."""
+        claude_settings.write("user", {"permissions": {"allow": [
+            "Bash(overcode show *)", "Bash(git status)", "Bash(overcode list *)"]}})
 
-            result = runner.invoke(app, ["perms", "uninstall"])
-            assert result.exit_code == 0
-            assert "Removed" in result.output
+        result = runner.invoke(app, ["perms", "uninstall"])
+        assert result.exit_code == 0
+        assert "Removed 2 permission(s)" in result.output
+        assert claude_settings.read("user") == {"permissions": {"allow": ["Bash(git status)"]}}
 
-    def test_perms_uninstall_none(self):
+    def test_perms_uninstall_none(self, claude_settings):
         """Perms uninstall when none found."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.remove_permission.return_value = False
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            result = runner.invoke(app, ["perms", "uninstall"])
-            assert result.exit_code == 0
-            assert "No overcode permissions found" in result.output
+        claude_settings.write("user", {"permissions": {"allow": ["Bash(git status)"]}})
+        result = runner.invoke(app, ["perms", "uninstall"])
+        assert result.exit_code == 0
+        assert "No overcode permissions found" in result.output
 
 
 class TestPermsStatusCommand:
     """Test perms status command."""
 
-    def test_perms_status(self):
+    def test_perms_status(self, claude_settings):
         """Perms status shows installed permissions."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_user = MagicMock()
-            mock_user.load.return_value = {}
-            mock_user.path = MagicMock()
-            mock_user.path.exists.return_value = True
-            mock_user.list_permissions_matching.return_value = ["Bash(overcode show *)"]
+        claude_settings.write("user", {"permissions": {"allow": ["Bash(overcode show *)"]}})
+        result = runner.invoke(app, ["perms", "status"])
+        out = strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "User-level" in out
+        assert "Bash(overcode show *)  ✓" in out
+        assert "(no settings file)" in out  # the project has none
 
-            mock_proj = MagicMock()
-            mock_proj.load.return_value = {}
-            mock_proj.path = MagicMock()
-            mock_proj.path.exists.return_value = False
-
-            mock_editor_cls.user_level.return_value = mock_user
-            mock_editor_cls.project_level.return_value = mock_proj
-
-            result = runner.invoke(app, ["perms", "status"])
-            assert result.exit_code == 0
-            assert "User-level" in result.output
-
-    def test_perms_status_invalid_json(self):
+    def test_perms_status_invalid_json(self, claude_settings):
         """Perms status handles invalid JSON."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_user = MagicMock()
-            mock_user.load.side_effect = ValueError("bad")
-            mock_user.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_user
-
-            mock_proj = MagicMock()
-            mock_proj.load.return_value = {}
-            mock_proj.path = MagicMock()
-            mock_proj.path.exists.return_value = False
-            mock_editor_cls.project_level.return_value = mock_proj
-
-            result = runner.invoke(app, ["perms", "status"])
-            assert result.exit_code == 0
-            assert "invalid JSON" in result.output
+        claude_settings.write("user", "{bad")
+        result = runner.invoke(app, ["perms", "status"])
+        assert result.exit_code == 0
+        assert "invalid JSON" in result.output
 
 
 class TestHookHandlerCommand:
@@ -1885,241 +1845,243 @@ class TestSupervisorDaemonWatchCommand:
             assert "Log file not found" in result.output
 
 
+@pytest.fixture
+def config_yaml(tmp_path, monkeypatch):
+    """This test's own config.yaml (under a private OVERCODE_DIR).
+
+    ``write(dict)`` saves it, ``read()`` loads it back, ``path`` is the file.
+    """
+    import yaml
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+    path = tmp_path / "oc" / "config.yaml"
+
+    class _Indented(yaml.SafeDumper):
+        """Lists indented under their key, as the config template writes them."""
+
+        def increase_indent(self, flow=False, indentless=False):
+            return super().increase_indent(flow, False)
+
+    def write(data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(data if isinstance(data, str) else yaml.dump(data, Dumper=_Indented))
+
+    def read():
+        return yaml.safe_load(path.read_text()) or {}
+
+    return SimpleNamespace(write=write, read=read, path=path)
+
+
 class TestSisterCommands:
-    """Test sister subcommands."""
+    """Sister subcommands, over a real config.yaml."""
 
-    def test_sister_list_none(self):
+    def test_sister_list_none(self, config_yaml):
         """Sister list when none configured."""
-        with patch('overcode.config.get_sisters_config', return_value=[]):
-            result = runner.invoke(app, ["sister", "list"])
-            assert result.exit_code == 0
-            assert "No sister instances" in result.output
+        result = runner.invoke(app, ["sister", "list"])
+        assert result.exit_code == 0
+        assert "No sister instances" in result.output
 
-    def test_sister_list_with_sisters(self):
+    def test_sister_list_with_sisters(self, config_yaml):
         """Sister list shows configured sisters."""
-        sisters = [
+        config_yaml.write({"sisters": [
             {"name": "macbook", "url": "http://localhost:5337"},
             {"name": "desktop", "url": "http://192.168.1.10:5337", "api_key": "secret123"},
-        ]
-        with patch('overcode.config.get_sisters_config', return_value=sisters):
-            result = runner.invoke(app, ["sister", "list"])
-            assert result.exit_code == 0
-            assert "macbook" in result.output
-            assert "desktop" in result.output
-            assert "secr..." in result.output  # masked API key
+        ]})
+        result = runner.invoke(app, ["sister", "list"])
+        assert result.exit_code == 0
+        assert "macbook" in result.output
+        assert "desktop" in result.output
+        assert "secr..." in result.output  # masked API key
+        assert "secret123" not in result.output
 
-    def test_sister_default_lists(self):
+    def test_sister_default_lists(self, config_yaml):
         """Sister with no subcommand lists."""
-        with patch('overcode.config.get_sisters_config', return_value=[]):
-            result = runner.invoke(app, ["sister"])
-            assert result.exit_code == 0
-            assert "No sister instances" in result.output
+        result = runner.invoke(app, ["sister"])
+        assert result.exit_code == 0
+        assert "No sister instances" in result.output
 
-    def test_sister_add(self):
+    def test_sister_add(self, config_yaml):
         """Sister add creates new entry."""
-        with patch('overcode.config.load_config', return_value={"sisters": []}):
-            with patch('overcode.config.save_config') as mock_save:
-                result = runner.invoke(app, ["sister", "add", "macbook", "http://localhost:5337"])
-                assert result.exit_code == 0
-                assert "Added sister" in result.output
-                saved_config = mock_save.call_args[0][0]
-                assert len(saved_config["sisters"]) == 1
-                assert saved_config["sisters"][0]["name"] == "macbook"
+        config_yaml.write({"sisters": []})
+        result = runner.invoke(app, ["sister", "add", "macbook", "http://localhost:5337"])
+        assert result.exit_code == 0
+        assert "Added sister" in result.output
+        assert config_yaml.read()["sisters"] == [{"name": "macbook", "url": "http://localhost:5337"}]
 
-    def test_sister_add_with_api_key(self):
+    def test_sister_add_with_api_key(self, config_yaml):
         """Sister add with API key."""
-        with patch('overcode.config.load_config', return_value={"sisters": []}):
-            with patch('overcode.config.save_config') as mock_save:
-                result = runner.invoke(app, [
-                    "sister", "add", "desktop", "http://192.168.1.10:5337",
-                    "--api-key", "secret"
-                ])
-                assert result.exit_code == 0
-                saved_config = mock_save.call_args[0][0]
-                assert saved_config["sisters"][0]["api_key"] == "secret"
+        result = runner.invoke(app, [
+            "sister", "add", "desktop", "http://192.168.1.10:5337",
+            "--api-key", "secret"
+        ])
+        assert result.exit_code == 0
+        assert config_yaml.read()["sisters"][0]["api_key"] == "secret"
 
-    def test_sister_add_duplicate(self):
+    def test_sister_add_duplicate(self, config_yaml):
         """Sister add rejects duplicate name."""
-        with patch('overcode.config.load_config', return_value={
-            "sisters": [{"name": "macbook", "url": "http://localhost:5337"}]
-        }):
-            result = runner.invoke(app, ["sister", "add", "macbook", "http://other:5337"])
-            assert result.exit_code == 1
-            assert "already exists" in result.output
+        config_yaml.write({"sisters": [{"name": "macbook", "url": "http://localhost:5337"}]})
+        result = runner.invoke(app, ["sister", "add", "macbook", "http://other:5337"])
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+        assert config_yaml.read()["sisters"] == [{"name": "macbook", "url": "http://localhost:5337"}]
 
-    def test_sister_remove(self):
+    def test_sister_remove(self, config_yaml):
         """Sister remove deletes entry."""
-        with patch('overcode.config.load_config', return_value={
-            "sisters": [{"name": "macbook", "url": "http://localhost:5337"}]
-        }):
-            with patch('overcode.config.save_config') as mock_save:
-                result = runner.invoke(app, ["sister", "remove", "macbook"])
-                assert result.exit_code == 0
-                assert "Removed sister" in result.output
-                saved_config = mock_save.call_args[0][0]
-                assert len(saved_config["sisters"]) == 0
+        config_yaml.write({"sisters": [{"name": "macbook", "url": "http://localhost:5337"}]})
+        result = runner.invoke(app, ["sister", "remove", "macbook"])
+        assert result.exit_code == 0
+        assert "Removed sister" in result.output
+        assert config_yaml.read().get("sisters", []) == []
 
-    def test_sister_remove_not_found(self):
+    @pytest.mark.xfail(strict=True, reason=(
+        "src bug: config._top_level_blocks ends a key's block at a column-0 "
+        "'- item' line (valid YAML, and PyYAML's own default style), so "
+        "save_config rewrites only the 'sisters:' line and leaves the old items "
+        "after it: the saved config.yaml no longer parses"))
+    def test_sister_remove_from_a_column_0_list(self, config_yaml):
+        config_yaml.write("sisters:\n- name: macbook\n  url: http://localhost:5337\n")
+        result = runner.invoke(app, ["sister", "remove", "macbook"])
+        assert result.exit_code == 0
+        assert config_yaml.read().get("sisters", []) == []
+
+    def test_sister_remove_not_found(self, config_yaml):
         """Sister remove errors when not found."""
-        with patch('overcode.config.load_config', return_value={"sisters": []}):
-            result = runner.invoke(app, ["sister", "remove", "missing"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
+        config_yaml.write({"sisters": []})
+        result = runner.invoke(app, ["sister", "remove", "missing"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
-    def test_sister_allow_control_show_disabled(self):
+    def test_sister_allow_control_show_disabled(self, config_yaml):
         """Show allow-control status when disabled."""
-        with patch('overcode.config.load_config', return_value={"web": {"allow_control": False}}):
-            with patch('overcode.config.get_web_api_key', return_value=None):
-                result = runner.invoke(app, ["sister", "allow-control"])
-                assert result.exit_code == 0
-                assert "disabled" in result.output
+        config_yaml.write({"web": {"allow_control": False}})
+        result = runner.invoke(app, ["sister", "allow-control"])
+        assert result.exit_code == 0
+        assert "disabled" in result.output
 
-    def test_sister_allow_control_show_enabled(self):
+    def test_sister_allow_control_show_enabled(self, config_yaml):
         """Show allow-control status when enabled."""
-        with patch('overcode.config.load_config', return_value={"web": {"allow_control": True}}):
-            with patch('overcode.config.get_web_api_key', return_value="secretkey"):
-                result = runner.invoke(app, ["sister", "allow-control"])
-                assert result.exit_code == 0
-                assert "enabled" in result.output
+        config_yaml.write({"web": {"allow_control": True, "api_key": "secretkey"}})
+        result = runner.invoke(app, ["sister", "allow-control"])
+        assert result.exit_code == 0
+        assert "enabled" in result.output
 
-    def test_sister_allow_control_on(self):
+    def test_sister_allow_control_on(self, config_yaml):
         """Enable allow-control."""
-        with patch('overcode.config.load_config', return_value={"web": {}}):
-            with patch('overcode.config.save_config'):
-                with patch('overcode.config.get_web_api_key', return_value="key123"):
-                    result = runner.invoke(app, ["sister", "allow-control", "--on"])
-                    assert result.exit_code == 0
-                    assert "enabled" in result.output
+        config_yaml.write({"web": {"api_key": "key123"}})
+        result = runner.invoke(app, ["sister", "allow-control", "--on"])
+        assert result.exit_code == 0
+        assert "enabled" in result.output
+        assert config_yaml.read()["web"] == {"api_key": "key123", "allow_control": True}
 
-    def test_sister_allow_control_on_no_api_key(self):
+    def test_sister_allow_control_on_no_api_key(self, config_yaml):
         """Enabling control without web.api_key is refused and saves nothing:
         the control routes would answer 403 anyway."""
-        with patch('overcode.config.load_config', return_value={"web": {}}):
-            with patch('overcode.config.save_config') as save:
-                with patch('overcode.config.get_web_api_key', return_value=None):
-                    result = runner.invoke(app, ["sister", "allow-control", "--on"])
-                    assert result.exit_code == 1
-                    assert "needs web.api_key" in result.output
-                    save.assert_not_called()
+        config_yaml.write({"web": {}})
+        result = runner.invoke(app, ["sister", "allow-control", "--on"])
+        assert result.exit_code == 1
+        assert "needs web.api_key" in result.output
+        assert config_yaml.read() == {"web": {}}
 
-    def test_sister_allow_control_show_enabled_without_key(self):
+    def test_sister_allow_control_show_enabled_without_key(self, config_yaml):
         """Status says control is refused when it is on but no key is set."""
-        with patch('overcode.config.load_config', return_value={"web": {"allow_control": True}}):
-            with patch('overcode.config.get_web_api_key', return_value=None):
-                result = runner.invoke(app, ["sister", "allow-control"])
-                assert result.exit_code == 0
-                assert "refused" in result.output
+        config_yaml.write({"web": {"allow_control": True}})
+        result = runner.invoke(app, ["sister", "allow-control"])
+        assert result.exit_code == 0
+        assert "refused" in result.output
 
-    def test_web_off_localhost_without_key_is_refused(self):
+    def test_web_off_localhost_without_key_is_refused(self, config_yaml):
         """`overcode web --host 0.0.0.0` with no key fails, via start_web_server."""
-        with patch('overcode.web_server.get_web_api_key', return_value=None), \
-             patch('overcode.web_server.is_web_server_running', return_value=False), \
+        with patch('overcode.web_server.is_web_server_running', return_value=False), \
              patch('subprocess.Popen') as popen:
             result = runner.invoke(app, ["web", "--host", "0.0.0.0"])
         assert result.exit_code == 1
         assert "web.api_key" in result.output
         popen.assert_not_called()
 
-    def test_sister_allow_control_off(self):
+    def test_sister_allow_control_off(self, config_yaml):
         """Disable allow-control."""
-        with patch('overcode.config.load_config', return_value={"web": {"allow_control": True}}):
-            with patch('overcode.config.save_config'):
-                result = runner.invoke(app, ["sister", "allow-control", "--off"])
-                assert result.exit_code == 0
-                assert "disabled" in result.output
+        config_yaml.write({"web": {"allow_control": True}})
+        result = runner.invoke(app, ["sister", "allow-control", "--off"])
+        assert result.exit_code == 0
+        assert "disabled" in result.output
+        assert config_yaml.read()["web"]["allow_control"] is False
 
-    def test_sister_allow_control_on_and_off(self):
+    def test_sister_allow_control_on_and_off(self, config_yaml):
         """Both --on and --off errors."""
-        with patch('overcode.config.load_config', return_value={"web": {}}):
-            result = runner.invoke(app, ["sister", "allow-control", "--on", "--off"])
-            assert result.exit_code == 1
-            assert "Cannot use --on and --off" in result.output
+        result = runner.invoke(app, ["sister", "allow-control", "--on", "--off"])
+        assert result.exit_code == 1
+        assert "Cannot use --on and --off" in result.output
 
 
 class TestConfigInitCommand:
     """Test config init command."""
 
-    def test_config_init_creates_file(self, tmp_path):
+    def test_config_init_creates_file(self, config_yaml):
         """Config init creates config file."""
-        config_path = tmp_path / "config.yaml"
-        with patch('overcode.config.CONFIG_PATH', config_path):
-            result = runner.invoke(app, ["config", "init"])
-            assert result.exit_code == 0
-            assert "Created config file" in result.output
-            assert config_path.exists()
+        result = runner.invoke(app, ["config", "init"])
+        assert result.exit_code == 0
+        assert "Created config file" in result.output
+        assert config_yaml.path.exists()
 
-    def test_config_init_exists_no_force(self, tmp_path):
+    def test_config_init_exists_no_force(self, config_yaml):
         """Config init refuses to overwrite without --force."""
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text("existing content")
-        with patch('overcode.config.CONFIG_PATH', config_path):
-            result = runner.invoke(app, ["config", "init"])
-            assert result.exit_code == 1
-            assert "already exists" in result.output
+        config_yaml.write("existing content")
+        result = runner.invoke(app, ["config", "init"])
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+        assert config_yaml.path.read_text() == "existing content"
 
-    def test_config_init_force(self, tmp_path):
+    def test_config_init_force(self, config_yaml):
         """Config init --force overwrites."""
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text("old content")
-        with patch('overcode.config.CONFIG_PATH', config_path):
-            result = runner.invoke(app, ["config", "init", "--force"])
-            assert result.exit_code == 0
-            assert "Created config file" in result.output
+        from overcode.cli.config import CONFIG_TEMPLATE
+        config_yaml.write("old content")
+        result = runner.invoke(app, ["config", "init", "--force"])
+        assert result.exit_code == 0
+        assert "Created config file" in result.output
+        assert config_yaml.path.read_text() == CONFIG_TEMPLATE
 
 
 class TestConfigShowCommand:
     """Test config show command."""
 
-    def test_config_show_no_file(self, tmp_path):
+    def test_config_show_no_file(self, config_yaml):
         """Config show when no config file."""
-        config_path = tmp_path / "config.yaml"
-        with patch('overcode.config.CONFIG_PATH', config_path):
-            result = runner.invoke(app, ["config", "show"])
-            assert result.exit_code == 0
-            assert "No config file" in result.output
+        result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+        assert "No config file" in result.output
 
-    def test_config_show_empty(self, tmp_path):
+    def test_config_show_empty(self, config_yaml):
         """Config show when config is empty."""
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text("")
-        with patch('overcode.config.CONFIG_PATH', config_path):
-            with patch('overcode.config.load_config', return_value={}):
-                result = runner.invoke(app, ["config", "show"])
-                assert result.exit_code == 0
-                assert "empty" in result.output
+        config_yaml.write("")
+        result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+        assert "empty" in result.output
 
-    def test_config_show_with_content(self, tmp_path):
+    def test_config_show_with_content(self, config_yaml):
         """Config show with content displays sections."""
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text("test: true")
-        config = {
+        config_yaml.write({
             "default_standing_instructions": "Be concise",
             "summarizer": {"api_url": "https://api.example.com", "model": "gpt-4", "api_key_var": "KEY"},
             "sisters": [{"name": "macbook", "url": "http://localhost:5337"}],
-        }
-        with patch('overcode.config.CONFIG_PATH', config_path):
-            with patch('overcode.config.load_config', return_value=config):
-                result = runner.invoke(app, ["config", "show"])
-                assert result.exit_code == 0
-                assert "Be concise" in result.output
-                assert "summarizer" in result.output
-                assert "relay" not in result.output
-                assert "macbook" in result.output
+        })
+        result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+        assert "Be concise" in result.output
+        assert "summarizer" in result.output
+        assert "relay" not in result.output
+        assert "macbook" in result.output
 
-    def test_config_show_lists_new_agent_defaults(self, tmp_path):
+    def test_config_show_lists_new_agent_defaults(self, config_yaml):
         """The default backend (#470) is visible without opening the file."""
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text("test: true")
-        config = {"new_agent_defaults": {"backend": "opencode", "provider": "web", "wrapper": ""}}
-        with patch('overcode.config.CONFIG_PATH', config_path):
-            with patch('overcode.config.load_config', return_value=config):
-                result = runner.invoke(app, ["config", "show"])
-                assert result.exit_code == 0
-                assert "new_agent_defaults" in result.output
-                assert "backend: opencode" in result.output
-                assert "wrapper" not in result.output  # empty values are skipped
+        config_yaml.write({"new_agent_defaults": {"backend": "opencode", "provider": "web", "wrapper": ""}})
+        result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+        assert "new_agent_defaults" in result.output
+        assert "backend: opencode" in result.output
+        assert "wrapper" not in result.output  # empty values are skipped
 
-    def test_config_init_template_documents_default_backend(self, tmp_path):
+    def test_config_init_template_documents_default_backend(self):
         from overcode.cli.config import CONFIG_TEMPLATE
         assert "new_agent_defaults" in CONFIG_TEMPLATE
         assert "backend: claude-code" in CONFIG_TEMPLATE
@@ -2128,12 +2090,11 @@ class TestConfigShowCommand:
 class TestConfigPathCommand:
     """Test config path command."""
 
-    def test_config_path(self):
+    def test_config_path(self, config_yaml):
         """Config path outputs path."""
-        with patch('overcode.config.CONFIG_PATH', Path("/tmp/test/config.yaml")):
-            result = runner.invoke(app, ["config", "path"])
-            assert result.exit_code == 0
-            assert "/tmp/test/config.yaml" in result.output
+        result = runner.invoke(app, ["config", "path"], env={"COLUMNS": "400"})
+        assert result.exit_code == 0
+        assert str(config_yaml.path) in result.output
 
 
 class TestExportExtended:
