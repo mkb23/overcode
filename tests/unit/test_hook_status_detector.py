@@ -1830,7 +1830,7 @@ class TestTurnEndedWithoutStop:
         """Like a child's Stop: at rest, never red (review item 25)."""
         _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, parent="parent-id")
         assert later[0] == STATUS_WAITING_OVERSIGHT
-        assert later[1] == "At rest: stopped (turn ended without a Stop)"
+        assert later[1] == "At rest: no report yet (turn ended without a Stop)"
         assert later[2].color == STATUS_COLOR_REST
         assert later[2].badges == []
 

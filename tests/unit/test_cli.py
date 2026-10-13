@@ -3005,7 +3005,7 @@ class TestListExtended:
                     patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
                 mock_disp = MagicMock()
                 mock_disp.detect_status.side_effect = lambda s, **kw: (
-                    ("waiting_oversight", "At rest: stopped", "pane") if s.name == "child"
+                    ("waiting_oversight", "At rest: no report yet", "pane") if s.name == "child"
                     else ("running", "Working", "pane"))
                 mock_disp_cls.return_value = mock_disp
                 mock_tree.return_value = {

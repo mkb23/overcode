@@ -570,7 +570,7 @@ def rule_idle_confirmed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     """
     if not ctx.idle_confirmed or v.color != STATUS_COLOR_GREEN:
         return None
-    activity = ("At rest: stopped (turn ended without a Stop)" if ctx.is_child
+    activity = ("At rest: no report yet (turn ended without a Stop)" if ctx.is_child
                 else "Waiting for user input (turn ended without a Stop)")
     return _turn_over(ctx, activity)
 
@@ -710,7 +710,7 @@ def build_activity(event: str, hook_state: dict, is_child: bool = False) -> str:
 
     if event == "Stop":
         if is_child:
-            return "At rest: stopped"
+            return "At rest: no report yet"
         return "Waiting for user input"
 
     if event == "StopFailure":

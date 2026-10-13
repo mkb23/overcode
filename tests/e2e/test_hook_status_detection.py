@@ -333,7 +333,12 @@ class TestHookStatusDetection:
         print("\n--- Launching agent 'hook-test' in bypass mode ---")
         result = _launch_agent(
             run_env, session, "hook-test",
-            prompt="Read the file tests/mock_claude.py and list all the function names defined in it.",
+            # The busy command keeps the turn green across daemon ticks: the
+            # prompt goes in on the command line, so a bare file read can
+            # end before the daemon first looks at the agent.
+            prompt=("Run this shell command first: python3 -c 'import time; time.sleep(20)'"
+                    " — then read the file tests/mock_claude.py and list all the"
+                    " function names defined in it."),
             bypass=True,
         )
         assert result.returncode == 0, (
