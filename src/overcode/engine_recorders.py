@@ -9,11 +9,11 @@ a restart neither forgets an open episode nor rings again.
 
 import json
 import os
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+from .clock import SYSTEM_CLOCK, Clock
 from .episodes import EpisodeRecorder, append_episode, status_detail_view
 from .monitor_daemon_state import SessionDaemonState
 from .status_constants import (
@@ -39,8 +39,11 @@ class RecorderStore:
     a recorder is made or loaded, as the configured loop can change it).
     """
 
-    def __init__(self, directory: Path, log, gap_seconds: Callable[[], float]):
+    def __init__(self, directory: Path, log, gap_seconds: Callable[[], float],
+                 clock: Optional[Clock] = None):
         self.directory = directory
+        # The daemon's clock: its monotonic side paces the liveness saves
+        self.clock: Clock = clock if clock is not None else SYSTEM_CLOCK
         self.log = log
         self._gap_seconds = gap_seconds
         # One recorded-colour history per agent (#507), by session id;
@@ -121,7 +124,7 @@ class RecorderStore:
         empty ``live_ids`` (a session index that came back empty) forgets
         nobody.
         """
-        stale = (bool(self.recorders) and time.monotonic()
+        stale = (bool(self.recorders) and self.clock.monotonic()
                  - self.saved_at >= RECORDER_SEEN_SAVE_SECONDS)
         if not (self.dirty or force or stale):
             return
@@ -135,7 +138,7 @@ class RecorderStore:
                 {"recorders": {sid: r.to_dict() for sid, r in self.recorders.items()}}))
             os.replace(tmp, path)
             self.dirty = False
-            self.saved_at = time.monotonic()
+            self.saved_at = self.clock.monotonic()
         except OSError as e:
             self.log.warn(f"engine state not saved: {e}")
 

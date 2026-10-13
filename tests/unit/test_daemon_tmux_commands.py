@@ -304,7 +304,6 @@ def _run(daemon, tmux, clock, ticks, between=None, step=2.0):
     from unittest.mock import patch
 
     counts, published = [], []
-    daemon._loop_clock = lambda: clock.now.timestamp()
 
     def after_tick(i):
         counts.append(dict(tmux.calls))

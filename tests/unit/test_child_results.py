@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from overcode.clock import to_epoch
 from overcode.child_lifecycle import OVERSIGHT_TIMEOUT_REASON, task_result
 from overcode.session_manager import SessionManager
 from overcode.settings import get_session_dir
@@ -127,7 +128,8 @@ class TestOversightDeadline:
         saved = sm.get_session(child.id)
         assert saved.status == "waiting_oversight"
         # Staged on the tick that saw the Stop (the clock is frozen at START)
-        assert datetime.fromisoformat(saved.oversight_deadline) == START + timedelta(seconds=600)
+        # Stored aware; the frozen START is naive local time
+        assert to_epoch(saved.oversight_deadline) == (START + timedelta(seconds=600)).timestamp()
         assert _published(daemon, child.id).task_result == "unreported"
 
     def test_the_wait_policy_has_no_deadline(self, root):

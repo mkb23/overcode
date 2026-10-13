@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from overcode.clock import from_iso
 from overcode.episodes import EpisodeRecorder
 from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
 from overcode.status_constants import STATUS_COLOR_GREEN as G_, STATUS_COLOR_RED as R_
@@ -105,7 +106,7 @@ class TestTimeBase:
             state_since=None, current_state="running",
         )
         on_disk = daemon.session_manager.get_session(sid).stats
-        accumulated_at = datetime.fromisoformat(on_disk.last_time_accumulation)
+        accumulated_at = from_iso(on_disk.last_time_accumulation)
         green, non_green, _ = get_current_state_times(stats, now=accumulated_at)
         assert green == pytest.approx(on_disk.green_time_seconds)
         assert non_green == pytest.approx(on_disk.non_green_time_seconds)

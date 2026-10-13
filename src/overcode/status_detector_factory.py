@@ -16,6 +16,7 @@ from typing import Dict, Optional, Tuple, TYPE_CHECKING
 from .protocols import StatusDetectorProtocol
 
 if TYPE_CHECKING:
+    from .clock import Clock
     from .pane_capture_gate import PaneCaptureGate
     from .protocols import TmuxInterface
     from .session_manager import Session
@@ -121,9 +122,12 @@ class StatusDetectorDispatcher:
         mode: str = "polling",
         capture_gate: Optional["PaneCaptureGate"] = None,
         children_working: Optional[Dict[str, int]] = None,
+        clock: Optional["Clock"] = None,
     ):
         self.tmux_session = tmux_session
         self._tmux = tmux
+        # The caller's clock (the daemon's), handed to every hook detector
+        self._clock = clock
         # Child agents still working, by parent session id: one dict, filled
         # by the caller each tick and shared with every hook detector (a
         # parent whose turn ended while they work waits on them)
@@ -137,7 +141,8 @@ class StatusDetectorDispatcher:
         from .status_detector import PollingStatusDetector
         from .hook_status_detector import HookStatusDetector
         self.polling = polling_detector or PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
-        self.hooks = hook_detector or HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+        self.hooks = hook_detector or HookStatusDetector(
+            tmux_session, tmux=tmux, patterns=patterns, clock=clock)
         self._install_gate(self.polling, self.hooks)
         # Detector pairs keyed by backend name. Injected/explicitly-patterned
         # detectors own the default backend slot.
@@ -183,7 +188,8 @@ class StatusDetectorDispatcher:
 
         patterns = get_patterns(backend_name)
         polling = _polling_detector(self.tmux_session, self._tmux, patterns, backend_name)
-        hooks = HookStatusDetector(self.tmux_session, tmux=self._tmux, patterns=patterns)
+        hooks = HookStatusDetector(
+            self.tmux_session, tmux=self._tmux, patterns=patterns, clock=self._clock)
         polling.capture_lines = self.capture_lines
         hooks.capture_lines = self.capture_lines
         self._install_gate(polling, hooks)

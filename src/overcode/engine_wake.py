@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
+from .clock import SYSTEM_CLOCK, Clock
 from .paths import agent_path
 from .settings import DAEMON, get_activity_signal_path
 
@@ -63,7 +64,9 @@ def check_activity_signal(session: str = None) -> bool:
 class WakeScan:
     """Each agent's hook state file signature, and the sticky-green rechecks."""
 
-    def __init__(self):
+    def __init__(self, clock: Optional[Clock] = None):
+        # The monotonic clock the sticky-green deadlines are on
+        self.clock: Clock = clock if clock is not None else SYSTEM_CLOCK
         # Each agent's hook state file signature, by overcode session id
         self.signatures: Dict[str, Optional[Tuple[int, int]]] = {}
         # Agents to re-detect once the sticky-green window has passed
@@ -84,7 +87,7 @@ class WakeScan:
         changed = set()
         seen = set()
         rechecks = self.rechecks
-        now = time.monotonic()
+        now = self.clock.monotonic()
         for state in states:
             sid = state.session_id
             if not sid:
@@ -132,7 +135,7 @@ class WakeLoop:
 
     def __init__(self, daemon):
         self.daemon = daemon
-        self.scan = WakeScan()
+        self.scan = WakeScan(daemon.clock)
 
     def changes(self) -> set:
         """Agents whose hook file changed since the last scan (``WakeScan.changes``)."""
@@ -184,7 +187,7 @@ class WakeLoop:
             changed = self.changes()
             if changed:
                 try:
-                    self.quick_tick(changed, datetime.now())
+                    self.quick_tick(changed, daemon.clock.wall())
                 except Exception as e:  # the full tick will retry
                     daemon.log.warn(f"quick tick failed: {e}")
 
@@ -207,7 +210,7 @@ class WakeLoop:
             # Over the whole fleet: _detect_and_enrich saw only the changed
             # agents, so a parent re-detected without its children got 0
             daemon._compute_subtree_costs(merged)
-            save = time.monotonic() - daemon._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
+            save = daemon.clock.monotonic() - daemon._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
             daemon._publish_state(merged, save=save)
             # Hook-driven transitions land here: persist what they recorded
             # (a closed episode, a bell) now, not at the next full tick, so a

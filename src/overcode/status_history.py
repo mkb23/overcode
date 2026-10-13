@@ -8,6 +8,11 @@ pair changes and as a periodic keepalive (``status_row_due``), so a row is
 valid for its agent until that agent's next row; readers that forward-fill
 can ask for the *carry* — each agent's last row at or before a window's
 cutoff — so the state at the window's left edge is known.
+
+Timestamps are written timezone-aware (the daemon's clock); files written
+before hold naive local times, and one file can hold both. Readers return
+naive local datetimes (``clock.from_iso``), the form their consumers keep,
+so the two kinds compare and sort together.
 """
 
 import csv
@@ -20,6 +25,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
+from .clock import aware, from_iso, local_naive, to_epoch
 from .settings import DAEMON, get_agent_history_path
 
 
@@ -30,6 +36,7 @@ def log_agent_status(
     history_file: Optional[Path] = None,
     session_id: str = "",
     hostname: str = "",
+    now: Optional[datetime] = None,
 ) -> None:
     """Log agent status to history CSV file.
 
@@ -44,7 +51,10 @@ def log_agent_status(
         history_file: Optional path override (for testing)
         session_id: Unique session ID (UUID) for disambiguation
         hostname: Machine hostname for multi-host disambiguation
+        now: When (the daemon's tick); default the wall clock. Written
+            timezone-aware.
     """
+    stamp = aware(now) if now is not None else datetime.now().astimezone()
     path = history_file or get_agent_history_path(DAEMON.default_tmux_session)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -56,7 +66,7 @@ def log_agent_status(
         if write_header:
             writer.writerow(['timestamp', 'agent', 'status', 'activity', 'session_id', 'hostname'])
         writer.writerow([
-            datetime.now().isoformat(),
+            stamp.isoformat(),
             agent_name,
             status,
             activity[:100] if activity else "",
@@ -106,7 +116,8 @@ def status_row_due(
         return True
     if last_pair != (status, activity[:100] if activity else ""):
         return True
-    return (now - last_written).total_seconds() >= keepalive_seconds
+    # Epoch seconds: either side may be naive (local) or aware
+    return to_epoch(now) - to_epoch(last_written) >= keepalive_seconds
 
 
 Row = Tuple[datetime, str, str, str, str, str]
@@ -301,7 +312,9 @@ class StatusHistoryFile:
         if data_start >= file_size:
             return data_start
 
-        cutoff_bytes = cutoff.isoformat().encode('ascii')
+        # Rows are ISO local wall times, naive or with an offset after
+        # them: both sort by their local prefix against a naive cutoff
+        cutoff_bytes = local_naive(cutoff).isoformat().encode('ascii')
         lo = data_start
         hi = file_size
 
@@ -346,7 +359,7 @@ class StatusHistoryFile:
             if row[0] == 'timestamp':
                 continue
             try:
-                ts = datetime.fromisoformat(row[0])
+                ts = from_iso(row[0])
                 entries.append(_intern_row((
                     ts,
                     row[1],                             # agent
@@ -493,7 +506,7 @@ def _oldest_row_timestamp(history_file: Path) -> Optional[datetime]:
                 if not row or row[0] == 'timestamp':
                     continue
                 try:
-                    return datetime.fromisoformat(row[0])
+                    return from_iso(row[0])
                 except (ValueError, IndexError):
                     continue
     except (OSError, IOError):
@@ -529,9 +542,10 @@ def rotate_status_history(
 
     Returns the archive path if a rotation happened, else None — including
     when nothing needs rotating, or the trigger was size but every row is
-    within keep_hours (nothing safe to archive yet).
+    within keep_hours (nothing safe to archive yet). Rows, naive or aware,
+    are compared as local times (``from_iso``), as the readers see them.
     """
-    now = now or datetime.now()
+    now = local_naive(now) if now is not None else datetime.now()
     try:
         stat = history_file.stat()
     except OSError:
@@ -585,7 +599,7 @@ def rotate_status_history(
                 if not row:
                     continue
                 try:
-                    ts = datetime.fromisoformat(row[0])
+                    ts = from_iso(row[0])
                 except (ValueError, IndexError):
                     act_writer.writerow(row)  # can't classify — never silently drop data
                     continue
@@ -629,7 +643,7 @@ def apply_retention(
     filename; falls back to file mtime if the name doesn't parse (e.g. a
     manually renamed archive).
     """
-    now = now or datetime.now()
+    now = local_naive(now) if now is not None else datetime.now()
     cutoff = now - timedelta(days=max_age_days)
     deleted: List[Path] = []
     for archive in _archive_glob(history_file):
@@ -662,7 +676,7 @@ def rotate_and_retain(
 
     Returns {"archived": Optional[Path], "deleted": List[Path]}.
     """
-    now = now or datetime.now()
+    now = local_naive(now) if now is not None else datetime.now()
     archived = rotate_status_history(
         history_file, rotate_mb=rotate_mb, max_age_days=max_age_days,
         keep_hours=keep_hours, now=now,

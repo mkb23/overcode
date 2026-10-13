@@ -184,8 +184,9 @@ class ScriptedDetector:
 # ── frozen clock ─────────────────────────────────────────────────────────
 
 
-# The daemon's modules that read the wall clock; those missing from an older
-# tree are skipped
+# The daemon's modules that read the wall clock through ``datetime`` on a
+# tree older than the injected clock (item 34); those missing from it are
+# skipped
 CLOCK_MODULES = (
     "overcode.monitor_daemon",
     "overcode.daemon_housekeeping",
@@ -197,36 +198,100 @@ CLOCK_MODULES = (
 
 
 class FrozenClock:
-    """Patches ``datetime`` in the daemon's modules so ``now()`` is scripted."""
+    """A ``Clock`` whose every reading (wall, epoch, monotonic) is ``now``.
+
+    ``now`` is a naive (local) or aware datetime the test sets and steps.
+    The monotonic reading is its epoch seconds, so the daemon's monotonic
+    cadences (the state file's liveness rewrite, the recorders' saves, the
+    capture keepalive) step with it instead of running in real time.
+
+    ``installed()`` makes it the clock of every daemon ``make_daemon``
+    built: they hold ``HARNESS_CLOCK``, which follows the installed one.
+    On an older tree, whose daemon reads ``datetime.now()``, it patches
+    ``datetime`` in ``CLOCK_MODULES`` instead.
+    """
 
     def __init__(self, start: datetime):
         self.now = start
 
+    # The Clock protocol (overcode.clock)
+    def wall(self) -> datetime:
+        now = self.now
+        return now if now.tzinfo is not None else now.astimezone()
+
+    def time(self) -> float:
+        return self.now.timestamp()
+
+    def monotonic(self) -> float:
+        return self.now.timestamp()
+
     @contextlib.contextmanager
     def installed(self) -> Iterator["FrozenClock"]:
-        import importlib
-
-        clock = self
-
-        class _Frozen(datetime):
-            @classmethod
-            def now(cls, tz=None):  # noqa: D401 - datetime API
-                return clock.now
-
+        previous = HARNESS_CLOCK.target
+        HARNESS_CLOCK.target = self
         patched = []
-        for name in CLOCK_MODULES:
-            try:
-                module = importlib.import_module(name)
-            except ImportError:
-                continue
-            if hasattr(module, "datetime"):
-                patched.append((module, module.datetime))
-                module.datetime = _Frozen
+        if not _daemon_takes_a_clock():
+            import importlib
+
+            clock = self
+
+            class _Frozen(datetime):
+                @classmethod
+                def now(cls, tz=None):  # noqa: D401 - datetime API
+                    return clock.now
+
+            for name in CLOCK_MODULES:
+                try:
+                    module = importlib.import_module(name)
+                except ImportError:
+                    continue
+                if hasattr(module, "datetime"):
+                    patched.append((module, module.datetime))
+                    module.datetime = _Frozen
         try:
             yield self
         finally:
             for module, original in reversed(patched):
                 module.datetime = original
+            HARNESS_CLOCK.target = previous
+
+
+class _HarnessClock:
+    """The clock ``make_daemon`` injects: the installed ``FrozenClock``, else the host's."""
+
+    def __init__(self):
+        self.target: Optional[FrozenClock] = None
+
+    def _clock(self):
+        if self.target is not None:
+            return self.target
+        from overcode.clock import SYSTEM_CLOCK
+
+        return SYSTEM_CLOCK
+
+    def wall(self) -> datetime:
+        return self._clock().wall()
+
+    def time(self) -> float:
+        return self._clock().time()
+
+    def monotonic(self) -> float:
+        return self._clock().monotonic()
+
+
+HARNESS_CLOCK = _HarnessClock()
+
+
+def _daemon_takes_a_clock() -> bool:
+    """Whether this tree's ``MonitorDaemon.for_test`` takes a ``clock`` (item 34)."""
+    import inspect
+
+    try:
+        from overcode.monitor_daemon import MonitorDaemon
+    except ImportError:
+        return False
+    for_test = getattr(MonitorDaemon, "for_test", None)
+    return for_test is not None and "clock" in inspect.signature(for_test).parameters
 
 
 # ── sessions.json I/O counters ───────────────────────────────────────────
@@ -418,12 +483,14 @@ def make_daemon(
 
         # The directory the real constructor resolves; presence reports
         # "unavailable" and the log is kept in memory
+        clock = {"clock": HARNESS_CLOCK} if _daemon_takes_a_clock() else {}
         daemon = monitor_daemon.MonitorDaemon.for_test(
             get_session_dir(tmux_session),
             detector=detector,
             tmux=tmux,
             session_manager=sm,
             tmux_session=tmux_session,
+            **clock,
         )
         daemon._legacy_windows_migrated = True
         daemon.state.loop_count = 1

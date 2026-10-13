@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 
+from .clock import parse_time, to_epoch
 from .status_constants import STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
 
 # An agent not observed for longer than this was not being watched: the
@@ -24,12 +25,12 @@ UNOBSERVED_GAP_SECONDS = 120.0
 def elapsed_seconds(since: datetime, now: datetime) -> float:
     """Seconds from ``since`` to ``now``, by the clock, not the calendar.
 
-    The daemon's times are naive local ``datetime.now()`` values; their
-    difference jumps back an hour when daylight saving ends (and forward
-    when it starts), which stalled every ``now - last >= interval``
-    cadence for an hour. ``timestamp()`` places a naive local time on the
-    epoch (honouring ``fold`` in the repeated hour, which ``datetime.now()``
-    sets), and handles aware datetimes too.
+    The daemon's times are aware (``Clock.wall``); older files and tests
+    hold naive local ones. Subtracting the two raises, and two naive local
+    times differ by an hour too much or too little across a daylight-saving
+    change (which stalled every ``now - last >= interval`` cadence for an
+    hour). ``timestamp()`` places either on the epoch (a naive one as local
+    time, honouring ``fold`` in the repeated hour).
     """
     return now.timestamp() - since.timestamp()
 
@@ -115,7 +116,7 @@ def calculate_time_accumulation(
     # Cap accumulated time to session uptime
     was_capped = False
     if session_start is not None:
-        max_allowed = (now - session_start).total_seconds()
+        max_allowed = now.timestamp() - session_start.timestamp()  # epoch: naive or aware
         total_accumulated = green + non_green + sleep
 
         if total_accumulated > max_allowed * tolerance:
@@ -221,11 +222,10 @@ def should_auto_archive(
         return False
     if not state_since:
         return False
-    try:
-        done_since = datetime.fromisoformat(state_since)
-        return elapsed_seconds(done_since, now) >= timeout_seconds
-    except (ValueError, TypeError):
+    done_since = parse_time(state_since)
+    if done_since is None:
         return False
+    return elapsed_seconds(done_since, now) >= timeout_seconds
 
 
 def should_archive_terminated(
@@ -269,11 +269,12 @@ def should_enforce_oversight_timeout(
         return False
     if not deadline:
         return False
-    try:
-        deadline_dt = datetime.fromisoformat(deadline)
-        return now >= deadline_dt
-    except (ValueError, TypeError):
+    deadline_at = to_epoch(deadline)
+    if deadline_at is None:
         return False
+    # Epoch seconds: an aware deadline against a naive now (or the
+    # reverse) would raise, and read as "not yet" for ever
+    return now.timestamp() >= deadline_at
 
 
 def is_heartbeat_eligible(
@@ -340,19 +341,15 @@ def is_heartbeat_due(
 
 
 def parse_datetime_safe(value: Optional[str]) -> Optional[datetime]:
-    """Safely parse an ISO datetime string.
+    """Safely parse a stored ISO timestamp as an aware datetime.
 
-    Pure function - no side effects, fully testable.
+    Pure function - no side effects, fully testable. A naive value (written
+    before timestamps carried their zone) is local time.
 
     Args:
         value: ISO format datetime string, or None
 
     Returns:
-        Parsed datetime, or None if parsing fails
+        Parsed aware datetime, or None if parsing fails
     """
-    if value is None:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
+    return parse_time(value) if isinstance(value, str) else None

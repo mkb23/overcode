@@ -24,12 +24,13 @@ import os
 import signal
 import sys
 import threading
-import time
+import time  # noqa: F401 - tests patch monitor_daemon.time.sleep
 import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from .clock import SYSTEM_CLOCK, Clock, aware
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
 from .backends import (
@@ -267,6 +268,7 @@ class MonitorDaemon:
         session_manager: Optional[SessionManager] = None,
         status_detector: Optional["StatusDetectorProtocol"] = None,
         tmux: Optional["TmuxInterface"] = None,
+        clock: Optional[Clock] = None,
     ):
         # Ensure session directory exists
         ensure_session_dir(tmux_session)
@@ -304,6 +306,7 @@ class MonitorDaemon:
             # Loop interval while nobody is watching (config.yaml
             # monitor_daemon.interval_unattended_seconds; read once).
             interval_unattended=get_monitor_daemon_config()["interval_unattended"],
+            clock=clock,
         )
 
     @classmethod
@@ -316,6 +319,7 @@ class MonitorDaemon:
         presence=None,
         log=None,
         tmux_session: str = "agents",
+        clock: Optional[Clock] = None,
     ) -> "MonitorDaemon":
         """A daemon whose files live in ``state_dir``, for tests.
 
@@ -323,8 +327,9 @@ class MonitorDaemon:
         nothing), no real tmux (``tmux`` defaults to a ``NullTmux``, a
         server with no sessions), a log kept in memory, and a
         ``SessionManager`` on ``state_dir`` unless one is given.
-        ``detector`` replaces the status detector dispatcher. Nothing here
-        reads the environment's session directory.
+        ``detector`` replaces the status detector dispatcher; ``clock``
+        the host's clocks (a test steps one to step every reading). Nothing
+        here reads the environment's session directory.
         """
         state_dir = Path(state_dir)
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -345,6 +350,7 @@ class MonitorDaemon:
             presence=presence if presence is not None else NullPresence(),
             log=log if log is not None else MemoryLogger(),
             interval_unattended=int(DAEMON.interval_unattended),
+            clock=clock,
         )
         return daemon
 
@@ -365,8 +371,13 @@ class MonitorDaemon:
         polling_detector: Optional["StatusDetectorProtocol"] = None,
         detector=None,
         detector_tmux: Optional["TmuxInterface"] = None,
+        clock: Optional[Clock] = None,
     ) -> None:
         """Every attribute the daemon has, from its resolved dependencies."""
+        # Every time the daemon reads, wall and monotonic, comes from here;
+        # its components (detectors, housekeeping, recorders, the wake loop)
+        # read the same one. Timestamps it writes are aware.
+        self.clock: Clock = clock if clock is not None else SYSTEM_CLOCK
         self.tmux_session = tmux_session
         self._tmux = tmux
         self.pid_path = pid_path
@@ -379,7 +390,6 @@ class MonitorDaemon:
         # detectors read the rest from the gate's cache. See _plan_captures.
         self._capture_gate = PaneCaptureGate()
         self._pane_tracker = PaneChangeTracker()
-        self._loop_clock = time.monotonic  # the keepalive's clock; tests freeze it
         # Child agents still working, by parent id, from the last published
         # tick (one tick behind is fine): the dispatcher's hook detectors
         # read it, so a parent waits on its children (_count_children_working)
@@ -392,6 +402,7 @@ class MonitorDaemon:
                 mode=detection_mode,
                 capture_gate=self._capture_gate,
                 children_working=self._children_working,
+                clock=self.clock,
             )
         elif isinstance(getattr(detector, "children_working", None), dict):
             self._children_working = detector.children_working
@@ -405,7 +416,7 @@ class MonitorDaemon:
         self.state = MonitorDaemonState(
             pid=os.getpid(),
             status="starting",
-            started_at=datetime.now().isoformat(),
+            started_at=self.clock.wall().isoformat(),
             daemon_version=DAEMON_VERSION,
         )
 
@@ -417,7 +428,8 @@ class MonitorDaemon:
         self._main_thread_id = threading.main_thread().ident
         # The recorded colour per agent (#507): episodes, bells, visits,
         # persisted in engine_state.json beside the state file
-        self.recorder_store = RecorderStore(state_path.parent, log, self._unobserved_gap_seconds)
+        self.recorder_store = RecorderStore(state_path.parent, log, self._unobserved_gap_seconds,
+                                            clock=self.clock)
         # The state file: monotonic time of its last write, and the engine
         # snapshot it holds (None: not written yet); see _state_file_due
         self._last_state_save = 0.0
@@ -478,7 +490,7 @@ class MonitorDaemon:
         self._stats_settled: set = set()
         # Transcript stats: tokens, cost, model, PR, session ids, and the
         # values views render beside the token columns
-        self.stats_sync = StatsSync(session_manager=session_manager, log=log)
+        self.stats_sync = StatsSync(session_manager=session_manager, log=log, clock=self.clock)
         # The process table, once per tick, for CPU / RSS and the sandbox probe
         self.process_probe = ProcessProbe()
 
@@ -522,6 +534,7 @@ class MonitorDaemon:
             housekeeping=self.cadence.housekeeping,
             rotation=self.cadence.history_rotation,
             model_metadata=self.cadence.model_metadata,
+            clock=self.clock,
         )
 
         # Loop interval while nobody is watching
@@ -562,7 +575,8 @@ class MonitorDaemon:
         return SessionIndex(self.session_manager.sessions_by_id())
 
     def track_session_stats(
-        self, session, status: str, index: Optional[SessionIndex] = None
+        self, session, status: str, index: Optional[SessionIndex] = None,
+        now: Optional[datetime] = None,
     ) -> SessionDaemonState:
         """Track session state and build SessionDaemonState.
 
@@ -571,10 +585,11 @@ class MonitorDaemon:
         ``index`` is the tick's ``SessionIndex``; the hierarchy fields
         (parent name, depth, children count) are looked up in it instead of
         being recomputed from the session table per session. Callers
-        without one get an index over the current snapshot.
+        without one get an index over the current snapshot. ``now`` is the
+        tick's time (default: the daemon's clock).
         """
         session_id = session.id
-        now = datetime.now()
+        now = self.clock.wall() if now is None else aware(now)
         if index is None:
             index = self._session_index()
 
@@ -596,7 +611,7 @@ class MonitorDaemon:
         if not was_running and is_running:
             if session_id in self.operation_start_times:
                 start_time = self.operation_start_times[session_id]
-                op_duration = (now - start_time).total_seconds()
+                op_duration = elapsed_seconds(start_time, now)
                 del self.operation_start_times[session_id]
 
                 # Update operation times
@@ -724,16 +739,17 @@ class MonitorDaemon:
             **self.stats_sync.stats_views.get(session_id, {}),
         )
 
-    def check_and_send_heartbeats(self, sessions: list) -> set:
+    def check_and_send_heartbeats(self, sessions: list, now: Optional[datetime] = None) -> set:
         """Check all sessions and send heartbeats if due.
 
         Args:
             sessions: List of Session objects to check
+            now: The tick's time (default: the daemon's clock)
 
         Returns:
             Set of session IDs that received heartbeats this loop
         """
-        now = datetime.now()
+        now = self.clock.wall() if now is None else aware(now)
         triggered = set()
 
         for session in sessions:
@@ -859,7 +875,7 @@ class MonitorDaemon:
 
         if result.was_capped:
             total = current_stats.green_time_seconds + current_stats.non_green_time_seconds + current_stats.sleep_time_seconds
-            max_allowed = (now - session_start).total_seconds() if session_start else 0
+            max_allowed = elapsed_seconds(session_start, now) if session_start else 0
             self.log.warn(
                 f"[{session.name}] Time tracking reset: "
                 f"accumulated {total/3600:.1f}h > uptime {max_allowed/3600:.1f}h"
@@ -955,9 +971,9 @@ class MonitorDaemon:
             return self._interval_unattended
         return INTERVAL_FAST
 
-    def _enforce_oversight_timeouts(self, sessions: list) -> None:
+    def _enforce_oversight_timeouts(self, sessions: list, now: Optional[datetime] = None) -> None:
         """Enforce oversight timeouts for waiting_oversight sessions."""
-        now = datetime.now()
+        now = self.clock.wall() if now is None else aware(now)
         for snapshot in sessions:
             # This tick may have staged a deadline, or cleared one
             session = self._pending.view(snapshot)
@@ -978,7 +994,7 @@ class MonitorDaemon:
 
     def _publish_state(self, session_states: List[SessionDaemonState], save: bool = True) -> None:
         """Publish current state: to engine.sock always, to the JSON file when ``save``."""
-        now = datetime.now()
+        now = self.clock.wall()
 
         # Update presence state
         presence_state, presence_idle, _ = self.presence.get_current_state()
@@ -1040,7 +1056,7 @@ class MonitorDaemon:
         saved = self._saved_snapshot
         if saved is None or self.state.state_file_error:
             return True
-        if time.monotonic() - self._last_state_save >= STATE_FILE_LIVENESS_SECONDS:
+        if self.clock.monotonic() - self._last_state_save >= STATE_FILE_LIVENESS_SECONDS:
             return True
         return not diff(saved, snapshot).empty
 
@@ -1056,7 +1072,7 @@ class MonitorDaemon:
                 self.log.error(f"State file not saved: {message}")
             self.state.state_file_error = message
             return
-        self._last_state_save = time.monotonic()
+        self._last_state_save = self.clock.monotonic()
         if previous:
             self.log.info("State file saved again")
 
@@ -1239,12 +1255,13 @@ class MonitorDaemon:
         own length) so consumers can widen their staleness window instead of
         treating a slow tick as a dead daemon.
         """
-        tick_t0 = time.monotonic()
+        now = aware(now)
+        tick_t0 = self.clock.monotonic()
         self.state.tick_started_at = now.isoformat()
         try:
             self._tick_phases(now)
         finally:
-            self._last_tick_duration_seconds = time.monotonic() - tick_t0
+            self._last_tick_duration_seconds = self.clock.monotonic() - tick_t0
 
     def _tick_phases(self, now: datetime) -> None:
         """The phases of one tick, in order."""
@@ -1264,7 +1281,7 @@ class MonitorDaemon:
         self._sync_process_resources(sessions, now)
         self._sync_git(sessions, now)
         self._sync_burn(sessions, now)
-        self._dispatch_heartbeats(sessions)
+        self._dispatch_heartbeats(sessions, now)
         newly_done: list = []
         try:
             self.recorder_store.apply_visits(self._engine)
@@ -1405,9 +1422,9 @@ class MonitorDaemon:
                 sessions, table, self._panes_at(now) or {}, self._pending)
         self.cadence.sandbox.mark(now)
 
-    def _dispatch_heartbeats(self, sessions: list) -> None:
+    def _dispatch_heartbeats(self, sessions: list, now: Optional[datetime] = None) -> None:
         """Send heartbeats before status detection (#171)."""
-        self._heartbeat_triggered_sessions = self.check_and_send_heartbeats(sessions)
+        self._heartbeat_triggered_sessions = self.check_and_send_heartbeats(sessions, now)
         # Add newly triggered sessions to persistent heartbeat tracking
         self._sessions_running_from_heartbeat.update(self._heartbeat_triggered_sessions)
         # Track pending heartbeat starts for timeline marker
@@ -1463,7 +1480,7 @@ class MonitorDaemon:
         if timeout <= 0 or getattr(session, "oversight_deadline", None):
             return
         from datetime import timedelta
-        deadline = datetime.now() + timedelta(seconds=timeout)
+        deadline = self.clock.wall() + timedelta(seconds=timeout)
         self._pending.update_session(session.id, oversight_deadline=deadline.isoformat())
         self.log.info(f"[{session.name}] oversight timeout in {timeout:.0f}s")
 
@@ -1495,6 +1512,7 @@ class MonitorDaemon:
         Returns:
             (session_states, all_waiting_user) tuple
         """
+        now = aware(now)
         session_states = []
         all_waiting_user = True
         if index is None:
@@ -1611,7 +1629,7 @@ class MonitorDaemon:
                 pending.update_session(session.id, oversight_deadline=None)
                 session = pending.view(snapshot)
 
-            session_state = self.track_session_stats(session, effective_status, index)
+            session_state = self.track_session_stats(session, effective_status, index, now)
             session_state.current_activity = activity
             for name, value in self._pane_view(session, pane_content).items():
                 setattr(session_state, name, value)
@@ -1640,6 +1658,7 @@ class MonitorDaemon:
                         history_file=self.history_path,
                         session_id=session.id,
                         hostname=self._hostname,
+                        now=now,
                     )
                 except OSError as e:
                     # History is a record, not the status: a full disk must
@@ -1731,7 +1750,7 @@ class MonitorDaemon:
         if panes is None:
             return
         tracker = self._pane_tracker
-        clock = self._loop_clock()
+        clock = self.clock.monotonic()
         for session in sessions:
             if session.status == "done":
                 continue
@@ -1923,8 +1942,7 @@ class MonitorDaemon:
         walks it. Without one, that pass reads the manager's snapshot.
         ``now`` is the tick's clock (the housekeeping cadence runs on it).
         """
-        if now is None:
-            now = datetime.now()
+        now = self.clock.wall() if now is None else aware(now)
         # Interval for the sleep that follows this tick, published with the
         # state so consumers size their staleness window to it.
         mode = self.attendance()
@@ -1946,7 +1964,7 @@ class MonitorDaemon:
         self._publish_state(session_states)
 
         # Enforce oversight timeouts every loop
-        self._enforce_oversight_timeouts(sessions)
+        self._enforce_oversight_timeouts(sessions, now)
 
         # Auto-archive "done" agents after 1 hour (#244)
         # Count untracked tmux windows every 2 minutes (#344)
@@ -1955,7 +1973,7 @@ class MonitorDaemon:
         published_terminated = {st.session_id for st in session_states
                                 if st.current_status == STATUS_TERMINATED}
         if housekeeping.due(now):
-            housekeeping.auto_archive_done_agents(sessions, self._pending)
+            housekeeping.auto_archive_done_agents(sessions, self._pending, now)
             self.state.untracked_window_count = housekeeping.count_untracked_windows(sessions)
             all_sessions = (
                 index.by_id.values() if index is not None else self.session_manager.list_sessions()
@@ -2024,8 +2042,7 @@ class MonitorDaemon:
             while not self._shutdown:
                 self.state.loop_count += 1
                 self._beat()
-                now = datetime.now()
-                self._run_tick(now)
+                self._run_tick(self.clock.wall())
                 self.wake.sleep(self.state.current_interval)
         except Exception as e:
             self.log.error(f"Monitor daemon error: {e}\n{traceback.format_exc()}")

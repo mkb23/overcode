@@ -1155,7 +1155,8 @@ class TestTickTiming:
         with patch.object(daemon, "_tick_phases", side_effect=lambda _now: _time.sleep(0.02)):
             daemon._tick(now)
 
-        assert daemon.state.tick_started_at == now.isoformat()
+        # A naive tick time is local: stored with its offset
+        assert daemon.state.tick_started_at == now.astimezone().isoformat()
         assert daemon._last_tick_duration_seconds >= 0.02
 
     def test_duration_is_recorded_even_when_a_phase_raises(self):

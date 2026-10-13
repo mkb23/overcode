@@ -22,11 +22,11 @@ import json
 import re
 import os
 import subprocess
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from .clock import SYSTEM_CLOCK, Clock
 from .paths import agent_path, session_dir
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
@@ -892,8 +892,11 @@ class HookStatusDetector:
         tmux: "TmuxInterface" = None,
         patterns: "StatusPatterns" = None,
         state_dir: Optional[Path] = None,
+        clock: Optional[Clock] = None,
     ):
         self.tmux_session = tmux_session
+        # The wall clock every default ``now`` reads (the daemon's, injected)
+        self.clock: Clock = clock if clock is not None else SYSTEM_CLOCK
         self.capture_lines = DEFAULT_CAPTURE_LINES
         self._tmux = tmux
         # Optional pane_capture_gate.PaneCaptureGate: serves the last captured
@@ -1034,7 +1037,7 @@ class HookStatusDetector:
     ) -> Optional[float]:
         """Seconds since the most recent RUNNING-class event, or None (#448)."""
         if now is None:
-            now = time.time()
+            now = self.clock.time()
         for entry in reversed(self._read_recent_events(session_name)):
             if entry.get("agent_id"):
                 continue  # a subagent's event, not the parent's turn (#507)
@@ -1107,13 +1110,13 @@ class HookStatusDetector:
 
         No polling fallback. When no hook state exists, checks if the
         tmux window is alive and returns a sensible default. ``now`` is the
-        tick's one clock reading (default: the wall clock).
+        tick's one clock reading (default: ``self.clock``).
 
         Returns:
             Tuple of (status, current_activity, pane_content)
         """
         if now is None:
-            now = time.time()
+            now = self.clock.time()
         self.note_agent(session.name, getattr(session, "id", None))
         hook_state = self._read_hook_state(session.name)
         # This call decides the detail afresh: a path that returns early
@@ -1231,7 +1234,7 @@ class HookStatusDetector:
         if not self._busy_marker_seen:
             return False  # the marker is unproven on this CLI version: can't tell
         if now is None:
-            now = time.time()
+            now = self.clock.time()
         try:
             hook_at = float(hook_state.get("timestamp", 0))
         except (TypeError, ValueError):
@@ -1257,7 +1260,7 @@ class HookStatusDetector:
             self._interrupt_counts.pop(session_name, None)
             return False
         if now is None:
-            now = time.time()
+            now = self.clock.time()
         if count > self._interrupt_counts.get(session_name, count):
             self._interrupt_seen_at[session_name] = now
         self._interrupt_counts[session_name] = count
@@ -1290,7 +1293,7 @@ class HookStatusDetector:
         waiting agent to red for as long as the cover stays.
         """
         if now is None:
-            now = time.time()
+            now = self.clock.time()
         if clean and status_bar_visible(clean, self._patterns, clean_content=clean):
             self._status_bar_counts[session_name] = (now, monitors, shells)
             return monitors, shells

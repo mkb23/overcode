@@ -12,6 +12,7 @@ from typing import Dict, Optional
 
 from .backends import BackendCapability, get_backend, session_backend_name
 from .claude_pid import is_session_id_owned_by_others
+from .clock import SYSTEM_CLOCK, Clock
 from .energy import estimate_energy_joules
 from .monitor_daemon_core import calculate_total_tokens
 from .pricing import calculate_cost_estimate
@@ -29,9 +30,10 @@ class StatsSync:
     extraction stands back for those agents).
     """
 
-    def __init__(self, *, session_manager, log):
+    def __init__(self, *, session_manager, log, clock: Optional[Clock] = None):
         self.session_manager = session_manager
         self.log = log
+        self.clock: Clock = clock if clock is not None else SYSTEM_CLOCK
         self.stats_views: Dict[str, dict] = {}
         self.last_commands: Dict[str, str] = {}  # session_id → last user prompt
         # Last pr-link PR number seen per session id (see sync_pr)
@@ -268,7 +270,7 @@ class StatsSync:
         if stored_cost:
             cost_estimate = stored_cost
 
-        now = datetime.now()
+        now = self.clock.wall()
         total_tokens = calculate_total_tokens(
             stats.input_tokens,
             stats.output_tokens,

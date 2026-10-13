@@ -121,8 +121,8 @@ class TestAQuietFleetRecordsNothing:
         assert counted["episodes"] == []
         assert daemon._engine.bells == []  # red from first sight: began unseen, never rings
         # The seen-time is written at most every RECORDER_SEEN_SAVE_SECONDS
-        # of real time: none in a fast test
-        assert counted["saves"] == first_saves
+        # of the daemon's (frozen, stepped) monotonic clock: once in 40 s
+        assert counted["saves"] == first_saves + 1
 
 
 class TestAStallRingsOnceThroughTheTick:

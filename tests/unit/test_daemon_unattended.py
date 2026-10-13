@@ -21,6 +21,7 @@ import threading
 import pytest
 
 from overcode import config
+from overcode.clock import to_epoch
 from overcode.monitor_daemon import (
     HOUSEKEEPING_INTERVAL_SECONDS,
     INTERVAL_FAST,
@@ -330,9 +331,9 @@ class TestHousekeepingIsWallClock:
                 when.append(k)
         assert when == [120, 240]
         assert daemon.state.untracked_window_count == 3
-        assert daemon.housekeeping.archive_terminated_sessions.call_args.args[1] == START + timedelta(
-            seconds=240
-        )
+        assert daemon.housekeeping.archive_terminated_sessions.call_args.args[1] == (
+            START + timedelta(seconds=240)
+        ).astimezone()
 
     def test_same_cadence_at_the_unattended_loop(self, root):
         """Loop counts would have stretched it to 10 minutes; wall clock keeps 2."""
@@ -493,9 +494,7 @@ class TestUnattendedTimelineHasNoHoles:
                 (
                     (
                         daemon.state.tick_started_at
-                        and (
-                            datetime.fromisoformat(daemon.state.tick_started_at) - START
-                        ).total_seconds()
+                        and to_epoch(daemon.state.tick_started_at) - START.timestamp()
                     ),
                     daemon.state.current_interval,
                     daemon.state.interval_mode,

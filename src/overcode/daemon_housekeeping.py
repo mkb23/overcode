@@ -8,15 +8,15 @@ may fail a tick.
 """
 
 import threading
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, TYPE_CHECKING
 
+from .clock import SYSTEM_CLOCK, Clock, aware
 from .daemon_cadence import Cadence
 from .session_manager import PendingUpdates
 from .status_constants import STATUS_TERMINATED
-from .monitor_daemon_core import should_archive_terminated, should_auto_archive
+from .monitor_daemon_core import elapsed_seconds, should_archive_terminated, should_auto_archive
 from .tmux_utils import untracked_window_names
 
 if TYPE_CHECKING:
@@ -55,8 +55,12 @@ class Housekeeping:
         housekeeping: Cadence,
         rotation: Cadence,
         model_metadata: Cadence,
+        clock: Optional[Clock] = None,
     ):
         self.tmux_session = tmux_session
+        # The daemon's clock: wall time for the backoff, monotonic for the
+        # hourly passes
+        self.clock: Clock = clock if clock is not None else SYSTEM_CLOCK
         self.tmux = tmux
         self.history_path = history_path
         self.log = log
@@ -100,12 +104,13 @@ class Housekeeping:
             return True
         return False
 
-    def auto_archive_done_agents(self, sessions: list, pending: PendingUpdates) -> None:
+    def auto_archive_done_agents(self, sessions: list, pending: PendingUpdates,
+                                 now: Optional[datetime] = None) -> None:
         """Auto-archive done agents that have been done for over 1 hour (#244).
 
         Kills the tmux window and marks as terminated so cleanup can remove them.
         """
-        now = datetime.now()
+        now = self.clock.wall() if now is None else now
 
         for session in sessions:
             if not should_auto_archive(
@@ -215,7 +220,8 @@ class Housekeeping:
             seen.add(session.id)
             cost = spend_of(session)["cost"]
             since, last_cost = self.last_checkpoint.setdefault(session.id, (now, None))
-            if now - since < every or cost == last_cost or cost <= 0:
+            if (elapsed_seconds(since, now) < every.total_seconds()
+                    or cost == last_cost or cost <= 0):
                 continue
             rows.append(make_row(session, "checkpoint", now=now))
             self.last_checkpoint[session.id] = (now, cost)
@@ -237,9 +243,9 @@ class Housekeeping:
         """
         last = self.last_storage_tidy
         if (not force and last is not None
-                and time.monotonic() - last < STORAGE_TIDY_INTERVAL_SECONDS):
+                and self.clock.monotonic() - last < STORAGE_TIDY_INTERVAL_SECONDS):
             return
-        self.last_storage_tidy = time.monotonic()
+        self.last_storage_tidy = self.clock.monotonic()
         try:
             counts = session_manager.tidy_agent_storage(self.tmux_session)
         except Exception as e:  # housekeeping must never fail the tick
@@ -272,9 +278,9 @@ class Housekeeping:
     def prune_finished_jobs(self) -> None:
         """Drop finished jobs past their retention, at most hourly."""
         last = self.last_job_prune
-        if last is not None and time.monotonic() - last < JOB_PRUNE_INTERVAL_SECONDS:
+        if last is not None and self.clock.monotonic() - last < JOB_PRUNE_INTERVAL_SECONDS:
             return
-        self.last_job_prune = time.monotonic()
+        self.last_job_prune = self.clock.monotonic()
         try:
             from .config import get_jobs_retention_hours
             from .job_manager import JobManager
@@ -330,7 +336,8 @@ class Housekeeping:
         thread = self.model_metadata_thread
         if thread is not None and thread.is_alive():
             return
-        if self.model_metadata_backoff_until and now < self.model_metadata_backoff_until:
+        backoff = self.model_metadata_backoff_until
+        if backoff is not None and aware(now) < aware(backoff):
             return
         try:
             from .config import get_model_metadata_config
@@ -366,7 +373,7 @@ class Housekeeping:
                 f"{info['model_count']} models -> {info['path']}"
             )
         except Exception as e:
-            self.model_metadata_backoff_until = datetime.now() + timedelta(
+            self.model_metadata_backoff_until = self.clock.wall() + timedelta(
                 seconds=self.model_metadata_failure_backoff
             )
             hours = self.model_metadata_failure_backoff / 3600
