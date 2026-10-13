@@ -29,6 +29,8 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 STATUS_SCRIPT = Callable[[int, object], Tuple[str, str, str]]
 SKILLS_SCRIPT = Callable[[int, str], List[str]]
+DETAIL_SCRIPT = Callable[[int, str], object]  # a StatusDetail or None
+HOOK_AT_SCRIPT = Callable[[int, str], Optional[float]]
 
 
 # ── fake tmux ────────────────────────────────────────────────────────────
@@ -126,21 +128,51 @@ class ScriptedDetector:
     ``script(tick, session)`` returns the ``(status, activity, pane_content)``
     the real detector would; ``skills(tick, name)`` the loaded skills. The
     test advances ``tick`` between daemon ticks.
+
+    Like the dispatcher, it answers ``get_status_detail`` (the colour the
+    engine's episode recorder and bell run on) and ``get_last_hook_at``.
+    By default the detail is synthesized from the session's last scripted
+    status, as the dispatcher does in polling mode, and no hook was ever
+    seen; ``details(tick, name)`` and ``hook_at(tick, name)`` script them.
     """
 
     mode = "polling"
 
-    def __init__(self, script: STATUS_SCRIPT, skills: Optional[SKILLS_SCRIPT] = None):
+    def __init__(self, script: STATUS_SCRIPT, skills: Optional[SKILLS_SCRIPT] = None,
+                 details: Optional[DETAIL_SCRIPT] = None,
+                 hook_at: Optional[HOOK_AT_SCRIPT] = None):
         self.script = script
         self.skills = skills or (lambda tick, name: [])
+        self.details = details
+        self.hook_at = hook_at or (lambda tick, name: None)
         self.tick = 0
         self.hooks = _Phaseless()
         self.polling = _Phaseless()
         self.calls: Counter = Counter()
+        self._last_seen: Dict[str, Tuple[str, str]] = {}
 
     def detect_status(self, session, num_lines: int = 0) -> Tuple[str, str, str]:
         self.calls["detect_status"] += 1
-        return self.script(self.tick, session)
+        result = self.script(self.tick, session)
+        self._last_seen[session.name] = (result[0], result[1])
+        return result
+
+    def get_status_detail(self, session_name: str):
+        self.calls["get_status_detail"] += 1
+        if self.details is not None:
+            return self.details(self.tick, session_name)
+        last = self._last_seen.get(session_name)
+        if last is None:
+            return None
+        try:  # absent from older trees (daemon_tick_driver): no colour there
+            from overcode.hook_status_detector import synthesize_status_detail_from_legacy
+        except ImportError:
+            return None
+        return synthesize_status_detail_from_legacy(*last)
+
+    def get_last_hook_at(self, session_name: str) -> Optional[float]:
+        self.calls["get_last_hook_at"] += 1
+        return self.hook_at(self.tick, session_name)
 
     def get_loaded_skills(self, session_name: str) -> List[str]:
         return list(self.skills(self.tick, session_name))
