@@ -484,14 +484,12 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / "sessions.json"
         self._store = JsonStore(self.state_file)
-        # Append-only, one JSON record per line; a legacy archive.json is
-        # migrated into it on first access (see _migrate_legacy_archive).
-        self.archive_file = self.state_dir / "archive.jsonl"
+        # The session archive: a slim record per agent, a JSONL file per
+        # month, beside the sessions root (session_archive). The single-file
+        # archives of earlier versions are split into it on first access.
+        self.archive_dir = paths.archive_dir(self.state_dir)
+        self.old_archive_file = self.state_dir / "archive.jsonl"
         self.legacy_archive_file = self.state_dir / "archive.json"
-        # (inode, byte offset after the last complete line, Session by id)
-        # of the last archive parse: the file only grows, so the next parse
-        # reads from the offset and reuses those objects.
-        self._archive_tail: Tuple[Optional[int], int, Dict[str, Session]] = (None, 0, {})
         self._skip_git_detection = skip_git_detection
         # The Session objects built from the last parse of each file, keyed
         # by entry id and reused while the file's stat signature is unchanged
@@ -500,7 +498,6 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         # times a second against a file that changes only when something
         # writes it.
         self._state_cache: StatGatedCache[Dict[str, Session]] = StatGatedCache()
-        self._archive_cache: StatGatedCache[Dict[str, Session]] = StatGatedCache()
 
     def _load_state(self) -> Dict[str, dict]:
         """Load all sessions from the state file as a fresh, private dict.
@@ -928,6 +925,12 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 limit=prune_limit))
         except Exception as e:
             logger.warning("bundle retention failed: %s", e)
+        try:
+            from .config import get_archive_config
+            counts["archive_months_pruned"] = len(
+                self.prune_archive(get_archive_config()["retention_months"]))
+        except Exception as e:
+            logger.warning("archive retention failed: %s", e)
         return counts
 
     def update_session(self, session_id: str, **kwargs):

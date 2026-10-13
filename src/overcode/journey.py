@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from .session_archive import archived_session
 from .usage_analytics import Summary
 
 # ── mastery ladder ─────────────────────────────────────────────────────
@@ -461,7 +462,7 @@ def _safe(fn: Callable, arg) -> bool:
 _SESSION_COUNTERS = ("agents", "child_of_agent", "standing_orders", "budgets", "wrappers",
                      "heartbeats", "annotations", "values", "overagents", "shells",
                      "profiled_agents")
-_ARCHIVE_CACHE_VERSION = 2
+_ARCHIVE_CACHE_VERSION = 3
 # Rows that aren't an agent CLI: overcode's own assistant and plain shells.
 _NOT_AGENT_CLIS = frozenset({"overagent", "shell"})
 
@@ -480,7 +481,8 @@ def _count_sessions(sessions, counts: dict, tags: set, backends: set,
         counts["profiled_agents"] += bool(isinstance(profile, str) and profile)
         counts["agents"] += 1
         counts["child_of_agent"] += bool(s.parent_session_id)
-        counts["standing_orders"] += bool(s.standing_instructions)
+        counts["standing_orders"] += bool(
+            s.standing_instructions or getattr(s, "_has_standing_instructions", False))
         counts["budgets"] += bool(s.cost_budget_usd)
         counts["wrappers"] += bool(s.wrapper)
         counts["heartbeats"] += bool(s.heartbeat_enabled)
@@ -494,18 +496,23 @@ def _count_sessions(sessions, counts: dict, tags: set, backends: set,
 def _archive_counts(sm) -> tuple[dict, set, set, dict, set]:
     """Counters over every archived session, read incrementally.
 
-    The archive only grows (20k sessions is the design target), so the counts
-    are cached next to it with the byte offset they cover, and each call
-    parses only what was appended since. A replaced or shrunk archive is
-    recounted from the start.
+    The archive is a file per month (``session_archive``); the counts are
+    cached in ``archive/cursor.json`` with, per month, how far they cover
+    it. A closed (gzipped) month never changes, so once counted it is
+    never read again; the current month is read from the byte offset the
+    last call stopped at. A month gzipped since it was last read is read
+    once more, skipping the records already counted. An agent whose
+    archive record was written twice (a crash between the archive and the
+    live file) can count twice: these are rough usage counts, and that
+    case is rare.
     """
-    path = sm.state_dir / "archive_residue.json"
+    path = sm.archive_dir / "cursor.json"
     counts = dict.fromkeys(_SESSION_COUNTERS, 0)
     tags: set = set()
     backends: set = set()
     backend_agents: dict = {}
     profile_backends: set = set()
-    offset, inode = 0, None
+    months: dict = {}
     try:
         cached = json.loads(path.read_text())
         if cached.get("v") == _ARCHIVE_CACHE_VERSION:
@@ -513,19 +520,50 @@ def _archive_counts(sm) -> tuple[dict, set, set, dict, set]:
             tags, backends = set(cached["tags"]), set(cached["backends"])
             backend_agents = {str(k): int(v) for k, v in cached["backend_agents"].items()}
             profile_backends = set(cached["profile_backends"])
-            offset, inode = int(cached["offset"]), cached["inode"]
+            months = {str(k): dict(v) for k, v in cached["months"].items()}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
-    sessions, new_offset, new_inode, reset = sm.archived_sessions_since(offset, inode)
-    if reset:
-        counts = dict.fromkeys(_SESSION_COUNTERS, 0)
-        tags, backends, backend_agents, profile_backends = set(), set(), {}, set()
-    _count_sessions(sessions, counts, tags, backends, backend_agents, profile_backends)
-    if new_offset != offset or new_inode != inode:
+    changed = False
+    archive = sm.archive_months()
+    for month, month_path in archive:
+        cursor = months.get(month)
+        if cursor and not cursor.get("closed") and cursor.get("off") and not month_path.name.endswith(".gz"):
+            try:
+                replaced = month_path.stat().st_ino != cursor.get("ino")
+            except OSError:
+                replaced = False
+            if replaced:  # rewritten underneath us: count everything again
+                counts = dict.fromkeys(_SESSION_COUNTERS, 0)
+                tags, backends, backend_agents, profile_backends = set(), set(), {}, set()
+                months, changed = {}, True
+                break
+    for month, month_path in archive:
+        cursor = months.get(month) or {"n": 0, "off": 0, "ino": None, "closed": False}
+        if cursor.get("closed"):
+            continue
+        closed = month_path.name.endswith(".gz")
+        if closed:
+            records, _, ino = sm.read_archive_month(month_path)
+            records = records[int(cursor.get("n", 0)):]
+            cursor = {"n": int(cursor.get("n", 0)) + len(records), "off": 0, "ino": ino,
+                      "closed": True}
+        else:
+            offset = int(cursor.get("off", 0))
+            records, end, ino = sm.read_archive_month(month_path, offset=offset)
+            cursor = {"n": int(cursor.get("n", 0)) + len(records), "off": end, "ino": ino,
+                      "closed": False}
+        if records or months.get(month) != cursor:
+            changed = True
+        months[month] = cursor
+        _count_sessions(
+            [s for s in (archived_session(r) for r in records) if s is not None],
+            counts, tags, backends, backend_agents, profile_backends)
+    if changed:
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
             tmp.write_text(json.dumps({
-                "v": _ARCHIVE_CACHE_VERSION, "offset": new_offset, "inode": new_inode,
+                "v": _ARCHIVE_CACHE_VERSION, "months": months,
                 "counts": counts, "tags": sorted(tags), "backends": sorted(backends),
                 "backend_agents": backend_agents, "profile_backends": sorted(profile_backends)}))
             os.replace(tmp, path)

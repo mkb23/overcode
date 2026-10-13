@@ -3,6 +3,7 @@ Monitoring commands: monitor, supervisor, web, export, instruct, heartbeat,
 history, hook_handler_cmd, usage.
 """
 
+import json
 from typing import Annotated, Optional, List
 
 import typer
@@ -447,69 +448,132 @@ def export(
         raise typer.Exit(1)
 
 
+def print_archived_session(session, *, files: bool = False) -> None:
+    """One archived agent's summary (``history <name>``, and ``show`` of a gone agent)."""
+    from ..tui_helpers import format_duration, format_tokens
+
+    rprint(f"\n[bold]{session.name}[/bold] [dim](archived)[/dim]")
+    rprint(f"  ID: {session.id}")
+    rprint(f"  Started: {session.start_time}")
+    end_time = getattr(session, '_end_time', None)
+    if end_time:
+        rprint(f"  Ended: {end_time}")
+    rprint(f"  Directory: {session.start_directory or '-'}")
+    rprint(f"  Repo: {session.repo_name or '-'} ({session.branch or '-'})")
+    billing_code = getattr(session, "billing_code", None)
+    if billing_code:
+        rprint(f"  Billing code: {billing_code}")
+    if session.report_status:
+        reason = f" ({session.report_reason})" if session.report_reason else ""
+        rprint(f"  Report: {session.report_status}{reason}")
+    rprint("\n  [bold]Stats:[/bold]")
+    stats = session.stats
+    rprint(f"    Interactions: {stats.interaction_count}")
+    rprint(f"    Tokens: {format_tokens(stats.total_tokens)}")
+    rprint(f"    Cost: ${stats.estimated_cost_usd:.4f}")
+    rprint(f"    Green time: {format_duration(stats.green_time_seconds)}")
+    rprint(f"    Non-green time: {format_duration(stats.non_green_time_seconds)}")
+    rprint(f"    Steers: {stats.steers_count}")
+    if files:
+        _print_agent_files(session)
+
+
+def _bundle_state(session) -> str:
+    """Where an archived agent's own files are: kept (day), expired, or none."""
+    pointer = getattr(session, "_bundle", None)
+    if not isinstance(pointer, dict) or "day" not in pointer:
+        return "none"
+    from ..paths import bundle_path
+
+    day = pointer["day"]
+    return f"kept ({day})" if bundle_path(session.tmux_session, day).exists() else f"expired ({day})"
+
+
+def _print_agent_files(session) -> None:
+    from ..agent_bundle import read_agent
+
+    state = _bundle_state(session)
+    rprint(f"\n  [bold]Files:[/bold] {state}")
+    if not state.startswith("kept"):
+        return
+    packed = read_agent(session.tmux_session, session._bundle)
+    if packed is None:
+        rprint("    [dim](the bundle could not be read)[/dim]")
+        return
+    for name, content in sorted((packed.get("files") or {}).items()):
+        size = len(content) if isinstance(content, str) else len(json.dumps(content))
+        rprint(f"    {name}  [dim]{size} bytes[/dim]")
+
+
 @app.command()
 def history(
     name: Annotated[
-        Optional[str], typer.Argument(help="Agent name (omit for all archived)")
+        Optional[str], typer.Argument(help="Agent name or id (omit for every archived agent)")
     ] = None,
+    since: Annotated[
+        str, typer.Option("--since", help="List agents archived since: 30d, 2w, 12h, 2026-09, 2026-09-15")
+    ] = "30d",
+    all_: Annotated[
+        bool, typer.Option("--all", help="List every archived agent, however old")
+    ] = False,
+    files: Annotated[
+        bool, typer.Option("--files", help="Show whether each agent's own files are kept (and which)")
+    ] = False,
 ):
-    """Show archived session history."""
+    """Show archived session history.
+
+    With a name (or a former name, or an id): that agent's newest archive
+    record, searched newest month first. Without: the agents archived in
+    the last 30 days (--since, --all).
+    """
+    from ..session_archive import parse_since
     from ..session_manager import SessionManager
     from ..tui_helpers import format_duration, format_tokens
 
     sessions = SessionManager()
 
     if name:
-        # Show specific archived session: stream the archive (one record
-        # at a time, file order) instead of materialising every entry.
-        session = next((s for s in sessions.iter_archived_sessions() if s.name == name), None)
+        session = sessions.find_archived(name)
         if not session:
             rprint(f"[red]✗[/red] No archived session named '[bold]{name}[/bold]'")
             raise typer.Exit(1)
+        print_archived_session(session, files=files)
+        return
 
-        rprint(f"\n[bold]{session.name}[/bold]")
-        rprint(f"  ID: {session.id}")
-        rprint(f"  Started: {session.start_time}")
-        end_time = getattr(session, '_end_time', None)
-        if end_time:
-            rprint(f"  Ended: {end_time}")
-        rprint(f"  Directory: {session.start_directory or '-'}")
-        rprint(f"  Repo: {session.repo_name or '-'} ({session.branch or '-'})")
-        rprint("\n  [bold]Stats:[/bold]")
-        stats = session.stats
-        rprint(f"    Interactions: {stats.interaction_count}")
-        rprint(f"    Tokens: {format_tokens(stats.total_tokens)}")
-        rprint(f"    Cost: ${stats.estimated_cost_usd:.4f}")
-        rprint(f"    Green time: {format_duration(stats.green_time_seconds)}")
-        rprint(f"    Non-green time: {format_duration(stats.non_green_time_seconds)}")
-        rprint(f"    Steers: {stats.steers_count}")
-    else:
-        # List all archived sessions
-        archived = sessions.list_archived_sessions()
-        if not archived:
-            rprint("[dim]No archived sessions[/dim]")
-            return
+    try:
+        cutoff = None if all_ else parse_since(since)
+    except ValueError as e:
+        rprint(f"[red]✗[/red] {e}")
+        raise typer.Exit(1)
+    archived = sessions.list_archived_sessions(since=cutoff)
+    if cutoff is not None:
+        stamp = cutoff.isoformat()
+        archived = [s for s in archived if (getattr(s, "_end_time", None) or s.start_time) >= stamp]
+    if not archived:
+        rprint("[dim]No archived sessions[/dim]" + ("" if all_ else f" [dim]since {since} (--all for every one)[/dim]"))
+        return
 
-        rprint(f"\n[bold]Archived Sessions ({len(archived)}):[/bold]\n")
-        for s in sorted(archived, key=lambda x: x.start_time, reverse=True):
-            end_time = getattr(s, '_end_time', None)
-            stats = s.stats
-            duration = ""
-            if end_time and s.start_time:
-                try:
-                    from datetime import datetime
-                    start = datetime.fromisoformat(s.start_time)
-                    end = datetime.fromisoformat(end_time)
-                    dur_sec = (end - start).total_seconds()
-                    duration = f" ({format_duration(dur_sec)})"
-                except ValueError:
-                    pass
-
-            rprint(
-                f"  {s.name:<16} {stats.interaction_count:>3}i "
-                f"{format_tokens(stats.total_tokens):>6} "
-                f"${stats.estimated_cost_usd:.2f}{duration}"
-            )
+    scope = "" if all_ else f", since {since}"
+    rprint(f"\n[bold]Archived Sessions ({len(archived)}{scope}):[/bold]\n")
+    for s in sorted(archived, key=lambda x: x.start_time, reverse=True):
+        end_time = getattr(s, '_end_time', None)
+        stats = s.stats
+        duration = ""
+        if end_time and s.start_time:
+            try:
+                from datetime import datetime
+                start = datetime.fromisoformat(s.start_time)
+                end = datetime.fromisoformat(end_time)
+                dur_sec = (end - start).total_seconds()
+                duration = f" ({format_duration(dur_sec)})"
+            except ValueError:
+                pass
+        kept = f"  [dim]files: {_bundle_state(s)}[/dim]" if files else ""
+        rprint(
+            f"  {s.name:<16} {stats.interaction_count:>3}i "
+            f"{format_tokens(stats.total_tokens):>6} "
+            f"${stats.estimated_cost_usd:.2f}{duration}{kept}"
+        )
 
 @app.command()
 def usage():

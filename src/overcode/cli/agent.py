@@ -1297,6 +1297,12 @@ def show(
     # Get the Session object
     sess = find_agent(launcher.sessions, name)
     if sess is None:
+        # Archived: its record (and whether its own files are kept)
+        archived = launcher.sessions.find_archived(name)
+        if archived is not None:
+            from .monitoring import print_archived_session
+            print_archived_session(archived, files=True)
+            return
         rprint(f"[red]✗[/red] Agent '[bold]{name}[/bold]' not found")
         raise typer.Exit(1)
     name = sess.name  # an old name resolved; show under the current one

@@ -235,19 +235,39 @@ class TestArchiveResidue:
         assert counts["standing_orders"] == 1 and tags == {"x"} and backends == {"claude-code"}
 
         seen = []
-        real = type(sm).archived_sessions_since
+        real = type(sm).read_archive_month
 
-        def spy(self, offset=0, inode=None):
-            out = real(self, offset, inode)
+        def spy(self, path, *, offset=0):
+            out = real(self, path, offset=offset)
             seen.append(len(out[0]))
             return out
 
-        monkeypatch.setattr(type(sm), "archived_sessions_since", spy)
+        monkeypatch.setattr(type(sm), "read_archive_month", spy)
         self._archive(sm, "c", tags=["y"])
         counts, tags, *_ = J._archive_counts(sm)
         assert counts["agents"] == 3 and tags == {"x", "y"}
         assert J._archive_counts(sm)[0]["agents"] == 3
         assert seen == [1, 0]  # only the appended session, then nothing
+
+    def test_a_closed_month_is_read_once_more_then_never(self, tmp_path, monkeypatch):
+        sm = self._sm(tmp_path, monkeypatch)
+        self._archive(sm, "a")
+        assert J._archive_counts(sm)[0]["agents"] == 1
+        # The month closes and is gzipped, with a record counted and one not
+        month = sm.archive_file.name[:7]
+        with open(sm.archive_file, "ab") as f:
+            f.write(b'{"id": "late", "name": "late", "tmux_session": "agents", '
+                    b'"tmux_window": "w", "command": [], "start_directory": null, '
+                    b'"start_time": "2026-01-01T00:00:00"}\n')
+        sm.gzip_closed_months(current="9999-12")
+        assert (sm.archive_dir / f"{month}.jsonl.gz").exists()
+        assert J._archive_counts(sm)[0]["agents"] == 2
+        seen = []
+        real = type(sm).read_archive_month
+        monkeypatch.setattr(type(sm), "read_archive_month",
+                            lambda self, path, **kw: seen.append(path) or real(self, path, **kw))
+        assert J._archive_counts(sm)[0]["agents"] == 2
+        assert seen == []
 
     def test_a_replaced_archive_is_recounted(self, tmp_path, monkeypatch):
         sm = self._sm(tmp_path, monkeypatch)
@@ -255,7 +275,7 @@ class TestArchiveResidue:
         self._archive(sm, "b")
         assert J._archive_counts(sm)[0]["agents"] == 2
         lines = sm.archive_file.read_bytes().splitlines(keepends=True)
-        tmp = sm.archive_file.with_name("new.jsonl")
+        tmp = sm.archive_file.with_name("new.tmp")
         tmp.write_bytes(lines[0])
         tmp.replace(sm.archive_file)
         assert J._archive_counts(sm)[0]["agents"] == 1
@@ -263,7 +283,7 @@ class TestArchiveResidue:
     def test_a_bad_cache_is_ignored(self, tmp_path, monkeypatch):
         sm = self._sm(tmp_path, monkeypatch)
         self._archive(sm, "a")
-        (sm.state_dir / "archive_residue.json").write_text('{"v": 1, "counts": []}')
+        (sm.archive_dir / "cursor.json").write_text('{"v": 3, "counts": []}')
         assert J._archive_counts(sm)[0]["agents"] == 1
 
 

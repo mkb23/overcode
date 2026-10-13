@@ -7,6 +7,7 @@ monitor daemon moves terminated entries out of sessions.json after a
 configurable grace, through the same record ``overcode cleanup`` writes.
 """
 
+import gzip
 import json
 import os
 from datetime import datetime, timedelta
@@ -15,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from overcode import config
+from overcode.session_archive import slim_record
 from overcode.session_manager import PendingUpdates, Session, SessionManager, SessionStats
 from tests.daemon_tick_harness import (
     FrozenClock,
@@ -55,6 +57,11 @@ def _lines(path: Path):
     return [json.loads(line) for line in path.read_bytes().split(b"\n") if line.strip()]
 
 
+def _archived_lines(sm):
+    """Every archive record, every month, oldest first (raw dicts)."""
+    return list(sm.iter_archived_records())
+
+
 def _dicts(sessions):
     return [(s.to_dict(), getattr(s, "_end_time", None)) for s in sessions]
 
@@ -69,7 +76,7 @@ class TestJsonlArchive:
         assert len(lines) == 1
         record = lines[0]
         assert record["status"] == "archived" and record["end_time"]
-        expected = dict(before, status="archived", end_time=record["end_time"])
+        expected = slim_record(dict(before, status="archived", end_time=record["end_time"]))
         assert record == expected
         assert sm.get_session(s.id) is None
         archived = sm.list_archived_sessions()
@@ -97,33 +104,52 @@ class TestJsonlArchive:
         legacy_sessions = [_session(f"old-{i}", f"old-{i}") for i in range(3)]
         legacy = {s.id: _legacy_record(s) for s in legacy_sessions}
         sm.legacy_archive_file.write_text(json.dumps(legacy, indent=2))
-        # What the old reader produced from that file
+        (tmp_path / "archive.json.migrated").write_text("{}")  # an earlier copy
+        # What the reader produces from the slim records
         expected = []
         for record in legacy.values():
-            data = dict(record)
+            data = slim_record(record)
             end_time = data.pop("end_time")
-            session = Session.from_dict(data)
-            expected.append((session.to_dict(), end_time))
+            expected.append((Session.from_dict(data).to_dict(), end_time))
 
         archived = sm.list_archived_sessions()
         assert _dicts(archived) == expected
         assert not sm.legacy_archive_file.exists()
-        assert (tmp_path / "archive.json.migrated").exists()
-        assert [r["id"] for r in _lines(sm.archive_file)] == list(legacy)
-        assert _lines(sm.archive_file) == list(legacy.values())
+        assert not (tmp_path / "archive.json.migrated").exists()  # secrets: not kept
+        # Filed under the month each ended, closed months gzipped
+        assert [m for m, _ in sm.archive_months()] == ["2026-01"]
+        gz = sm.archive_dir / "2026-01.jsonl.gz"
+        assert gz.exists() and not (sm.archive_dir / "2026-01.jsonl").exists()
+        assert [r["id"] for r in _archived_lines(sm)] == list(legacy)
 
         # Idempotent: a second access changes nothing
-        sig = os.stat(sm.archive_file)
+        sig = os.stat(gz)
         assert _dicts(sm.list_archived_sessions()) == expected
-        assert os.stat(sm.archive_file).st_mtime_ns == sig.st_mtime_ns
-        assert len(_lines(sm.archive_file)) == 3
+        assert os.stat(gz).st_mtime_ns == sig.st_mtime_ns
 
         # A fresh manager sees the same records, and an append goes after them
         fresh = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         assert _dicts(fresh.list_archived_sessions()) == expected
         s = fresh.create_session(name="new", tmux_session="agents", tmux_window="w", command=[])
         fresh.delete_session(s.id)
-        assert [r["id"] for r in _lines(sm.archive_file)] == [*legacy, s.id]
+        assert [r["id"] for r in _archived_lines(sm)] == [*legacy, s.id]
+
+    def test_the_single_jsonl_archive_is_split_slimmed_and_deleted(self, tmp_path):
+        """archive.jsonl held every launch command and sisters' API keys."""
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        a = _session("a", "a", standing_instructions="keep going", source_api_key="sk-secret")
+        b = _session("b", "b")
+        with open(sm.old_archive_file, "w") as f:
+            f.write(json.dumps(_legacy_record(a, end_time="2026-08-30T10:00:00")) + "\n")
+            f.write(json.dumps(_legacy_record(b, end_time="2026-09-02T10:00:00")) + "\n")
+            f.write('{"id": "torn", "na')  # a crashed append
+        assert [s.id for s in sm.list_archived_sessions()] == ["a", "b"]
+        assert not sm.old_archive_file.exists()
+        assert [m for m, _ in sm.archive_months()] == ["2026-08", "2026-09"]
+        raw = b"".join(gzip.open(p).read() for _, p in sm.archive_months())
+        assert b"sk-secret" not in raw and b"keep going" not in raw and b'"claude"' not in raw
+        (rec_a,) = [r for r in _archived_lines(sm) if r["id"] == "a"]
+        assert rec_a["has_standing_instructions"] is True and rec_a["command"] == []
 
     def test_migration_also_runs_before_the_first_append(self, tmp_path):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -131,7 +157,7 @@ class TestJsonlArchive:
         sm.legacy_archive_file.write_text(json.dumps({old.id: _legacy_record(old)}))
         s = sm.create_session(name="new", tmux_session="agents", tmux_window="w", command=[])
         sm.delete_session(s.id)
-        assert [r["id"] for r in _lines(sm.archive_file)] == ["old-1", s.id]
+        assert [r["id"] for r in _archived_lines(sm)] == ["old-1", s.id]
         assert not sm.legacy_archive_file.exists()
 
     def test_unreadable_legacy_archive_is_set_aside(self, tmp_path, caplog):
@@ -147,6 +173,7 @@ class TestJsonlArchive:
     def test_damaged_and_unfinished_lines_are_skipped_and_repaired(self, tmp_path):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         a, b = _session("a", "a"), _session("b", "b")
+        sm.archive_dir.mkdir(parents=True)
         with open(sm.archive_file, "wb") as f:
             f.write(json.dumps(_legacy_record(a)).encode() + b"\n")
             f.write(b"this is not json\n")
@@ -159,7 +186,7 @@ class TestJsonlArchive:
         c = _session("c", "c")
         sm._archive_session(_legacy_record(c))
         raw = sm.archive_file.read_bytes()
-        assert raw.endswith(json.dumps(_legacy_record(c)).encode() + b"\n")
+        assert raw.endswith(json.dumps(slim_record(_legacy_record(c))).encode() + b"\n")
         assert raw.count(b"\n") == 5  # the unfinished line was terminated first
         settle(sm.archive_file)
         assert [s.id for s in sm.list_archived_sessions()] == ["a", "c"]
@@ -179,46 +206,98 @@ class TestJsonlArchive:
             ("x", "x-second"),
         ]
 
-    def test_parse_after_append_reads_only_the_appended_bytes(self, tmp_path):
+    def _months(self, sm, months):
+        """Archive records filed under given months: {month: [records]}."""
+        with sm._archive_lock():
+            for month, records in months.items():
+                sm._append_month_records(month, [slim_record(r) for r in records])
+
+    def test_lookup_is_newest_first_by_name_former_name_or_id(self, tmp_path):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        sm._append_archive_records([_legacy_record(_session(f"s{i}", f"s{i}")) for i in range(3)])
-        settle(sm.archive_file)
-        first = sm.list_archived_sessions()
-        assert sm._archive_tail[1] == sm.archive_file.stat().st_size
+        self._months(sm, {
+            "2026-08": [_legacy_record(_session("x1", "shirka")),
+                        _legacy_record(_session("y", "other", previous_names=["old-name"]))],
+            "2026-09": [_legacy_record(_session("x2", "shirka"))],
+        })
+        sm.gzip_closed_months(current="2026-09")
+        assert sm.find_archived("shirka").id == "x2"  # the newest run of the name
+        assert sm.find_archived("x1").id == "x1"
+        assert sm.find_archived("old-name").id == "y"
+        assert sm.find_archived("nobody") is None
+        assert sm.is_archived("x1") and not sm.is_archived("nobody")
 
-        reads = []
-        original = sm._read_archive_bytes
+    def test_a_repeated_id_reads_as_its_newest_record(self, tmp_path):
+        """A crash between the archive and the live file archives twice."""
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        self._months(sm, {
+            "2026-08": [_legacy_record(_session("x", "first"))],
+            "2026-09": [_legacy_record(_session("x", "second"))],
+        })
+        assert [s.name for s in sm.iter_archived_sessions(newest_first=True)] == ["second"]
+        assert [s.name for s in sm.list_archived_sessions()] == ["second"]
+        assert [s.name for s in sm.iter_archived_sessions()] == ["first", "second"]
 
-        def counting():
-            st, data, offset = original()
-            reads.append((len(data), offset))
-            return st, data, offset
+    def test_since_skips_older_months(self, tmp_path):
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        self._months(sm, {"2026-07": [_legacy_record(_session("a", "a"))],
+                          "2026-09": [_legacy_record(_session("b", "b"))]})
+        assert [s.id for s in sm.list_archived_sessions(since=datetime(2026, 9, 1))] == ["b"]
 
-        sm._read_archive_bytes = counting
-        size_before = sm.archive_file.stat().st_size
-        sm._append_archive_records([_legacy_record(_session("s3", "s3"))])
-        settle(sm.archive_file)
-        second = sm.list_archived_sessions()
-        assert reads == [(sm.archive_file.stat().st_size - size_before, size_before)]
-        assert [s.id for s in second] == ["s0", "s1", "s2", "s3"]
-        assert second[0] is first[0] and second[2] is first[2]  # earlier records reused
+    def test_rollover_gzips_closed_months_once(self, tmp_path):
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        sm.rollover_in_background = False
+        self._months(sm, {"2026-07": [_legacy_record(_session("a", "a"))]})
+        assert (sm.archive_dir / "2026-07.jsonl").exists()
+        s = sm.create_session(name="now", tmux_session="agents", tmux_window="w", command=[])
+        sm.delete_session(s.id)  # the first archive of a later month rolls over
+        assert (sm.archive_dir / "2026-07.jsonl.gz").exists()
+        assert not (sm.archive_dir / "2026-07.jsonl").exists()
+        assert [x.id for x in sm.list_archived_sessions()] == ["a", s.id]
+        assert sm.gzip_closed_months() == []  # nothing left to do
 
-        # A replaced file (new inode) is parsed from the start
-        tmp = sm.archive_file.with_name("archive.rewrite")
-        tmp.write_bytes(sm.archive_file.read_bytes())
-        tmp.rename(sm.archive_file)
-        settle(sm.archive_file)
-        third = sm.list_archived_sessions()
-        assert reads[-1] == (sm.archive_file.stat().st_size, 0)
-        assert [s.id for s in third] == ["s0", "s1", "s2", "s3"]
-        assert third[0] is not first[0]
+    def test_retention_is_off_by_default_and_drops_old_months(self, tmp_path):
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        self._months(sm, {"2025-01": [_legacy_record(_session("a", "a"))],
+                          "2026-09": [_legacy_record(_session("b", "b"))]})
+        assert sm.prune_archive(0) == []
+        assert sm.prune_archive(6, now=datetime(2026, 10, 12)) == ["2025-01"]
+        assert [s.id for s in sm.list_archived_sessions()] == ["b"]
+        assert config.get_archive_config()["retention_months"] == 0
 
-        # A shrunk file too
-        with open(sm.archive_file, "wb") as f:
-            f.write(json.dumps(_legacy_record(_session("only", "only"))).encode() + b"\n")
-        settle(sm.archive_file)
-        assert [s.id for s in sm.list_archived_sessions()] == ["only"]
-        assert reads[-1][1] == 0
+    def test_slim_record_keeps_what_readers_use(self):
+        full = _legacy_record(_session("a", "a", standing_instructions="be brief",
+                                       source_api_key="sk-x", tags=["t"]))
+        full["bundle"] = {"day": "2026-10-12", "off": 0, "len": 10}
+        slim = slim_record(full)
+        assert slim["stats"] == full["stats"] and slim["tags"] == ["t"]
+        assert slim["bundle"] == full["bundle"] and slim["has_standing_instructions"] is True
+        assert "source_api_key" not in slim and "standing_instructions" not in slim
+        assert slim["command"] == [] and "agent_session_ids" not in slim
+        assert len(json.dumps(slim)) < len(json.dumps(full))
+        assert slim_record(slim) == slim  # idempotent (migration of a slim archive)
+
+    def test_journey_counts_and_history_read_the_same_from_slim(self, tmp_path):
+        """The journey's counters and the history listing see no difference."""
+        from overcode.journey import _SESSION_COUNTERS, _count_sessions
+        from overcode.session_archive import archived_session
+
+        full = _legacy_record(_session(
+            "a", "a", standing_instructions="be brief", tags=["t"], parent_session_id="p",
+            cost_budget_usd=5.0, wrapper="w.sh", heartbeat_enabled=True,
+            human_annotation="note", agent_value=2000, skill_profile="prof", backend="codex"))
+
+        def counted(record):
+            counts = dict.fromkeys(_SESSION_COUNTERS, 0)
+            tags, backends, backend_agents, profiles = set(), set(), {}, set()
+            _count_sessions([archived_session(record)], counts, tags, backends,
+                            backend_agents, profiles)
+            return counts, tags, backends, backend_agents, profiles
+
+        assert counted(full) == counted(slim_record(full))
+        one, two = archived_session(full), archived_session(slim_record(full))
+        for attr in ("name", "start_time", "_end_time", "start_directory", "repo_name", "branch"):
+            assert getattr(one, attr) == getattr(two, attr)
+        assert one.stats == two.stats
 
     def test_iter_is_lazy_and_in_file_order(self, tmp_path):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -270,10 +349,11 @@ class TestCommitPendingArchive:
         assert (io.reads, io.writes) == (2, 1)
         raw = json.loads(sm.state_file.read_text())
         assert list(raw) == ["live"] and raw["live"]["stats"]["current_task"] == "still here"
-        records = _lines(sm.archive_file)
+        records = _archived_lines(sm)
         assert [r["id"] for r in records] == ["t1", "t2"]
         for record, sid in zip(records, ["t1", "t2"]):
-            assert record == dict(state[sid], status="archived", end_time=record["end_time"])
+            assert record == slim_record(
+                dict(state[sid], status="archived", end_time=record["end_time"]))
 
     def test_only_archive_ids_still_writes_once(self, tmp_path):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -282,7 +362,7 @@ class TestCommitPendingArchive:
         pending.archive_session("t")
         assert sm.commit_pending(pending) is True
         assert json.loads(sm.state_file.read_text()) == {}
-        assert [r["id"] for r in _lines(sm.archive_file)] == ["t"]
+        assert [r["id"] for r in _archived_lines(sm)] == ["t"]
         # Nothing to do the second time: no write, no archive append
         pending = PendingUpdates()
         pending.archive_session("t")
@@ -388,7 +468,7 @@ class TestDaemonArchivesTerminatedSessions:
             self._tick(daemon, 180, start + timedelta(minutes=62))
         assert io.writes == 1
         assert {s.id for s in sm.list_sessions()} == {s.id for s in sessions[:4]}
-        archived = {r["id"]: r for r in _lines(sm.archive_file)}
+        archived = {r["id"]: r for r in _archived_lines(sm)}
         assert set(archived) == {t4, t5, "old-0000", "old-0001"}
         assert all(r["status"] == "archived" and r["end_time"] for r in archived.values())
         assert archived[t4]["name"] == "agent-04"
@@ -418,7 +498,7 @@ class TestDaemonArchivesTerminatedSessions:
         self._tick(daemon, 180, start + timedelta(minutes=62))
         assert sm.get_session(gone.id) is None
         assert sm.get_session(alive.id).status == "waiting_oversight"
-        assert gone.id in {r["id"] for r in _lines(sm.archive_file)}
+        assert gone.id in {r["id"] for r in _archived_lines(sm)}
 
     def test_a_revived_session_drops_its_clock(self, env):
         daemon, sm, sessions, start = self._setup(env)
@@ -443,7 +523,7 @@ class TestDaemonArchivesTerminatedSessions:
         daemon, sm, sessions, start = self._setup(env, grace=0)
         self._tick(daemon, 60, start)
         assert sm.get_session(sessions[4].id) is None
-        assert {r["id"] for r in _lines(sm.archive_file)} == {
+        assert {r["id"] for r in _archived_lines(sm)} == {
             sessions[4].id,
             sessions[5].id,
             "old-0000",

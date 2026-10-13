@@ -2726,68 +2726,55 @@ class TestHistoryExtended:
             assert result.exit_code == 0
             assert "No archived sessions" in result.output
 
-    def test_history_list_archived(self):
+    @pytest.fixture
+    def archive(self, tmp_path, monkeypatch):
+        """A real archive in a private state dir, with one archived agent."""
+        from overcode.session_manager import SessionManager, SessionStats
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "sessions"))
+        sm = SessionManager(skip_git_detection=True)
+        s = sm.create_session(name="old-agent", tmux_session="agents",
+                              tmux_window="old-agent-1", command=["claude", "--secret"])
+        sm.update_stats(s.id, **SessionStats(
+            interaction_count=10, total_tokens=50000, estimated_cost_usd=2.50,
+            green_time_seconds=1800.0, non_green_time_seconds=300.0, steers_count=5,
+        ).to_dict())
+        sm.delete_session(s.id)
+        return sm, s
+
+    def test_history_list_archived(self, archive):
         """History lists archived sessions."""
-        from overcode.session_manager import SessionStats
-        mock_session = _make_session(
-            name="old-agent",
-            stats=SessionStats(
-                interaction_count=10,
-                total_tokens=50000,
-                estimated_cost_usd=2.50,
-                green_time_seconds=1800.0,
-                non_green_time_seconds=300.0,
-                steers_count=5,
-            ),
-        )
+        result = runner.invoke(app, ["history"])
+        assert result.exit_code == 0
+        assert "Archived Sessions (1, since 30d)" in result.output
+        assert "old-agent" in result.output
 
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.list_archived_sessions.return_value = [mock_session]
-            mock_sm_cls.return_value = mock_sm
+    def test_history_since_and_all(self, archive):
+        result = runner.invoke(app, ["history", "--since", "2099-01"])
+        assert result.exit_code == 0 and "No archived sessions" in result.output
+        result = runner.invoke(app, ["history", "--all", "--files"])
+        assert "old-agent" in result.output and "files: none" in result.output
+        result = runner.invoke(app, ["history", "--since", "soon"])
+        assert result.exit_code == 1
 
-            result = runner.invoke(app, ["history"])
-            assert result.exit_code == 0
-            assert "Archived Sessions" in result.output
-            assert "old-agent" in result.output
-
-    def test_history_specific_agent(self):
-        """History shows specific archived agent."""
-        from overcode.session_manager import SessionStats
-        mock_session = _make_session(
-            name="old-agent",
-            stats=SessionStats(
-                interaction_count=10,
-                total_tokens=50000,
-                estimated_cost_usd=2.50,
-                green_time_seconds=1800.0,
-                non_green_time_seconds=300.0,
-                steers_count=5,
-            ),
-        )
-
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            # A named lookup streams the archive instead of listing it
-            mock_sm.iter_archived_sessions.return_value = iter([mock_session])
-            mock_sm_cls.return_value = mock_sm
-
-            result = runner.invoke(app, ["history", "old-agent"])
+    def test_history_specific_agent(self, archive):
+        """History shows specific archived agent, by name or id."""
+        sm, s = archive
+        for key in ("old-agent", s.id):
+            result = runner.invoke(app, ["history", key])
             assert result.exit_code == 0
             assert "old-agent" in result.output
-            assert "Stats" in result.output
-            mock_sm.list_archived_sessions.assert_not_called()
+            assert "Stats" in result.output and "$2.5000" in result.output
 
-    def test_history_agent_not_found(self):
+    def test_history_agent_not_found(self, archive):
         """History errors when agent not in archive."""
-        with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
-            mock_sm = MagicMock()
-            mock_sm.iter_archived_sessions.return_value = iter([])
-            mock_sm_cls.return_value = mock_sm
+        result = runner.invoke(app, ["history", "missing"])
+        assert result.exit_code == 1
+        assert "No archived session" in result.output
 
-            result = runner.invoke(app, ["history", "missing"])
-            assert result.exit_code == 1
-            assert "No archived session" in result.output
+    def test_show_falls_back_to_the_archive(self, archive):
+        result = runner.invoke(app, ["show", "old-agent"])
+        assert result.exit_code == 0
+        assert "(archived)" in result.output and "Files: none" in result.output
 
 
 class TestAttachExtended:
