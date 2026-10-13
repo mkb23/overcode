@@ -1158,10 +1158,16 @@ class TestRenderAgentValue:
 
 class TestRenderStatusPlain:
     def test_returns_symbol_and_status_name(self):
-        ctx = _make_ctx(status_symbol="🟢")
+        ctx = _make_ctx(status_symbol="🟢", status="running")
         result = render_status_plain(ctx)
         assert "🟢" in result
         assert "running" in result
+
+    def test_names_which_rest_a_white_light_is(self):
+        """done and waiting_oversight share ⚪: the name comes from the status."""
+        assert "waiting_oversight" in render_status_plain(
+            _make_ctx(status_symbol="⚪", status="waiting_oversight"))
+        assert " done" in render_status_plain(_make_ctx(status_symbol="⚪", status="done"))
 
     def test_includes_time_in_state(self):
         state_since = (datetime.now() - timedelta(seconds=90)).isoformat()
@@ -1586,7 +1592,7 @@ class TestComputeFleetFlags:
         from types import SimpleNamespace
         from overcode.summary_columns import FleetRow
         row_fields = {k: kw.pop(k) for k in ("pr_number", "subtree_cost_usd", "window_burn",
-                                              "has_status_detail") if k in kw}
+                                              "has_status_detail", "task_result") if k in kw}
         session = SimpleNamespace(**{
             "cost_budget_usd": 0.0, "oversight_policy": "wait", "oversight_timeout_seconds": 0.0,
             "model": None, "effort": None, "provider": "web", "backend": "claude-code",
@@ -1617,6 +1623,7 @@ class TestComputeFleetFlags:
             "any_has_status_detail": self._row(has_status_detail=True),
             "any_has_subtree_cost": self._row(subtree_cost_usd=1.5),
             "any_has_burn": self._row(window_burn=burn),
+            "any_has_task_result": self._row(task_result="unreported"),
         }
         assert set(cases) == _FLEET_FIELDS
         for name, row in cases.items():
@@ -1638,3 +1645,80 @@ class TestComputeFleetFlags:
         from overcode.summary_columns import compute_fleet_flags
         burn = SimpleNamespace(tokens_per_hour=0.0, cost_per_hour=0.0)
         assert not compute_fleet_flags([self._row(window_burn=burn)]).any_has_burn
+
+
+class TestTaskResultColumn:
+    """The Result column: one width whatever it shows, full reason on hover."""
+
+    def _cell(self, **kw):
+        from overcode.summary_columns import COLUMNS_BY_ID, cell_text, cell_segments
+        col = COLUMNS_BY_ID["task_result"]
+        ctx = _make_ctx(any_has_task_result=True, **kw)
+        return col, ctx, cell_text(cell_segments(col, ctx)).plain
+
+    @staticmethod
+    def _width(text):
+        import unicodedata
+        return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+    @pytest.mark.parametrize("emoji_free", [False, True])
+    def test_every_value_and_the_blank_are_one_width(self, emoji_free):
+        widths = {
+            self._width(self._cell(task_result=kind, task_reason=reason,
+                                   emoji_free=emoji_free)[2])
+            for kind, reason in [(None, ""), ("unreported", ""), ("success", "done"),
+                                 ("failure", "x" * 80), ("timeout", "Oversight timeout expired")]
+        }
+        assert len(widths) == 1
+
+    def test_a_long_reason_is_cut_with_an_ellipsis(self):
+        _, _, text = self._cell(task_result="failure", task_reason="3 integration tests still fail")
+        assert text.strip() == "❌ 3 integration t…"
+
+    def test_glyphs(self):
+        for kind, glyph in [("unreported", "📭"), ("success", "✅"), ("failure", "❌"),
+                            ("timeout", "⌛")]:
+            assert self._cell(task_result=kind)[2].strip().startswith(glyph)
+        assert self._cell(task_result="unreported")[2].strip() == "📭 unreported"
+
+    def test_ascii_mode(self):
+        assert self._cell(task_result="success", emoji_free=True)[2].strip() == "ok"
+
+    def test_hover_has_the_full_reason(self):
+        col, ctx, _ = self._cell(task_result="failure",
+                                 task_reason="3 integration tests still fail")
+        assert col.hover(ctx).plain.endswith("reported failure: 3 integration tests still fail")
+        assert col.hover(_make_ctx(task_result=None)) is None
+
+    def test_hidden_until_some_child_has_a_result(self):
+        from overcode.summary_columns import COLUMNS_BY_ID
+        col = COLUMNS_BY_ID["task_result"]
+        assert not col.visible(_make_ctx())
+        assert col.visible(_make_ctx(any_has_task_result=True))
+
+    def test_plain_has_the_full_reason(self):
+        from overcode.summary_columns import COLUMNS_BY_ID
+        plain = COLUMNS_BY_ID["task_result"].render_plain
+        assert plain(_make_ctx(task_result="failure", task_reason="x" * 40)) == "❌ " + "x" * 40
+        assert plain(_make_ctx(task_result=None)) is None
+
+
+class TestChildRollup:
+    def _text(self, **kw):
+        from overcode.columns.render_performance import render_child_count
+        return render_child_count(_make_ctx(**kw))[0][0]
+
+    def test_non_zero_segments_only(self):
+        rollup = {"working": 2, "unreported": 1, "success": 1, "failure": 1}
+        assert self._text(child_count=5, child_rollup=rollup) == " 👶 5 2▶ 1📭 1✅ 1❌"
+        assert self._text(child_count=3, child_rollup={"working": 0, "unreported": 0,
+                                                       "success": 3, "failure": 0}) == " 👶 3 3✅"
+
+    def test_without_a_rollup_just_the_count(self):
+        assert self._text(child_count=2) == " 👶 2"
+        assert self._text(child_count=0) == " 👶 0"
+
+    def test_ascii_mode(self):
+        text = self._text(child_count=2, child_rollup={"working": 1, "success": 1},
+                          emoji_free=True)
+        assert text == " Ch 2 1> 1ok"

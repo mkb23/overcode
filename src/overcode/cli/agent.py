@@ -679,12 +679,23 @@ def list_agents(
         except Exception:
             return None
 
+    # Each child's result, from its session (the daemon publishes the
+    # same, from the same fields), and each parent's children by state
+    from ..child_lifecycle import child_rollup, task_result
+    results = {sess.id: task_result(sess, status) for sess, status, *_ in session_data}
+    children: dict = {}
+    for sess, status, *_ in session_data:
+        if getattr(sess, 'parent_session_id', None):
+            children.setdefault(sess.parent_session_id, []).append(
+                (status, results[sess.id][0]))
+
     # Which fleet-gated columns show, by the same rule as the TUI
     fleet = compute_fleet_flags(
         FleetRow(
             session=sess, status=status, pr_number=getattr(sess, 'pr_number', None),
             subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
             has_status_detail=_get_status_detail(sess) is not None,
+            task_result=results[sess.id][0],
         )
         for sess, status, *_ in session_data
     )
@@ -696,6 +707,7 @@ def list_agents(
         return augment_with_legacy_heartbeat(_get_status_detail(sess), status)
 
     # Second pass: build contexts and collect cells for auto-alignment
+    from ..summary_columns import COLUMNS_BY_ID
     row_contexts = []
     activities = []
     for sess, status, activity, claude_stats, git_diff, git_untracked in session_data:
@@ -727,6 +739,9 @@ def list_agents(
             max_branch_width=max_branch_width,
             all_names_match_repos=all_names_match_repos,
             subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
+            task_result=results[sess.id][0],
+            task_reason=results[sess.id][1],
+            child_rollup=child_rollup(children.get(sess.id, ())),
         )
         ctx.status_color = f"bold {status_color}"
         ctx.show_cost = "joules" if joules else ("cost" if cost else "tokens")
@@ -739,11 +754,13 @@ def list_agents(
         ctx.display_name = (indent + sess.name[:available]).ljust(name_width)
 
         row_contexts.append(ctx)
-        activities.append(activity)
+        # The result's full reason, which the column truncates
+        result_plain = COLUMNS_BY_ID["task_result"].render_plain(ctx)
+        activities.append(f"{activity}  {result_plain}" if result_plain else activity)
 
     # Columns every row has the same value in say nothing: hide them, as
     # the TUI does, and note the shared values under the table
-    from ..summary_columns import COLUMNS_BY_ID, uniform_columns
+    from ..summary_columns import uniform_columns
     shared = uniform_columns(row_contexts)
 
     def col_filter(col):

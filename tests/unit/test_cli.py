@@ -2985,6 +2985,40 @@ class TestListExtended:
                                     result = runner.invoke(app, ["list", "--show-done"])
                                     assert result.exit_code == 0
 
+    def test_list_shows_a_childs_result_and_its_full_reason(self):
+        """The Result column, and the whole reason after the activity."""
+        parent = _make_session(name="parent", id="parent-id")
+        child = _make_session(name="child", id="child-id", parent_session_id="parent-id",
+                              status="waiting_oversight", report_status="failure",
+                              report_reason="three integration tests still fail on main")
+
+        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
+            mock_launcher = MagicMock()
+            mock_launcher.list_sessions.return_value = [parent, child]
+            mock_cls.return_value = mock_launcher
+
+            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None), \
+                    patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_disp_cls, \
+                    patch('overcode.history_reader.get_session_stats', return_value=None), \
+                    patch('overcode.git_stats.get_git_diff_stats', return_value=None), \
+                    patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[parent, child]), \
+                    patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
+                mock_disp = MagicMock()
+                mock_disp.detect_status.side_effect = lambda s, **kw: (
+                    ("waiting_oversight", "At rest: stopped", "pane") if s.name == "child"
+                    else ("running", "Working", "pane"))
+                mock_disp_cls.return_value = mock_disp
+                mock_tree.return_value = {
+                    "parent-id": MagicMock(depth=0, child_count=1),
+                    "child-id": MagicMock(depth=1, child_count=0),
+                }
+                result = runner.invoke(app, ["list", "--full"], env={"COLUMNS": "400"})
+
+        assert result.exit_code == 0, result.output
+        assert "❌ three integrati…" in result.output  # the column, cut
+        assert "❌ three integration tests still fail on main" in result.output  # in full
+        assert "1❌" in result.output  # the parent's rollup
+
     def test_list_filters_done_by_default(self):
         """List without --show-done excludes done agents."""
         done_session = _make_session(name="done-only", status="done", id="done-id")

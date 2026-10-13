@@ -239,6 +239,18 @@ class TestApplyEngine:
         widget.apply_engine(_view(git_diff=None, git_untracked=None))  # not read yet
         assert widget.git_diff_stats == (5, 100, 20)
 
+    def test_result_and_children_rollup(self):
+        widget = _make_bare_widget()
+        rollup = {"working": 1, "unreported": 0, "success": 2, "failure": 0}
+        assert widget.apply_engine(_view(task_result="failure", task_reason="tests fail",
+                                         children_rollup=rollup)) is True
+        assert (widget.task_result, widget.task_reason, widget.child_rollup) == (
+            "failure", "tests fail", rollup)
+        assert widget.apply_engine(_view(task_result="failure", task_reason="tests fail",
+                                         children_rollup=rollup)) is False
+        widget.apply_engine(_view())  # a view without them clears them
+        assert (widget.task_result, widget.child_rollup) == (None, None)
+
     def test_pane_derived_counts_come_from_the_engine(self):
         widget = _make_bare_widget()
         widget.apply_engine(_view(background_bash_count=3, live_subagent_count=2,

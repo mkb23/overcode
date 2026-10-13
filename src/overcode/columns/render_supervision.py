@@ -307,3 +307,44 @@ def render_orders_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 render_value_plain = _make_simple_render_plain("session.agent_value", str)
+
+
+# Result column: glyph, a space, then this many cells of reason ("…" past it)
+RESULT_REASON_WIDTH = 16
+_RESULT_WIDTH = 1 + 2 + 1 + RESULT_REASON_WIDTH
+
+
+def _result_text(ctx: ColumnContext) -> str:
+    """The reason the cell shows: the report's, else what the kind means."""
+    from ..status_constants import RESULT_UNREPORTED
+    if ctx.task_result == RESULT_UNREPORTED:
+        return "unreported"
+    return " ".join((ctx.task_reason or "").split())
+
+
+def render_task_result(ctx: ColumnContext) -> ColumnOutput:
+    """A child's task outcome: 📭 unreported, ✅ / ❌ with the reason, ⌛ timeout.
+
+    Always the same width (blank when there is no result), so the column
+    does not move as children finish.
+    """
+    from ..status_constants import RESULT_KINDS
+    spec = RESULT_KINDS.get(ctx.task_result or "")
+    if spec is None:
+        return [(" " * _RESULT_WIDTH, f"dim{ctx.bg}")]
+    emoji, ascii_fb, style, _ = spec
+    glyph = ascii_fb if ctx.emoji_free else emoji
+    reason = _result_text(ctx)
+    if len(reason) > RESULT_REASON_WIDTH:
+        reason = reason[:RESULT_REASON_WIDTH - 1] + "…"
+    return [(f" {glyph} {reason.ljust(RESULT_REASON_WIDTH)}", f"{style}{ctx.bg}")]
+
+
+def render_task_result_plain(ctx: ColumnContext) -> Optional[str]:
+    """The result with its full reason (``overcode list``)."""
+    from ..status_constants import RESULT_KINDS
+    spec = RESULT_KINDS.get(ctx.task_result or "")
+    if spec is None:
+        return None
+    reason = _result_text(ctx)
+    return f"{spec[0]} {reason}".rstrip()

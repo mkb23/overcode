@@ -8,9 +8,11 @@ from .context import ColumnContext
 from .hover import (
     hover_allowed_tools,
     hover_available_skills,
+    hover_child_count,
     hover_loaded_skills,
     hover_skill_profile,
     hover_status_detail,
+    hover_task_result,
     hover_wrapper,
 )
 from .render_context import (
@@ -78,6 +80,8 @@ from .render_supervision import (
     render_skill_profile,
     render_skill_profile_plain,
     render_skills_plain,
+    render_task_result,
+    render_task_result_plain,
     render_standing_orders,
     render_teams_plain,
     render_tools_plain,
@@ -181,6 +185,14 @@ def _sort_heartbeat(ctx: ColumnContext) -> Optional[tuple]:
     return (bool(s.heartbeat_paused), s.heartbeat_frequency_seconds)
 
 
+# Failures first, then what still needs a look, then successes
+_RESULT_ORDER = {"failure": 0, "timeout": 1, "unreported": 2, "success": 3}
+
+
+def _sort_task_result(ctx: ColumnContext) -> Optional[int]:
+    return _RESULT_ORDER.get(ctx.task_result or "")
+
+
 def _sort_oversight(ctx: ColumnContext) -> Optional[str]:
     return ctx.oversight_deadline or None
 
@@ -197,7 +209,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Identity group — always visible
     SummaryColumn(id="status_symbol", group="identity", detail_levels=ALL, render=render_status_symbol,
                   label="Status", render_plain=render_status_plain, name="Status",
-                  description="What the agent is doing: running, waiting for you, stalled, asleep, done",
+                  description="What the agent is doing and whether it needs you: working, waiting "
+                              "on something automatic, needs approval or input, at rest, unknown, gone",
                   sort_key=lambda ctx: ctx.stats.current_state),
     SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert,
                   name="Alert",
@@ -214,6 +227,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="DTL", name="Status Detail",
                   description="Status detail: current tool, subagents, sleep wake-up estimate",
                   hover=hover_status_detail),
+    SummaryColumn(id="task_result", group="identity", detail_levels=ALL, render=render_task_result,
+                  label="Result", render_plain=render_task_result_plain,
+                  visible=lambda ctx: ctx.fleet.any_has_task_result,
+                  header="RES", name="Result",
+                  description="A child agent's outcome: 📭 stopped without a report, ✅ success, "
+                              "❌ failure, ⌛ oversight timeout (hover for the full reason)",
+                  sort_key=_sort_task_result,
+                  hover=hover_task_result),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand",
                   description="Fold marker for tree view"),
@@ -399,7 +420,9 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_desc=True),
     SummaryColumn(id="child_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_child_count,
                   header="CH", name="Child Count",
-                  description="Overcode child agents launched by this agent",
+                  description="Overcode child agents launched by this agent, and how they "
+                              "stand: ▶ working, 📭 unreported, ✅ success, ❌ failure",
+                  hover=hover_child_count,
                   sort_key=lambda ctx: ctx.child_count,
                   sort_desc=True),
     SummaryColumn(id="job_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_job_count,

@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Optional
 
 from ..status_constants import (
-    ALL_STATUSES,
     BADGE_KINDS,
     STATUS_COLOR_GREEN,
     STATUS_COLOR_ORANGE,
@@ -13,7 +12,7 @@ from ..status_constants import (
     STATUS_COLOR_YELLOW,
     StatusDetail,
 )
-from ..tui_helpers import format_duration, get_status_symbol
+from ..tui_helpers import format_duration
 from .column import _make_simple_render
 from .context import ColumnContext, ColumnOutput
 
@@ -180,14 +179,8 @@ def render_agent_name(ctx: ColumnContext) -> ColumnOutput:
 
 def render_status_plain(ctx: ColumnContext) -> Optional[str]:
     """Status with time-in-state."""
-    # Determine status name from the symbol
-    status = "unknown"
-    # Reverse-lookup from status_symbol
-    for candidate in ALL_STATUSES:
-        sym, _ = get_status_symbol(candidate)
-        if sym == ctx.status_symbol:
-            status = candidate
-            break
+    # The status itself: done and waiting_oversight share one symbol (⚪)
+    status = ctx.status or getattr(ctx.stats, "current_state", "") or "unknown"
 
     state_start = ctx.status_changed_at
     if state_start is None and ctx.stats.state_since:

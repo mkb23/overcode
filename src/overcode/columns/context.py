@@ -45,6 +45,7 @@ class FleetFlags:
     any_has_status_detail: bool = False
     any_has_subtree_cost: bool = False  # a parent with subtree cost
     any_has_burn: bool = False  # a non-zero burn rate (#174)
+    any_has_task_result: bool = False  # a child with a result (the Result column)
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class FleetRow:
     subtree_cost_usd: float = 0.0
     window_burn: Optional[object] = None  # Optional[WindowBurnStats]
     has_status_detail: bool = False
+    task_result: Optional[str] = None  # the child's result kind, if any
 
 
 def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
@@ -86,6 +88,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
             and (r.window_burn.tokens_per_hour > 0 or r.window_burn.cost_per_hour > 0)
             for r in rows
         ),
+        any_has_task_result=any(r.task_result for r in rows),
     )
 
 
@@ -145,6 +148,17 @@ class ColumnContext:
 
     # Running overcode jobs this agent launched (#463)
     job_count: int = 0
+
+    # The status the row shows (the published one; asleep / terminated
+    # applied), for the plain status text
+    status: str = ""
+
+    # A child's task outcome (RESULT_KINDS key, or None) and its full
+    # reason; a parent's children by state (working / unreported /
+    # success / failure counts), None without children
+    task_result: Optional[str] = None
+    task_reason: str = ""
+    child_rollup: Optional[dict] = None
 
     # Fleet-wide column gates, the same for every row
     fleet: FleetFlags = field(default_factory=FleetFlags)
@@ -216,6 +230,9 @@ def build_cli_context(
     subtree_cost_usd: float = 0.0,
     status_detail: Optional[StatusDetail] = None,
     window_burn: Optional[object] = None,
+    task_result: Optional[str] = None,
+    task_reason: str = "",
+    child_rollup: Optional[dict] = None,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed).
 
@@ -279,6 +296,10 @@ def build_cli_context(
         live_subagent_count=live_sub_count,
         background_bash_count=bg_bash_count,
         child_count=child_count,
+        status=status,
+        task_result=task_result,
+        task_reason=task_reason,
+        child_rollup=child_rollup,
         status_changed_at=status_changed_at,
         max_name_width=max_name_width,
         max_repo_width=max_repo_width,

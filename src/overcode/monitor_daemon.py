@@ -58,10 +58,6 @@ from .settings import (
 from .config import get_monitor_daemon_config
 from .status_constants import (
     AT_REST_STATUSES,
-    RESULT_FAILURE,
-    RESULT_SUCCESS,
-    RESULT_TIMEOUT,
-    RESULT_UNREPORTED,
     STATUS_ASLEEP,
     STATUS_DONE,
     STATUS_HEARTBEAT_START,
@@ -83,7 +79,7 @@ from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
-from .child_lifecycle import OVERSIGHT_TIMEOUT_REASON, task_result
+from .child_lifecycle import CHILD_NOT_WORKING, OVERSIGHT_TIMEOUT_REASON, child_rollup, task_result
 from .engine_recorders import RecorderStore
 from .engine_wake import WakeLoop
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
@@ -145,10 +141,6 @@ HOUSEKEEPING_INTERVAL_SECONDS = 60 * DAEMON.interval_fast
 
 # Statuses that leave the fleet idle (all_waiting_user)
 _QUIET_STATUSES = AT_REST_STATUSES | {STATUS_WAITING_USER, STATUS_UNKNOWN}
-
-# A child in one of these is not working: its parent's turn may end at rest
-# (red) rather than waiting on it (yellow, the children badge)
-_CHILD_NOT_WORKING = AT_REST_STATUSES | {STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN}
 
 
 # Create PID helper functions using factory
@@ -1865,7 +1857,7 @@ class MonitorDaemon:
         counts = self._children_working
         counts.clear()
         for state in self.state.sessions:
-            if state.current_status in _CHILD_NOT_WORKING:
+            if state.current_status in CHILD_NOT_WORKING:
                 continue
             child = index.by_id.get(state.session_id)
             parent_id = getattr(child, "parent_session_id", None)
@@ -1875,29 +1867,19 @@ class MonitorDaemon:
     def _compute_child_rollups(self, session_states, index: SessionIndex) -> None:
         """Each parent's children by state, for the 👶 column (children_rollup).
 
-        Counted from this tick's published children: working (not at rest,
-        gone, asleep or unknown), and their results (a timeout counts as a
-        failure). Parents whose children are in another tmux session count
-        only the ones this daemon publishes.
+        Counted from this tick's published children (child_lifecycle's
+        child_rollup). Parents whose children are in another tmux session
+        count only the ones this daemon publishes.
         """
-        rollups: Dict[str, dict] = {}
+        children: Dict[str, list] = {}
         for state in session_states:
             child = index.by_id.get(state.session_id)
             parent_id = getattr(child, "parent_session_id", None)
-            if not parent_id:
-                continue
-            counts = rollups.setdefault(
-                parent_id, {"working": 0, "unreported": 0, "success": 0, "failure": 0})
-            if state.current_status not in _CHILD_NOT_WORKING:
-                counts["working"] += 1
-            if state.task_result == RESULT_UNREPORTED:
-                counts["unreported"] += 1
-            elif state.task_result == RESULT_SUCCESS:
-                counts["success"] += 1
-            elif state.task_result in (RESULT_FAILURE, RESULT_TIMEOUT):
-                counts["failure"] += 1
+            if parent_id:
+                children.setdefault(parent_id, []).append(
+                    (state.current_status, state.task_result))
         for state in session_states:
-            state.children_rollup = rollups.get(state.session_id)
+            state.children_rollup = child_rollup(children.get(state.session_id, ()))
 
     def _cleanup_stale(self, sessions: list) -> None:
         """Remove stale tracking entries for deleted sessions."""

@@ -83,6 +83,33 @@ def hover_wrapper(ctx: ColumnContext):
     return _emoji_legend("Wrapper", rows) if rows else None
 
 
+def hover_task_result(ctx: ColumnContext):
+    """The child's result in full: the kind, then the report's whole reason."""
+    from ..status_constants import RESULT_KINDS
+    spec = RESULT_KINDS.get(ctx.task_result or "")
+    if spec is None:
+        return None
+    emoji, ascii_fb, _, meaning = spec
+    reason = (ctx.task_reason or "").strip()
+    return _emoji_legend("Result", [(ascii_fb if ctx.emoji_free else emoji,
+                                     f"{meaning}: {reason}" if reason else meaning)])
+
+
+def hover_child_count(ctx: ColumnContext):
+    """What the 👶 rollup's segments count."""
+    if not ctx.child_count:
+        return None
+    rollup = ctx.child_rollup or {}
+    rows = [(ctx.e("👶"), f"{ctx.child_count} child agent{'' if ctx.child_count == 1 else 's'}")]
+    for key, glyph, words in (("working", "▶", "still working"),
+                              ("unreported", "📭", "stopped without a report"),
+                              ("success", "✅", "reported success"),
+                              ("failure", "❌", "reported failure or timed out")):
+        if rollup.get(key):
+            rows.append((ctx.e(glyph), f"{rollup[key]} {words}"))
+    return _emoji_legend("Children", rows)
+
+
 def hover_status_detail(ctx: ColumnContext):
     detail = ctx.status_detail
     if detail is None or not detail.badges:

@@ -73,12 +73,23 @@ def render_bash_count(ctx: ColumnContext) -> ColumnOutput:
     return [(f" {ctx.e('🐚')}{count:>2}", style)]
 
 
+# The 👶 rollup's segments, in order: (rollup key, glyph); zero ones are left out
+_ROLLUP_SEGMENTS = (("working", "▶"), ("unreported", "📭"), ("success", "✅"), ("failure", "❌"))
+
+
 def render_child_count(ctx: ColumnContext) -> ColumnOutput:
+    """Children, then how they stand: " 👶 5 2▶ 1📭 1✅ 1❌" (non-zero only)."""
     count = ctx.child_count
     if count == 0:
         return [(f" {ctx.e('👶')} 0", f"dim{ctx.bg}")]
     style = f"bold cyan{ctx.bg}"
-    return [(f" {ctx.e('👶')}{count:>2}", style)]
+    text = f" {ctx.e('👶')}{count:>2}"
+    rollup = ctx.child_rollup or {}
+    for key, glyph in _ROLLUP_SEGMENTS:
+        n = rollup.get(key) or 0
+        if n:
+            text += f" {n}{ctx.e(glyph).rstrip()}"
+    return [(text, style)]
 
 
 def render_job_count(ctx: ColumnContext) -> ColumnOutput:

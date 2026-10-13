@@ -14,7 +14,7 @@ Either way the child is *at rest* (⚪): the light says it stopped, and
 """
 
 import json
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 from .paths import agent_file_name
 from .settings import get_session_dir
@@ -24,6 +24,9 @@ from .status_constants import (
     RESULT_SUCCESS,
     RESULT_TIMEOUT,
     RESULT_UNREPORTED,
+    STATUS_ASLEEP,
+    STATUS_TERMINATED,
+    STATUS_UNKNOWN,
     STATUS_WAITING_APPROVAL,
     STATUS_WAITING_OVERSIGHT,
     is_green_status,
@@ -32,6 +35,10 @@ from .status_constants import (
 # Statuses a stopped child is settled from. "done" is final; anything else
 # (a killed or archived record) is not an agent the rule should touch.
 SETTLEABLE_STATUSES = frozenset({"running", "starting", "terminated", STATUS_WAITING_OVERSIGHT})
+
+# A child in one of these is not working: a parent whose turn ended rests
+# (red) rather than waiting on it (yellow, the children badge)
+CHILD_NOT_WORKING = AT_REST_STATUSES | {STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN}
 
 # The report reason an expired oversight timeout files (the daemon and
 # follow mode both write it); the Result column shows it as a timeout.
@@ -111,3 +118,24 @@ def task_result(session, status: Optional[str] = None) -> Tuple[Optional[str], s
         session.status in AT_REST_STATUSES
         and not is_green_status(status or "") and status != STATUS_WAITING_APPROVAL)
     return (RESULT_UNREPORTED, "") if at_rest else (None, "")
+
+
+def child_rollup(children: Iterable[Tuple[str, Optional[str]]]) -> Optional[dict]:
+    """A parent's children by state, for the 👶 column; None without children.
+
+    ``children`` is each child's (published status, task result). Working
+    is any status not in CHILD_NOT_WORKING; a timeout counts as a failure.
+    """
+    counts = {"working": 0, "unreported": 0, "success": 0, "failure": 0}
+    any_child = False
+    for status, result in children:
+        any_child = True
+        if status not in CHILD_NOT_WORKING:
+            counts["working"] += 1
+        if result == RESULT_UNREPORTED:
+            counts["unreported"] += 1
+        elif result == RESULT_SUCCESS:
+            counts["success"] += 1
+        elif result in (RESULT_FAILURE, RESULT_TIMEOUT):
+            counts["failure"] += 1
+    return counts if any_child else None
