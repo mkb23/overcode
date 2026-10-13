@@ -33,6 +33,7 @@ STATUS_HEARTBEAT_START = "heartbeat_start"  # First observation of heartbeat-tri
 STATUS_DONE = "done"  # Child agent completed its delegated work (#244)
 STATUS_WAITING_OVERSIGHT = "waiting_oversight"  # Child stopped, awaiting oversight report
 STATUS_BUSY_SLEEPING = "busy_sleeping"  # Agent running but executing a sleep command (#289) or waiting on a live Monitor stream (#441)
+STATUS_UNKNOWN = "unknown"  # Not known yet (booting, before its first hook) or detection failing
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -48,7 +49,12 @@ ALL_STATUSES = [
     STATUS_DONE,
     STATUS_WAITING_OVERSIGHT,
     STATUS_BUSY_SLEEPING,
+    STATUS_UNKNOWN,
 ]
+
+# A child agent whose turn is over, reported or not: at rest (⚪). Its
+# outcome is the Result column's (RESULT_KINDS), not the light's.
+AT_REST_STATUSES = frozenset({STATUS_DONE, STATUS_WAITING_OVERSIGHT})
 
 
 # =============================================================================
@@ -97,9 +103,10 @@ STATUS_SYMBOLS = {
     STATUS_WAITING_HEARTBEAT: ("💛", "yellow"),  # Waiting but heartbeat will auto-resume
     STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
     STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
-    STATUS_DONE: ("☑️", "dim"),  # Done child agent (#244)
-    STATUS_WAITING_OVERSIGHT: ("👁️", "yellow"),  # Waiting for oversight report
+    STATUS_DONE: ("⚪", "grey85"),  # Child at rest, reported (#244)
+    STATUS_WAITING_OVERSIGHT: ("⚪", "grey85"),  # Child at rest, no report yet
     STATUS_BUSY_SLEEPING: ("🟡", "yellow"),  # Running but sleeping (#289) or watching a live Monitor (#441)
+    STATUS_UNKNOWN: ("❔", "dim"),  # Booting before its first hook, or detection failing
 }
 
 
@@ -123,10 +130,13 @@ EMOJI_ASCII = {
     "🟠": "[A]",
     "💛": "[h]",
     "🟣": "[E]",
-    "☑️": "[D]",
-    "👁️": "[O]",
     "🟡": "[S]",
-    "⚪": "[?]",
+    "⚪": "[.]",
+    "❔": "[?]",
+    # Result column (RESULT_KINDS)
+    "📭": "Un",
+    "✅": "ok",
+    "❌": "XX",
     # Tool indicators
     "🖥️": "Sh",
     "📖": "Rd",
@@ -153,6 +163,7 @@ EMOJI_ASCII = {
     "💓": "<3",
     "💰": "$$",
     "⏳": "~~",
+    "⌛": "TO",  # oversight timeout expired (Result column)
     "🤖": "Ro",
     "👤": "Hu",
     "🤿": "Su",
@@ -188,7 +199,6 @@ EMOJI_ASCII = {
     "⚡": ">>",
     "😴": "Sl",
     "🔐": "Pm",  # permission (was 🛡 — text-default)
-    "👀": "Ov",  # oversight (was 👁 — text-default)
     "❗": "!W",  # error (was ⚠ — text-default)
     "❓": "??",
     "📥": "In",
@@ -271,7 +281,7 @@ def get_permissiveness_emoji(mode: str, emoji_free: bool = False) -> str:
 
 def get_status_emoji(status: str, emoji_free: bool = False) -> str:
     """Get emoji for an agent status."""
-    e = STATUS_EMOJIS.get(status, "⚪")
+    e = STATUS_EMOJIS.get(status, "❔")
     return emoji_or_ascii(e, emoji_free)
 
 
@@ -282,7 +292,7 @@ def get_status_color(status: str) -> str:
 
 def get_status_symbol(status: str, emoji_free: bool = False) -> Tuple[str, str]:
     """Get (emoji, color) tuple for an agent status."""
-    symbol, color = STATUS_SYMBOLS.get(status, ("⚪", "dim"))
+    symbol, color = STATUS_SYMBOLS.get(status, ("❔", "dim"))
     return (emoji_or_ascii(symbol, emoji_free), color)
 
 
@@ -300,9 +310,10 @@ AGENT_TIMELINE_CHARS = {
     STATUS_WAITING_HEARTBEAT: "▒",  # Medium shade - waiting but heartbeat will auto-resume
     STATUS_ERROR: "▓",  # Dense shade (#22)
     STATUS_HEARTBEAT_START: "💚",  # Green heart emoji - rendered specially by timeline widget
-    STATUS_DONE: "✓",  # Done child agent (#244)
-    STATUS_WAITING_OVERSIGHT: "▒",  # Waiting for oversight report
+    STATUS_DONE: "·",  # Child at rest (#244)
+    STATUS_WAITING_OVERSIGHT: "·",  # Child at rest, no report yet
     STATUS_BUSY_SLEEPING: "█",  # Solid - doesn't need human input (#289)
+    STATUS_UNKNOWN: "?",  # Not known (booting, detection failing)
 }
 
 
@@ -401,10 +412,12 @@ STATUS_COLOR_GREEN = "color_green"      # acting (generating | tool in flight | 
 STATUS_COLOR_ORANGE = "color_orange"    # waiting on a quick yes/no approval
 STATUS_COLOR_YELLOW = "color_yellow"    # armed — will resume on its own (timer / cron / monitor / bg task)
 STATUS_COLOR_RED = "color_red"          # needs substantive user input/decision
+STATUS_COLOR_REST = "color_rest"        # a child whose turn is over: at rest, never rings
 
 # Priority order (higher index = higher priority). Used when a single agent is
 # in multiple buckets simultaneously.
 _COLOR_PRIORITY = {
+    STATUS_COLOR_REST: -1,
     STATUS_COLOR_YELLOW: 0,
     STATUS_COLOR_GREEN: 1,
     STATUS_COLOR_ORANGE: 2,
@@ -414,7 +427,7 @@ _COLOR_PRIORITY = {
 
 def color_priority(color: str) -> int:
     """Return priority for a status color (higher = wins)."""
-    return _COLOR_PRIORITY.get(color, -1)
+    return _COLOR_PRIORITY.get(color, -2)
 
 
 # Single source of truth for badge emoji + the column it belongs to. New
@@ -431,6 +444,7 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     "bg_task":         ("🔌", STATUS_COLOR_YELLOW, "Bg"),  # Background Bash/Workflow
     "subagent":        ("👥", STATUS_COLOR_YELLOW, "Sa"),  # Subagent still running (#507)
     "heartbeat":       ("💓", STATUS_COLOR_YELLOW, "Hb"),  # Overcode heartbeat will re-prompt
+    "children":        ("👶", STATUS_COLOR_YELLOW, "Ch"),  # turn over, child agents still working
 
     # ---- GREEN (acting) ----
     "generating":      ("⚡", STATUS_COLOR_GREEN,  ">>"),  # token generation, no tool
@@ -446,7 +460,9 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     # ---- ORANGE (approval) ----
     "permission":      ("🔐", STATUS_COLOR_ORANGE, "Pm"),  # PermissionRequest
     "plan_approval":   ("📋", STATUS_COLOR_ORANGE, "Pl"),  # ExitPlanMode
-    "oversight":       ("👀", STATUS_COLOR_ORANGE, "Ov"),  # child WAITING_OVERSIGHT
+    # Pre-0.6 sisters may still publish this for a stopped child: it draws
+    # as nothing (the light says at rest). Drop after one release.
+    "oversight":       ("", STATUS_COLOR_REST, ""),
 
     # ---- RED (needs input) ----
     "ask_question":    ("❓", STATUS_COLOR_RED,   "??"),   # AskUserQuestion open
@@ -464,6 +480,8 @@ BADGE_MEANINGS: dict[str, str] = {
     "bg_task":         "background shell or task running",
     "heartbeat":       "overcode heartbeat will re-prompt",
     "subagent":        "subagent still running",
+    "children":        "child agents still working",
+    "oversight":       "child at rest (an older sister)",
     "generating":      "generating a response",
     "tool":            "running a tool",
     "blocked_ci":      "waiting on CI",
@@ -471,11 +489,71 @@ BADGE_MEANINGS: dict[str, str] = {
     "blocked_sleep":   "sleeping",
     "permission":      "permission prompt open",
     "plan_approval":   "plan waiting for approval",
-    "oversight":       "child stopped, ready to report",
     "ask_question":    "asking you a question",
     "awaiting_input":  "waiting for your next prompt",
     "error":           "error needs attention",
     "overdue":         "a scheduled wakeup never came",
+}
+
+
+# =============================================================================
+# The legend: what the traffic light and the Result column say
+# =============================================================================
+#
+# One table each; the help overlay and docs/tui-guide.md are checked against
+# them (tests/unit/test_legend_consistency.py). Every glyph is emoji
+# presentation by default, so it is two cells wide in every terminal.
+
+@dataclass(frozen=True)
+class LegendEntry:
+    glyph: str
+    name: str
+    meaning: str
+    statuses: Tuple[str, ...] = ()
+    variant: bool = False  # a shade of a main light (heartbeat, error, asleep)
+
+
+# The traffic light answers one question: what is the agent doing, and
+# does it need me?
+LIGHT_LEGEND: Tuple[LegendEntry, ...] = (
+    LegendEntry("🟢", "Working", "generating or running a tool",
+                (STATUS_RUNNING,)),
+    LegendEntry("🟡", "Waiting on something automatic",
+                "background work, a wakeup or child agents will resume it",
+                (STATUS_BUSY_SLEEPING,)),
+    LegendEntry("🟠", "Needs approval", "a permission prompt or a plan to approve",
+                (STATUS_WAITING_APPROVAL,)),
+    LegendEntry("🔴", "Needs input", "its turn is over and it waits for you",
+                (STATUS_WAITING_USER,)),
+    LegendEntry("⚪", "At rest", "a child agent that stopped, reported or not",
+                (STATUS_DONE, STATUS_WAITING_OVERSIGHT)),
+    LegendEntry("❔", "Unknown", "starting up, or its status cannot be read",
+                (STATUS_UNKNOWN,)),
+    LegendEntry("⚫", "Gone", "the agent exited or its window is gone",
+                (STATUS_TERMINATED,)),
+    LegendEntry("💚", "Working (heartbeat)", "a heartbeat started this turn",
+                (STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START), variant=True),
+    LegendEntry("💛", "Waiting on a heartbeat", "a heartbeat will re-prompt it",
+                (STATUS_WAITING_HEARTBEAT,), variant=True),
+    LegendEntry("🟣", "Error", "an API or hook error needs attention",
+                (STATUS_ERROR,), variant=True),
+    LegendEntry("💤", "Asleep", "paused by you, left out of stats",
+                (STATUS_ASLEEP,), variant=True),
+)
+
+
+# The Result column: a child's task outcome, separate from the light.
+# Fields: (emoji, ascii_fallback, style, meaning)
+RESULT_UNREPORTED = "unreported"
+RESULT_SUCCESS = "success"
+RESULT_FAILURE = "failure"
+RESULT_TIMEOUT = "timeout"
+
+RESULT_KINDS: dict[str, Tuple[str, str, str, str]] = {
+    RESULT_UNREPORTED: ("📭", "Un", "yellow", "stopped without a report"),
+    RESULT_SUCCESS:    ("✅", "ok", "green", "reported success"),
+    RESULT_FAILURE:    ("❌", "XX", "red", "reported failure"),
+    RESULT_TIMEOUT:    ("⌛", "TO", "red", "oversight timeout expired"),
 }
 
 

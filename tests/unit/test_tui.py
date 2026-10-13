@@ -263,8 +263,9 @@ class TestAgentStatusToChar:
         assert agent_status_to_char("waiting_user") == "░"
 
     def test_unknown_status(self):
-        """Unknown status returns dash"""
-        assert agent_status_to_char("unknown") == "─"
+        """Unknown status has its own mark; an unrecognised one returns dash"""
+        assert agent_status_to_char("unknown") == "?"
+        assert agent_status_to_char("no_such_status") == "─"
 
 
 class TestGetCurrentStateTimes:
@@ -438,10 +439,13 @@ class TestGetStatusSymbol:
         assert color == "red"
 
     def test_unknown_status(self):
-        """Unknown status returns white circle"""
-        symbol, color = get_status_symbol("unknown")
-        assert symbol == "⚪"
-        assert color == "dim"
+        """Unknown status (and an unrecognised one) returns a grey question mark"""
+        assert get_status_symbol("unknown") == ("❔", "dim")
+        assert get_status_symbol("no_such_status") == ("❔", "dim")
+
+    def test_child_at_rest_is_white_whether_reported_or_not(self):
+        assert get_status_symbol("done")[0] == "⚪"
+        assert get_status_symbol("waiting_oversight")[0] == "⚪"
 
 
 class TestGetPresenceColor:

@@ -19,7 +19,7 @@ from .context import ColumnContext, ColumnOutput
 
 
 def render_status_symbol(ctx: ColumnContext) -> ColumnOutput:
-    # Most status emojis are 2 cells wide; some (☑️) are 1 cell.
+    # Status emojis are 2 cells wide; an ASCII fallback may be narrower.
     # Pad narrow symbols with an extra space so columns stay aligned.
     symbol = ctx.status_symbol
     cell_width = sum(
