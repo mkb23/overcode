@@ -227,6 +227,34 @@ class TestAttentionFields:
         assert state.input_needed_since is None
 
 
+class TestAtRestIsRecorded:
+    """A child at rest is recorded as the rest colour, whatever detail was cached."""
+
+    def _record(self, tmp_path, status, cached):
+        from overcode.monitor_daemon import MonitorDaemon
+        from overcode.status_constants import STATUS_COLOR_REST
+
+        d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
+        state = SessionDaemonState(session_id="s1")
+        d.detector = MagicMock()
+        d.detector.get_status_detail.return_value = cached
+        d.recorder_store.record(SimpleNamespace(id="s1", name="a"), state, status,
+                                datetime.fromtimestamp(100.0), detector=d.detector)
+        return state, STATUS_COLOR_REST
+
+    @pytest.mark.parametrize("status", ["done", "waiting_oversight"])
+    def test_done_and_unreported_both_rest(self, tmp_path, status):
+        stale = SimpleNamespace(color=G_, badges=[], legacy_status="running")
+        state, rest = self._record(tmp_path, status, stale)
+        assert state.live_colour == rest
+        assert state.status_detail == {"color": rest, "badges": [], "legacy_status": status}
+        assert state.input_needed_since is None
+
+    def test_unknown_holds_the_record(self, tmp_path):
+        state, _ = self._record(tmp_path, "unknown", None)
+        assert state.live_colour is None and state.status_detail is None
+
+
 class TestSlowTick:
     def _daemon(self, tmp_path, duration, interval):
         from overcode.monitor_daemon import MonitorDaemon

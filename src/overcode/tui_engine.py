@@ -22,6 +22,7 @@ from .status_constants import (
     STATUS_ASLEEP,
     STATUS_DONE,
     STATUS_TERMINATED,
+    STATUS_UNKNOWN,
     StatusBadge,
     StatusDetail,
 )
@@ -29,9 +30,9 @@ from .burn import WindowBurnStats
 
 AgentView = Mapping[str, Any]
 
-# Lifecycle states hold the recorded colour where it was; their time in
-# state is the status's own.
-_LIFECYCLE = frozenset({STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE})
+# Lifecycle states (and not knowing) hold the recorded colour where it
+# was; their time in state is the status's own.
+_LIFECYCLE = frozenset({STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE, STATUS_UNKNOWN})
 
 # Session fields the engine keeps current (sessions.json carries the same
 # values, written by the same daemon, a little later).

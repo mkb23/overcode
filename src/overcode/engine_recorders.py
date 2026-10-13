@@ -16,7 +16,14 @@ from typing import Callable, Dict, Optional
 
 from .episodes import EpisodeRecorder, append_episode, status_detail_view
 from .monitor_daemon_state import SessionDaemonState
-from .status_constants import STATUS_ASLEEP, STATUS_DONE, STATUS_TERMINATED
+from .status_constants import (
+    AT_REST_STATUSES,
+    STATUS_ASLEEP,
+    STATUS_COLOR_REST,
+    STATUS_TERMINATED,
+    STATUS_UNKNOWN,
+    StatusDetail,
+)
 
 # Recorder state (engine_state.json) is written when it changes, and at
 # least this often while agents are observed: each recorder's last
@@ -58,9 +65,13 @@ class RecorderStore:
         except Exception:
             detail = None
         detail = augment_with_legacy_heartbeat(detail, effective_status)
+        if effective_status in AT_REST_STATUSES:
+            # A child at rest, reported or not. A done child is not
+            # detected at all, so whatever detail is cached is stale.
+            detail = StatusDetail(STATUS_COLOR_REST, [], effective_status)
         ts = now.timestamp()
-        # Lifecycle states hold the record where it was
-        colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE) \
+        # Lifecycle states (and not knowing) hold the record where it was
+        colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN) \
             else (detail.color if detail else None)
         recorder = self.recorders.get(session.id)
         if recorder is None:

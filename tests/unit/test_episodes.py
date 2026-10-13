@@ -13,6 +13,7 @@ from overcode.status_constants import (
     STATUS_COLOR_GREEN as G_,
     STATUS_COLOR_ORANGE as O_,
     STATUS_COLOR_RED as R_,
+    STATUS_COLOR_REST as W_,
     STATUS_COLOR_YELLOW as Y_,
 )
 
@@ -121,6 +122,22 @@ class TestEpisodes:
         rec = EpisodeRecorder(visited_at=50)
         _, _, bells, _ = run(ticks((G_, 0, 30), (R_, 30, 100)), rec)
         assert bells == []
+
+    def test_a_child_at_rest_never_rings(self):
+        rec, closed, bells, _ = run(ticks((G_, 0, 5), (W_, 5, 120)))
+        assert bells == []
+        assert [(e.colour, e.start, e.end) for e in closed] == [(G_, 0, 5.0)]
+        assert rec.episode.colour == W_ and rec.input_needed_since is None
+
+    def test_coming_to_rest_ends_a_red_stretch(self):
+        rec, _, bells, _ = run(ticks((G_, 0, 5), (R_, 5, 40), (W_, 40, 80)))
+        assert len(bells) == 1  # the red rang; the rest does not
+        assert rec.episode.colour == W_ and rec.input_needed_since is None
+
+    def test_an_open_rest_episode_survives_a_restart(self):
+        rec, *_ = run(ticks((W_, 0, 10)))
+        again = EpisodeRecorder.from_dict(rec.to_dict())
+        assert again.episode.colour == W_ and again.episode.start == 0
 
     def test_unvisited_stretches_each_ring(self):
         _, _, bells, _ = run(ticks((G_, 0, 5), (R_, 5, 40), (G_, 40, 70), (R_, 70, 100)))

@@ -46,6 +46,7 @@ from .status_constants import (
     STATUS_COLOR_GREEN,
     STATUS_COLOR_ORANGE,
     STATUS_COLOR_RED,
+    STATUS_COLOR_REST,
     STATUS_COLOR_YELLOW,
 )
 
@@ -54,8 +55,10 @@ from .status_constants import (
 EPISODE_MERGE_SECONDS = 20.0
 
 INPUT_NEEDED = frozenset({STATUS_COLOR_RED, STATUS_COLOR_ORANGE})
+# Rest (a child whose turn is over) is recorded like any colour but never
+# needs input: entering it ends a red stretch, and it never rings.
 COLOURS = frozenset({STATUS_COLOR_GREEN, STATUS_COLOR_YELLOW, STATUS_COLOR_ORANGE,
-                     STATUS_COLOR_RED})
+                     STATUS_COLOR_RED, STATUS_COLOR_REST})
 
 
 @dataclass(frozen=True)

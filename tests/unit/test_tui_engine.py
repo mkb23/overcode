@@ -70,8 +70,9 @@ class TestStatusDetail:
 
 
 class TestStatusChangedAt:
-    def test_lifecycle_states_count_from_status_since(self):
-        view = {"current_status": "asleep", "status_since": "2026-10-07T11:00:00",
+    @pytest.mark.parametrize("status", ["asleep", "unknown"])
+    def test_lifecycle_states_count_from_status_since(self, status):
+        view = {"current_status": status, "status_since": "2026-10-07T11:00:00",
                 "episode_start": 5.0, "live_colour": "red", "episode_colour": "red"}
         assert tui_engine.status_changed_at(view) == datetime(2026, 10, 7, 11, 0, 0)
 
