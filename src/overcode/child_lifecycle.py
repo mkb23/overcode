@@ -8,18 +8,34 @@ budget refunded to its parent (``SessionManager.reclaim_budget``, #432).
 These are the read side and the rule; the writer is the monitor daemon's
 tick (``MonitorDaemon._settle_children``). ``AgentLauncher.reconcile_lifecycle``
 applies the same rule once for a CLI command run while no daemon is.
+
+Either way the child is *at rest* (⚪): the light says it stopped, and
+``task_result`` says how it went (the Result column).
 """
 
 import json
-from typing import Optional
+from typing import Optional, Tuple
 
 from .paths import agent_file_name
 from .settings import get_session_dir
-from .status_constants import STATUS_WAITING_OVERSIGHT
+from .status_constants import (
+    AT_REST_STATUSES,
+    RESULT_FAILURE,
+    RESULT_SUCCESS,
+    RESULT_TIMEOUT,
+    RESULT_UNREPORTED,
+    STATUS_WAITING_APPROVAL,
+    STATUS_WAITING_OVERSIGHT,
+    is_green_status,
+)
 
 # Statuses a stopped child is settled from. "done" is final; anything else
 # (a killed or archived record) is not an agent the rule should touch.
 SETTLEABLE_STATUSES = frozenset({"running", "starting", "terminated", STATUS_WAITING_OVERSIGHT})
+
+# The report reason an expired oversight timeout files (the daemon and
+# follow mode both write it); the Result column shows it as a timeout.
+OVERSIGHT_TIMEOUT_REASON = "Oversight timeout expired"
 
 
 def hook_stopped(tmux_session: str, agent_name: str) -> bool:
@@ -70,3 +86,28 @@ def settled_child_status(session, stopped: Optional[bool] = None) -> Optional[st
     else:
         status = STATUS_WAITING_OVERSIGHT
     return status if status != session.status else None
+
+
+def task_result(session, status: Optional[str] = None) -> Tuple[Optional[str], str]:
+    """A child's task outcome for the Result column: (result kind, reason).
+
+    A filed report is ``success`` / ``failure`` (an expired oversight
+    timeout is ``timeout``); a child at rest without one is
+    ``unreported``. ``status`` is the one published this tick (a child
+    whose window has gone publishes terminated but is still at rest).
+    (None, "") for a top-level agent and for a child still at work.
+    """
+    if getattr(session, "parent_session_id", None) is None:
+        return None, ""
+    reported = getattr(session, "report_status", None)
+    reason = getattr(session, "report_reason", "") or ""
+    if reported == "failure" and reason == OVERSIGHT_TIMEOUT_REASON:
+        return RESULT_TIMEOUT, reason
+    if reported in (RESULT_SUCCESS, RESULT_FAILURE):
+        return reported, reason
+    # Settled at rest and not working again (its window may be gone, or
+    # the pane may say it waits)
+    at_rest = status in AT_REST_STATUSES or (
+        session.status in AT_REST_STATUSES
+        and not is_green_status(status or "") and status != STATUS_WAITING_APPROVAL)
+    return (RESULT_UNREPORTED, "") if at_rest else (None, "")

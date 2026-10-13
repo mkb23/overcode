@@ -353,6 +353,25 @@ class TestPollForReport:
 
         assert result == 2
 
+    def test_the_daemons_deadline_wins_over_a_fresh_one(self):
+        """A deadline the daemon already set is the one follow mode waits for."""
+        from datetime import datetime, timedelta
+
+        session = MagicMock(oversight_deadline=(datetime.now() - timedelta(seconds=1)).isoformat())
+        mock_sessions = MagicMock()
+        mock_sessions.get_session_by_name.return_value = session
+
+        with patch("overcode.follow_mode._check_report", return_value=None), \
+                patch("overcode.follow_mode._check_session_terminated", return_value=False), \
+                patch("overcode.follow_mode._capture_pane", return_value=None), \
+                patch("overcode.follow_mode.time.sleep"):
+            result = _poll_for_report("test", "agents", mock_sessions, 1,
+                                      "timeout", 3600.0, 0.1, deque())
+
+        assert result == 2
+        mock_sessions.update_session.assert_called_once_with(
+            session.id, report_status="failure", report_reason="Oversight timeout expired")
+
     def test_returns_1_on_terminated(self):
         mock_sessions = MagicMock()
         mock_sessions.get_session_by_name.return_value = MagicMock()

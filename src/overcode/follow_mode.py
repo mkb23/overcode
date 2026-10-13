@@ -16,7 +16,7 @@ from typing import Optional
 
 from .session_manager import Session, SessionManager, rename_notice
 from .status_patterns import strip_ansi
-from .child_lifecycle import hook_stopped, read_report
+from .child_lifecycle import OVERSIGHT_TIMEOUT_REASON, hook_stopped, read_report
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_WAITING_OVERSIGHT
 from .tmux_utils import tmux_window_target, _build_tmux_cmd
 
@@ -247,10 +247,12 @@ def follow_agent(
                     print(f"\n[follow] Agent '{name}' stopped without report (--on-stuck fail)", file=sys.stderr)
                     return 1
 
-                # Mark as waiting_oversight and set deadline
+                # Mark as waiting_oversight and set deadline (unless the
+                # monitor daemon already started the child's timeout)
                 session = _lookup(sessions, name, session_id)
                 if session:
-                    if oversight_policy == "timeout" and oversight_timeout_seconds > 0:
+                    if (oversight_policy == "timeout" and oversight_timeout_seconds > 0
+                            and not session.oversight_deadline):
                         deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
                         sessions.update_session(
                             session.id,
@@ -312,6 +314,15 @@ def _poll_for_report(
     deadline = None
     if oversight_policy == "timeout" and oversight_timeout_seconds > 0:
         deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
+        # The session's own deadline when one is set: the daemon enforces
+        # that one too, so both agree on when the child times out
+        session = _lookup(sessions, name, session_id)
+        set_deadline = getattr(session, "oversight_deadline", None)
+        if isinstance(set_deadline, str) and set_deadline:
+            try:
+                deadline = datetime.fromisoformat(set_deadline)
+            except ValueError:
+                pass
 
     while True:
         name, window_name = _current_identity(sessions, session_id, name, window_name)
@@ -327,7 +338,7 @@ def _poll_for_report(
                 sessions.update_session(
                     session.id,
                     report_status="failure",
-                    report_reason="Oversight timeout expired",
+                    report_reason=OVERSIGHT_TIMEOUT_REASON,
                 )
                 sessions.update_session_status(session.id, "done")
             print(f"\n[follow] Agent '{name}' timed out waiting for report", file=sys.stderr)

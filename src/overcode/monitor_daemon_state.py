@@ -166,6 +166,15 @@ class SessionDaemonState:
     oversight_policy: str = "wait"
     oversight_timeout_seconds: float = 0.0
     oversight_deadline: Optional[str] = None
+    # A child's task outcome, the Result column (child_lifecycle.task_result):
+    # "unreported" | "success" | "failure" | "timeout", None while it works
+    # or for a top-level agent; task_reason is the report's full reason
+    task_result: Optional[str] = None
+    task_reason: str = ""
+    # A parent's children by state, for the 👶 column: {"working",
+    # "unreported", "success", "failure"} counts (a timeout is a failure).
+    # None for an agent without children.
+    children_rollup: Optional[dict] = None
 
     # Skills (#252)
     available_skills: List[str] = field(default_factory=list)  # All skills in ~/.claude/skills

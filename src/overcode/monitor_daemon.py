@@ -57,14 +57,21 @@ from .settings import (
 )
 from .config import get_monitor_daemon_config
 from .status_constants import (
+    AT_REST_STATUSES,
+    RESULT_FAILURE,
+    RESULT_SUCCESS,
+    RESULT_TIMEOUT,
+    RESULT_UNREPORTED,
     STATUS_ASLEEP,
     STATUS_DONE,
     STATUS_HEARTBEAT_START,
     STATUS_RUNNING,
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
+    STATUS_UNKNOWN,
     STATUS_WAITING_HEARTBEAT,
     STATUS_WAITING_OVERSIGHT,
+    STATUS_WAITING_USER,
     is_green_status,
 )
 from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
@@ -76,6 +83,7 @@ from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
+from .child_lifecycle import OVERSIGHT_TIMEOUT_REASON, task_result
 from .engine_recorders import RecorderStore
 from .engine_wake import WakeLoop
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
@@ -134,6 +142,13 @@ STATE_FILE_LIVENESS_SECONDS = 10.0
 # count, terminated-session archive) was 120 s of wall clock at the 2 s
 # loop; it is a wall-clock cadence now so the unattended loop keeps it.
 HOUSEKEEPING_INTERVAL_SECONDS = 60 * DAEMON.interval_fast
+
+# Statuses that leave the fleet idle (all_waiting_user)
+_QUIET_STATUSES = AT_REST_STATUSES | {STATUS_WAITING_USER, STATUS_UNKNOWN}
+
+# A child in one of these is not working: its parent's turn may end at rest
+# (red) rather than waiting on it (yellow, the children badge)
+_CHILD_NOT_WORKING = AT_REST_STATUSES | {STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN}
 
 
 # Create PID helper functions using factory
@@ -373,6 +388,10 @@ class MonitorDaemon:
         self._capture_gate = PaneCaptureGate()
         self._pane_tracker = PaneChangeTracker()
         self._loop_clock = time.monotonic  # the keepalive's clock; tests freeze it
+        # Child agents still working, by parent id, from the last published
+        # tick (one tick behind is fine): the dispatcher's hook detectors
+        # read it, so a parent waits on its children (_count_children_working)
+        self._children_working: Dict[str, int] = {}
         if detector is None:
             detector = StatusDetectorDispatcher(
                 tmux_session,
@@ -380,7 +399,10 @@ class MonitorDaemon:
                 polling_detector=polling_detector,
                 mode=detection_mode,
                 capture_gate=self._capture_gate,
+                children_working=self._children_working,
             )
+        elif isinstance(getattr(detector, "children_working", None), dict):
+            self._children_working = detector.children_working
         self.detector = detector
 
         self._hostname = hostname
@@ -622,7 +644,7 @@ class MonitorDaemon:
         # Check if this session is waiting for heartbeat to auto-resume
         waiting_for_heartbeat = (
             status == STATUS_WAITING_HEARTBEAT
-            or (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP)
+            or (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN)
                 and session.heartbeat_enabled
                 and not session.heartbeat_paused
                 and bool(session.heartbeat_instruction))
@@ -630,6 +652,7 @@ class MonitorDaemon:
 
         last_hook_at = getattr(self.detector, "get_last_hook_at", None)
         last_hook_at = last_hook_at(session.name) if callable(last_hook_at) else None
+        result, reason = task_result(session, status)
         return SessionDaemonState(
             last_hook_at=last_hook_at if isinstance(last_hook_at, (int, float)) else None,
             session_id=session_id,
@@ -689,6 +712,8 @@ class MonitorDaemon:
             oversight_policy=getattr(session, 'oversight_policy', 'wait') or 'wait',
             oversight_timeout_seconds=getattr(session, 'oversight_timeout_seconds', 0.0) or 0.0,
             oversight_deadline=getattr(session, 'oversight_deadline', None),
+            task_result=result,
+            task_reason=reason,
             # Last user command (from history sync)
             last_command=self.stats_sync.last_commands.get(session_id),
             pr_number=session.pr_number,
@@ -941,7 +966,9 @@ class MonitorDaemon:
     def _enforce_oversight_timeouts(self, sessions: list) -> None:
         """Enforce oversight timeouts for waiting_oversight sessions."""
         now = datetime.now()
-        for session in sessions:
+        for snapshot in sessions:
+            # This tick may have staged a deadline, or cleared one
+            session = self._pending.view(snapshot)
             if not should_enforce_oversight_timeout(
                 session.status,
                 getattr(session, 'oversight_policy', 'wait'),
@@ -952,7 +979,7 @@ class MonitorDaemon:
             self._pending.update_session(
                 session.id,
                 report_status="failure",
-                report_reason="Oversight timeout expired",
+                report_reason=OVERSIGHT_TIMEOUT_REASON,
             )
             self._pending.update_session_status(session.id, "done")
             self.log.info(f"[{session.name}] Oversight timeout expired, marked done")
@@ -1405,22 +1432,48 @@ class MonitorDaemon:
         daemon is the one writer of this; the TUI and ``overcode list``
         only read it. Returns the ids of children that became done this
         tick, for ``_refund_done_children`` once the status is written.
+
+        A child that turns done has its report copied onto the session if
+        ``overcode report`` could not write it there, so the Result column
+        shows it. A stopped child waiting for oversight under the timeout
+        policy gets its deadline here, so the timeout applies whether or
+        not a parent follows it.
         """
-        from .child_lifecycle import settled_child_status
+        from .child_lifecycle import read_report, settled_child_status
 
         newly_done = []
         for snapshot in sessions:
             if snapshot.parent_session_id is None:
                 continue  # no file reads for a top-level agent
             session = self._pending.view(snapshot)
-            new_status = settled_child_status(session, stopped=self._hook_stopped(session))
-            if new_status is None:
-                continue
-            self._pending.update_session_status(session.id, new_status)
-            self.log.info(f"[{session.name}] stopped: {new_status}")
-            if new_status == "done":
-                newly_done.append(session.id)
+            stopped = self._hook_stopped(session)
+            new_status = settled_child_status(session, stopped=stopped)
+            if new_status is not None:
+                self._pending.update_session_status(session.id, new_status)
+                self.log.info(f"[{session.name}] stopped: {new_status}")
+                if new_status == "done":
+                    newly_done.append(session.id)
+                    if not session.report_status:
+                        report = read_report(session.tmux_session, session.name)
+                        if report and report.get("status") in ("success", "failure"):
+                            self._pending.update_session(
+                                session.id, report_status=report["status"],
+                                report_reason=report.get("reason") or "")
+            if (new_status or session.status) == STATUS_WAITING_OVERSIGHT and stopped:
+                self._stage_oversight_deadline(session)
         return newly_done
+
+    def _stage_oversight_deadline(self, session) -> None:
+        """Start a stopped child's oversight timeout, once (policy timeout only)."""
+        if (getattr(session, "oversight_policy", "wait") or "wait") != "timeout":
+            return
+        timeout = getattr(session, "oversight_timeout_seconds", 0.0) or 0.0
+        if timeout <= 0 or getattr(session, "oversight_deadline", None):
+            return
+        from datetime import timedelta
+        deadline = datetime.now() + timedelta(seconds=timeout)
+        self._pending.update_session(session.id, oversight_deadline=deadline.isoformat())
+        self.log.info(f"[{session.name}] oversight timeout in {timeout:.0f}s")
 
     def _refund_done_children(self, child_ids: list) -> None:
         """Refund the unused budget of children that just became done (#432).
@@ -1455,6 +1508,7 @@ class MonitorDaemon:
         if index is None:
             index = self._session_index()
         pending = self._pending
+        self._count_children_working(index)
         self._plan_captures(sessions, now)
         # session id -> (first failure, last error): see _detection_failed
         detect_failures = self._detect_failures
@@ -1536,7 +1590,7 @@ class MonitorDaemon:
                     self._heartbeat_start_pending.discard(session.id)
                 else:
                     effective_status = STATUS_RUNNING_HEARTBEAT
-            elif (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP)
+            elif (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN)
                   and session.heartbeat_enabled
                   and not session.heartbeat_paused
                   and session.heartbeat_instruction):
@@ -1556,6 +1610,14 @@ class MonitorDaemon:
             elif (session.status == "terminated"
                     and effective_status != STATUS_TERMINATED):
                 pending.update_session_status(session.id, "running")
+
+            # A child re-prompted while waiting for oversight is working
+            # again: its timeout must not expire under it (it gets a new
+            # one when it stops)
+            if (session.status == STATUS_WAITING_OVERSIGHT and session.oversight_deadline
+                    and is_green_status(effective_status)):
+                pending.update_session(session.id, oversight_deadline=None)
+                session = pending.view(snapshot)
 
             session_state = self.track_session_stats(session, effective_status, index)
             session_state.current_activity = activity
@@ -1596,12 +1658,14 @@ class MonitorDaemon:
                 )
                 self._last_keepalive[session.id] = now
 
-            # Track if any session is not waiting for user
-            if status != "waiting_user":
+            # Track if any session is not waiting for user (one at rest,
+            # or not known yet, is quiet too)
+            if status not in _QUIET_STATUSES:
                 all_waiting_user = False
 
-        # Compute subtree costs for parent agents
+        # Compute subtree costs and child rollups for parent agents
         self._compute_subtree_costs(session_states)
+        self._compute_child_rollups(session_states, index)
 
         return session_states, all_waiting_user
 
@@ -1640,8 +1704,9 @@ class MonitorDaemon:
         if previous is not None and elapsed_seconds(first, now) <= self._unobserved_gap_seconds():
             return previous
         unknown = dict(
-            current_status="unknown",
+            current_status=STATUS_UNKNOWN,
             current_activity=f"Status unknown: {message}"[:100],
+            status_since=first.isoformat(),
             live_colour=None, live_since=None, episode_colour=None, episode_start=None,
             status_detail=None,
         )
@@ -1790,6 +1855,49 @@ class MonitorDaemon:
         for s in session_states:
             if children_map.get(s.name):
                 s.subtree_cost_usd = _sum(s.name, set())
+
+    def _count_children_working(self, index: SessionIndex) -> None:
+        """Refill the children-working counts from the last published tick.
+
+        In place: the hook detectors hold this dict. A child counts while
+        its published status is not at rest, gone, asleep or unknown.
+        """
+        counts = self._children_working
+        counts.clear()
+        for state in self.state.sessions:
+            if state.current_status in _CHILD_NOT_WORKING:
+                continue
+            child = index.by_id.get(state.session_id)
+            parent_id = getattr(child, "parent_session_id", None)
+            if parent_id:
+                counts[parent_id] = counts.get(parent_id, 0) + 1
+
+    def _compute_child_rollups(self, session_states, index: SessionIndex) -> None:
+        """Each parent's children by state, for the 👶 column (children_rollup).
+
+        Counted from this tick's published children: working (not at rest,
+        gone, asleep or unknown), and their results (a timeout counts as a
+        failure). Parents whose children are in another tmux session count
+        only the ones this daemon publishes.
+        """
+        rollups: Dict[str, dict] = {}
+        for state in session_states:
+            child = index.by_id.get(state.session_id)
+            parent_id = getattr(child, "parent_session_id", None)
+            if not parent_id:
+                continue
+            counts = rollups.setdefault(
+                parent_id, {"working": 0, "unreported": 0, "success": 0, "failure": 0})
+            if state.current_status not in _CHILD_NOT_WORKING:
+                counts["working"] += 1
+            if state.task_result == RESULT_UNREPORTED:
+                counts["unreported"] += 1
+            elif state.task_result == RESULT_SUCCESS:
+                counts["success"] += 1
+            elif state.task_result in (RESULT_FAILURE, RESULT_TIMEOUT):
+                counts["failure"] += 1
+        for state in session_states:
+            state.children_rollup = rollups.get(state.session_id)
 
     def _cleanup_stale(self, sessions: list) -> None:
         """Remove stale tracking entries for deleted sessions."""
