@@ -54,6 +54,26 @@ class Fleet:
             self.tmux.new_window("agents", s.tmux_window)
         return self.sm.get_session(s.id)
 
+    def add_with_history(self, name="test-agent", **fields):
+        """An agent with a repo, a branch and an hour of recorded stats."""
+        stats = dict(green_time_seconds=3600.0, non_green_time_seconds=600.0,
+                     estimated_cost_usd=1.50, steers_count=2,
+                     state_since="2026-02-06T11:50:00")
+        stats.update(fields.pop("stats", {}))
+        fields = {"repo_name": "test-repo", "branch": "main", **fields}
+        return self.add(name, stats=stats, **fields)
+
+    def publish(self, **by_name):
+        """Publish a fresh monitor-daemon state: ``name={SessionDaemonState fields}``."""
+        from datetime import datetime
+        from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
+        from overcode.settings import get_monitor_daemon_state_path
+
+        sessions = [SessionDaemonState(session_id=self.get(name).id, name=name, **fields)
+                    for name, fields in by_name.items()]
+        MonitorDaemonState(pid=1, status="active", last_loop_time=datetime.now().isoformat(),
+                           sessions=sessions).save(get_monitor_daemon_state_path("agents"))
+
     def get(self, name):
         return self.sm.resolve_session_name(name)
 
@@ -194,20 +214,14 @@ from unittest.mock import patch, MagicMock  # noqa: E402
 
 
 class TestListCommandWithMocks:
-    """Test list command with mocked sessions"""
+    """Test list command with no agents."""
 
-    def test_list_outputs_no_sessions(self):
+    def test_list_outputs_no_sessions(self, fleet):
         """List outputs message when no sessions exist"""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = []
-            mock_launcher_class.return_value = mock_launcher
+        result = runner.invoke(app, ["list"])
 
-            result = runner.invoke(app, ["list"])
-
-            assert result.exit_code == 0
-            # Might say "No running agents" or be empty
-            assert "no" in result.output.lower() or result.output.strip() == ""
+        assert result.exit_code == 0
+        assert "No running agents" in result.output
 
 
 class TestSendCommandWithMocks:
@@ -255,38 +269,18 @@ class TestHistoryCommandWithMocks:
         assert result.exit_code == 0
 
 
+def _detector_seeing(status, activity, pane):
+    """Patch show's status detector (it reads the tmux server) to report this."""
+    detector = MagicMock()
+    detector.detect_status.return_value = (status, activity, pane)
+    return patch('overcode.status_detector_factory.create_status_detector', return_value=detector)
+
+
 class TestShowCommandWithMocks:
-    """Test show command with mocked output"""
+    """Show renders a real agent record; only tmux and the transcript are stubbed."""
 
-    def _make_mock_session(self, name="test-agent"):
-        """Create a mock Session object with all required fields."""
-        from overcode.session_manager import Session, SessionStats
-        return Session(
-            id="test-id",
-            name=name,
-            tmux_session="agents",
-            tmux_window=0,
-            command=["claude"],
-            start_directory="/tmp/test",
-            start_time="2026-02-06T10:00:00",
-            repo_name="test-repo",
-            branch="main",
-            status="running",
-            permissiveness_mode="normal",
-            standing_instructions="",
-            agent_value=1000,
-            stats=SessionStats(
-                green_time_seconds=3600.0,
-                non_green_time_seconds=600.0,
-                sleep_time_seconds=0.0,
-                estimated_cost_usd=1.50,
-                steers_count=2,
-                state_since="2026-02-06T11:50:00",
-            ),
-        )
-
-    def _make_mock_claude_stats(self):
-        """Create a mock AgentSessionStats."""
+    @staticmethod
+    def _claude_stats():
         from overcode.history_reader import AgentSessionStats
         return AgentSessionStats(
             interaction_count=5,
@@ -300,145 +294,88 @@ class TestShowCommandWithMocks:
             background_task_count=0,
         )
 
-    def test_show_session_output_no_stats(self):
+    def test_show_session_output_no_stats(self, fleet):
         """Show --no-stats outputs only pane content"""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = self._make_mock_session()
-            mock_launcher.get_session_output.return_value = None
-            mock_launcher_class.return_value = mock_launcher
+        fleet.add_with_history()
+        with _detector_seeing("running", "Working...", "line 1\nline 2\nline 3"):
+            result = runner.invoke(app, ["show", "test-agent", "--no-stats"])
 
-            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
-                mock_sd = MagicMock()
-                mock_sd.detect_status.return_value = ("running", "Working...", "line 1\nline 2\nline 3")
-                mock_factory.return_value = mock_sd
+        assert result.exit_code == 0
+        assert "line 1" in result.output
+        # Stats should NOT be present
+        assert "Tokens:" not in result.output
 
-                result = runner.invoke(app, ["show", "test-agent", "--no-stats"])
-
-                assert result.exit_code == 0
-                assert "line 1" in result.output
-                # Stats should NOT be present
-                assert "Tokens:" not in result.output
-
-    def test_show_displays_stats(self):
+    def test_show_displays_stats(self, fleet):
         """Show displays stats section by default"""
-        mock_session = self._make_mock_session()
-        mock_claude_stats = self._make_mock_claude_stats()
+        fleet.add_with_history(start_directory="/tmp/test")
+        pane = "Some output\n⏵⏵ bypass permissions on · 3 bashes · esc"
+        with _detector_seeing("running", "Working on tests", pane), \
+                patch('overcode.history_reader.get_session_stats', return_value=self._claude_stats()), \
+                patch('overcode.git_stats.get_git_diff_stats', return_value=(3, 120, 45)):
+            result = runner.invoke(app, ["show", "test-agent"])
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_launcher_class.return_value = mock_launcher
+        assert result.exit_code == 0
+        output = result.output
+        assert "=== test-agent ===" in output
+        assert "running" in output
+        assert "test-repo" in output
+        assert "main" in output
+        assert "active" in output
+        assert "stalled" in output
+        assert "60.0K" in output  # total tokens
+        assert "subagents" in output
+        assert "3 background bashes" in output
+        assert "Δ3 files" in output
 
-            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
-                mock_sd = MagicMock()
-                pane = "Some output\n⏵⏵ bypass permissions on · 3 bashes · esc"
-                mock_sd.detect_status.return_value = ("running", "Working on tests", pane)
-                mock_factory.return_value = mock_sd
-
-                with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
-                    with patch('overcode.git_stats.get_git_diff_stats', return_value=(3, 120, 45)):
-                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                            result = runner.invoke(app, ["show", "test-agent"])
-
-                            assert result.exit_code == 0
-                            output = result.output
-                            assert "=== test-agent ===" in output
-                            assert "running" in output
-                            assert "test-repo" in output
-                            assert "main" in output
-                            assert "active" in output
-                            assert "stalled" in output
-                            assert "60.0K" in output  # total tokens
-                            assert "subagents" in output
-                            assert "3 background bashes" in output
-                            assert "Δ3 files" in output
-
-    def test_show_agent_not_found(self):
+    def test_show_agent_not_found(self, fleet):
         """Show exits with error when agent not found"""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = None
-            mock_launcher_class.return_value = mock_launcher
+        result = runner.invoke(app, ["show", "nonexistent"])
+        assert result.exit_code == 1
 
-            result = runner.invoke(app, ["show", "nonexistent"])
-
-            assert result.exit_code == 1
-
-    def test_show_handles_no_claude_stats(self):
+    def test_show_handles_no_claude_stats(self, fleet):
         """Show handles missing claude stats gracefully"""
-        mock_session = self._make_mock_session()
+        fleet.add_with_history()
+        with _detector_seeing("running", "Working...", "output"):
+            result = runner.invoke(app, ["show", "test-agent"])
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_launcher_class.return_value = mock_launcher
+        assert result.exit_code == 0
+        # With no claude stats, Tokens/Work lines are omitted
+        assert "Tokens" not in result.output
+        assert "=== test-agent ===" in result.output
 
-            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
-                mock_sd = MagicMock()
-                mock_sd.detect_status.return_value = ("running", "Working...", "output")
-                mock_factory.return_value = mock_sd
-
-                with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                            result = runner.invoke(app, ["show", "test-agent"])
-
-                            assert result.exit_code == 0
-                            # With no claude stats, Tokens/Work lines are omitted
-                            assert "Tokens" not in result.output
-                            assert "=== test-agent ===" in result.output
-
-    def test_show_background_bash_count_with_ansi(self):
+    def test_show_background_bash_count_with_ansi(self, fleet):
         """Show correctly extracts background bash count from ANSI content"""
-        mock_session = self._make_mock_session()
-        mock_claude_stats = self._make_mock_claude_stats()
+        fleet.add_with_history()
+        # Simulate ANSI-coded status bar
+        pane = "Output\n\x1b[36m⏵⏵ auto-approve · 2 bashes · esc\x1b[0m"
+        with _detector_seeing("running", "Working", pane), \
+                patch('overcode.history_reader.get_session_stats', return_value=self._claude_stats()):
+            result = runner.invoke(app, ["show", "test-agent"])
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_launcher_class.return_value = mock_launcher
-
-            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
-                mock_sd = MagicMock()
-                # Simulate ANSI-coded status bar
-                pane = "Output\n\x1b[36m⏵⏵ auto-approve · 2 bashes · esc\x1b[0m"
-                mock_sd.detect_status.return_value = ("running", "Working", pane)
-                mock_factory.return_value = mock_sd
-
-                with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
-                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                            result = runner.invoke(app, ["show", "test-agent"])
-
-                            assert result.exit_code == 0
-                            assert "2 background bashes" in result.output
+        assert result.exit_code == 0
+        assert "2 background bashes" in result.output
 
 
 class TestKillCommandWithMocks:
-    """Test kill command with mocked sessions"""
+    """Kill over real agents (windows on MockTmux)."""
 
-    def test_kill_existing_session(self):
+    def test_kill_existing_session(self, fleet):
         """Kill existing session"""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.kill_session.return_value = True
-            mock_launcher_class.return_value = mock_launcher
+        agent = fleet.add("test-agent")
 
-            result = runner.invoke(app, ["kill", "test-agent"])
+        result = runner.invoke(app, ["kill", "test-agent"])
 
-            assert result.exit_code == 0
+        assert result.exit_code == 0
+        assert "Killed session 'test-agent'" in result.output
+        assert fleet.get("test-agent") is None
+        assert agent.tmux_window not in fleet.tmux.sessions["agents"]
 
-    def test_kill_nonexistent_session(self):
+    def test_kill_nonexistent_session(self, fleet):
         """Kill nonexistent session shows message"""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.kill_session.return_value = False
-            mock_launcher_class.return_value = mock_launcher
+        result = runner.invoke(app, ["kill", "nonexistent"])
 
-            result = runner.invoke(app, ["kill", "nonexistent"])
-
-            assert result.exit_code == 0
+        assert result.exit_code == 0
+        assert "not found" in result.output
 
 
 class TestLaunchCommandWithMocks:
@@ -501,31 +438,28 @@ class TestInstructCommandWithMocks:
 
 
 class TestCleanupCommandWithMocks:
-    """Test cleanup command with mocked dependencies."""
+    """Cleanup over real agents: a gone window is terminated, then removed."""
 
-    def test_cleanup_removes_terminated_sessions(self):
+    def test_cleanup_removes_terminated_sessions(self, fleet):
         """Should remove terminated sessions."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.cleanup_terminated_sessions.return_value = 3
-            mock_launcher_class.return_value = mock_launcher
+        for name in ("gone-1", "gone-2", "gone-3"):
+            fleet.add(name, window=False)
+        fleet.add("alive")
 
-            result = runner.invoke(app, ["cleanup"])
+        result = runner.invoke(app, ["cleanup"])
 
-            assert result.exit_code == 0
-            assert "Cleaned up 3" in result.output
+        assert result.exit_code == 0, result.output
+        assert "Cleaned up 3" in result.output
+        assert [s.name for s in fleet.sm.list_sessions()] == ["alive"]
 
-    def test_cleanup_no_terminated_sessions(self):
+    def test_cleanup_no_terminated_sessions(self, fleet):
         """Should show message when no terminated sessions."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
-            mock_launcher = MagicMock()
-            mock_launcher.cleanup_terminated_sessions.return_value = 0
-            mock_launcher_class.return_value = mock_launcher
+        fleet.add("alive")
 
-            result = runner.invoke(app, ["cleanup"])
+        result = runner.invoke(app, ["cleanup"])
 
-            assert result.exit_code == 0
-            assert "No sessions to clean up" in result.output
+        assert result.exit_code == 0
+        assert "No sessions to clean up" in result.output
 
 
 class TestSetValueCommand:
@@ -556,54 +490,6 @@ class TestExportCommand:
 # =============================================================================
 # Expanded coverage tests
 # =============================================================================
-
-
-def _make_session(name="test-agent", **kwargs):
-    """Helper to create a Session object with sensible defaults."""
-    from overcode.session_manager import Session, SessionStats
-    defaults = dict(
-        id="test-id",
-        name=name,
-        tmux_session="agents",
-        tmux_window=0,
-        command=["claude"],
-        start_directory="/tmp/test",
-        start_time="2026-02-06T10:00:00",
-        repo_name="test-repo",
-        branch="main",
-        status="running",
-        permissiveness_mode="normal",
-        standing_instructions="",
-        agent_value=1000,
-        stats=SessionStats(
-            green_time_seconds=3600.0,
-            non_green_time_seconds=600.0,
-            sleep_time_seconds=0.0,
-            estimated_cost_usd=1.50,
-            steers_count=2,
-            state_since="2026-02-06T11:50:00",
-        ),
-    )
-    defaults.update(kwargs)
-    return Session(**defaults)
-
-
-def _make_claude_stats(**kwargs):
-    """Helper to create a AgentSessionStats."""
-    from overcode.history_reader import AgentSessionStats
-    defaults = dict(
-        interaction_count=5,
-        input_tokens=50000,
-        output_tokens=10000,
-        cache_creation_tokens=1000,
-        cache_read_tokens=2000,
-        work_times=[120.0, 180.0, 90.0],
-        current_context_tokens=90000,
-        subagent_count=2,
-        background_task_count=0,
-    )
-    defaults.update(kwargs)
-    return AgentSessionStats(**defaults)
 
 
 class TestParseDuration:
@@ -1205,108 +1091,62 @@ class TestSendExtended:
 class TestShowExtended:
     """Extended show command tests."""
 
-    def test_show_stats_only(self):
+    def test_show_stats_only(self, fleet):
         """Show with --stats-only omits pane output."""
-        mock_session = _make_session()
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_cls.return_value = mock_launcher
+        fleet.add_with_history()
+        with _detector_seeing("running", "Working", "pane output here"):
+            result = runner.invoke(app, ["show", "test-agent", "--stats-only"])
+        assert result.exit_code == 0
+        assert "=== test-agent ===" in result.output
+        # Should not have the pane output section
+        assert "last 50 lines" not in result.output
+        assert "pane output here" not in result.output
 
-            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
-                mock_sd = MagicMock()
-                mock_sd.detect_status.return_value = ("running", "Working", "pane output here")
-                mock_factory.return_value = mock_sd
-
-                with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                            result = runner.invoke(app, ["show", "test-agent", "--stats-only"])
-                            assert result.exit_code == 0
-                            assert "=== test-agent ===" in result.output
-                            # Should not have the pane output section
-                            assert "last 50 lines" not in result.output
-
-    def test_show_terminated_session(self):
+    def test_show_terminated_session(self, fleet):
         """Show handles terminated session."""
-        mock_session = _make_session(status="terminated")
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_launcher.get_session_output.return_value = None
-            mock_cls.return_value = mock_launcher
+        from overcode.launcher import AgentLauncher
+        fleet.add_with_history(status="terminated", window=False)
+        with patch.object(AgentLauncher, "get_session_output", return_value=None):
+            result = runner.invoke(app, ["show", "test-agent"])
+        assert result.exit_code == 0
+        assert "terminated" in result.output
+        assert "No pane output available" in result.output
 
-            with patch('overcode.history_reader.get_session_stats', return_value=None):
-                with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                    with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                        result = runner.invoke(app, ["show", "test-agent"])
-                        assert result.exit_code == 0
-                        assert "terminated" in result.output
-
-    def test_show_with_daemon_state(self):
+    def test_show_with_daemon_state(self, fleet):
         """Show uses daemon state when available."""
-        mock_session = _make_session()
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_cls.return_value = mock_launcher
+        fleet.add_with_history()
+        fleet.publish(**{"test-agent": dict(
+            current_status="running", current_activity="Coding tests",
+            activity_summary="Writing unit tests", activity_summary_context="Test context")})
 
-            mock_daemon_state = MagicMock()
-            mock_daemon_state.is_stale.return_value = False
-            mock_daemon_session = MagicMock()
-            mock_daemon_session.current_status = "running"
-            mock_daemon_session.current_activity = "Coding tests"
-            mock_daemon_session.activity_summary = "Writing unit tests"
-            mock_daemon_session.activity_summary_context = "Test context"
-            mock_daemon_state.get_session_by_name.return_value = mock_daemon_session
+        with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_dispatcher:
+            mock_dispatcher.return_value.get_pane_content.return_value = "pane content"
+            result = runner.invoke(app, ["show", "test-agent"])
+        assert result.exit_code == 0
+        assert "Coding tests" in result.output
+        assert "Writing unit tests" in result.output
+        assert "Test context" in result.output
+        assert "pane content" in result.output
 
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=mock_daemon_state):
-                with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_dispatcher:
-                    mock_d = MagicMock()
-                    mock_d.get_pane_content.return_value = "pane content"
-                    mock_dispatcher.return_value = mock_d
-
-                    with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                            result = runner.invoke(app, ["show", "test-agent"])
-                            assert result.exit_code == 0
-                            assert "Coding tests" in result.output
-
-    def test_show_asleep_session(self):
+    def test_show_asleep_session(self, fleet):
         """Show handles asleep session."""
-        mock_session = _make_session(is_asleep=True)
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_cls.return_value = mock_launcher
+        fleet.add_with_history(is_asleep=True)
+        with _detector_seeing("running", "Working", "output"):
+            result = runner.invoke(app, ["show", "test-agent"])
+        assert result.exit_code == 0
+        assert "asleep" in result.output
 
-            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
-                mock_sd = MagicMock()
-                mock_sd.detect_status.return_value = ("running", "Working", "output")
-                mock_factory.return_value = mock_sd
-
-                with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                            result = runner.invoke(app, ["show", "test-agent"])
-                            assert result.exit_code == 0
-                            assert "asleep" in result.output
-
-    def test_show_pane_fallback_for_terminated(self):
+    def test_show_pane_fallback_for_terminated(self, fleet):
         """Show uses launcher.get_session_output for terminated sessions."""
-        mock_session = _make_session(status="terminated")
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.sessions.resolve_session_name.return_value = mock_session
-            mock_launcher.get_session_output.return_value = "fallback output here"
-            mock_cls.return_value = mock_launcher
-
-            with patch('overcode.history_reader.get_session_stats', return_value=None):
-                with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                    with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                        result = runner.invoke(app, ["show", "test-agent"])
-                        assert result.exit_code == 0
-                        assert "fallback output here" in result.output
+        from overcode.launcher import AgentLauncher
+        fleet.add_with_history(status="terminated", window=False)
+        # get_session_output captures from the tmux server directly, not the double
+        with patch.object(AgentLauncher, "get_session_output",
+                          return_value="fallback output here") as output:
+            result = runner.invoke(app, ["show", "test-agent"])
+        assert result.exit_code == 0
+        assert "fallback output here" in result.output
+        output.assert_called_once_with("test-agent", lines=50)
 
 
 class TestHooksInstallCommand:
@@ -2428,295 +2268,177 @@ class TestAttachExtended:
             mock_launcher.attach.assert_called_once_with(name="my-agent", bare=True)
 
 
+def _dispatcher_seeing(status, activity="Working", pane="pane"):
+    """Patch list's fallback status detection (it reads the tmux server).
+
+    ``status`` is one status for every agent, or a callable of the session.
+    """
+    dispatcher = MagicMock()
+    if callable(status):
+        dispatcher.detect_status.side_effect = lambda s, **kw: status(s)
+    else:
+        dispatcher.detect_status.return_value = (status, activity, pane)
+    return patch('overcode.status_detector_factory.StatusDetectorDispatcher',
+                 return_value=dispatcher)
+
+
 class TestListExtended:
-    """Extended list command tests with full execution."""
+    """List over real agents: lifecycle, tree order and columns run for real."""
 
-    def test_list_with_sessions(self):
+    def test_list_with_sessions(self, fleet):
         """List shows sessions with status columns."""
-        mock_session = _make_session()
+        fleet.add_with_history()
+        with _dispatcher_seeing("running", "Working on code"):
+            result = runner.invoke(app, ["list"], env={"COLUMNS": "400"})
+        assert result.exit_code == 0, result.output
+        assert "test-agent" in result.output
+        assert "Working on code" in result.output
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [mock_session]
-            mock_cls.return_value = mock_launcher
-
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_disp_cls:
-                    mock_disp = MagicMock()
-                    mock_disp.detect_status.return_value = ("running", "Working on code", "pane")
-                    mock_disp_cls.return_value = mock_disp
-
-                    with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                            with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
-                                with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
-                                    mock_tree.return_value = {
-                                        "test-id": MagicMock(depth=0, child_count=0)
-                                    }
-                                    result = runner.invoke(app, ["list"])
-                                    assert result.exit_code == 0
-                                    # Should have output (some columns rendered)
-                                    assert len(result.output.strip()) > 0
-
-    def test_list_terminated_shows_cleanup_hint(self):
+    def test_list_terminated_shows_cleanup_hint(self, fleet):
         """List shows cleanup hint when terminated sessions exist."""
-        mock_session = _make_session(status="terminated")
+        fleet.add_with_history(status="terminated", window=False)
+        with _dispatcher_seeing("running"):
+            result = runner.invoke(app, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "cleanup" in result.output
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [mock_session]
-            mock_cls.return_value = mock_launcher
+    def test_a_gone_window_is_found_terminated_with_no_daemon(self, fleet):
+        """With no daemon running, list settles the lifecycle itself."""
+        fleet.add_with_history(window=False)
+        with _dispatcher_seeing("running"):
+            result = runner.invoke(app, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "Detected 1 terminated session(s): test-agent" in result.output
+        assert fleet.get("test-agent").status == "terminated"
 
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_disp_cls:
-                    mock_disp = MagicMock()
-                    mock_disp.detect_status.return_value = ("terminated", "gone", "")
-                    mock_disp_cls.return_value = mock_disp
-
-                    with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                            with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
-                                with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
-                                    mock_tree.return_value = {
-                                        "test-id": MagicMock(depth=0, child_count=0)
-                                    }
-                                    result = runner.invoke(app, ["list"])
-                                    assert result.exit_code == 0
-                                    assert "cleanup" in result.output
-
-    def test_list_filter_by_name_not_found(self):
+    def test_list_filter_by_name_not_found(self, fleet):
         """List with name filter errors when agent not found."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [_make_session()]
-            mock_launcher.sessions.resolve_session_name.return_value = None
-            mock_cls.return_value = mock_launcher
+        fleet.add_with_history()
+        result = runner.invoke(app, ["list", "missing"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                result = runner.invoke(app, ["list", "missing"])
-                assert result.exit_code == 1
-                assert "not found" in result.output
-
-    def test_list_filter_by_name(self):
+    def test_list_filter_by_name(self, fleet):
         """List with name filter shows only matching tree."""
-        root = _make_session(name="root")
-        child = _make_session(name="child", id="child-id", parent_session_id="test-id")
+        root = fleet.add_with_history("root")
+        fleet.add_with_history("child", parent_session_id=root.id)
+        fleet.add_with_history("stranger")
+        with _dispatcher_seeing("running"):
+            result = runner.invoke(app, ["list", "root"])
+        assert result.exit_code == 0, result.output
+        assert "root" in result.output and "child" in result.output
+        assert "stranger" not in result.output
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [root, child]
-            mock_launcher.sessions.resolve_session_name.return_value = root
-            mock_launcher.sessions.get_descendants.return_value = [child]
-            mock_cls.return_value = mock_launcher
+    def test_list_with_daemon_state(self, fleet):
+        """List uses daemon state when available (no detection at all)."""
+        fleet.add_with_history()
+        fleet.publish(**{"test-agent": dict(current_status="running",
+                                            current_activity="Coding")})
+        with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as detector:
+            result = runner.invoke(app, ["list"], env={"COLUMNS": "400"})
+        assert result.exit_code == 0, result.output
+        assert "Coding" in result.output
+        detector.assert_not_called()
 
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_disp_cls:
-                    mock_disp = MagicMock()
-                    mock_disp.detect_status.return_value = ("running", "Working", "pane")
-                    mock_disp_cls.return_value = mock_disp
-
-                    with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                            with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[root, child]):
-                                with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
-                                    mock_tree.return_value = {
-                                        "test-id": MagicMock(depth=0, child_count=1),
-                                        "child-id": MagicMock(depth=1, child_count=0),
-                                    }
-                                    result = runner.invoke(app, ["list", "root"])
-                                    assert result.exit_code == 0
-
-    def test_list_with_daemon_state(self):
-        """List uses daemon state when available."""
-        mock_session = _make_session()
-
-        mock_daemon_state = MagicMock()
-        mock_daemon_state.is_stale.return_value = False
-        mock_daemon_state.untracked_window_count = 0
-        mock_ds = MagicMock()
-        mock_ds.current_status = "running"
-        mock_ds.current_activity = "Coding"
-        mock_daemon_state.get_session_by_name.return_value = mock_ds
-
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [mock_session]
-            mock_cls.return_value = mock_launcher
-
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=mock_daemon_state):
-                with patch('overcode.history_reader.get_session_stats', return_value=None):
-                    with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                        with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
-                            with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
-                                mock_tree.return_value = {
-                                    "test-id": MagicMock(depth=0, child_count=0)
-                                }
-                                result = runner.invoke(app, ["list"])
-                                assert result.exit_code == 0
-
-    def test_list_show_done(self):
+    def test_list_show_done(self, fleet):
         """List with --show-done includes done agents."""
-        done_session = _make_session(name="done-agent", status="done")
-        running_session = _make_session(name="running-agent")
+        fleet.add_with_history("running-agent")
+        fleet.add_with_history("done-agent", status="done")
+        with _dispatcher_seeing("running"):
+            result = runner.invoke(app, ["list", "--show-done"])
+        assert result.exit_code == 0, result.output
+        assert "done-agent" in result.output
+        assert "running-agent" in result.output
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [running_session, done_session]
-            mock_cls.return_value = mock_launcher
-
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_disp_cls:
-                    mock_disp = MagicMock()
-                    mock_disp.detect_status.return_value = ("running", "Working", "pane")
-                    mock_disp_cls.return_value = mock_disp
-
-                    with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                            with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[running_session, done_session]):
-                                with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
-                                    mock_tree.return_value = {
-                                        "test-id": MagicMock(depth=0, child_count=0),
-                                    }
-                                    result = runner.invoke(app, ["list", "--show-done"])
-                                    assert result.exit_code == 0
-
-    def test_list_shows_a_childs_result_and_its_full_reason(self):
+    def test_list_shows_a_childs_result_and_its_full_reason(self, fleet):
         """The Result column, and the whole reason after the activity."""
-        parent = _make_session(name="parent", id="parent-id")
-        child = _make_session(name="child", id="child-id", parent_session_id="parent-id",
-                              status="waiting_oversight", report_status="failure",
-                              report_reason="three integration tests still fail on main")
+        parent = fleet.add_with_history("parent")
+        fleet.add_with_history(
+            "child", parent_session_id=parent.id, status="waiting_oversight",
+            report_status="failure", report_reason="three integration tests still fail on main")
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [parent, child]
-            mock_cls.return_value = mock_launcher
+        def detect(s):
+            if s.name == "child":
+                return ("waiting_oversight", "At rest: no report yet", "pane")
+            return ("running", "Working", "pane")
 
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None), \
-                    patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_disp_cls, \
-                    patch('overcode.history_reader.get_session_stats', return_value=None), \
-                    patch('overcode.git_stats.get_git_diff_stats', return_value=None), \
-                    patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[parent, child]), \
-                    patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
-                mock_disp = MagicMock()
-                mock_disp.detect_status.side_effect = lambda s, **kw: (
-                    ("waiting_oversight", "At rest: no report yet", "pane") if s.name == "child"
-                    else ("running", "Working", "pane"))
-                mock_disp_cls.return_value = mock_disp
-                mock_tree.return_value = {
-                    "parent-id": MagicMock(depth=0, child_count=1),
-                    "child-id": MagicMock(depth=1, child_count=0),
-                }
-                result = runner.invoke(app, ["list", "--full"], env={"COLUMNS": "400"})
+        with _dispatcher_seeing(detect):
+            result = runner.invoke(app, ["list", "--full"], env={"COLUMNS": "400"})
 
         assert result.exit_code == 0, result.output
         assert "❌ three integrati…" in result.output  # the column, cut
         assert "❌ three integration tests still fail on main" in result.output  # in full
         assert "1❌" in result.output  # the parent's rollup
 
-    def test_list_filters_done_by_default(self):
+    def test_list_filters_done_by_default(self, fleet):
         """List without --show-done excludes done agents."""
-        done_session = _make_session(name="done-only", status="done", id="done-id")
+        fleet.add_with_history("done-only", status="done")
+        result = runner.invoke(app, ["list"])
+        assert result.exit_code == 0
+        assert "No running agents" in result.output
 
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [done_session]
-            mock_cls.return_value = mock_launcher
-
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                result = runner.invoke(app, ["list"])
-                assert result.exit_code == 0
-                assert "No running agents" in result.output
-
-    def test_list_asleep_agent(self):
+    def test_list_asleep_agent(self, fleet):
         """List handles asleep agent status."""
-        mock_session = _make_session(is_asleep=True)
-
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.list_sessions.return_value = [mock_session]
-            mock_cls.return_value = mock_launcher
-
-            with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
-                with patch('overcode.status_detector_factory.StatusDetectorDispatcher') as mock_disp_cls:
-                    mock_disp = MagicMock()
-                    mock_disp.detect_status.return_value = ("running", "Working", "")
-                    mock_disp_cls.return_value = mock_disp
-
-                    with patch('overcode.history_reader.get_session_stats', return_value=None):
-                        with patch('overcode.git_stats.get_git_diff_stats', return_value=None):
-                            with patch('overcode.tui_logic.sort_sessions_by_tree', return_value=[mock_session]):
-                                with patch('overcode.tui_logic.compute_tree_metadata') as mock_tree:
-                                    mock_tree.return_value = {
-                                        "test-id": MagicMock(depth=0, child_count=0)
-                                    }
-                                    result = runner.invoke(app, ["list"])
-                                    assert result.exit_code == 0
+        from overcode.tui_helpers import get_status_symbol
+        fleet.add_with_history(is_asleep=True)
+        with _dispatcher_seeing("running", "Working", ""):
+            result = runner.invoke(app, ["list"])
+        assert result.exit_code == 0, result.output
+        assert get_status_symbol("asleep")[0] in result.output
 
 
 class TestKillExtended:
     """Extended kill command tests."""
 
-    def test_kill_with_no_cascade(self):
-        """Kill with --no-cascade passes cascade=False."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_cls.return_value = mock_launcher
+    @staticmethod
+    def _family(fleet):
+        parent = fleet.add("my-agent")
+        fleet.add("kid", parent_session_id=parent.id)
 
-            result = runner.invoke(app, ["kill", "my-agent", "--no-cascade"])
-            assert result.exit_code == 0
-            mock_launcher.kill_session.assert_called_once_with("my-agent", cascade=False)
+    def test_kill_with_no_cascade(self, fleet):
+        """Kill with --no-cascade leaves the children running."""
+        self._family(fleet)
+        result = runner.invoke(app, ["kill", "my-agent", "--no-cascade"])
+        assert result.exit_code == 0
+        assert fleet.get("my-agent") is None
+        assert fleet.get("kid") is not None
 
-    def test_kill_default_cascades(self):
-        """Kill without --no-cascade passes cascade=True."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_cls.return_value = mock_launcher
-
-            result = runner.invoke(app, ["kill", "my-agent"])
-            assert result.exit_code == 0
-            mock_launcher.kill_session.assert_called_once_with("my-agent", cascade=True)
+    def test_kill_default_cascades(self, fleet):
+        """Kill without --no-cascade kills the children too."""
+        self._family(fleet)
+        result = runner.invoke(app, ["kill", "my-agent"])
+        assert result.exit_code == 0
+        assert fleet.sm.list_sessions() == []
 
 
 class TestCleanupUntracked:
     """Test cleanup --untracked flag (#344)."""
 
-    def test_cleanup_untracked_calls_kill_untracked(self):
-        """Cleanup with --untracked calls kill_untracked_windows()."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.cleanup_terminated_sessions.return_value = 0
-            mock_launcher.list_sessions.return_value = []
-            mock_cls.return_value = mock_launcher
+    def test_cleanup_untracked_kills_untracked_windows(self, fleet):
+        """Cleanup with --untracked kills windows no agent owns."""
+        agent = fleet.add("tracked")
+        fleet.tmux.new_window("agents", "stray")
 
-            result = runner.invoke(app, ["cleanup", "--untracked"])
-            assert result.exit_code == 0
-            mock_launcher.kill_untracked_windows.assert_called_once_with()
+        result = runner.invoke(app, ["cleanup", "--untracked"])
+        assert result.exit_code == 0, result.output
+        assert "Killing untracked window stray" in result.output
+        assert "stray" not in fleet.tmux.sessions["agents"]
+        assert agent.tmux_window in fleet.tmux.sessions["agents"]
 
-    def test_cleanup_untracked_with_terminated(self):
+    def test_cleanup_untracked_with_terminated(self, fleet):
         """Cleanup with --untracked also cleans terminated sessions."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.cleanup_terminated_sessions.return_value = 2
-            mock_launcher.list_sessions.return_value = []
-            mock_cls.return_value = mock_launcher
+        fleet.add("gone-1", window=False)
+        fleet.add("gone-2", window=False)
 
-            result = runner.invoke(app, ["cleanup", "--untracked"])
-            assert result.exit_code == 0
-            assert "2 terminated" in result.output
-            mock_launcher.kill_untracked_windows.assert_called_once_with()
+        result = runner.invoke(app, ["cleanup", "--untracked"])
+        assert result.exit_code == 0, result.output
+        assert "2 terminated" in result.output
 
-    def test_cleanup_untracked_no_message_when_nothing_terminated(self):
+    def test_cleanup_untracked_no_message_when_nothing_terminated(self, fleet):
         """Cleanup with --untracked doesn't show 'no sessions' message."""
-        with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
-            mock_launcher = MagicMock()
-            mock_launcher.cleanup_terminated_sessions.return_value = 0
-            mock_launcher.list_sessions.return_value = []
-            mock_cls.return_value = mock_launcher
-
-            result = runner.invoke(app, ["cleanup", "--untracked"])
-            assert result.exit_code == 0
-            assert "No sessions to clean up" not in result.output
+        result = runner.invoke(app, ["cleanup", "--untracked"])
+        assert result.exit_code == 0
+        assert "No sessions to clean up" not in result.output
 
 
 # =============================================================================
