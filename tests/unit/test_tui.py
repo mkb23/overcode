@@ -759,9 +759,11 @@ class TestHelpOverlayRender:
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
         plain = widget.render_text(120).plain
-        assert "Running" in plain
-        assert "Waiting (user)" in plain
+        assert "Working" in plain
+        assert "Needs input" in plain
+        assert "At rest" in plain
         assert "AGENT STATUSES" in plain
+        assert "RESULT (CHILD AGENTS)" in plain
         assert "TIMELINE LEGEND" in plain
 
 

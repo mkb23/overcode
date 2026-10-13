@@ -180,7 +180,7 @@ overcode report --status success --reason "All tests pass"
 overcode report --status failure --reason "Build failed"
 ```
 
-Without a report, the child enters `waiting_oversight` status (👁️) when it stops. The parent's follow mode blocks until a report arrives or the oversight policy triggers.
+Without a report, the child enters `waiting_oversight` status when it stops: at rest (⚪), with 📭 in the Result column. The parent's follow mode blocks until a report arrives or the oversight policy triggers.
 
 **Always include `overcode report` at the end of your `--prompt`.** This is the most common mistake when setting up delegation.
 
@@ -199,7 +199,7 @@ overcode launch -n child --follow --on-stuck fail -p "..."
 overcode launch -n child --follow --oversight-timeout 5m -p "..."
 ```
 
-The TUI shows a countdown timer (⏳) for agents with a timeout policy.
+The TUI shows a countdown timer (⏳) for agents with a timeout policy. The monitor daemon starts the timeout when the child stops, so it applies whether or not a parent follows it; a child prompted again before it expires loses its deadline and gets a fresh one when it next stops. An expired timeout shows ⌛ in the Result column.
 
 ### Budget Transfer
 
@@ -230,17 +230,17 @@ Press `S` to cycle to "Tree" sort mode. Agents display in a hierarchy with tree 
 parent-agent    🟢  2.5h  ...
 ├─child-1       🟢  1.2h  ...
 │ └─grandchild  🟠  0.5h  ...
-└─child-2       ✓   0.8h  ...
+└─child-2       ⚪   0.8h  ✅ all tests pass ...
 ```
 
 - **`X`** — Collapse/expand children of the focused agent
 - **`D`** — Show/hide "done" child agents (hidden by default)
 
-The child count column (👶) shows how many direct children each agent has.
+The child count column (👶) shows how many direct children each agent has, then how they stand: `👶 5 2▶ 1📭 1✅ 1❌` (▶ still working, 📭 stopped without a report, ✅ success, ❌ failure or timeout; zero counts are left out). A parent whose turn ended while its children still work shows 🟡 ("Waiting on N children"), not 🔴.
 
 ### Done Agents
 
-When a child reports success or failure via `overcode report`, it enters the "done" state:
+When a child reports success or failure via `overcode report`, it enters the "done" state, at rest (⚪) with ✅ or ❌ and the reason in the Result column (hover it, or see `overcode list`, for the full reason):
 - Hidden from default list and TUI views
 - Press `D` in TUI or use `--show-done` in CLI to reveal them
 - Auto-archived by the monitor daemon after 1 hour
@@ -248,10 +248,10 @@ When a child reports success or failure via `overcode report`, it enters the "do
 
 ### Waiting for Oversight
 
-If a child stops without calling `overcode report`, it enters `waiting_oversight` (👁️):
-- Visible in the TUI with a yellow indicator
+If a child stops without calling `overcode report`, it enters `waiting_oversight`:
+- Visible in the TUI at rest (⚪), with 📭 in the Result column; it never rings the bell
 - Parent's follow mode remains blocked, waiting for a report
-- With `--oversight-timeout`, a countdown timer appears in the TUI
+- With `--oversight-timeout`, a countdown timer appears in the TUI (the daemon enforces it, with or without `--follow`)
 - Resolve by attaching to the child's tmux window and running `overcode report` manually, or let the timeout expire
 
 ### Filtered List

@@ -141,17 +141,42 @@ Press `i` or `:` to open the command bar for sending instructions to the selecte
 
 ## Status Indicators
 
-Agents display colored status indicators:
+The traffic light answers one question: what is the agent doing, and does it
+need you?
 
-| Color | Status | Meaning |
-|-------|--------|---------|
-| Green | Running | Claude is actively working |
-| Yellow | No Orders | Waiting for standing orders |
-| Orange | Wait Supervisor | Waiting for supervisor approval |
-| Red | Wait User | Waiting for human input |
-| Grey | Asleep | Agent is paused (sleep mode) |
-| Black | Terminated | Tmux window no longer exists |
-| Green ✓ | Done | Child agent completed its task |
+| Light | Name | Meaning |
+|-------|------|---------|
+| 🟢 | Working | Generating or running a tool |
+| 🟡 | Waiting on something automatic | Background work, a wakeup or child agents will resume it |
+| 🟠 | Needs approval | A permission prompt or a plan to approve |
+| 🔴 | Needs input | Its turn is over and it waits for you |
+| ⚪ | At rest | A child agent that stopped, reported or not |
+| ❔ | Unknown | Starting up, or its status cannot be read |
+| ⚫ | Gone | The agent exited or its window is gone |
+
+Shades of those: 💚 working (a heartbeat started this turn), 💛 waiting on a
+heartbeat that will re-prompt it, 🟣 an API or hook error needs attention,
+💤 asleep (paused by you, left out of stats).
+
+A parent whose own turn ended while any of its children still work reads 🟡,
+with 👶 in the status detail ("Waiting on 2 children"). Once every child is at
+rest, the usual rules apply: 🔴 if it waits for you.
+
+### Result column
+
+How a child's task went is the Result column (RES), not the light:
+
+| Result | Meaning |
+|--------|---------|
+| 📭 | Stopped without a report |
+| ✅ | Reported success (with its reason) |
+| ❌ | Reported failure (with its reason) |
+| ⌛ | Oversight timeout expired |
+
+The cell is blank until a child has a result, and the reason is cut to fit;
+hover it for the full reason (`overcode list` prints it in full after the
+activity). The 👶 column rolls a parent's children up the same way, e.g.
+`👶 5 2▶ 1📭 1✅ 1❌` (only non-zero counts: ▶ still working).
 
 ### Bell Indicator
 

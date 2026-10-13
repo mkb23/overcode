@@ -448,7 +448,7 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
 
     # ---- GREEN (acting) ----
     "generating":      ("⚡", STATUS_COLOR_GREEN,  ">>"),  # token generation, no tool
-    # Note: emoji-default codepoints only. Text-default ones (⚙, 🛡, 👁, ⚠)
+    # Note: emoji-default codepoints only. Text-default ones (⚙, 🛡, ⚠)
     # render with ambiguous width on Windows Terminal / KDE Konsole — they
     # look like 1-cell monochrome glyphs there while Rich budgets 2 cells,
     # cascading into column overlap. Pick swaps with Emoji_Presentation=Yes.

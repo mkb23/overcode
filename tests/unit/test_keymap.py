@@ -412,7 +412,7 @@ class TestHelpLayout:
         from overcode.tui_widgets.help_overlay import build_help
         text = build_help(160, _km()).plain
         for s in ("AGENT STATUSES", "SPECIAL INDICATORS", "SKILL EMOJI", "TOOL EMOJI",
-                  "TIMELINE LEGEND", "Waiting (user)", "Standing orders active"):
+                  "TIMELINE LEGEND", "Needs input", "Standing orders active"):
             assert s in text
 
 

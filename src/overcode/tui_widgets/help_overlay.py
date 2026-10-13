@@ -172,8 +172,15 @@ def key_sections(km: Any, compact: bool = False,
 
 
 def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
-    """Status colours, indicators, emoji and the timeline legend."""
-    from ..status_constants import _safe_emoji
+    """Status colours, indicators, emoji and the timeline legend.
+
+    The light and the Result column come from their one tables
+    (status_constants.LIGHT_LEGEND / RESULT_KINDS), as docs/tui-guide.md does.
+    """
+    from ..status_constants import (
+        LIGHT_LEGEND, RESULT_KINDS, STATUS_ASLEEP, STATUS_DONE, _safe_emoji,
+        get_agent_timeline_char, get_status_color,
+    )
 
     def status(emoji: str, char: str, colour: str, name: str, desc: str) -> List[Text]:
         head = Text()
@@ -186,23 +193,25 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
 
     sleep_key = km.label("toggle_sleep")
     done_key = km.label("toggle_show_done")
+    # Where a key does something about a light, say so
+    keys = {STATUS_ASLEEP: f"{sleep_key} to toggle" if sleep_key else "",
+            STATUS_DONE: f"{done_key} to show reported ones" if done_key else ""}
     statuses: List[Text] = []
-    for args in (
-        ("🟢", "█", C_RUNNING, "Running", "Actively working on a task"),
-        ("💚", "█", C_RUNNING, "Running (heartbeat)", "Auto-resumed by heartbeat"),
-        ("💛", "▒", C_WAITING, "Waiting (heartbeat)", "Paused — heartbeat will auto-resume"),
-        ("🟠", "▒", C_APPROVAL, "Waiting (approval)", "Needs plan or tool use approval"),
-        ("🔴", "░", C_BLOCKED, "Waiting (user)", "Blocked — needs human input"),
-        ("🟡", "█", C_WAITING, "Busy (sleep/monitor)",
-         "Sleeping or watching a live Monitor — will self-resume"),
-        ("🟣", "▓", C_ERROR, "Error", "API timeout, rate limit, etc."),
-        ("💤", "░", C_ASLEEP, "Asleep",
-         f"Paused by human  ({sleep_key} to toggle)" if sleep_key else "Paused by human"),
-        ("⚫", "×", C_ASLEEP, "Terminated", "Process exited, shell showing"),
-        ("✓", "✓", C_RUNNING, "Done",
-         f"Child agent completed ({done_key} to show)" if done_key else "Child agent completed"),
-    ):
-        statuses += status(*args)
+    for entry in LIGHT_LEGEND:
+        lead = entry.statuses[0]
+        key = next((keys[s] for s in entry.statuses if keys.get(s)), "")
+        desc = entry.meaning[0].upper() + entry.meaning[1:] + (f"  ({key})" if key else "")
+        statuses += status(entry.glyph, get_agent_timeline_char(lead), get_status_color(lead),
+                           entry.name, desc)
+
+    results: List[Text] = []
+    for emoji, _ascii, style, meaning in RESULT_KINDS.values():
+        line = Text()
+        line.append(f"{_safe_emoji(emoji)}  ")
+        line.append(meaning[0].upper() + meaning[1:], style=style)
+        results.append(line)
+    if not compact:
+        results.append(Text("Hover the cell for the report's full reason", style=C_MUTED))
 
     def plain(emoji: str, desc: str, style: str = C_TEXT) -> Text:
         t = Text()
@@ -212,7 +221,8 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
 
     indicators = [plain(e, d) for e, d in (
         ("🔔", "Unvisited stall (bell)"), ("🤿", "Subagent count"),
-        ("🐚", "Background bash count"), ("👶", "Child agent count"),
+        ("🐚", "Background bash count"),
+        ("👶", "Child agents, then ▶ working 📭 unreported ✅ success ❌ failure"),
         ("📋", "Standing orders active"), ("✓ ", "Standing orders complete"),
         ("🤝", "Agent teams enabled"),
     )]
@@ -242,10 +252,12 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
     timeline = [
         legend(("█", C_RUNNING, "active"), (_safe_emoji("💚"), "", "heartbeat start")),
         legend(("▒", C_WAITING, "waiting"), ("░", C_BLOCKED, "blocked"), ("▓", C_ERROR, "error")),
-        legend(("×", C_ASLEEP, "exited"), ("░", C_ASLEEP, "asleep"), ("─", C_ASLEEP, "no data")),
+        legend(("×", C_ASLEEP, "exited"), ("░", C_ASLEEP, "asleep"), ("·", C_ASLEEP, "at rest")),
+        legend(("?", C_ASLEEP, "unknown"), ("─", C_ASLEEP, "no data")),
     ]
     return [
         HelpSection("AGENT STATUSES", statuses, "reference"),
+        HelpSection("RESULT (CHILD AGENTS)", results, "reference"),
         HelpSection("SPECIAL INDICATORS", indicators, "reference"),
         HelpSection("TIMELINE LEGEND", timeline, "reference"),
         HelpSection("SKILL EMOJI", skills, "reference"),

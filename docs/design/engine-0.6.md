@@ -79,7 +79,10 @@ scan still finds the change.
    Working agents are driven by hooks and need no capture. This replaces
    `select_capture_sessions` and the pane-change gate in the TUI.
 3. **Detect** each agent on the list: the existing `HookStatusDetector`,
-   unchanged, producing the live 4-colour `StatusDetail`.
+   unchanged, producing the live `StatusDetail`: green, yellow, orange,
+   red, or rest (a child whose turn is over). Unknown (booting before its
+   first hook, or detection failing) and the lifecycle states have no
+   colour and hold the record where it was.
 4. **Record** (the #507 layer, below).
 5. **Stats** on their cadence through the incremental readers. Burn uses
    the per-turn window indexes (#517, #524, #525).
@@ -101,7 +104,9 @@ keeps the current **episode** (colour, start time) and the previous one.
   resets only when the colour changes, not on a sub-state change.
 - **Green/non-green totals** keep counting live seconds, so percentages stay
   honest.
-- **Input needed** = a red or orange episode.
+- **Input needed** = a red or orange episode. Rest is recorded like any
+  colour but never needs input: entering it ends a red stretch, and it never
+  rings.
 - **Bell.** It rings when an input-needed episode starts after the person
   last visited the agent (`visited_at`, persisted). Nothing else rings it:
   no TUI memory of transitions and no first-sight rule (the d679fff
@@ -112,8 +117,8 @@ keeps the current **episode** (colour, start time) and the previous one.
   wakeup 2 min past its time with nothing else pending.
 - **Green is checked too.** A hook "running" whose Claude pane has shown
   no "esc to interrupt" for 15 s, with no hook since, is a turn that ended
-  without a Stop, and reads like one: red, a child's orange (oversight),
-  yellow if background work is armed. Claude's `idle_prompt` Notification
+  without a Stop, and reads like one: red, a child at rest,
+  yellow if background work (or a child agent still working) is armed. Claude's `idle_prompt` Notification
   settles it for good as a Stop. Each agent's `last_hook_at` is published.
 - **One rule table.** The hook detector gathers a tick (`TickContext`: hook
   state, pane, one `now`, the counts) and runs named rules in order

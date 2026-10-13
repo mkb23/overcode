@@ -66,7 +66,7 @@ Cheapest signal first. Each later step runs only when the earlier ones are incon
 
 - **DTL badges** split the current `bg_task`:
   - ⚙️ batch (yellow, wakes the agent)
-  - 👀 watcher (yellow)
+  - 🔭 watcher (yellow)
   - 🖥 service (neutral: doesn't make the agent yellow on its own)
   - ⚠️ stuck watcher
 - **Colour:**
