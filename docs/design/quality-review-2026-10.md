@@ -296,6 +296,7 @@ move-only commits.
 | 31 summary_columns | done: metadata on each column; plain text by default; `mono()` gone; one `FleetFlags` for the TUI and `overcode list`; the `overcode.columns` package behind a facade | (see log) |
 | 32 Session model | part: canonical names only on write, aliases gone; old files still load | (see log) |
 | 33 tmux layers | done: TmuxManager a bounded facade over RealTmux; `MockTmux` moved to tests; a libtmux pin-safety test; `RealTmux.resize_window` fixed (it called a method that never existed) | (see log) |
+| 34 one clock | done: `overcode.clock` (wall, epoch, monotonic); injected into the daemon, hook detectors, housekeeping, stats sync, recorders and wake loop; new stamps timezone-aware, rules compare epoch seconds, readers take naive and aware (`from_iso`); `FrozenClock` is a `Clock` the harness injects | 76e19ce, 1e7d49b |
 | 35 files by session id | done: per-agent `agents/<id>/` from launch to archive, packed into day bundles write-ahead, an orphan sweep, a slim monthly archive, billing codes and a spend ledger, the 0.5 layout migrated in batches; rename moves no files (branch item35-billing-storage) | (see log) |
 | 36 shared pilot harness | done: `make_tui` (tests/tui_harness.py), no timers unless asked, an in-memory engine connected from mount; 17 files moved onto it | (see log) |
 | 38 less mocking | part: `test_tui_actions_session` builds real `Session`s | (see log) |
@@ -312,9 +313,7 @@ test only failed on Linux (9bb2a07); `sleep 1m` read as one second
 Also: the 250 ms tick no longer queries the DOM to keep focus (dba2254); a
 flaky test counted other threads' sleeps (see log).
 
-Still open: 34 (one clock beyond the
-detector), 37
-(work-counting tests beyond the row cache and status bar), and the rest of
+Still open: 37 (work-counting tests beyond the row cache and status bar), and the rest of
 32 (cpu/rss/sandbox into daemon state, sister-only fields) and 38
 (test_cli's mocking).
 
