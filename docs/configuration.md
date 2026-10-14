@@ -135,6 +135,11 @@ energy:
 | `OVERCODE_STATE_DIR` | Sessions root: `sessions.json`, the archive, and one directory per tmux session | `$OVERCODE_DIR/sessions` |
 | `OVERCODE_ACTIVITY` | `0` turns the [usage log](#usage-log) off | on |
 
+Before 0.6.0, `OVERCODE_DIR` on its own did not move `sessions.json` or
+`jobs.json`: they stayed in `~/.overcode/sessions` and `~/.overcode/jobs`.
+With only `OVERCODE_DIR` set, overcode keeps reading them there until
+`$OVERCODE_DIR` has its own.
+
 ### Claude Command
 
 | Variable | Description | Default |

@@ -50,6 +50,44 @@ class TestOvercodeDir:
         assert paths.jobs_dir() == tmp_path / "oc" / "jobs"
         assert paths.config_file() == tmp_path / "oc" / "config.yaml"
 
+    @pytest.fixture
+    def upgraded(self, monkeypatch, tmp_path):
+        """OVERCODE_DIR alone: 0.5.x kept sessions.json and jobs.json in ~/.overcode."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+        monkeypatch.delenv("OVERCODE_STATE_DIR", raising=False)
+        old = tmp_path / "home" / ".overcode"
+        (old / "sessions").mkdir(parents=True)
+        (old / "sessions" / "sessions.json").write_text("{}")
+        (old / "jobs").mkdir()
+        (old / "jobs" / "jobs.json").write_text("{}")
+        return tmp_path
+
+    def test_reads_the_registry_and_jobs_05x_kept_in_home(self, upgraded):
+        old = upgraded / "home" / ".overcode"
+        assert paths.sessions_registry_dir() == old / "sessions"
+        assert paths.jobs_dir() == old / "jobs"
+        # The archive and ledger follow the registry, beside it
+        assert paths.archive_dir() == old / "archive"
+        # Per-session state stays under OVERCODE_DIR, as 0.5.x had it
+        assert paths.session_dir("agents") == upgraded / "oc" / "sessions" / "agents"
+
+    def test_its_own_files_win(self, upgraded):
+        new = upgraded / "oc"
+        (new / "sessions").mkdir(parents=True)
+        (new / "sessions" / "sessions.json").write_text("{}")
+        (new / "jobs").mkdir()
+        (new / "jobs" / "jobs.json").write_text("{}")
+        assert paths.sessions_registry_dir() == new / "sessions"
+        assert paths.jobs_dir() == new / "jobs"
+
+    def test_no_home_fallback_when_overcode_dir_is_home(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
+        monkeypatch.delenv("OVERCODE_STATE_DIR", raising=False)
+        assert paths.sessions_registry_dir() == tmp_path / ".overcode" / "sessions"
+        assert paths.jobs_dir() == tmp_path / ".overcode" / "jobs"
+
 
 class TestStateDir:
     """OVERCODE_STATE_DIR is the sessions root, and only that."""

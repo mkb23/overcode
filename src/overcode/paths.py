@@ -26,8 +26,10 @@ they would be taken for tmux sessions: see :func:`data_dir_for`.
 
 Before 0.6.0 ``OVERCODE_STATE_DIR`` also meant "the parent of
 ``sessions/``" to ``SessionManager`` and "the parent of ``jobs/``" to
-``JobManager``. A tree written that way is still read: see
-:func:`sessions_registry_dir` and :func:`jobs_dir`.
+``JobManager``, and both ignored ``OVERCODE_DIR``: with only it set,
+``sessions.json`` and ``jobs.json`` stayed under ``~/.overcode``. A tree
+written either way is still read: see :func:`sessions_registry_dir` and
+:func:`jobs_dir`.
 
 This module imports nothing from overcode: the hook handler runs it on
 every agent event.
@@ -85,36 +87,67 @@ def session_dir(tmux_session: str) -> Path:
     return sessions_root() / tmux_session
 
 
+def _pre_06_home_dir(name: str) -> "Path | None":
+    """``~/.overcode/<name>`` when 0.5.x kept the registry there and 0.6 would not.
+
+    Before 0.6.0, ``SessionManager`` and ``JobManager`` ignored
+    ``OVERCODE_DIR``: with it set and ``OVERCODE_STATE_DIR`` unset they
+    kept ``sessions.json`` and ``jobs.json`` under ``~/.overcode``. None
+    unless that is the setup now (otherwise the default tree is the same).
+    """
+    if os.environ.get("OVERCODE_STATE_DIR") or not os.environ.get("OVERCODE_DIR"):
+        return None
+    home = Path.home() / ".overcode"
+    if overcode_dir() == home:
+        return None
+    return home / name
+
+
+def _registry_or_legacy(current: Path, legacies, file_name: str) -> Path:
+    """``current``, or the first legacy directory holding ``file_name`` when it has none."""
+    if (current / file_name).exists():
+        return current
+    for legacy in legacies:
+        if legacy is not None and (legacy / file_name).exists():
+            return legacy
+    return current
+
+
 def sessions_registry_dir() -> Path:
     """The directory holding ``sessions.json`` and the session archive.
 
-    The sessions root, except for a tree written while
-    ``OVERCODE_STATE_DIR`` meant the parent of ``sessions/``: when the root
-    has no ``sessions.json`` but ``<root>/sessions/sessions.json`` exists,
-    that older directory is used.
+    The sessions root, except for a tree an older overcode wrote, when the
+    root has no ``sessions.json`` and the older directory has one:
+
+    - ``<root>/sessions``, from when ``OVERCODE_STATE_DIR`` meant the
+      parent of ``sessions/``;
+    - ``~/.overcode/sessions``, from when ``OVERCODE_DIR`` alone did not
+      move ``sessions.json`` (see :func:`_pre_06_home_dir`).
     """
     root = sessions_root()
-    if os.environ.get("OVERCODE_STATE_DIR"):
-        legacy = root / "sessions"
-        if not (root / "sessions.json").exists() and (legacy / "sessions.json").exists():
-            return legacy
-    return root
+    legacies = [
+        root / "sessions" if os.environ.get("OVERCODE_STATE_DIR") else None,
+        _pre_06_home_dir("sessions"),
+    ]
+    return _registry_or_legacy(root, legacies, "sessions.json")
 
 
 def jobs_dir() -> Path:
     """The directory holding ``jobs.json`` and the jobs' exit-code files.
 
-    ``overcode_dir()/jobs``, except for a tree written while
-    ``OVERCODE_STATE_DIR`` meant the parent of ``jobs/``: when there is no
-    ``jobs.json`` there but ``<sessions root>/jobs/jobs.json`` exists, that
-    older directory is used.
+    ``overcode_dir()/jobs``, except for a tree an older overcode wrote,
+    when there is no ``jobs.json`` there and the older directory has one:
+
+    - ``<sessions root>/jobs``, from when ``OVERCODE_STATE_DIR`` meant the
+      parent of ``jobs/``;
+    - ``~/.overcode/jobs``, from when ``OVERCODE_DIR`` alone did not move
+      ``jobs.json`` (see :func:`_pre_06_home_dir`).
     """
-    current = overcode_dir() / "jobs"
-    if os.environ.get("OVERCODE_STATE_DIR"):
-        legacy = sessions_root() / "jobs"
-        if not (current / "jobs.json").exists() and (legacy / "jobs.json").exists():
-            return legacy
-    return current
+    legacies = [
+        sessions_root() / "jobs" if os.environ.get("OVERCODE_STATE_DIR") else None,
+        _pre_06_home_dir("jobs"),
+    ]
+    return _registry_or_legacy(overcode_dir() / "jobs", legacies, "jobs.json")
 
 
 def config_file() -> Path:
