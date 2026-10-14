@@ -98,6 +98,9 @@ class SessionSummary(Static, can_focus=True):
     _visible_ids: frozenset = frozenset()
     _pending: bool = False  # the tick built the line the next render() draws
     _full_builds: int = 0  # times the cells were built from scratch (tests)
+    # Its hide-when-uniform columns' values when the app last looked
+    # (SupervisorTUI._update_uniform_columns)
+    _uniform_values: Optional[tuple] = None
     _last_rendered: Optional[Text] = None
     task_result: Optional[str] = None
     task_reason: str = ""

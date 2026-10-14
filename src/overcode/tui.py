@@ -1845,7 +1845,7 @@ class SupervisorTUI(
                     # handled via force_refresh=True when widths change)
                     if changed:
                         widget.refresh()
-            if self._update_fleet_flags():
+            if self._update_fleet_flags() | self._update_uniform_columns():
                 for widget in existing_widgets.values():
                     widget.refresh()
             # Recompute cell column widths for alignment after data update
@@ -1922,13 +1922,52 @@ class SupervisorTUI(
         self._recompute_cell_column_widths()
         self._restore_focus_in_update(_focused_session_id, _focus_was_on_session)
 
-    def _update_uniform_columns(self) -> None:
-        """Hide the columns every shown agent has the same value in."""
-        from .summary_columns import uniform_columns
-        widgets = [w for w in self.query(SessionSummary) if w.display]
-        self.uniform_columns = uniform_columns([w._build_column_context() for w in widgets])
-        for widget in self.query(SessionSummary):
-            widget.uniform_columns = self.uniform_columns
+    def _update_uniform_columns(self, changed: Optional[list] = None) -> bool:
+        """Hide the columns every shown agent has the same value in.
+
+        With ``changed`` (rows whose view just moved), the set is worked out
+        again only if one of those rows' values in a hide-when-uniform
+        column moved (a rebill, a /model switch). True if the set changed:
+        the columns, their widths and the header's "all: …" note moved.
+        """
+        from .summary_columns import SUMMARY_COLUMNS, uniform_columns
+
+        cols = [c for c in SUMMARY_COLUMNS if c.hide_when_uniform and c.render_plain is not None]
+
+        def values(ctx) -> tuple:
+            out = []
+            for col in cols:
+                try:
+                    out.append(col.render_plain(ctx))
+                except Exception:
+                    out.append(None)
+            return tuple(out)
+
+        if changed is not None:
+            moved = False
+            for w in changed:
+                key = values(w._build_column_context())
+                if key != w._uniform_values:
+                    w._uniform_values = key
+                    moved = True
+            if not moved:
+                return False
+        rows = list(self.query(SessionSummary))
+        contexts = []
+        for w in rows:
+            ctx = w._build_column_context()
+            w._uniform_values = values(ctx)
+            if w.display:
+                contexts.append(ctx)
+        uniform = uniform_columns(contexts)
+        flipped = uniform != self.uniform_columns
+        self.uniform_columns = uniform
+        for widget in rows:
+            if widget.uniform_columns != uniform:
+                widget.uniform_columns = uniform
+        if flipped:
+            self._column_widths_dirty = True
+        return flipped
 
     def _restore_focus_in_update(self, focused_session_id: str | None, focus_was_on_session: bool) -> None:
         """Restore focused_session_index after update_session_widgets DOM mutations.

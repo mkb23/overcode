@@ -213,7 +213,7 @@ class EngineLink:
             sid = widget.session.id
             if widget.is_unvisited_stalled and sid == focused_id and app.attended:
                 app._schedule_bell_dismiss(sid)
-        if app._update_fleet_flags():
+        if app._update_fleet_flags() | app._update_uniform_columns(changed):
             changed = list(app.query(SessionSummary))
         if not app.attended:
             return  # nothing is drawn while detached; re-attaching repaints every row
