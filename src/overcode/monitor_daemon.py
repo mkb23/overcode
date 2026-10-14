@@ -1604,7 +1604,10 @@ class MonitorDaemon:
                     self._heartbeat_start_pending.discard(session.id)
                 else:
                     effective_status = STATUS_RUNNING_HEARTBEAT
+            # A child at rest (or done) stays at rest: a heartbeat is
+            # scheduled work, which never lifts a child (rule_armed)
             elif (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN)
+                  and status not in AT_REST_STATUSES
                   and session.heartbeat_enabled
                   and not session.heartbeat_paused
                   and session.heartbeat_instruction):

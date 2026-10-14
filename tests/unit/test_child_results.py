@@ -219,6 +219,22 @@ class TestChildrenRollupAndCounts:
             "working": 0, "unreported": 0, "success": 1, "failure": 0}
         assert parent.id not in daemon._children_working
 
+    @pytest.mark.parametrize("report", [None, "success"])
+    def test_a_resting_child_with_a_heartbeat_stays_at_rest(self, root, report):
+        """A heartbeat is scheduled work: it lifts neither a waiting nor a
+        done child out of rest, so its parent is not 'waiting on 1 child'."""
+        daemon, sm, sessions = _daemon(root, {"agent-11": "waiting_oversight"})
+        parent, child = sessions[1], sessions[11]
+        sm.update_session(child.id, heartbeat_enabled=True, heartbeat_paused=False,
+                          heartbeat_instruction="status?", heartbeat_frequency_seconds=3600)
+        _hook(child.name, "Stop")
+        if report:
+            _report(child.name, report)
+        _ticks(daemon, 3)
+        assert _published(daemon, child.id).current_status in ("waiting_oversight", "done")
+        assert _published(daemon, parent.id).children_rollup["working"] == 0
+        assert parent.id not in daemon._children_working
+
     def test_the_counts_are_the_detectors_dict(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon
 
