@@ -249,7 +249,7 @@ class TestDetectionFailure:
             unknown = {s.session_id: s for s in daemon.state.sessions}[victim.id]
             assert unknown.current_status == "unknown"
             # unknown since detection first failed: its time in state
-            assert unknown.status_since == first_failure.astimezone().isoformat()
+            assert unknown.status_since == first_failure.isoformat()
             assert unknown.live_colour is None and unknown.status_detail is None
             # one warning when it started, not one per tick
             log = daemon.log.console.file.getvalue()

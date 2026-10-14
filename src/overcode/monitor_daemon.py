@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from .clock import SYSTEM_CLOCK, Clock, aware
+from .clock import SYSTEM_CLOCK, Clock, aware, stamp
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
 from .backends import (
@@ -417,7 +417,7 @@ class MonitorDaemon:
         self.state = MonitorDaemonState(
             pid=os.getpid(),
             status="starting",
-            started_at=self.clock.wall().isoformat(),
+            started_at=stamp(self.clock.wall()),
             daemon_version=DAEMON_VERSION,
         )
 
@@ -624,7 +624,7 @@ class MonitorDaemon:
                     self._pending.update_stats(
                         session_id,
                         operation_times=op_times,
-                        last_activity=now.isoformat()
+                        last_activity=stamp(now)
                     )
                     self.log.info(f"[{session.name}] Operation completed ({op_duration:.1f}s)")
 
@@ -644,7 +644,7 @@ class MonitorDaemon:
             if last_hb:
                 from datetime import timedelta
                 next_due = last_hb + timedelta(seconds=session.heartbeat_frequency_seconds)
-                next_heartbeat_due = next_due.isoformat()
+                next_heartbeat_due = stamp(next_due)
 
         # Check if this session is running from heartbeat (persistent across loops)
         running_from_heartbeat = session_id in self._sessions_running_from_heartbeat
@@ -796,7 +796,7 @@ class MonitorDaemon:
             ):
                 self._pending.update_session(
                     session.id,
-                    last_heartbeat_time=now.isoformat()
+                    last_heartbeat_time=stamp(now)
                 )
                 triggered.add(session.id)
                 self.log.info(f"[{session.name}] Heartbeat sent")
@@ -886,10 +886,10 @@ class MonitorDaemon:
         # Update state tracking
         state_since = current_stats.state_since
         if result.state_changed:
-            state_since = now.isoformat()
+            state_since = stamp(now)
         elif not state_since:
             # Initialize state_since if never set (e.g., new session)
-            state_since = now.isoformat()
+            state_since = stamp(now)
 
         # Staged for the tick's single write
         self._pending.update_stats(
@@ -899,7 +899,7 @@ class MonitorDaemon:
             green_time_seconds=result.green_seconds,
             non_green_time_seconds=result.non_green_seconds,
             sleep_time_seconds=result.sleep_seconds,
-            last_time_accumulation=now.isoformat(),
+            last_time_accumulation=stamp(now),
         )
 
         self.last_state_times[session_id] = now
@@ -1001,7 +1001,7 @@ class MonitorDaemon:
         # Update presence state
         presence_state, presence_idle, _ = self.presence.get_current_state()
 
-        self.state.last_loop_time = now.isoformat()
+        self.state.last_loop_time = stamp(now)
         self.state.last_tick_duration_seconds = round(self._last_tick_duration_seconds, 3)
         self.state.slow_tick_seconds = (
             round(self.state.last_tick_duration_seconds, 1)
@@ -1259,7 +1259,7 @@ class MonitorDaemon:
         """
         now = aware(now)
         tick_t0 = self.clock.monotonic()
-        self.state.tick_started_at = now.isoformat()
+        self.state.tick_started_at = stamp(now)
         try:
             self._tick_phases(now)
         finally:
@@ -1485,7 +1485,7 @@ class MonitorDaemon:
             return
         from datetime import timedelta
         deadline = self.clock.wall() + timedelta(seconds=timeout)
-        self._pending.update_session(session.id, oversight_deadline=deadline.isoformat())
+        self._pending.update_session(session.id, oversight_deadline=stamp(deadline))
         self.log.info(f"[{session.name}] oversight timeout in {timeout:.0f}s")
 
     def _refund_done_children(self, child_ids: list) -> None:
@@ -1728,7 +1728,7 @@ class MonitorDaemon:
         unknown = dict(
             current_status=STATUS_UNKNOWN,
             current_activity=f"Status unknown: {message}"[:100],
-            status_since=first.isoformat(),
+            status_since=stamp(first),
             live_colour=None, live_since=None, episode_colour=None, episode_start=None,
             status_detail=None,
         )

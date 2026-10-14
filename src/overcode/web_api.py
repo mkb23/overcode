@@ -49,9 +49,10 @@ WEB_COLORS = {
 def _wire_time(value: Any) -> Any:
     """A stored time as the API sends it: naive local ISO, as before 0.6.
 
-    Stored stamps are timezone-aware now; a sister peer on an older
-    version parses these with ``datetime.fromisoformat`` and subtracts
-    them from a naive ``datetime.now()``, so they go out naive.
+    Stamps are stored naive (``clock.stamp``), but a pre-release 0.6.0
+    build left aware ones and in-memory times are aware; a sister peer on
+    an older version parses these with ``datetime.fromisoformat`` and
+    subtracts them from a naive ``datetime.now()``, so they go out naive.
     """
     if isinstance(value, datetime):
         return local_naive(value).isoformat() if value.tzinfo else value.isoformat()

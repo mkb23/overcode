@@ -517,8 +517,8 @@ class MonitorDaemonState:
         """
         from .clock import to_epoch
 
-        # Epoch seconds: the stamp is aware (naive in a file an older daemon
-        # wrote), ``now`` the caller's wall clock in epoch seconds
+        # Epoch seconds: the stamp is naive local (aware in a file a
+        # pre-release 0.6.0 wrote), ``now`` the caller's wall clock
         last_at = to_epoch(self.last_loop_time)
         if last_at is None:
             return True

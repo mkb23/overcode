@@ -8,9 +8,12 @@ so a test freezes or steps every reading together; freezing ``datetime``
 alone left the monotonic ones running, which is how the quiet-fleet test
 flaked.
 
-Timestamps written from here on are timezone-aware (local zone, with its
-offset). Files written before carry naive local times, so every reader
-takes both:
+In memory the wall clock is timezone-aware (local zone, with its offset).
+On disk a timestamp stays naive local ISO, as 0.5.x wrote it (``stamp``):
+an older overcode still running beside this one after an upgrade (its
+supervisor daemon or API server), or one rolled back to, reads the same
+files and subtracts their stamps from a naive ``datetime.now()``, which
+raises on an aware value. Every reader here takes both:
 
 - ``to_epoch`` / ``parse_time`` for comparisons: epoch seconds, or an
   aware datetime, never a naive/aware subtraction (which raises);
@@ -72,6 +75,29 @@ def local_naive(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
     return value.astimezone().replace(tzinfo=None)
+
+
+def stamp(value: datetime) -> str:
+    """``value`` as the ISO text a file stores: naive local time.
+
+    What every persisted timestamp is written with (sessions.json, the
+    daemon state files, the history CSVs), so 0.5.x code reading them
+    keeps working; aware values stay in memory.
+    """
+    return local_naive(value).isoformat()
+
+
+def seconds_since(value: TimeValue, now: Optional[float] = None) -> Optional[float]:
+    """Seconds from a stored or in-memory time to ``now`` (epoch; default the wall clock).
+
+    Exact across a DST change: a naive datetime is placed by ``timestamp()``
+    (``fold`` included), never by naive wall-clock subtraction. None when
+    ``value`` is unknown or unreadable.
+    """
+    then = to_epoch(value)
+    if then is None:
+        return None
+    return (time.time() if now is None else now) - then
 
 
 def from_iso(text: str) -> datetime:

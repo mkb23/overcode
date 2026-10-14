@@ -79,8 +79,8 @@ class TestPerTickBudget:
         # the done agent is left alone; the asleep one accumulates sleep time
         assert by_i[3]["status"] == "done" and by_i[3]["stats"]["current_task"] == "Completed"
         assert by_i[4]["stats"]["sleep_time_seconds"] > 0
-        # the heartbeat stamp landed
-        assert by_i[5]["last_heartbeat_time"] == driver.START.astimezone().isoformat()
+        # the heartbeat stamp landed (naive local, as an older overcode reads it)
+        assert by_i[5]["last_heartbeat_time"] == driver.START.isoformat()
         # loaded skills changed on tick 2
         assert by_i[7]["loaded_skills"] == ["dataviz", "overcode"]
         assert by_i[17]["loaded_skills"] == ["dataviz", "overcode"]
@@ -98,7 +98,7 @@ class TestPerTickBudget:
         assert published["agent-09"]["model"] == "claude-opus-4-6"
         assert published["agent-09"]["last_command"] == "do task 9"
         # the heartbeat sent earlier in the tick
-        assert published["agent-05"]["last_heartbeat_time"] == driver.START.astimezone().isoformat()
+        assert published["agent-05"]["last_heartbeat_time"] == driver.START.isoformat()
         assert published["agent-05"]["current_status"] == "heartbeat_start"
         # the git context read in the tick
         assert published["agent-01"]["branch"] == "main"

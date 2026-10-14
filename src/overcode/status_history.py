@@ -9,8 +9,10 @@ valid for its agent until that agent's next row; readers that forward-fill
 can ask for the *carry* — each agent's last row at or before a window's
 cutoff — so the state at the window's left edge is known.
 
-Timestamps are written timezone-aware (the daemon's clock); files written
-before hold naive local times, and one file can hold both. Readers return
+Timestamps are written as naive local ISO (``clock.stamp``), as 0.5.x
+wrote them, so an older overcode reading the file (a rollback) can compare
+them with its naive cutoff; pre-release 0.6.0 builds wrote them aware, so one
+file can hold both. Readers return
 naive local datetimes (``clock.from_iso``), the form their consumers keep,
 so the two kinds compare and sort together.
 """
@@ -25,7 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
-from .clock import aware, from_iso, local_naive, to_epoch
+from .clock import from_iso, local_naive, stamp, to_epoch
 from .settings import DAEMON, get_agent_history_path
 
 
@@ -52,9 +54,9 @@ def log_agent_status(
         session_id: Unique session ID (UUID) for disambiguation
         hostname: Machine hostname for multi-host disambiguation
         now: When (the daemon's tick); default the wall clock. Written
-            timezone-aware.
+            as naive local time (``clock.stamp``).
     """
-    stamp = aware(now) if now is not None else datetime.now().astimezone()
+    when = stamp(now if now is not None else datetime.now())
     path = history_file or get_agent_history_path(DAEMON.default_tmux_session)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -66,7 +68,7 @@ def log_agent_status(
         if write_header:
             writer.writerow(['timestamp', 'agent', 'status', 'activity', 'session_id', 'hostname'])
         writer.writerow([
-            stamp.isoformat(),
+            when,
             agent_name,
             status,
             activity[:100] if activity else "",

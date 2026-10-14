@@ -12,7 +12,7 @@ from typing import Dict, Optional
 
 from .backends import BackendCapability, get_backend, session_backend_name
 from .claude_pid import is_session_id_owned_by_others
-from .clock import SYSTEM_CLOCK, Clock
+from .clock import SYSTEM_CLOCK, Clock, stamp
 from .energy import estimate_energy_joules
 from .monitor_daemon_core import calculate_total_tokens
 from .pricing import calculate_cost_estimate
@@ -291,7 +291,7 @@ class StatsSync:
                 stats.cache_creation_tokens, stats.cache_read_tokens,
             ), 1),
             current_context_tokens=stats.current_context_tokens,
-            last_stats_update=now.isoformat(),
+            last_stats_update=stamp(now),
         )
 
     def note_stats_view(self, session, stats: Optional[AgentSessionStats]) -> None:

@@ -1,8 +1,9 @@
 """One clock (quality review item 34): the injected Clock, and mixed timestamps.
 
 The daemon, the detectors and history read the time from one ``Clock``, so
-a test freezes and steps every reading together. Timestamps written now are
-timezone-aware; files written before hold naive local times, and every
+a test freezes and steps every reading together. In memory the clock is
+timezone-aware; on disk stamps are naive local times (``clock.stamp``), as
+0.5.x wrote them, and pre-release 0.6.0 builds left aware ones, so every
 reader must take both, alone or mixed, and compare them correctly.
 """
 
@@ -201,13 +202,13 @@ class TestHistoryTakesBoth:
         kept = list(csv.reader(open(path, newline="")))[1:]
         assert [r[2] for r in kept] == ["s2", "s3"]
 
-    def test_rows_are_written_aware_at_the_given_time(self, tmp_path):
+    def test_rows_are_written_naive_at_the_given_time(self, tmp_path):
         from overcode.status_history import log_agent_status
 
         path = tmp_path / "agent_status_history.csv"
         log_agent_status("a", "running", history_file=path, now=START)
         stamp = list(csv.reader(open(path, newline="")))[1][0]
-        assert stamp == aware(START).isoformat()
+        assert stamp == START.isoformat()
 
     def test_the_keepalive_rule_takes_both(self):
         from overcode.status_history import status_row_due
@@ -291,7 +292,7 @@ class TestOneClockThroughTheDaemon:
         for component in (daemon.housekeeping, daemon.stats_sync, daemon.recorder_store,
                           daemon.wake.scan, daemon.detector.hooks):
             assert component.clock is clock
-        assert daemon.state.started_at == aware(START).isoformat()
+        assert daemon.state.started_at == START.isoformat()
 
     def test_the_hook_detector_reads_its_clock(self, tmp_path):
         from overcode.hook_status_detector import HookStatusDetector
@@ -326,7 +327,7 @@ class TestOneClockThroughTheDaemon:
             clock.now += timedelta(seconds=1)
             assert daemon._state_file_due(saved)
 
-    def test_old_naive_stamps_keep_accumulating_and_new_ones_are_aware(self, env):
+    def test_old_naive_stamps_keep_accumulating_and_new_ones_are_naive(self, env):
         daemon, detector, sessions, clock = _fleet(
             env, n=1, script=lambda tick, s: ("running", "Working", ""))
         before = sessions[0].stats.green_time_seconds  # seeded naive stamps
@@ -334,6 +335,6 @@ class TestOneClockThroughTheDaemon:
             run_ticks(daemon, detector, clock, 3)  # t = 0, 2, 4
         stats = daemon.session_manager.get_session(sessions[0].id).stats
         assert stats.green_time_seconds == pytest.approx(before + 6)
-        assert parse_time(stats.last_time_accumulation).tzinfo is not None
+        assert datetime.fromisoformat(stats.last_time_accumulation).tzinfo is None
         assert to_epoch(stats.last_time_accumulation) == (START + timedelta(seconds=4)).timestamp()
         assert to_epoch(daemon.state.last_loop_time) == (START + timedelta(seconds=4)).timestamp()

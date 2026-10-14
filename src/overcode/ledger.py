@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
 from . import paths
+from .clock import stamp
 
 try:
     import fcntl
@@ -103,7 +104,7 @@ def make_row(record, kind: str, *, now: Optional[datetime] = None,
         base = {"cost": _get(record, "billing_base_cost", 0.0) or 0.0,
                 "tokens": _get(record, "billing_base_tokens", 0) or 0}
     return {
-        "t": t or now.isoformat(),
+        "t": t or stamp(now),
         "seq": time.time_ns(),
         "sid": _get(record, "id"),
         "name": _get(record, "name"),
@@ -283,7 +284,7 @@ class Ledger:
             for name in AMOUNTS:
                 entry[name] = entry.get(name, 0) + amounts[name]
             entry["agents"] = entry.get("agents", 0) + 1
-            closed[key] = {"code": code, "amounts": amounts, "at": now.isoformat(),
+            closed[key] = {"code": code, "amounts": amounts, "at": stamp(now),
                            "seq": int(row.get("seq", 0))}
         else:
             open_[key] = row
@@ -319,7 +320,7 @@ class Ledger:
             if rows or months.get(month) != cursor:
                 changed = True
             months[month] = cursor
-        cutoff = (now - timedelta(days=CLOSED_KEEP_DAYS)).isoformat()
+        cutoff = stamp(now - timedelta(days=CLOSED_KEEP_DAYS))
         stale = [k for k, v in totals["closed"].items() if str(v.get("at", "")) < cutoff]
         for key in stale:
             del totals["closed"][key]
@@ -368,8 +369,8 @@ class Ledger:
         ``until`` less its last one before ``since``. Reads every month: a
         CLI report, not a hot path.
         """
-        start = since.isoformat() if since else ""
-        end = until.isoformat() if until else "￿"
+        start = stamp(since) if since else ""
+        end = stamp(until) if until else "￿"
         before: Dict[str, dict] = {}
         within: Dict[str, dict] = {}
         for row in self.iter_rows():
