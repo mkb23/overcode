@@ -522,11 +522,16 @@ def type_text_to_tmux_window(
     <pasted_content> tags it is told not to obey (2.1.29x). Typed, the
     same text is a plain user message (verified live). One tmux command per
     line: a single burst of keys can itself be taken for a paste.
+
+    Typed, a character is a key: a carriage return is Return (it would
+    submit the message mid-way) and a tab is Tab. So CRLF and lone CR line
+    ends become line breaks, and tabs become spaces.
     """
     exit_copy_mode_if_active(tmux_session, window)
     tmux_cmd = _build_tmux_cmd()
     target = tmux_window_target(tmux_session, window)
-    lines = text.split('\n')
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    lines = [line.expandtabs(4) for line in text.split('\n')]
     try:
         for i, line in enumerate(lines):
             keys = ['-l', '--', line + '\\'] if i < len(lines) - 1 else ['-l', '--', line]

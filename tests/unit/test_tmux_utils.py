@@ -602,3 +602,18 @@ class TestTypeTextToTmuxWindow:
             ["-l", "--", "three"],
             ["Enter"],                             # submit
         ]
+
+    def test_carriage_returns_and_tabs_are_not_typed_as_keys(self):
+        """Typed, CR is Return (submits mid-message) and a tab is Tab."""
+        with patch("overcode.tmux_utils.subprocess.run") as run, \
+                patch("overcode.tmux_utils.time.sleep"):
+            run.return_value = MagicMock(returncode=0, stdout="0")
+            assert type_text_to_tmux_window("agents", 1, "Please do A\r\nthen\tB\rthen C")
+        sends = [c.args[0][c.args[0].index("send-keys") + 3:]
+                 for c in run.call_args_list if "send-keys" in c.args[0]]
+        assert sends == [
+            ["-l", "--", "Please do A\\"], ["Enter"],
+            ["-l", "--", "then    B\\"], ["Enter"],
+            ["-l", "--", "then C"],
+            ["Enter"],
+        ]
