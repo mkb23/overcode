@@ -55,13 +55,14 @@ except ImportError:
 # What an archive record keeps (besides ``stats``, kept whole, and
 # ``bundle``, the pointer to the agent's packed files). Session.from_dict
 # needs the identity fields; the rest is what history, the journey's
-# counts, the ledger backfill and a report read.
+# counts, the ledger backfill, a report and ``overcode export`` read.
 ARCHIVE_KEYS = (
     "id", "name", "previous_names", "tmux_session", "tmux_window",
     "parent_session_id", "billing_code", "billing_seg", "billing_base_cost",
     "billing_base_tokens", "billing_base_usage", "tags",
     "backend", "model", "provider", "skill_profile", "wrapper",
     "heartbeat_enabled", "cost_budget_usd", "human_annotation", "agent_value",
+    "permissiveness_mode", "standing_instructions_preset", "source_host",
     "start_directory", "repo_name", "branch",
     "start_time", "end_time", "status",
     "report_status", "report_reason",

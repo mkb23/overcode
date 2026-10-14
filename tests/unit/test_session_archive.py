@@ -306,6 +306,23 @@ class TestJsonlArchive:
         assert len(json.dumps(slim)) < len(json.dumps(full))
         assert slim_record(slim) == slim  # idempotent (migration of a slim archive)
 
+    def test_slim_record_keeps_what_export_reads(self, tmp_path):
+        """``overcode export --archived`` must not report a bypass agent as normal."""
+        from overcode.data_export import _session_to_record
+
+        full = _legacy_record(_session("a", "a", permissiveness_mode="bypass",
+                                       standing_instructions="secret plan",
+                                       standing_instructions_preset="DO_NOTHING",
+                                       source_host="other-box"))
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        sm._append_archive_records([full])
+        (archived,) = sm.list_archived_sessions()
+        record = _session_to_record(archived, is_archived=True)
+        assert record["permissiveness_mode"] == "bypass"
+        assert record["standing_instructions_preset"] == "DO_NOTHING"
+        assert record["hostname"] == "other-box"
+        assert record["standing_instructions"] == ""  # the text itself is never kept
+
     def test_journey_counts_and_history_read_the_same_from_slim(self, tmp_path):
         """The journey's counters and the history listing see no difference."""
         from overcode.journey import _SESSION_COUNTERS, _count_sessions
