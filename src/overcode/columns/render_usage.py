@@ -185,9 +185,9 @@ def render_billing_code(ctx: ColumnContext) -> ColumnOutput:
     code = _billing_code(ctx)
     if code is None:
         return [(" " + "-".ljust(BILLING_CODE_W), f"dim{ctx.bg}")]
+    style = "dim" if code == ctx.session.name else "bold cyan"
     if cell_len(code) > BILLING_CODE_W:
         code = set_cell_size(code, BILLING_CODE_W - 1) + "…"
-    style = "dim" if code == ctx.session.name else "bold cyan"
     return [(" " + set_cell_size(code, BILLING_CODE_W), f"{style}{ctx.bg}")]
 
 
