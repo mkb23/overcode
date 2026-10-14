@@ -287,6 +287,9 @@ class SupervisorDaemon:
 
         # State tracking
         self.loop_count = 0
+        # Set by SIGTERM/SIGINT: every wait checks it, so a stop is acted on
+        # well inside stop_process's grace before SIGKILL
+        self._shutdown = False
         self.daemon_claude_launches = 0
         self.status = "starting"
         self.started_at: Optional[datetime] = None
@@ -363,6 +366,21 @@ class SupervisorDaemon:
 
         return check_daemon_tool_activity(content, DAEMON_TOOL_INDICATORS)
 
+    def _sleep(self, seconds: float) -> None:
+        """Sleep, waking early once shutdown is asked for.
+
+        A signal handler only sets ``_shutdown``, and an interrupted
+        ``time.sleep`` resumes (PEP 475): a plain 5 s sleep outlasts the
+        grace stop_process gives before SIGKILL, and the finally that kills
+        daemon claude never runs.
+        """
+        deadline = time.time() + seconds
+        while not self._shutdown:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return
+            time.sleep(min(remaining, 0.25))
+
     def wait_for_daemon_claude(
         self,
         timeout: int = None,
@@ -375,7 +393,8 @@ class SupervisorDaemon:
             poll_interval: Seconds between checks (default from settings)
 
         Returns:
-            True if daemon claude completed, False if timed out
+            True if daemon claude completed, False if timed out or the
+            supervisor is shutting down
         """
         timeout = timeout or DAEMON.daemon_claude_timeout
         poll_interval = poll_interval or DAEMON.daemon_claude_poll
@@ -388,6 +407,9 @@ class SupervisorDaemon:
         has_seen_activity = False
 
         while time.time() - start_time < timeout:
+            if self._shutdown:
+                self.log.info("Shutdown requested; no longer waiting for daemon claude")
+                return False
             self.capture_daemon_claude_output()
 
             if not has_seen_activity:
@@ -400,7 +422,7 @@ class SupervisorDaemon:
                 self.log.success(f"Daemon claude completed in {elapsed}s")
                 return True
 
-            time.sleep(poll_interval)
+            self._sleep(poll_interval)
 
         self.log.warn(f"Daemon claude timed out after {timeout}s")
         return False
@@ -631,7 +653,7 @@ class SupervisorDaemon:
         trust_accepted = False
         perms_accepted = False
 
-        while time.time() - start < timeout:
+        while time.time() - start < timeout and not self._shutdown:
             content = self._capture_daemon_pane(lines=20)
             if content is None:
                 time.sleep(0.5)
@@ -841,6 +863,9 @@ class SupervisorDaemon:
             self.capture_daemon_claude_output()
             self._mark_daemon_claude_stopped()
 
+            if self._shutdown:
+                # run()'s finally kills daemon claude; not a timeout
+                return
             if completed:
                 self.kill_daemon_claude()
                 session_names = [s.name for s in non_green]
@@ -927,7 +952,7 @@ class SupervisorDaemon:
                     # One bad iteration (a corrupt state file, a tmux hiccup)
                     # must not end supervision: log it and try again
                     self._iteration_failed(e)
-                time.sleep(check_interval)
+                self._sleep(check_interval)
 
         except Exception as e:
             self.log.error(f"Supervisor daemon error: {e}\n{traceback.format_exc()}")

@@ -1395,3 +1395,56 @@ class TestAcceptStartupPrompts:
             assert daemon._accept_startup_prompts("_daemon_claude-1") is True
         keys = [c.args[0][c.args[0].index("-t") + 2:] for c in run.call_args_list]
         assert keys == [["Down"], ["", "Enter"]]
+
+
+class TestStopWhileDaemonClaudeWorks:
+    """SIGTERM only sets _shutdown and an interrupted sleep resumes: a wait
+    that never looks at it outlasts stop_process's 5 s grace, gets SIGKILLed,
+    and daemon claude is left running unsupervised."""
+
+    def _daemon(self):
+        import threading
+
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        daemon = SupervisorDaemon.__new__(SupervisorDaemon)
+        daemon._shutdown = False
+        daemon.log = MagicMock()
+        daemon.is_daemon_claude_running = lambda: True
+        daemon.capture_daemon_claude_output = lambda: None
+        daemon._has_daemon_claude_started = lambda: True
+        daemon.is_daemon_claude_done = lambda: False  # still at work
+        # The signal handler, 0.2 s in
+        threading.Timer(0.2, lambda: setattr(daemon, "_shutdown", True)).start()
+        return daemon
+
+    def test_the_wait_ends_soon_after_a_stop(self):
+        import time
+
+        daemon = self._daemon()
+        start = time.monotonic()
+        assert daemon.wait_for_daemon_claude(timeout=4, poll_interval=2) is False
+        assert time.monotonic() - start < 1.5
+
+    def test_a_stop_is_not_counted_as_a_timeout(self):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        daemon = SupervisorDaemon.__new__(SupervisorDaemon)
+        daemon._shutdown = True
+        daemon.tmux_session = "test"
+        daemon.loop_count = 1
+        daemon.log = MagicMock()
+        daemon.supervisor_stats = MagicMock(consecutive_timeouts=0)
+        daemon.cleanup_stale_daemon_claudes = MagicMock()
+        daemon.get_non_green_sessions = MagicMock(return_value=[])
+        daemon.is_daemon_claude_running = MagicMock(return_value=True)
+        daemon.wait_for_daemon_claude = MagicMock(return_value=False)
+        daemon.capture_daemon_claude_output = MagicMock()
+        daemon._mark_daemon_claude_stopped = MagicMock()
+        state = MagicMock(sessions=[])
+        state.is_stale.return_value = False
+        with patch("overcode.supervisor_daemon.get_monitor_daemon_state", return_value=state), \
+                patch("overcode.supervisor_daemon.determine_supervisor_action",
+                      return_value=MagicMock(action="wait", reason="")):
+            daemon._iteration()
+        assert daemon.supervisor_stats.consecutive_timeouts == 0
