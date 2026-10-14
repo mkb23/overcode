@@ -303,6 +303,7 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("focus_human_annotation", "Annotation…", "Agent", "note comment", agent=True),
     _C("edit_agent_value", "Agent value…", "Agent", "priority", agent=True),
     _C("edit_cost_budget", "Cost budget…", "Agent", "money limit dollars", agent=True),
+    _C("set_billing_code", "Billing code…", "Agent", "rebill client charge spend ledger account", agent=True),
     _C("toggle_enhanced_context", "Enhanced context", "Agent", "hook inject",
        state=_agent_toggle("enhanced_context_enabled"), agent=True),
     _C("toggle_hook_detection", "Status detection", "Agent", "hooks polling mode",

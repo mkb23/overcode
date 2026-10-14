@@ -10,6 +10,8 @@ Field types:
   toggle — space/enter cycles through options (host, perms, teams, provider,
            backend, skill profile)
   select — space/enter cycles through a dynamic list (agent persona)
+  choice — space cycles a list, enter types a value of your own (billing
+           code: the agent's name, then the billing.codes shortlist)
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ class FormField:
     value: str = ""
     options: List[str] = dc_field(default_factory=list)   # for toggle/select
     auto: bool = False       # True → value auto-derived (resets on manual edit)
+    locked: bool = False     # shown, not changeable (a child's inherited billing code)
 
 
 def _unique_name(base: str, existing_names: set[str]) -> str:
@@ -90,6 +93,7 @@ class NewAgentModal(ModalBase):
             wrapper: Optional[str],
             extra_cli_args: List[str],
             skill_profile: Optional[str] = None,
+            billing_code: Optional[str] = None,
         ) -> None:
             super().__init__()
             self.host = host
@@ -104,6 +108,8 @@ class NewAgentModal(ModalBase):
             self.wrapper = wrapper
             self.extra_cli_args = extra_cli_args
             self.skill_profile = skill_profile
+            # None: the launcher's default (the name; a child's parent's code)
+            self.billing_code = billing_code
 
     class Cancelled(Message):
         pass
@@ -132,6 +138,8 @@ class NewAgentModal(ModalBase):
         local_hostname: str = "",
         sister_names: List[str] | None = None,
         wrappers: List[str] | None = None,
+        billing_codes: List[str] | None = None,
+        parent_billing_code: Optional[str] = None,
         app_ref: Optional[Any] = None,
     ) -> None:
         """Populate the form and display it.
@@ -144,6 +152,9 @@ class NewAgentModal(ModalBase):
             local_hostname: Name of the local machine.
             sister_names: Names of available remote sisters (omit if none).
             wrappers: Available wrapper names (from list_available_wrappers).
+            billing_codes: The billing.codes shortlist (config.get_billing_config).
+            parent_billing_code: Launching a child: its parent's code, which
+                it always takes; the Billing row shows it, locked.
             app_ref: The Textual app, for focus save/restore.
         """
         self._existing_names = existing_names
@@ -177,6 +188,11 @@ class NewAgentModal(ModalBase):
             FormField("host",      "Host",      "toggle", value=host_options[0], options=host_options),
             FormField("directory", "Directory", "text",   value=directory),
             FormField("name",      "Name",      "text",   value=default_name, auto=True),
+            # "" is the default: the agent's own name, whatever it ends up as
+            FormField("billing",   "Billing",   "choice",
+                      value=parent_billing_code or "",
+                      options=[""] + list(billing_codes or []),
+                      locked=bool(parent_billing_code)),
             FormField("agent",     "Agent",     "select", value="(none)", options=agent_options),
             FormField("perms",     "Perms",     "toggle", value="bypass" if defaults.get("bypass_permissions") else "normal", options=["normal", "bypass"]),
             FormField("teams",     "Teams",     "toggle", value="on" if defaults.get("agent_teams") else "off", options=["off", "on"]),
@@ -216,7 +232,7 @@ class NewAgentModal(ModalBase):
 
     def _start_edit(self) -> None:
         f = self._cur
-        if f.type != "text":
+        if f.type not in ("text", "choice") or f.locked:
             return
         self._editing = True
         self._edit_snapshot = f.value
@@ -231,6 +247,8 @@ class NewAgentModal(ModalBase):
         # If name was manually edited, clear auto flag
         if f.key == "name" and f.value != self._edit_snapshot:
             f.auto = False
+        if f.key == "billing":
+            f.value = self._billing_value(f.value)
         self.refresh()
         if advance:
             self.selected_index = (self.selected_index + 1) % len(self.fields)
@@ -255,8 +273,25 @@ class NewAgentModal(ModalBase):
             )
             f.value = resolved if resolved in profiles else "none"
 
+    def _agent_name(self) -> str:
+        try:
+            return self._field("name").value
+        except StopIteration:
+            return ""
+
+    def _billing_value(self, typed: str) -> str:
+        """A typed billing code, with blank or the agent's name as "" (the default)."""
+        typed = typed.strip()
+        return "" if typed == self._agent_name() else typed
+
     def _cycle(self, f: FormField) -> None:
-        if not f.options:
+        if not f.options or f.locked:
+            return
+        if f.key == "billing":
+            from .billing_code_modal import next_in_cycle
+            name = self._agent_name()
+            f.value = next_in_cycle([""] + [c for c in f.options if c and c != name], f.value)
+            self.refresh()
             return
         if f.key == "skills":
             f.auto = False
@@ -335,8 +370,20 @@ class NewAgentModal(ModalBase):
             wrapper=wrapper,
             extra_cli_args=extra_cli_args,
             skill_profile=d.get("skills"),
+            billing_code=self._launch_billing_code(),
         ))
         self._hide()
+
+    def _launch_billing_code(self) -> Optional[str]:
+        """The code to launch with; None for the launcher's default (the
+        agent's name, or a child's parent's code, which always wins)."""
+        try:
+            f = self._field("billing")
+        except StopIteration:
+            return None
+        if f.locked:
+            return None
+        return self._billing_value(f.value) or None
 
     def _cancel(self) -> None:
         if self._editing:
@@ -356,6 +403,7 @@ class NewAgentModal(ModalBase):
         "host": "Machine to launch on: this one or a sister",
         "directory": "Working directory; ~ expands, and a missing local directory is created",
         "name": "Agent name; follows the directory until you edit it",
+        "billing": "Billing code for its spend: space cycles (its name) and billing.codes; ↵ types one",
         "agent": "Agent persona to launch as (from the backend's agents directory)",
         "perms": "bypass skips every permission prompt",
         "teams": "Let the agent run agent teams",
@@ -383,6 +431,8 @@ class NewAgentModal(ModalBase):
             line.append(f"{f.label:<{self.LABEL_W}}", style="bold" if sel else ds.MUTED)
             if f.type == "text":
                 line.append_text(ds.text_value(f.value, self._cursor if editing else None))
+            elif f.type == "choice":
+                line.append_text(self._render_choice(f, editing, value_w))
             else:
                 line.append_text(ds.options(f.options, f.value, value_w))
             t.append_text(ds.finish(line, w))
@@ -392,10 +442,30 @@ class NewAgentModal(ModalBase):
             f = self._cur
             if self._editing:
                 note = Text("type to edit · ← → home end move", style=ds.MUTED)
+            elif f.locked:
+                note = Text("A child is always billed to its parent's code", style=ds.MUTED)
             else:
                 note = Text(self._TIPS.get(f.key, ""), style=ds.MUTED)
             t.append_text(ds.tip(w, note))
         return t
+
+    def _render_choice(self, f: FormField, editing: bool, width: int) -> Text:
+        """The Billing row: the cycle with the current code lit, a typed
+        code as text, the cursor while editing, a child's code locked."""
+        if editing:
+            return ds.text_value(f.value, self._cursor)
+        if f.locked:
+            t = Text(f.value, style=ds.STATE_OTHER)
+            t.append("  inherited from its parent", style=f"italic {ds.STATE_OTHER}")
+            return t
+        name = self._agent_name()
+        codes = [c for c in f.options if c and c != name]
+        if f.value and f.value not in codes:
+            t = Text(f.value, style=ds.STATE_CUR)
+            t.append("  typed · space cycles", style=ds.STATE_OTHER)
+            return t
+        labels = [f"({name})"] + codes
+        return ds.options(labels, f.value or labels[0], width)
 
     # ── key handling ─────────────────────────────────────────────────────
 
@@ -415,7 +485,7 @@ class NewAgentModal(ModalBase):
         f = self._cur
 
         if key in ("enter", "space"):
-            if f.type == "text":
+            if f.type == "text" or (f.type == "choice" and key == "enter"):
                 self._start_edit()
             else:
                 self._cycle(f)

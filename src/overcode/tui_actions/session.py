@@ -574,7 +574,7 @@ class SessionActionsMixin:
     def action_new_agent(self) -> None:
         """Open the unified new-agent modal pre-filled with defaults."""
         from ..tui_widgets import NewAgentModal
-        from ..config import get_new_agent_defaults, get_sisters_config
+        from ..config import get_billing_config, get_new_agent_defaults, get_sisters_config
         from ..agent_scanner import scan_agents
         from ..wrapper import list_available_wrappers
 
@@ -609,6 +609,7 @@ class SessionActionsMixin:
             local_hostname=self.local_hostname,
             sister_names=sister_names,
             wrappers=wrappers,
+            billing_codes=get_billing_config()["codes"],
             app_ref=self,
         )
 
@@ -640,6 +641,49 @@ class SessionActionsMixin:
             session_id=session.id,
             name=session.name,
             existing_names=existing_names,
+            app_ref=self,
+        )
+
+    def action_set_billing_code(self) -> None:
+        """Open the billing-code dialog for the focused agent (palette: Billing code…).
+
+        Applying it is ``overcode rebill``: forward only, this agent only.
+        """
+        from ..config import get_billing_config
+        from ..ledger import billing_code_of
+        from ..tui_widgets import BillingCodeModal
+
+        focused = _get_focused_session(self)
+        if not focused:
+            self.notify("No agent focused", severity="warning")
+            return
+        session = focused.session
+        if self._is_remote(session):
+            # No sister API for it: the rebill has to run where the agent does.
+            self.notify(
+                f"Rebill remote agent '{session.name}' on its own machine "
+                f"(overcode rebill {session.name} <code>)",
+                severity="warning",
+            )
+            return
+        try:
+            modal = self.query_one("#billing-code-modal", BillingCodeModal)
+        except NoMatches:
+            self.notify("Billing code modal not found", severity="error")
+            return
+        billing = get_billing_config()
+        warning = ""
+        if billing["warnings"]:
+            warning = f"config.yaml: {billing['warnings'][0]}"
+            if len(billing["warnings"]) > 1:
+                warning += f" (+{len(billing['warnings']) - 1} more)"
+        self._dialog_will_open()
+        modal.show(
+            session_id=session.id,
+            name=session.name,
+            code=billing_code_of(session),
+            shortlist=billing["codes"],
+            config_warning=warning,
             app_ref=self,
         )
 

@@ -3,7 +3,7 @@ Dialogs for the TUI: opening them, their results, and the tmux zoom around them.
 
 Every dialog (a widget with the "modal" class) zooms the TUI pane while it
 is open (_dialog_will_open) and unzooms when the last one closes
-(_dialog_did_close). Here: the new-agent and rename dialogs, column config,
+(_dialog_did_close). Here: the new-agent, rename and billing-code dialogs, column config,
 new-agent defaults, skills, tmux toggle key, passthru keys, instruction
 history (#376) and the command palette (agents, tags, sorts, commands:
 #420, #357, #482, #487).
@@ -27,6 +27,7 @@ from ..tui_widgets import (
     NewAgentDefaultsModal,
     NewAgentModal,
     PassthruConfigModal,
+    BillingCodeModal,
     RenameAgentModal,
     SessionSummary,
     SkillsModal,
@@ -114,6 +115,12 @@ class DialogsMixin:
             permissions = "bypass" if message.bypass_permissions else "normal"
             if message.extra_cli_args:
                 self.notify("Backend args are not yet supported for remote launches — ignored", severity="warning")
+            if message.billing_code:
+                self.notify(
+                    f"Billing codes are not yet supported for remote launches — '{name}' "
+                    f"is billed to its name (overcode rebill on {message.host} moves it)",
+                    severity="warning",
+                )
             from ..backends import DEFAULT_BACKEND
             if message.backend and message.backend != DEFAULT_BACKEND:
                 self.notify(
@@ -159,12 +166,15 @@ class DialogsMixin:
                     wrapper=message.wrapper,
                     extra_cli_args=message.extra_cli_args or None,
                     skill_profile=message.skill_profile,
+                    billing_code=message.billing_code,
                 )
                 parts = [f"Created agent: {name}"]
                 if message.wrapper:
                     parts.append(f"wrapper: {message.wrapper}")
                 if message.skill_profile and message.skill_profile != "none":
                     parts.append(f"skills: {message.skill_profile}")
+                if message.billing_code:
+                    parts.append(f"billed to: {message.billing_code}")
                 self.notify(" ".join(parts), severity="information")
                 self.refresh_sessions()
             except LaunchError as e:
@@ -240,6 +250,30 @@ class DialogsMixin:
                 severity="error",
             )
         self.call_from_thread(self.refresh_sessions)
+
+    def on_billing_code_modal_rebill_requested(
+        self, message: BillingCodeModal.RebillRequested,
+    ) -> None:
+        """Bill the agent's new spend to the chosen code: ``overcode rebill``'s path."""
+        self._dialog_did_close()
+        try:
+            old = self.session_manager.rebill(message.session_id, message.new_code)
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+            return
+        if old is None:
+            self.notify(f"Agent '{message.name}' no longer exists", severity="error")
+            return
+        if old == message.new_code:
+            self.notify(f"'{message.name}' is already billed to {old}")
+            return
+        self.notify(f"'{message.name}' billed to {message.new_code} from now on "
+                    f"(its spend so far stays on {old})")
+        self.refresh_sessions()
+
+    def on_billing_code_modal_cancelled(self, message: BillingCodeModal.Cancelled) -> None:
+        """Handle cancel from the billing-code modal."""
+        self._dialog_did_close()
 
     def on_rename_agent_modal_cancelled(self, message: RenameAgentModal.Cancelled) -> None:
         """Handle cancel from the rename modal."""

@@ -159,6 +159,7 @@ EXTRA_ACTIONS = {
     "new_agent": ("cli:launch",),
     "fork_focused": ("cli:fork",),
     "rename_focused": ("cli:rename",),
+    "set_billing_code": ("cli:rebill",),
     "kill_focused": ("cli:kill",),
     "restart_focused": ("cli:restart",),
 }
