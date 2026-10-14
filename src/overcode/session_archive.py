@@ -526,6 +526,31 @@ class SessionArchiveMixin:
                         return found
         return found
 
+    def newest_archived_records(self, session_ids: Iterable[str]) -> Dict[str, dict]:
+        """The newest archive record of each of ``session_ids`` the archive holds.
+
+        One pass, newest month first, parsing only the lines of those ids;
+        stops once every one is found.
+        """
+        wanted = set(session_ids)
+        found: Dict[str, dict] = {}
+        if not wanted:
+            return found
+        prefix = b'{"id": "'
+        for _, path in reversed(self._months_since(None)):
+            for line in reversed(self._month_lines(path)):
+                if line.startswith(prefix):
+                    end = line.find(b'"', len(prefix))
+                    if line[len(prefix):end].decode("utf-8", "replace") not in wanted:
+                        continue
+                record = _archive_record(line)
+                if record is None or record["id"] not in wanted or record["id"] in found:
+                    continue
+                found[record["id"]] = record
+                if len(found) == len(wanted):
+                    return found
+        return found
+
     def read_archive_month(self, path: Path, *, offset: int = 0) -> Tuple[List[dict], int, int]:
         """Records of one month file from byte ``offset`` (plain files only; 0 for a gzip).
 

@@ -335,6 +335,7 @@ def sweep_orphans(
     *,
     archived: Callable[[set], set],
     record: Callable[[str, dict], None],
+    attach: Optional[Callable[[str, dict], None]] = None,
     now: Optional[float] = None,
     min_age: float = ORPHAN_MIN_AGE_SECONDS,
     limit: int = 200,
@@ -346,9 +347,12 @@ def sweep_orphans(
     sessions.json snapshot taken after the scandir (``live_ids``) and it
     has not changed for ``min_age`` seconds. The archive is asked once,
     for all of them, which are archived already (``archived(ids)`` returns
-    those): they are removed. Any other is packed first and
-    ``record(sid, pointer)`` writes its archive record before the
-    directory goes. At most ``limit`` orphans per call.
+    those): they are removed, unless their record has no bundle (packing
+    failed when they were archived: ``archived`` then returns a mapping
+    ``{sid: has_bundle}``), when they are packed and ``attach(sid,
+    pointer)`` gives the record its bundle first. Any other is packed
+    first and ``record(sid, pointer)`` writes its archive record before
+    the directory goes. At most ``limit`` orphans per call.
 
     Returns counts: ``removed`` (archived already), ``packed``, ``kept``
     (too recent, or packing failed).
@@ -390,13 +394,21 @@ def sweep_orphans(
         sid = entry.name
         try:
             if sid in already:
-                shutil.rmtree(entry.path, ignore_errors=True)
-                counts["removed"] += 1
-                continue
-            pointer = pack_agent_dir(tmux_session, sid, {"orphan": True})
-            if pointer is None:
-                continue
-            record(sid, pointer)
+                unpacked = isinstance(already, dict) and not already[sid]
+                if not unpacked or attach is None:
+                    shutil.rmtree(entry.path, ignore_errors=True)
+                    counts["removed"] += 1
+                    continue
+                # Archived, but its packing failed then: pack it now
+                pointer = pack_agent_dir(tmux_session, sid, {"retry": True})
+                if pointer is None:
+                    continue
+                attach(sid, pointer)
+            else:
+                pointer = pack_agent_dir(tmux_session, sid, {"orphan": True})
+                if pointer is None:
+                    continue
+                record(sid, pointer)
         except Exception:
             counts["kept"] += 1
             continue

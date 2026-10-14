@@ -221,6 +221,22 @@ class TestOrphanSweep:
         assert agent_bundle.read_agent("agents", orphan["bundle"])["files"]["report.json"] == \
             {"status": "failure"}
 
+    def test_a_directory_whose_packing_failed_is_packed_not_deleted(self, sm):
+        """A full disk at archive time: the record is written, the directory kept."""
+        session = _agent(sm, report_json='{"status": "success"}')
+        with patch("overcode.agent_bundle._append_member", side_effect=OSError(28, "ENOSPC")):
+            sm.delete_session(session.id)
+        assert sm.is_archived(session.id) and agent_dir("agents", session.id).is_dir()
+        assert sm.find_archived(session.id)._bundle is None
+        self._old(agent_dir("agents", session.id))
+        counts = sm.tidy_agent_storage("agents")
+        assert counts["packed"] == 1 and counts.get("removed", 0) == 0
+        assert not agent_dir("agents", session.id).exists()
+        archived = sm.find_archived(session.id)
+        assert archived.name == "kid"  # the real record, now with its bundle
+        assert agent_bundle.read_agent("agents", archived._bundle)["files"]["report.json"] == \
+            {"status": "success"}
+
     def test_live_and_recent_directories_are_left_alone(self, sm):
         live = _agent(sm)
         self._old(agent_dir("agents", live.id))

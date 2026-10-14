@@ -1002,8 +1002,16 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         def live_ids() -> set:
             return set(self._snapshot())
 
-        def archived(session_ids: set) -> set:
-            return self.archived_ids(session_ids)
+        def archived(session_ids: set) -> Dict[str, bool]:
+            # Whether each archived one's record has its bundle: one whose
+            # packing failed at archive time kept its directory for this
+            return {sid: bool(r.get("bundle"))
+                    for sid, r in self.newest_archived_records(session_ids).items()}
+
+        def attach(session_id: str, pointer: dict) -> None:
+            newest = self.newest_archived_records({session_id}).get(session_id)
+            if newest is not None:
+                self._append_archive_records([dict(newest, bundle=pointer)])
 
         def record(session_id: str, pointer: dict) -> None:
             now = datetime.now().isoformat()
@@ -1018,7 +1026,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         try:
             if sweep_limit > 0:
                 counts.update(agent_bundle.sweep_orphans(
-                    tmux_session, live_ids, archived=archived, record=record, limit=sweep_limit))
+                    tmux_session, live_ids, archived=archived, record=record, attach=attach,
+                    limit=sweep_limit))
         except Exception as e:
             logger.warning("agent directory sweep failed: %s", e)
         try:
