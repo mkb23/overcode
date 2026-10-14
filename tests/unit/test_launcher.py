@@ -1965,10 +1965,19 @@ class TestLaunchFork:
             launcher.launch_fork(name="too-deep", source_session=deepest)
 
     def test_fork_with_initial_prompt(self, tmp_path):
-        """Fork can send an initial prompt."""
-        launcher, source, _ = self._make_launcher_and_source(tmp_path)
+        """A Claude fork's prompt goes on its command line, as a launch's does:
+        pasted, Claude 2.1.29x hands it over as <pasted_content>, not obeyed."""
+        launcher, source, mock_tmux = self._make_launcher_and_source(tmp_path)
+        seen = {}
 
-        with patch.object(launcher, "_send_prompt_to_window") as mock_send:
+        def wait(window, backend=None):
+            line = mock_tmux.sent_keys[-1][2]
+            path = line.rsplit('"$(cat ', 1)[1].rstrip(')"').strip("'")
+            seen.update(line=line, path=path, text=Path(path).read_text())
+            return True
+
+        with patch.object(launcher, "_wait_for_prompt", side_effect=wait), \
+                patch.object(launcher, "_send_prompt_to_window") as paste:
             forked = launcher.launch_fork(
                 name="prompted-fork",
                 source_session=source,
@@ -1976,9 +1985,10 @@ class TestLaunchFork:
             )
 
         assert forked is not None
-        args, kwargs = mock_send.call_args
-        assert args == (forked.tmux_window, "Analyze the test failures")
-        assert kwargs["backend"].name == "claude-code"
+        paste.assert_not_called()
+        assert "--fork-session" in seen["line"]
+        assert seen["text"] == "Analyze the test failures"
+        assert not Path(seen["path"]).exists()
 
 
 class TestForkSessionIdPrescriptionByBackend:
@@ -3122,12 +3132,30 @@ class TestClaudePromptOnTheCommandLine:
         # A restart relaunches from the stored command: no prompt in it
         assert not any("$(cat" in part or "Line one" in part for part in session.command)
 
-    def test_a_prompt_that_looks_like_an_option_is_pasted(self, tmp_path):
+    def test_a_prompt_that_looks_like_an_option_is_on_the_command_line(self, tmp_path):
+        """`--` ends the options, so "-"-prefixed text is still the prompt."""
         launcher, tmux = self._launcher(tmp_path)
-        with patch.object(launcher, "_send_prompt_to_window") as paste:
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch.object(launcher, "_send_prompt_to_window") as paste:
             launcher.launch(name="kid", initial_prompt="--help me")
-        paste.assert_called_once()
-        assert "$(cat" not in tmux.sent_keys[-1][2]
+        paste.assert_not_called()
+        assert ' -- "$(cat ' in tmux.sent_keys[-1][2]
+
+    @pytest.mark.parametrize("kwargs", [
+        {"allowed_tools": "Bash,Read"},
+        {"extra_cli_args": ["--add-dir ../shared"]},
+    ])
+    def test_a_variadic_option_does_not_swallow_the_prompt(self, tmp_path, kwargs):
+        """claude's --allowedTools <tools...> and --add-dir <dirs...> take every
+        following word: the prompt must come after `--`, not straight after."""
+        import shlex as _shlex
+
+        launcher, tmux = self._launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True):
+            launcher.launch(name="kid", initial_prompt="Fix the flaky test", **kwargs)
+        words = _shlex.split(tmux.sent_keys[-1][2])
+        assert words[-1].startswith("$(cat ")
+        assert words[-2] == "--"
 
     def test_other_backends_paste(self, tmp_path):
         launcher, tmux = self._launcher(tmp_path)

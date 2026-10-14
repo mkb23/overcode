@@ -277,8 +277,11 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
         env_prefix = " ".join(f"{k}={v}" for k, v in env.items())
         # The shell reads the prompt from its file: the text itself never
-        # rides on the typed line (quoting, length)
-        prompt_arg = (f' "$(cat {shlex.quote(spec.initial_prompt_file)})"'
+        # rides on the typed line (quoting, length). `--` ends the options:
+        # claude's variadic ones (--allowedTools <tools...>, --add-dir,
+        # --mcp-config...) would otherwise take the prompt as one more
+        # value, and a prompt starting with "-" would read as an option.
+        prompt_arg = (f' -- "$(cat {shlex.quote(spec.initial_prompt_file)})"'
                       if spec.initial_prompt_file else "")
 
         if spec.mock_scenario:
@@ -528,26 +531,34 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         if tidy is not None:
             tidy(self.tmux_session, sweep_limit=0, prune_limit=31)
 
-        # Send initial prompt if provided (after Claude starts)
-        if prompt_file:
-            # On the command line already: only answer the startup dialogs
-            self._wait_for_prompt(window_name, backend=agent_backend)
-            self._remove_prompt_file(prompt_file)
-        elif initial_prompt:
-            self._send_prompt_to_window(window_name, initial_prompt, backend=agent_backend)
-
+        self._deliver_initial_prompt(window_name, agent_backend, prompt_file, initial_prompt)
         return session
+
+    def _deliver_initial_prompt(self, window_name: str, backend: AgentBackend,
+                                prompt_file: Optional[str],
+                                prompt: Optional[str]) -> None:
+        """Get the first prompt to an agent whose launch line was just sent.
+
+        On the command line already (``prompt_file``): only answer the
+        startup dialogs, then drop the file. Otherwise send it once the
+        agent is up.
+        """
+        if prompt_file:
+            self._wait_for_prompt(window_name, backend=backend)
+            self._remove_prompt_file(prompt_file)
+        elif prompt:
+            self._send_prompt_to_window(window_name, prompt, backend=backend)
 
     def _initial_prompt_file(self, backend: AgentBackend, session: Session,
                              prompt: Optional[str]) -> Optional[str]:
         """Write the first prompt for a backend that takes it as an argument.
 
-        None (paste it once the agent is up) for other backends, the mock
-        harness, and a prompt starting with "-", which the CLI would read
-        as an option.
+        None (paste it once the agent is up) for other backends and the
+        mock harness. The launch line puts `--` before it, so a prompt
+        starting with "-" is still the prompt, not an option.
         """
         if (not prompt or not backend.prompt_as_argument
-                or os.environ.get("MOCK_SCENARIO") or prompt.lstrip().startswith("-")):
+                or os.environ.get("MOCK_SCENARIO")):
             return None
         from .settings import get_session_dir
         folder = get_session_dir(self.tmux.session_name) / "prompts"
@@ -677,10 +688,15 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         # own unpredictable fork id and offer no reliable discovery
         # mechanism would need directory+time fallback here instead; none
         # of the four current backends are in that position.
+        # The prompt rides on the command line too, as for a launch: Claude
+        # does not act on a long pasted prompt (see _initial_prompt_file).
+        prompt_file = self._initial_prompt_file(agent_backend, session, initial_prompt)
         if not self._send_launch_for_session(
             session, window_name,
             fork_from=source_session.active_agent_session_id,
+            initial_prompt_file=prompt_file,
         ):
+            self._remove_prompt_file(prompt_file)
             self.tmux.kill_window(window_name)
             self.sessions.delete_session(session.id, archive=False)
             raise LaunchError(f"failed to send command to window {window_name}", "fork")
@@ -689,10 +705,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
         print(f"✓ Forked '{source_session.name}' → '{name}' in tmux window {window_name}")
 
-        # Send initial prompt if provided
-        if initial_prompt:
-            self._send_prompt_to_window(window_name, initial_prompt, backend=agent_backend)
-
+        self._deliver_initial_prompt(window_name, agent_backend, prompt_file, initial_prompt)
         return session
 
     def _send_launch_for_session(
