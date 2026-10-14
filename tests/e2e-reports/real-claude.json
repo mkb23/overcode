@@ -1,10 +1,10 @@
 {
   "tier": "real-claude",
   "result": "passed",
-  "commit": "183f593a5fcde2e6ee532df7393394c3e620aa30",
+  "commit": "e2899ca71f5921fb4d783f48056bade680e99a57",
   "src_dirty": false,
-  "ran_at": "2026-10-13T22:43:39+00:00",
-  "duration_s": 221,
+  "ran_at": "2026-10-14T17:55:32+00:00",
+  "duration_s": 212,
   "exit_code": 0,
   "counts": {
     "passed": 5,
@@ -23,7 +23,7 @@
   "versions": {
     "python": "3.12.9",
     "platform": "Darwin 25.5.0 arm64",
-    "claude": "2.1.296 (Claude Code)",
+    "claude": "2.1.299 (Claude Code)",
     "codex": "codex-cli 0.156.1",
     "opencode": "1.18.29",
     "hermes": "Hermes Agent v0.21.3 (2026.9.14) \u00b7 upstream 98f758ae",
