@@ -1923,3 +1923,52 @@ class TestSecondInterrupt:
         running_at(5)               # re-prompted: the old marker is history
         assert not check(6, 1)
         assert check(8, 2)          # a second Esc: one more marker in the tail
+
+
+_OLD_ESC = "⏺ Bash(make test)\n  ⎿  Interrupted · What should Claude do instead?\n\n"
+_PROMPT_TAIL = "❯ \n  ? for shortcuts\n"
+
+
+class TestOldInterruptMarkerAfterReprompt:
+    """An Esc marker left in the tail does not turn a later clean Stop red."""
+
+    def _run(self, tmp_path, parent, final_pane):
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True)
+        tmux = MockTmux()
+        det = HookStatusDetector("agents", tmux=tmux, state_dir=state_dir)
+        s = create_mock_session(name="a1", tmux_window="w1")
+        s.parent_session_id = parent
+        t0 = 1_800_000_000.0
+        events = []
+
+        def hook(event, t, **kw):
+            events.append({"event": event, "timestamp": t0 + t})
+            (state_dir / "hook_state_a1.json").write_text(
+                json.dumps({"event": event, "timestamp": t0 + t, **kw}))
+            (state_dir / "hook_events_a1.jsonl").write_text(
+                "".join(json.dumps(e) + "\n" for e in events))
+
+        hook("PreToolUse", 0, tool_name="Bash")
+        tmux.set_pane_content("agents", "w1", _OLD_ESC + _PROMPT_TAIL)
+        det.detect_status(s, now=t0 + 5)
+        assert det.get_status_detail("a1").color == STATUS_COLOR_RED  # the Esc
+
+        hook("UserPromptSubmit", 20)  # re-prompted: busy under the old marker
+        tmux.set_pane_content("agents", "w1", _OLD_ESC + "> go on\n\n"
+                              "✻ Thinking… (3s · esc to interrupt)\n\n" + _PROMPT_TAIL)
+        det.detect_status(s, now=t0 + 22)
+
+        hook("Stop", 30)
+        tmux.set_pane_content("agents", "w1", final_pane)
+        det.detect_status(s, now=t0 + 35)
+        return det.get_status_detail("a1")
+
+    def test_a_child_clean_stop_rests(self, tmp_path):
+        pane = _OLD_ESC + "> go on\n\n⏺ Done.\n\n" + _PROMPT_TAIL
+        assert self._run(tmp_path, "p1", pane).color == STATUS_COLOR_REST
+
+    def test_a_new_esc_after_the_turn_still_counts(self, tmp_path):
+        pane = (_OLD_ESC + "> go on\n\n⏺ Bash(ls)\n  ⎿  Interrupted · What should Claude "
+                "do instead?\n\n" + _PROMPT_TAIL)
+        assert self._run(tmp_path, "p1", pane).color == STATUS_COLOR_RED

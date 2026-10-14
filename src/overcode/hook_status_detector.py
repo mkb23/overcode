@@ -926,6 +926,9 @@ class HookStatusDetector:
         self._interrupt_seen_at: Dict[str, float] = {}
         # How many interrupt markers the pane's tail held last time
         self._interrupt_counts: Dict[str, int] = {}
+        # How many of the markers in each pane's tail were seen above a live
+        # busy marker: those are history, even after the turn ends
+        self._interrupt_stale: Dict[str, int] = {}
         # When each pane was first seen idle while hooks said running
         self._idle_seen_at: Dict[str, float] = {}
         # Whether this backend's busy marker has shown on any pane since
@@ -1186,10 +1189,9 @@ class HookStatusDetector:
 
         # An interrupt marker above a live busy marker is an old one
         shown = bool(clean) and _pane_shows_interrupt_prompt(clean, patterns)
-        if shown and pane_shows_idle(clean, patterns, clean_content=clean) is False:
-            shown = False
+        busy = shown and pane_shows_idle(clean, patterns, clean_content=clean) is False
         interrupted = self._interrupt_still_current(
-            name, shown, _interrupt_marker_count(clean, patterns), now=now,
+            name, shown, _interrupt_marker_count(clean, patterns), now=now, busy=busy,
         )
 
         # The idle wait runs while hooks say a turn is working
@@ -1246,7 +1248,8 @@ class HookStatusDetector:
         return now - first >= _IDLE_CONFIRM_SECONDS
 
     def _interrupt_still_current(
-        self, session_name: str, shown: bool, count: int = 1, now: Optional[float] = None
+        self, session_name: str, shown: bool, count: int = 1, now: Optional[float] = None,
+        busy: bool = False,
     ) -> bool:
         """Whether an on-screen interrupt marker still means "interrupted" (#507).
 
@@ -1254,13 +1257,31 @@ class HookStatusDetector:
         prompt; once a working event arrives after the marker first showed,
         the agent has resumed and the marker is history. One more marker in
         the tail than last time is a new Esc, so it counts from now.
+
+        Markers seen above a live busy marker (``busy``) are history for
+        good: when that turn ends the pane still shows them, and only a
+        marker added since is a new Esc.
         """
         if not shown:
             self._interrupt_seen_at.pop(session_name, None)
             self._interrupt_counts.pop(session_name, None)
+            self._interrupt_stale.pop(session_name, None)
             return False
         if now is None:
             now = self.clock.time()
+        if busy:
+            self._interrupt_stale[session_name] = count
+            self._interrupt_counts[session_name] = count
+            self._interrupt_seen_at.pop(session_name, None)
+            return False
+        stale = self._interrupt_stale.get(session_name)
+        if stale is not None:
+            if count <= stale:
+                # Old markers only (some may have scrolled out of the tail)
+                self._interrupt_stale[session_name] = count
+                self._interrupt_counts[session_name] = count
+                return False
+            del self._interrupt_stale[session_name]
         if count > self._interrupt_counts.get(session_name, count):
             self._interrupt_seen_at[session_name] = now
         self._interrupt_counts[session_name] = count
