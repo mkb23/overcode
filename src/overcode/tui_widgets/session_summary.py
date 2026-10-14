@@ -421,6 +421,16 @@ class SessionSummary(Static, can_focus=True):
         rds = s.remote_daemon_state or {}
         self.is_unvisited_stalled = not s.is_asleep and tui_engine.is_unvisited(rds, visited_here)
         self._apply_results(rds)
+        # Time in state: the sister's published episode (as for a local row),
+        # else the poll's state_since (an older sister)
+        changed_at = tui_engine.status_changed_at(rds)
+        if changed_at is None and stats.state_since:
+            try:
+                changed_at = from_iso(stats.state_since)
+            except (ValueError, TypeError):
+                changed_at = None
+        if changed_at is not None:
+            self._status_changed_at = changed_at
         pane_changed = self.apply_pane_content(s.pane_content or "")
         return pane_changed or before != (
             self.detected_status, self.current_activity, self.claude_stats,
