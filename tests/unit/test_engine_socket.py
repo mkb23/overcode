@@ -376,3 +376,59 @@ class TestLiveness:
         server.publish(proto.Snapshot(agents={"a": {"status": "running"}}))
         client, rec = client_factory()
         assert wait_for(lambda: rec.latest is not None and "a" in rec.latest.agents)
+
+
+class TestLongStateDir:
+    """A state dir too deep for AF_UNIX gets a short stand-in socket path
+    that the daemon and every view compute alike."""
+
+    @pytest.fixture
+    def short_root(self, monkeypatch):
+        d = tempfile.mkdtemp(prefix="oc-root-", dir="/tmp")
+        monkeypatch.setattr(engine_socket, "SHORT_SOCKET_ROOT", Path(d))
+        yield Path(d)
+        shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_short_state_dir_keeps_its_own_socket(self, sock_path):
+        assert engine_socket.socket_path(sock_path.parent) == sock_path
+
+    def test_a_long_state_dir_binds_and_connects(self, tmp_path, short_root, monkeypatch):
+        state_dir = tmp_path / ("s" * 120) / "agents"
+        path = engine_socket.socket_path(state_dir)
+        assert path.parent == short_root / f"overcode-{os.getuid()}"
+        assert len(os.fsencode(str(path))) <= engine_socket.MAX_SOCKET_PATH_BYTES
+        # Another state dir gets another socket; the same one, the same
+        assert engine_socket.socket_path(tmp_path / ("t" * 120)) != path
+        assert engine_socket.socket_path(state_dir) == path
+
+        # The TUI finds it from the tmux session, as the daemon does
+        from overcode import tui_engine
+        from overcode.settings import get_monitor_daemon_state_path
+
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / ("s" * 120)))
+        daemon_dir = get_monitor_daemon_state_path("agents").parent
+        assert tui_engine.engine_socket_path("agents") == engine_socket.socket_path(daemon_dir)
+
+        server = EngineServer(path)
+        server.start()
+        try:
+            assert stat.S_IMODE(os.stat(path.parent).st_mode) == 0o700
+            server.publish(snap(a={"colour": "green"}))
+            rec = Recorder()
+            client = EngineClient(engine_socket.socket_path(state_dir), rec.on_change,
+                                  rec.on_bell, rec.on_connection)
+            client.start()
+            try:
+                assert wait_for(lambda: rec.latest and rec.latest.agents == {"a": {"colour": "green"}})
+            finally:
+                client.stop()
+        finally:
+            server.stop()
+
+    def test_a_short_dir_that_is_not_ours_is_refused(self, short_root):
+        target = short_root / "elsewhere"
+        target.mkdir()
+        (short_root / f"overcode-{os.getuid()}").symlink_to(target)
+        server = EngineServer(engine_socket._short_socket_dir() / "x.sock")
+        with pytest.raises(OSError):
+            server.start()

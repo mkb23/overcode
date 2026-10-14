@@ -149,9 +149,18 @@ class TestMonitorState:
             assert changed != before
 
 
-def test_socket_path_is_next_to_the_state_file(monkeypatch, tmp_path):
-    monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
-    from overcode.settings import get_monitor_daemon_state_path
+def test_socket_path_is_next_to_the_state_file(monkeypatch):
+    # pytest's tmp_path on macOS is too long for AF_UNIX (that gets a
+    # short stand-in: test_engine_socket.TestLongStateDir)
+    import shutil
+    import tempfile
 
-    assert tui_engine.engine_socket_path("agents") == \
-        get_monitor_daemon_state_path("agents").parent / "engine.sock"
+    short = tempfile.mkdtemp(prefix="oc-", dir="/tmp")
+    try:
+        monkeypatch.setenv("OVERCODE_STATE_DIR", short)
+        from overcode.settings import get_monitor_daemon_state_path
+
+        assert tui_engine.engine_socket_path("agents") == \
+            get_monitor_daemon_state_path("agents").parent / "engine.sock"
+    finally:
+        shutil.rmtree(short, ignore_errors=True)

@@ -15,9 +15,12 @@ visibility and focus, and reconnects with backoff when the engine goes away.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import selectors
 import socket
+import stat
+import sys
 import threading
 import time
 from pathlib import Path
@@ -38,8 +41,52 @@ STALL_SECONDS = 30.0
 SILENT_SECONDS = 3 * PING_SECONDS
 
 
+# The longest AF_UNIX path bind() takes, in bytes: sun_path is 104 bytes on
+# macOS and 108 on Linux, one of them the terminating NUL
+MAX_SOCKET_PATH_BYTES = 103 if sys.platform == "darwin" else 107
+# Where a socket whose own path is too long goes instead: short on every
+# platform (macOS's $TMPDIR is itself ~50 bytes), one directory per user
+SHORT_SOCKET_ROOT = Path("/tmp")
+
+
 def socket_path(state_dir: Path) -> Path:
-    return Path(state_dir) / "engine.sock"
+    """engine.sock for ``state_dir``: inside it, or a short stand-in.
+
+    A long HOME, tmux session name or OVERCODE_STATE_DIR can push
+    ``<state_dir>/engine.sock`` past the AF_UNIX limit, and then nothing
+    could ever bind or connect it. Such a socket lives at
+    ``/tmp/overcode-<uid>/<hash of state_dir>.sock`` instead; the daemon
+    and every view compute the same path from the same state dir.
+    """
+    path = Path(state_dir) / "engine.sock"
+    if len(os.fsencode(str(path))) <= MAX_SOCKET_PATH_BYTES:
+        return path
+    key = hashlib.sha256(os.fsencode(os.path.abspath(str(state_dir)))).hexdigest()[:16]
+    return _short_socket_dir() / f"{key}.sock"
+
+
+def _short_socket_dir() -> Path:
+    return SHORT_SOCKET_ROOT / f"overcode-{os.getuid()}"
+
+
+def _prepare_socket_dir(directory: Path) -> None:
+    """Create the socket's directory; the shared short one private to this user.
+
+    /tmp is everyone's: the directory must be ours and not a symlink, or
+    another user could own the path our views connect to.
+    """
+    if directory != _short_socket_dir():
+        directory.mkdir(parents=True, exist_ok=True)
+        return
+    try:
+        directory.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    info = os.lstat(directory)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise OSError(f"{directory} is not a directory owned by this user")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        os.chmod(directory, 0o700)
 
 
 class _Peer:
@@ -81,7 +128,7 @@ class EngineServer:
     # -- lifecycle -------------------------------------------------------
 
     def start(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _prepare_socket_dir(self.path.parent)
         try:
             self.path.unlink()
         except FileNotFoundError:

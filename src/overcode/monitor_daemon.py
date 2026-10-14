@@ -1165,7 +1165,7 @@ class MonitorDaemon:
             server = EngineServer(socket_path(self.state_path.parent))
             server.start()
         except OSError as e:
-            self.log.warn(f"engine.sock unavailable, views fall back to the state file: {e}")
+            self.log.warn(f"engine.sock unavailable, views cannot connect: {e}")
             return
         server.on_stall = self._on_main_loop_stall
         self._engine = server
