@@ -703,6 +703,23 @@ class TestLaunchSister:
                     permissions="normal",
                 )
 
+    def test_launch_sister_warns_billing_code_is_dropped(self):
+        """The sister API takes no billing code: say so, don't drop it silently."""
+        from overcode.sister_controller import ControlResult
+
+        with patch('overcode.config.get_sister_by_name', return_value={
+            "name": "desktop", "url": "http://desktop:15337", "api_key": "secret",
+        }):
+            with patch('overcode.sister_controller.SisterController.launch_agent',
+                       return_value=ControlResult(ok=True)):
+                result = runner.invoke(app, [
+                    "launch", "--name", "w", "--sister", "desktop",
+                    "--directory", "/tmp/work", "--billing-code", "client-x",
+                ])
+        assert result.exit_code == 0, result.output
+        assert "Billing codes are not yet supported for remote launches" in result.output
+        assert "rebill" in result.output
+
     def test_launch_sister_remote_error(self):
         """Error from remote sister is displayed."""
         from overcode.sister_controller import ControlResult

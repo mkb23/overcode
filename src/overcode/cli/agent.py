@@ -309,6 +309,11 @@ def launch(
         remote_dir = directory if directory else "."
         if not directory:
             rprint("[yellow]Warning:[/yellow] No --directory given; remote agent will use '.'")
+        if billing_code:
+            # The sister launch API takes no billing code (the TUI warns the same)
+            rprint(f"[yellow]Warning:[/yellow] Billing codes are not yet supported for remote "
+                   f"launches; '{name}' is billed to its name "
+                   f"(overcode rebill on {sister} moves it)")
 
         # Map permission flags to permissions string
         if bypass_permissions:
