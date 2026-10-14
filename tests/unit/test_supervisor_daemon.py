@@ -1317,3 +1317,81 @@ class TestASupervisorPassMayFail:
             except ValueError as e:
                 daemon._iteration_failed(e)
         assert daemon.log.error.call_count == 4  # 1st with traceback, then 2, 4, 8
+
+
+class TestLaunchDaemonClaude:
+    """Daemon claude's mission goes on its command line, not through a paste:
+    Claude 2.1.29x hands a long paste to the model as <pasted_content>."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+        monkeypatch.setattr('overcode.settings.get_session_dir', lambda x: tmp_path / "session")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        daemon.tmux.ensure_session = Mock(return_value=True)
+        daemon.tmux.create_window = Mock(return_value="_daemon_claude-1")
+        daemon.tmux.send_keys = Mock(return_value=True)
+        daemon.tmux.kill_window = Mock()
+        return daemon
+
+    def test_the_prompt_is_on_the_command_line(self, tmp_path, monkeypatch):
+        import shlex
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        seen = {}
+
+        def startup(window_name, timeout=15):
+            line = daemon.tmux.send_keys.call_args.args[1]
+            words = shlex.split(line)
+            seen["words"] = words
+            path = words[-1][len("$(cat "):-1]
+            seen["path"] = path
+            seen["text"] = Path(path).read_text()
+            return True
+
+        with patch.object(daemon, "build_daemon_claude_context", return_value="CONTEXT"), \
+                patch.object(daemon, "_accept_startup_prompts", side_effect=startup), \
+                patch("overcode.supervisor_daemon.type_text_to_tmux_window") as typed, \
+                patch("overcode.tmux_utils.send_text_to_tmux_window") as pasted:
+            assert daemon.launch_daemon_claude([]) is True
+
+        typed.assert_not_called()
+        pasted.assert_not_called()
+        assert seen["words"][-2] == "--"
+        assert "--dangerously-skip-permissions" in seen["words"]
+        assert seen["text"].endswith("CONTEXT")
+        assert not Path(seen["path"]).exists()
+
+    def test_without_a_prompt_file_the_prompt_is_typed(self, tmp_path, monkeypatch):
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        with patch.object(daemon, "build_daemon_claude_context", return_value="CONTEXT"), \
+                patch.object(daemon, "_write_prompt_file", return_value=None), \
+                patch.object(daemon, "_accept_startup_prompts", return_value=True), \
+                patch("overcode.supervisor_daemon.type_text_to_tmux_window",
+                      return_value=True) as typed:
+            assert daemon.launch_daemon_claude([]) is True
+        assert typed.call_args.args[2].endswith("CONTEXT")
+        assert "$(cat" not in daemon.tmux.send_keys.call_args.args[1]
+
+
+class TestAcceptStartupPrompts:
+    def test_the_bypass_warning_is_accepted_not_taken_for_the_prompt(self, tmp_path, monkeypatch):
+        """The warning shows a '❯' menu cursor and names Claude Code."""
+        daemon = TestLaunchDaemonClaude()._make_daemon(tmp_path, monkeypatch)
+        warning = ("WARNING: Claude Code running in Bypass Permissions mode\n"
+                   "❯ 1. No, exit\n  2. Yes, I accept")
+        ready = "Claude Code v2\n❯ "
+        screens = iter([warning, ready])
+        with patch.object(daemon, "_capture_daemon_pane", side_effect=lambda lines=20: next(screens)), \
+                patch("overcode.supervisor_daemon.subprocess.run") as run, \
+                patch("overcode.supervisor_daemon.time.sleep"):
+            assert daemon._accept_startup_prompts("_daemon_claude-1") is True
+        keys = [c.args[0][c.args[0].index("-t") + 2:] for c in run.call_args_list]
+        assert keys == [["Down"], ["", "Enter"]]

@@ -21,6 +21,7 @@ Pure business logic is extracted to supervisor_daemon_core.py for testability.
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -55,7 +56,7 @@ from .status_constants import (
     STATUS_WAITING_USER,
 )
 from .tmux_manager import TmuxManager
-from .tmux_utils import DAEMON_CLAUDE_WINDOW_NAME, send_text_to_tmux_window
+from .tmux_utils import DAEMON_CLAUDE_WINDOW_NAME, type_text_to_tmux_window
 from .history_reader import encode_project_path, read_token_usage_from_session_file
 from .supervisor_daemon_core import (
     build_daemon_claude_context as _build_daemon_claude_context,
@@ -580,13 +581,38 @@ class SupervisorDaemon:
         return _build_daemon_claude_context(self.tmux_session, session_dicts)
 
     def _send_prompt_to_window(self, window_name: str, prompt: str) -> bool:
-        """Send a large prompt to a tmux window via load-buffer/paste-buffer."""
-        return send_text_to_tmux_window(
+        """Type a prompt into daemon claude's window.
+
+        Typed, not pasted: Claude 2.1.29x hands a long paste to the model
+        inside <pasted_content>, which it is told not to obey. Only used when
+        the prompt could not go on the command line.
+        """
+        return type_text_to_tmux_window(
             self.tmux.session_name,
             window_name,
             prompt,
             send_enter=True,
         )
+
+    def _write_prompt_file(self, prompt: str) -> Optional[str]:
+        """Write daemon claude's prompt for its command line; None on failure.
+
+        The launch line reads it with ``"$(cat <file>)"``, as the launcher
+        does for an agent's first prompt (see ``AgentLauncher._initial_prompt_file``).
+        """
+        from .settings import get_session_dir
+
+        folder = get_session_dir(self.tmux_session) / "prompts"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / "daemon-claude.txt"
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(prompt)
+        except OSError as e:
+            self.log.warning(f"Could not write daemon claude prompt file: {e}")
+            return None
+        return str(path)
 
     def _accept_startup_prompts(self, window_name: str, timeout: int = 15) -> bool:
         """Accept Claude's interactive startup prompts via tmux keys.
@@ -611,10 +637,8 @@ class SupervisorDaemon:
                 time.sleep(0.5)
                 continue
 
-            if '\u276f' in content and 'Claude Code' in content:
-                self.log.info("Claude startup complete -- prompt detected")
-                return True
-
+            # The dialogs first: the bypass warning has a '\u276f' menu
+            # cursor and names Claude Code, so it would pass for the prompt
             if not trust_accepted and "I trust this folder" in content:
                 self.log.info("Trust prompt detected -- accepting")
                 subprocess.run(tmux_cmd + ['send-keys', '-t', target, '', 'Enter'], timeout=5)
@@ -630,6 +654,10 @@ class SupervisorDaemon:
                 perms_accepted = True
                 time.sleep(2.0)
                 continue
+
+            if '\u276f' in content and 'Claude Code' in content:
+                self.log.info("Claude startup complete -- prompt detected")
+                return True
 
             time.sleep(0.5)
 
@@ -673,21 +701,35 @@ class SupervisorDaemon:
         self.daemon_claude_launch_time = datetime.now()
 
         # Start Claude with auto-permissions (CLAUDE_COMMAND override matches
-        # launcher.py behavior; used by E2E tests to substitute a mock)
+        # launcher.py behavior; used by E2E tests to substitute a mock). The
+        # prompt goes on the command line, read from a file by the shell, so
+        # it arrives as typed: a pasted one reaches the model as
+        # <pasted_content>, not to be obeyed.
         claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
         claude_cmd = f"{claude_command} --dangerously-skip-permissions"
-        if not self.tmux.send_keys(window_name, claude_cmd, enter=True):
-            self.log.error("Failed to start Claude in daemon claude window")
-            self.tmux.kill_window(window_name)
-            return False
+        prompt_file = self._write_prompt_file(full_prompt)
+        if prompt_file:
+            claude_cmd += f' -- "$(cat {shlex.quote(prompt_file)})"'
+        try:
+            if not self.tmux.send_keys(window_name, claude_cmd, enter=True):
+                self.log.error("Failed to start Claude in daemon claude window")
+                self.tmux.kill_window(window_name)
+                return False
 
-        # Wait for Claude startup, accepting any interactive dialogs
-        if not self._accept_startup_prompts(window_name):
-            self.log.error("Failed to accept Claude startup prompts")
-            self.tmux.kill_window(window_name)
-            return False
+            # Wait for Claude startup, accepting any interactive dialogs
+            if not self._accept_startup_prompts(window_name):
+                self.log.error("Failed to accept Claude startup prompts")
+                self.tmux.kill_window(window_name)
+                return False
+        finally:
+            if prompt_file:
+                try:
+                    os.unlink(prompt_file)
+                except OSError:
+                    pass
 
-        # Send prompt
+        if prompt_file:
+            return True
         return self._send_prompt_to_window(window_name, full_prompt)
 
     # =========================================================================
