@@ -253,6 +253,45 @@ class TestPresenceComponent:
             component = PresenceComponent()
             component.stop()  # Should not raise
 
+    def _states(self, wall, mono):
+        """The presence state published at each (wall, monotonic) reading."""
+        from types import SimpleNamespace
+
+        from overcode.daemon_presence import PresenceComponent
+
+        clocks = SimpleNamespace(w=0.0, m=0.0)
+        fake_time = SimpleNamespace(time=lambda: clocks.w, monotonic=lambda: clocks.m)
+
+        class FakeDatetime(datetime):  # the wall clock, read either way
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.fromtimestamp(clocks.w, tz)
+
+        states = []
+        with patch('overcode.daemon_presence.MACOS_APIS_AVAILABLE', False), \
+                patch('overcode.daemon_presence.PresenceLogger', None):
+            component = PresenceComponent()
+            with patch('overcode.daemon_presence.time', fake_time), \
+                    patch('overcode.daemon_presence.datetime', FakeDatetime, create=True):
+                for clocks.w, clocks.m in zip(wall, mono):
+                    states.append(component.get_current_state()[0])
+        return states
+
+    def test_a_long_publish_interval_is_not_a_sleep(self):
+        """interval_unattended_seconds: 30 (or a slow tick): both clocks move 30 s."""
+        ticks = [1000.0 + 30 * i for i in range(5)]
+        states = self._states(ticks, [t - 900 for t in ticks])
+        assert 0 not in states  # never "asleep"
+
+    def test_a_sleep_is_the_wall_clock_gaining_on_the_monotonic(self):
+        # Asleep for 10 minutes between the 2nd and 3rd publish: the wall
+        # clock jumps, the monotonic clock (stopped in suspend) does not
+        wall = [1000.0, 1010.0, 1620.0, 1630.0]
+        mono = [100.0, 110.0, 120.0, 130.0]
+        states = self._states(wall, mono)
+        assert states[2] == 0  # asleep, for the sample after the wake
+        assert 0 not in (states[0], states[1], states[3])
+
 
 class TestMonitorDaemonState:
     """Test MonitorDaemonState dataclass."""

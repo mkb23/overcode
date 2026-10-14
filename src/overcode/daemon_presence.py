@@ -6,7 +6,6 @@ runs its attended cadences or the unattended ones.
 """
 
 import time
-from datetime import datetime
 from typing import Optional
 
 from .clock import to_epoch
@@ -40,12 +39,16 @@ class PresenceComponent:
 
     # TUI heartbeat is considered fresh if within this many seconds
     TUI_HEARTBEAT_FRESHNESS = 60
+    # How far the wall clock must gain on the monotonic clock between two
+    # publishes to count as a sleep (an NTP slew never comes near it)
+    SLEEP_GAIN_SECONDS = 10.0
 
     def __init__(self, tmux_session: str = "agents"):
         self.available = True
         self._logger: Optional[PresenceLogger] = None
         self._tmux_session = tmux_session
-        self._last_publish_time: Optional[datetime] = None
+        # (wall, monotonic) at the last publish, for _detect_sleep
+        self._last_publish_clocks: Optional[tuple] = None
 
         if PresenceLogger is not None:
             heartbeat_path = str(get_tui_heartbeat_path(tmux_session))
@@ -71,18 +74,20 @@ class PresenceComponent:
             return False
 
     def _detect_sleep(self) -> bool:
-        """Detect if the machine likely slept since last publish.
+        """Whether the machine slept since the last publish.
 
-        Returns True if the gap since last publish exceeds 2x the daemon interval.
+        Asleep, the wall clock runs on and the monotonic clock does not
+        (macOS and Linux both stop it in suspend), so a sleep shows as the
+        wall clock gaining on the monotonic one. A long publish interval or
+        a slow tick moves both alike and is never taken for a sleep, however
+        long the gap.
         """
-        now = datetime.now()
-        if self._last_publish_time is None:
-            self._last_publish_time = now
+        wall, mono = time.time(), time.monotonic()
+        last = self._last_publish_clocks
+        self._last_publish_clocks = (wall, mono)
+        if last is None:
             return False
-        gap = (now - self._last_publish_time).total_seconds()
-        slept = gap > 20  # Machine sleep produces gaps of 30s+; absolute threshold avoids false positives
-        self._last_publish_time = now
-        return slept
+        return (wall - last[0]) - (mono - last[1]) > self.SLEEP_GAIN_SECONDS
 
     def get_current_state(self) -> tuple:
         """Get current presence state.
