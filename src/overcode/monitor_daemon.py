@@ -82,6 +82,7 @@ from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
 from .child_lifecycle import CHILD_NOT_WORKING, OVERSIGHT_TIMEOUT_REASON, child_rollup, task_result
 from .engine_recorders import RecorderStore
+from .ledger import billing_code_of
 from .engine_wake import WakeLoop
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
@@ -731,6 +732,7 @@ class MonitorDaemon:
             wrapper=session.wrapper,
             sandbox_enabled=session.sandbox_enabled,
             skill_profile=getattr(session, 'skill_profile', None),
+            billing_code=billing_code_of(session),
             # Resource usage (summed over the agent process tree)
             cpu_percent=session.cpu_percent,
             rss_bytes=session.rss_bytes,
@@ -1724,7 +1726,7 @@ class MonitorDaemon:
         if previous is None:
             return SessionDaemonState(
                 session_id=session.id, name=session.name, tmux_window=session.tmux_window,
-                **unknown,
+                billing_code=billing_code_of(session), **unknown,
             )
         return dataclasses.replace(previous, **unknown)
 

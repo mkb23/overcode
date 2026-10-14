@@ -165,3 +165,31 @@ def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     if budget > 0:
         return f"{format_cost(cost)}/{format_cost(budget)}"
     return format_cost(cost)
+
+
+# The billing-code cell's width: a code is cut to it (… marks the cut) and
+# the "-" placeholder is padded to it, so the column holds still.
+BILLING_CODE_W = 12
+
+
+def _billing_code(ctx: ColumnContext) -> Optional[str]:
+    code = getattr(ctx.session, "billing_code", None)
+    return code if isinstance(code, str) and code else None
+
+
+def render_billing_code(ctx: ColumnContext) -> ColumnOutput:
+    """The code new spend is billed to; dim while it is the agent's own name
+    (the default), bold once rebilled or launched with a code."""
+    from rich.cells import cell_len, set_cell_size
+
+    code = _billing_code(ctx)
+    if code is None:
+        return [(" " + "-".ljust(BILLING_CODE_W), f"dim{ctx.bg}")]
+    if cell_len(code) > BILLING_CODE_W:
+        code = set_cell_size(code, BILLING_CODE_W - 1) + "…"
+    style = "dim" if code == ctx.session.name else "bold cyan"
+    return [(" " + set_cell_size(code, BILLING_CODE_W), f"{style}{ctx.bg}")]
+
+
+def render_billing_code_plain(ctx: ColumnContext) -> Optional[str]:
+    return _billing_code(ctx)

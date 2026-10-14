@@ -50,7 +50,7 @@ from .columns.render_time import (
 from .columns.render_usage import (
     render_token_count, render_cost, render_joules, render_budget, render_subtree_cost,
     render_subtree_cost_plain, burn_color_for_rate, render_burn_rate_plain, render_burn_rate,
-    render_token_count_plain, render_cost_plain,
+    render_token_count_plain, render_cost_plain, render_billing_code, render_billing_code_plain,
 )
 from .columns.render_context import (
     render_context_usage, render_model, render_model_plain, EFFORT_LEVELS, effort_short_name,
@@ -99,7 +99,8 @@ __all__ = [
     "render_uptime_plain", "render_time_plain", "render_token_count", "render_cost",
     "render_joules", "render_budget", "render_subtree_cost", "render_subtree_cost_plain",
     "burn_color_for_rate", "render_burn_rate_plain", "render_burn_rate",
-    "render_token_count_plain", "render_cost_plain", "render_context_usage", "render_model",
+    "render_token_count_plain", "render_cost_plain", "render_billing_code",
+    "render_billing_code_plain", "render_context_usage", "render_model",
     "render_model_plain", "EFFORT_LEVELS", "effort_short_name", "render_effort",
     "render_effort_plain", "render_provider", "render_provider_plain", "BACKEND_BADGES",
     "_backend_badge", "render_backend", "render_backend_plain", "render_median_work_time",

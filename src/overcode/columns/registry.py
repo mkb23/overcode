@@ -100,6 +100,9 @@ from .render_time import (
     render_uptime_plain,
 )
 from .render_usage import (
+    _billing_code,
+    render_billing_code,
+    render_billing_code_plain,
     render_budget,
     render_burn_rate,
     render_burn_rate_plain,
@@ -339,6 +342,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Cost of this agent plus all its children",
                   sort_key=lambda ctx: ctx.subtree_cost_usd or None,
                   sort_desc=True),
+    # Hidden below full detail; `overcode list` (full) shows it.
+    SummaryColumn(id="billing_code", group="llm_usage", detail_levels={"full"},
+                  render=render_billing_code, label="Billing",
+                  render_plain=render_billing_code_plain, header="BILL", name="Billing Code",
+                  description="Billing code new spend goes to (dim: the agent's own name); "
+                              "set it from the palette, / then 'billing'",
+                  sort_key=lambda ctx: _billing_code(ctx) or None,
+                  hide_when_uniform=True),
     # Burn rate over the timeline window (#174). Hidden until at least one
     # agent has window-scoped activity, so the column doesn't take width
     # when burn data isn't being computed (TUI not running, no recent tokens).
