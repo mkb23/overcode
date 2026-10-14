@@ -3198,3 +3198,45 @@ class TestClaudePromptOnTheCommandLine:
             launcher.launch(name="kid", initial_prompt="hello", backend="opencode")
         paste.assert_called_once()
         assert "$(cat" not in tmux.sent_keys[-1][2]
+
+
+class TestTmuxNotAnswering:
+    """A bounded TmuxManager raises TmuxTimeoutError when tmux is slow, rather
+    than report a window gone: launch/fork/restart/revive/kill end cleanly."""
+
+    def _launcher(self, tmp_path):
+        tmux = MockTmux()
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher("agents", TmuxManager("agents", tmux=tmux), sm)
+        return launcher, tmux, sm
+
+    def test_launch_is_a_launch_error(self, tmp_path):
+        launcher, tmux, _ = self._launcher(tmp_path)
+        tmux.unresponsive = True
+        with pytest.raises(LaunchError, match="not responding"):
+            launcher.launch(name="kid")
+
+    def test_fork_is_a_launch_error(self, tmp_path):
+        launcher, tmux, sm = self._launcher(tmp_path)
+        source = launcher.launch(name="source")
+        sm.set_active_agent_session_id(source.id, "sess-1")
+        source = sm.get_session(source.id)
+        tmux.unresponsive = True
+        with pytest.raises(LaunchError, match="not responding") as err:
+            launcher.launch_fork(name="kid", source_session=source)
+        assert err.value.action == "fork"
+
+    def test_restart_and_revive_fail(self, tmp_path, capsys):
+        launcher, tmux, _ = self._launcher(tmp_path)
+        session = launcher.launch(name="kid")
+        tmux.unresponsive = True
+        assert launcher.restart(session, graceful_exit_wait=0) is False
+        assert launcher.revive(session) is False
+        assert "not responding" in capsys.readouterr().err
+
+    def test_kill_keeps_the_record(self, tmp_path):
+        launcher, tmux, sm = self._launcher(tmp_path)
+        session = launcher.launch(name="kid")
+        tmux.unresponsive = True
+        assert launcher.kill_session("kid") is False
+        assert sm.get_session(session.id) is not None

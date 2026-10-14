@@ -212,11 +212,19 @@ class AgentLifecycleMixin:
         Acts in the agent's own tmux session: looked for in this launcher's,
         a live window elsewhere reads as gone and only the record would go.
         """
+        from .protocols import TmuxTimeoutError
+
         owner = self.for_agent(session)
         if owner is not self:
             return owner._kill_single_session(session)
-        # Check if the tmux window/session still exists
-        window_exists = self.tmux.window_exists(session.tmux_window)
+        # Check if the tmux window/session still exists. A server too slow
+        # to say is not "gone": the record stays, nothing is killed.
+        try:
+            window_exists = self.tmux.window_exists(session.tmux_window)
+        except TmuxTimeoutError:
+            print(f"Failed to kill '{session.name}': tmux is not responding; "
+                  f"try again in a moment")
+            return False
 
         if window_exists:
             # Active session - try to kill the tmux window

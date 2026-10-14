@@ -829,3 +829,25 @@ class TestCommandBarPrefill:
 
         # Should not raise
         Tui(query=NoMatches()).action_configure_heartbeat()
+
+
+class TestRestartWhenTmuxIsSlow:
+    """R on a local agent while tmux does not answer: an error, not a crash."""
+
+    def test_a_tmux_timeout_is_notified(self, sm):
+        from overcode.tmux_manager import TmuxManager
+        from overcode.tui_actions.session import SessionActionsMixin as Mixin
+        from tests.tmux_doubles import MockTmux
+
+        class RealRestart(Tui):
+            _execute_restart = Mixin._execute_restart
+
+        session = _registered(sm)
+        tui = RealRestart(_row(session), sm)
+        tmux = MockTmux()
+        tmux.unresponsive = True
+        with patch("overcode.tmux_manager.TmuxManager",
+                   lambda name: TmuxManager(name, tmux=tmux)):
+            tui._execute_restart(_row(session))
+        message, severity = tui.last
+        assert severity == "error" and "not responding" in message

@@ -916,7 +916,14 @@ def restart(
 
     # Window gone (killed, reboot): bring it back in a new window, as the
     # TUI's R does (#481).
-    if not launcher.tmux.window_exists(sess.tmux_window):
+    from ..protocols import TmuxTimeoutError
+    try:
+        window_exists = launcher.tmux.window_exists(sess.tmux_window)
+    except TmuxTimeoutError:
+        rprint(f"[red]Failed to restart agent: {name}: tmux is not responding; "
+               f"try again in a moment[/red]")
+        raise typer.Exit(code=1)
+    if not window_exists:
         from ..lifecycle import resume_mode
 
         mode, reason = resume_mode(sess, fresh)

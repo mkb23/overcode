@@ -402,6 +402,21 @@ class TestCli:
         launcher.restart.assert_not_called()
         assert "Revived agent: a1 (resumed)" in result.output
 
+    def test_restart_when_tmux_does_not_answer(self):
+        """A slow tmux raises TmuxTimeoutError: a clean error, not a traceback."""
+        from overcode.cli import app
+        from overcode.protocols import TmuxTimeoutError
+        sess = MagicMock(name="sess", active_agent_session_id="sid", backend="claude-code")
+        launcher = MagicMock()
+        launcher.tmux.window_exists.side_effect = TmuxTimeoutError("slow")
+        with patch("overcode.launcher.AgentLauncher", return_value=launcher), \
+             patch("overcode.cli.agent.find_agent", return_value=sess):
+            result = runner.invoke(app, ["restart", "a1"])
+        assert result.exit_code == 1
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert "not responding" in result.output
+        launcher.restart.assert_not_called()
+
     def test_revive_needs_name_or_all(self):
         from overcode.cli import app
         result = runner.invoke(app, ["revive"])

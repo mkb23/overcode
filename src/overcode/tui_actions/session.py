@@ -922,7 +922,14 @@ class SessionActionsMixin:
         session_name = session.name
         tmux = TmuxManager(self.tmux_session)
 
-        if not tmux.window_exists(session.tmux_window):
+        from ..protocols import TmuxTimeoutError
+        try:
+            window_exists = tmux.window_exists(session.tmux_window)
+        except TmuxTimeoutError:
+            self.notify(f"Failed to restart agent: {session_name}: tmux is not responding",
+                        severity="error")
+            return
+        if not window_exists:
             self._execute_revive(focused, tmux)
             return
 

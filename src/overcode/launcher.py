@@ -10,6 +10,7 @@ Which CLI gets launched, and with what argv, comes from the session's
 """
 
 import shlex
+from contextlib import contextmanager
 import os
 import sys
 import time
@@ -52,7 +53,24 @@ from .lifecycle import (  # noqa: F401  (window_* and LifecycleReconcile re-expo
     window_in_lookup,
     window_lookup,
 )
+from .protocols import TmuxTimeoutError
 from .rename import RenameMixin
+
+
+TMUX_NOT_ANSWERING = "tmux is not responding; try again in a moment"
+
+
+@contextmanager
+def _tmux_answers(action: str = "launch"):
+    """A tmux read that timed out (``TmuxTimeoutError``) as a LaunchError.
+
+    A bounded TmuxManager raises rather than answer "gone" when the server
+    is slow; for a launch that is a clean error, not a traceback.
+    """
+    try:
+        yield
+    except TmuxTimeoutError as e:
+        raise LaunchError(TMUX_NOT_ANSWERING, action) from e
 
 
 # Valid session name pattern
@@ -458,18 +476,19 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
         # Check if a session with this name already exists
         existing = self.sessions.get_session_by_name(name)
-        if existing:
-            # Check if its tmux window still exists
-            if self.tmux.window_exists(existing.tmux_window):
-                print(f"Session '{name}' already exists in window {existing.tmux_window}")
-                return existing
-            else:
-                # Window is gone, clean up the stale session
-                self.sessions.delete_session(existing.id)
+        with _tmux_answers():
+            if existing:
+                # Check if its tmux window still exists
+                if self.tmux.window_exists(existing.tmux_window):
+                    print(f"Session '{name}' already exists in window {existing.tmux_window}")
+                    return existing
+                else:
+                    # Window is gone, clean up the stale session
+                    self.sessions.delete_session(existing.id)
 
-        # Ensure tmux session exists
-        if not self.tmux.ensure_session():
-            raise LaunchError(f"failed to create tmux session '{self.tmux.session_name}'")
+            # Ensure tmux session exists
+            if not self.tmux.ensure_session():
+                raise LaunchError(f"failed to create tmux session '{self.tmux.session_name}'")
 
         # Generate session_id FIRST so we can use it in the window name
         session_id = str(uuid.uuid4())
@@ -649,17 +668,18 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
         # Check for name collision
         existing = self.sessions.get_session_by_name(name)
-        if existing:
-            if self.tmux.window_exists(existing.tmux_window):
-                print(f"Session '{name}' already exists in window {existing.tmux_window}")
-                return existing
-            else:
-                self.sessions.delete_session(existing.id)
+        with _tmux_answers("fork"):
+            if existing:
+                if self.tmux.window_exists(existing.tmux_window):
+                    print(f"Session '{name}' already exists in window {existing.tmux_window}")
+                    return existing
+                else:
+                    self.sessions.delete_session(existing.id)
 
-        # Ensure tmux session exists
-        if not self.tmux.ensure_session():
-            raise LaunchError(
-                f"failed to create tmux session '{self.tmux.session_name}'", "fork")
+            # Ensure tmux session exists
+            if not self.tmux.ensure_session():
+                raise LaunchError(
+                    f"failed to create tmux session '{self.tmux.session_name}'", "fork")
 
         # Create tmux window in source's directory
         session_id = str(uuid.uuid4())
@@ -911,12 +931,16 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
         Returns:
             True if the relaunch command was sent, False if the tmux window
-            is gone or send failed.
+            is gone, tmux is not answering, or send failed.
         """
         owner = self.for_agent(session)
         if owner is not self:
             return owner.restart(session, fresh=fresh, graceful_exit_wait=graceful_exit_wait)
-        if not self.tmux.window_exists(session.tmux_window):
+        try:
+            if not self.tmux.window_exists(session.tmux_window):
+                return False
+        except TmuxTimeoutError:
+            print(f"Cannot restart '{session.name}': {TMUX_NOT_ANSWERING}", file=sys.stderr)
             return False
 
         self._send_graceful_exit(self.backend_for(session), session.tmux_window)
@@ -948,17 +972,22 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                 prescribe a new --session-id.
 
         Returns:
-            True on success, False if window creation or send failed.
+            True on success, False if tmux is not answering or window
+            creation or send failed.
         """
         owner = self.for_agent(session)
         if owner is not self:  # its window, and its new one, are in its own tmux session
             return owner.revive(session, fresh=fresh)
 
-        # Original window still around — caller probably meant restart.
-        if self.tmux.window_exists(session.tmux_window):
-            return self.restart(session, fresh=fresh)
+        try:
+            # Original window still around — caller probably meant restart.
+            if self.tmux.window_exists(session.tmux_window):
+                return self.restart(session, fresh=fresh)
 
-        if not self.tmux.ensure_session():
+            if not self.tmux.ensure_session():
+                return False
+        except TmuxTimeoutError:
+            print(f"Cannot revive '{session.name}': {TMUX_NOT_ANSWERING}", file=sys.stderr)
             return False
 
         # Reuse the overcode session id as the window suffix (stable across
