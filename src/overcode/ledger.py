@@ -10,8 +10,8 @@ named by write time (a closed month is gzipped). A row carries the agent's
 harmless: readers keep the last row of each agent's segment. Rows::
 
     {"t", "seq", "sid", "name", "parent", "billing_code", "seg", "model",
-     "cost", "tokens", "tok_in", "tok_out", "tok_cache",
-     "base_cost", "base_tokens", "kind"}
+     "cost", "tokens", "tok_in", "tok_out", "tok_cache", "tok_cw", "tok_cr",
+     "px", "base_cost", "base_tokens", "base_usage", "kind"}
 
 ``kind`` is ``checkpoint`` (a running agent, at most every
 ``ledger.checkpoint_minutes``), ``final`` (written with its archive
@@ -21,6 +21,15 @@ code's first) or ``backfill`` (an agent archived before the ledger).
 rebill. A segment's spend is its last row's cumulative values less its
 ``base_*`` (the cumulative values when the segment began), so spend before
 a rebill stays on the old code.
+
+An estimated cost is every token so far at the agent's *current* model's
+prices, so a ``/model`` switch reprices the past. A row whose cost is that
+estimate carries the prices (``px``, per million input, output, cache
+write, cache read tokens) and its token breakdown, and a rebill keeps the
+segment's base breakdown (``base_usage``): a segment's spend, or a
+period's, is then the tokens it added at the row's prices, never a
+repricing of tokens spent before it. A recorded cost (a backend that
+reports one) carries no ``px`` and is taken as it is.
 
 ``ledger/totals.json`` folds the rows incrementally: per month, how far
 they were read; the last row of every open segment; per-code totals of
@@ -97,15 +106,66 @@ def spend_of(record) -> Dict[str, float]:
     }
 
 
+def usage_of(record) -> Dict[str, int]:
+    """An agent's cumulative token breakdown, as priced: in, out, cache write, cache read."""
+    stats = _get(record, "stats") or {}
+    get = (lambda k: stats.get(k, 0)) if isinstance(stats, dict) else (lambda k: getattr(stats, k, 0))
+    out = {}
+    for name, key in (("in", "input_tokens"), ("out", "output_tokens"),
+                      ("cw", "cache_creation_tokens"), ("cr", "cache_read_tokens")):
+        try:
+            out[name] = int(get(key) or 0)
+        except (TypeError, ValueError):
+            out[name] = 0
+    return out
+
+
+def price(px, usage: Dict[str, int]) -> float:
+    """What ``usage`` costs at ``px`` (per-million prices: in, out, cache write, cache read)."""
+    return sum(float(p) * int(usage.get(k, 0) or 0)
+               for p, k in zip(px, ("in", "out", "cw", "cr"))) / 1_000_000
+
+
+def estimate_prices(record, usage: Dict[str, int], cost: float) -> Optional[List[float]]:
+    """The prices ``cost`` was estimated at, or None when it is a recorded cost.
+
+    The daemon prices every token so far at the agent's model and
+    provider (``daemon_stats_sync._stage_usage``); a cost that is not that
+    estimate came from the backend.
+    """
+    try:
+        from .settings import get_model_pricing, get_user_config
+
+        mp = get_model_pricing(_get(record, "model"), get_user_config(),
+                               provider=_get(record, "provider"))
+        px = [float(mp.input), float(mp.output), float(mp.cache_write), float(mp.cache_read)]
+    except Exception:
+        return None
+    if abs(price(px, usage) - cost) > max(1e-3, abs(cost) * 1e-6):
+        return None
+    return px
+
+
+def _usage(row: dict) -> Optional[Dict[str, int]]:
+    """A row's token breakdown, as priced; None for a row written without one."""
+    if "tok_cw" not in row or "tok_cr" not in row:
+        return None
+    return {"in": row.get("tok_in", 0) or 0, "out": row.get("tok_out", 0) or 0,
+            "cw": row.get("tok_cw", 0) or 0, "cr": row.get("tok_cr", 0) or 0}
+
+
 def make_row(record, kind: str, *, now: Optional[datetime] = None,
              billing_code: Optional[str] = None, seg: Optional[int] = None,
              base: Optional[Dict[str, float]] = None, t: Optional[str] = None) -> dict:
     """The ledger row for an agent's record (a sessions.json dict or a Session)."""
     now = now or datetime.now()
     spend = spend_of(record)
+    usage = usage_of(record)
     if base is None:
         base = {"cost": _get(record, "billing_base_cost", 0.0) or 0.0,
-                "tokens": _get(record, "billing_base_tokens", 0) or 0}
+                "tokens": _get(record, "billing_base_tokens", 0) or 0,
+                "usage": _get(record, "billing_base_usage")}
+    base_usage = base.get("usage")
     return {
         "t": t or stamp(now),
         "seq": time.time_ns(),
@@ -116,16 +176,29 @@ def make_row(record, kind: str, *, now: Optional[datetime] = None,
         "seg": int(_get(record, "billing_seg", 0) or 0) if seg is None else seg,
         "model": _get(record, "model"),
         **spend,
+        "tok_cw": usage["cw"],
+        "tok_cr": usage["cr"],
+        "px": estimate_prices(record, usage, spend["cost"]),
         "base_cost": float(base.get("cost", 0.0) or 0.0),
         "base_tokens": int(base.get("tokens", 0) or 0),
+        "base_usage": dict(base_usage) if isinstance(base_usage, dict) else None,
         "kind": kind,
     }
 
 
 def contribution(row: dict) -> Dict[str, float]:
-    """What a segment's (last) row adds to its code: cumulative less the segment's base."""
+    """What a segment's (last) row adds to its code: cumulative less the segment's base.
+
+    With an estimated cost (``px``) and the base's breakdown, the base is
+    priced as the row's cost was, so a model switch after a rebill does
+    not move the repriced past onto the new code.
+    """
     out = {key: row.get(key, 0) or 0 for key in AMOUNTS}
-    out["cost"] = max(0.0, float(out["cost"]) - float(row.get("base_cost", 0) or 0))
+    base_cost = float(row.get("base_cost", 0) or 0)
+    px, base_usage = row.get("px"), row.get("base_usage")
+    if px and isinstance(base_usage, dict):
+        base_cost = price(px, base_usage)
+    out["cost"] = max(0.0, float(out["cost"]) - base_cost)
     out["tokens"] = max(0, int(out["tokens"]) - int(row.get("base_tokens", 0) or 0))
     if row.get("seg"):
         # The breakdown is not split at a rebill: only cost and tokens are
@@ -417,6 +490,12 @@ class Ledger:
             if prior is not None:
                 earlier = contribution(prior)
                 amounts = {k: max(0, amounts[k] - earlier[k]) for k in AMOUNTS}
+                px, prior_usage = row.get("px"), _usage(prior)
+                if px and prior_usage is not None:
+                    # The tokens added in the period at the end row's prices:
+                    # a model switch does not reprice earlier periods into it
+                    amounts["cost"] = max(0.0, float(row.get("cost", 0) or 0)
+                                          - price(px, prior_usage))
             code = row.get("billing_code") or "?"
             entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0, "running": 0})
             for name in AMOUNTS:

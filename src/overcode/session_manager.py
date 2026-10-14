@@ -168,6 +168,10 @@ class Session:
     billing_seg: int = 0
     billing_base_cost: float = 0.0
     billing_base_tokens: int = 0
+    # The token breakdown at the rebill (ledger.usage_of): the new segment's
+    # spend is priced from it, so a later /model switch does not reprice
+    # the old code's tokens onto the new one
+    billing_base_usage: Optional[Dict[str, int]] = None
 
     # Hook-based status detection - per-agent toggle (#5).
     # False = never use hooks for this agent (web API's hook-detection switch).
@@ -916,14 +920,18 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 return old
             from .ledger import spend_of
 
-            spend = spend_of(entry)
+            from .ledger import usage_of
+
+            spend, usage = spend_of(entry), usage_of(entry)
             seg = int(entry.get("billing_seg", 0) or 0)
             close = make_row(entry, "close", billing_code=old)
             opened = make_row(entry, "open", billing_code=billing_code, seg=seg + 1,
-                              base={"cost": spend["cost"], "tokens": spend["tokens"]})
+                              base={"cost": spend["cost"], "tokens": spend["tokens"],
+                                    "usage": usage})
             self.ledger.append([close, opened])
             entry.update(billing_code=billing_code, billing_seg=seg + 1,
-                         billing_base_cost=spend["cost"], billing_base_tokens=spend["tokens"])
+                         billing_base_cost=spend["cost"], billing_base_tokens=spend["tokens"],
+                         billing_base_usage=usage)
             txn.dirty = True
         return old
 

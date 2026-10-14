@@ -132,6 +132,56 @@ class TestRebill:
         assert totals["a"]["cost"] == 3.0 and totals["a"]["tokens"] == 300
         assert totals["client-y"]["cost"] == 2.0 and totals["client-y"]["tokens"] == 200
 
+    @staticmethod
+    def _estimate(model, inp, out):
+        """The daemon's estimate: every token so far at ``model``'s prices."""
+        from overcode.pricing import calculate_cost_estimate
+        from overcode.settings import get_model_pricing, get_user_config
+
+        mp = get_model_pricing(model, get_user_config())
+        return round(calculate_cost_estimate(inp, out, 0, 0, price_input=mp.input,
+                                             price_output=mp.output,
+                                             price_cache_write=mp.cache_write,
+                                             price_cache_read=mp.cache_read), 4)
+
+    def _work(self, sm, s, model, inp, out):
+        cost = self._estimate(model, inp, out)
+        sm.update_session(s.id, model=model)
+        sm.update_stats(s.id, input_tokens=inp, output_tokens=out, total_tokens=inp + out,
+                        estimated_cost_usd=cost)
+        return cost
+
+    @pytest.mark.parametrize("before,after", [("claude-sonnet-4-5", "claude-opus-4-1"),
+                                              ("claude-opus-4-1", "claude-sonnet-4-5")])
+    def test_a_model_switch_after_a_rebill_does_not_move_the_past(self, sm, before, after):
+        s = sm.create_session(name="w", tmux_session="agents", tmux_window="w-1", command=[],
+                              billing_code="client-a")
+        spent = self._work(sm, s, before, 5_000_000, 1_000_000)
+        sm.rebill(s.id, "client-b")
+        self._work(sm, s, after, 5_010_000, 1_001_000)  # /model, then a little work
+        new_work = self._estimate(after, 10_000, 1_000)
+        sm.delete_sessions([s.id])
+        totals = sm.ledger.totals()
+        assert totals["client-a"]["cost"] == pytest.approx(spent)
+        assert totals["client-b"]["cost"] == pytest.approx(new_work, abs=1e-3)
+
+    def test_a_model_switch_does_not_reprice_an_earlier_month(self, sm):
+        s = sm.create_session(name="w", tmux_session="agents", tmux_window="w-1", command=[])
+        self._work(sm, s, "claude-sonnet-4-5", 5_000_000, 1_000_000)
+        sm.ledger.append([make_row(sm.get_session(s.id), "checkpoint", t="2026-09-30T12:00:00")])
+        self._work(sm, s, "claude-opus-4-1", 5_010_000, 1_001_000)
+        sm.ledger.append([make_row(sm.get_session(s.id), "checkpoint", t="2026-10-02T12:00:00")])
+        octo = sm.ledger.report(since=datetime(2026, 10, 1), until=datetime(2026, 11, 1))
+        assert octo["w"]["cost"] == pytest.approx(
+            self._estimate("claude-opus-4-1", 10_000, 1_000), abs=1e-3)
+
+    def test_a_recorded_cost_is_taken_as_it_is(self, sm):
+        s = sm.create_session(name="w", tmux_session="agents", tmux_window="w-1", command=[])
+        sm.update_stats(s.id, input_tokens=1000, output_tokens=1000, total_tokens=2000,
+                        estimated_cost_usd=7.0)  # what the backend charged
+        row = make_row(sm.get_session(s.id), "checkpoint")
+        assert row["px"] is None and contribution(row)["cost"] == 7.0
+
     def test_cli(self, sm):
         s = sm.create_session(name="a", tmux_session="agents", tmux_window="a-1", command=[])
         result = runner.invoke(app, ["rebill", "a", "client-z"])

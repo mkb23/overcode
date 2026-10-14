@@ -59,7 +59,7 @@ except ImportError:
 ARCHIVE_KEYS = (
     "id", "name", "previous_names", "tmux_session", "tmux_window",
     "parent_session_id", "billing_code", "billing_seg", "billing_base_cost",
-    "billing_base_tokens", "tags",
+    "billing_base_tokens", "billing_base_usage", "tags",
     "backend", "model", "provider", "skill_profile", "wrapper",
     "heartbeat_enabled", "cost_budget_usd", "human_annotation", "agent_value",
     "start_directory", "repo_name", "branch",
