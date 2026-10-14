@@ -505,39 +505,42 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             session = self.sessions.get_session(session.id)
 
         prompt_file = self._initial_prompt_file(agent_backend, session, initial_prompt)
+        # The prompt file goes on every way out (a failed send, a refused
+        # budget, an error or Ctrl-C while waiting): nothing else removes it
+        try:
+            # fresh=True triggers the helper's "prescribe a new --session-id" branch
+            # (#373), giving us the Claude session ID upfront without PID discovery.
+            if not self._send_launch_for_session(session, window_name, fresh=True,
+                                                 initial_prompt_file=prompt_file):
+                self.tmux.kill_window(window_name)
+                self.sessions.delete_session(session.id, archive=False)
+                raise LaunchError(f"failed to send command to window {window_name}")
 
-        # fresh=True triggers the helper's "prescribe a new --session-id" branch
-        # (#373), giving us the Claude session ID upfront without PID discovery.
-        if not self._send_launch_for_session(session, window_name, fresh=True,
-                                             initial_prompt_file=prompt_file):
+            # Reload so caller sees the active_agent_session_id / command set by the helper.
+            session = self.sessions.get_session(session.id)
+
+            # Apply budget at launch time
+            if budget_usd is not None and budget_usd > 0:
+                if parent_session:
+                    # transfer_budget handles unlimited parent (budget=0) correctly
+                    success = self.sessions.transfer_budget(parent_session.id, session.id, budget_usd)
+                    if not success:
+                        self.tmux.kill_window(window_name)
+                        self.sessions.delete_session(session.id)
+                        raise LaunchError(
+                            f"parent has insufficient budget for ${budget_usd:.2f}")
+                else:
+                    self.sessions.set_cost_budget(session.id, budget_usd)
+
+            print(f"✓ Launched '{name}' in tmux window {window_name}")
+            # Bundle retention, bounded, so a user with no daemon stays bounded too
+            tidy = getattr(self.sessions, "tidy_agent_storage", None)
+            if tidy is not None:
+                tidy(self.tmux_session, sweep_limit=0, prune_limit=31)
+
+            self._deliver_initial_prompt(window_name, agent_backend, prompt_file, initial_prompt)
+        finally:
             self._remove_prompt_file(prompt_file)
-            self.tmux.kill_window(window_name)
-            self.sessions.delete_session(session.id, archive=False)
-            raise LaunchError(f"failed to send command to window {window_name}")
-
-        # Reload so caller sees the active_agent_session_id / command set by the helper.
-        session = self.sessions.get_session(session.id)
-
-        # Apply budget at launch time
-        if budget_usd is not None and budget_usd > 0:
-            if parent_session:
-                # transfer_budget handles unlimited parent (budget=0) correctly
-                success = self.sessions.transfer_budget(parent_session.id, session.id, budget_usd)
-                if not success:
-                    self.tmux.kill_window(window_name)
-                    self.sessions.delete_session(session.id)
-                    raise LaunchError(
-                        f"parent has insufficient budget for ${budget_usd:.2f}")
-            else:
-                self.sessions.set_cost_budget(session.id, budget_usd)
-
-        print(f"✓ Launched '{name}' in tmux window {window_name}")
-        # Bundle retention, bounded, so a user with no daemon stays bounded too
-        tidy = getattr(self.sessions, "tidy_agent_storage", None)
-        if tidy is not None:
-            tidy(self.tmux_session, sweep_limit=0, prune_limit=31)
-
-        self._deliver_initial_prompt(window_name, agent_backend, prompt_file, initial_prompt)
         return session
 
     def _deliver_initial_prompt(self, window_name: str, backend: AgentBackend,
@@ -546,12 +549,11 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         """Get the first prompt to an agent whose launch line was just sent.
 
         On the command line already (``prompt_file``): only answer the
-        startup dialogs, then drop the file. Otherwise send it once the
-        agent is up.
+        startup dialogs (the caller then removes the file). Otherwise send
+        it once the agent is up.
         """
         if prompt_file:
             self._wait_for_prompt(window_name, backend=backend)
-            self._remove_prompt_file(prompt_file)
         elif prompt:
             self._send_prompt_to_window(window_name, prompt, backend=backend)
 
@@ -700,21 +702,23 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         # The prompt rides on the command line too, as for a launch: Claude
         # does not act on a long pasted prompt (see _initial_prompt_file).
         prompt_file = self._initial_prompt_file(agent_backend, session, initial_prompt)
-        if not self._send_launch_for_session(
-            session, window_name,
-            fork_from=source_session.active_agent_session_id,
-            initial_prompt_file=prompt_file,
-        ):
+        try:
+            if not self._send_launch_for_session(
+                session, window_name,
+                fork_from=source_session.active_agent_session_id,
+                initial_prompt_file=prompt_file,
+            ):
+                self.tmux.kill_window(window_name)
+                self.sessions.delete_session(session.id, archive=False)
+                raise LaunchError(f"failed to send command to window {window_name}", "fork")
+
+            session = self.sessions.get_session(session.id)
+
+            print(f"✓ Forked '{source_session.name}' → '{name}' in tmux window {window_name}")
+
+            self._deliver_initial_prompt(window_name, agent_backend, prompt_file, initial_prompt)
+        finally:
             self._remove_prompt_file(prompt_file)
-            self.tmux.kill_window(window_name)
-            self.sessions.delete_session(session.id, archive=False)
-            raise LaunchError(f"failed to send command to window {window_name}", "fork")
-
-        session = self.sessions.get_session(session.id)
-
-        print(f"✓ Forked '{source_session.name}' → '{name}' in tmux window {window_name}")
-
-        self._deliver_initial_prompt(window_name, agent_backend, prompt_file, initial_prompt)
         return session
 
     def _send_launch_for_session(

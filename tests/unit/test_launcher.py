@@ -3171,6 +3171,27 @@ class TestClaudePromptOnTheCommandLine:
         assert "$(cat" not in tmux.sent_keys[-1][2]
         assert PROMPT_ARG_MAX_BYTES < 128 * 1024
 
+    def _prompt_files(self, launcher):
+        from overcode.settings import get_session_dir
+        folder = get_session_dir(launcher.tmux.session_name) / "prompts"
+        return sorted(folder.glob("*.txt")) if folder.exists() else []
+
+    def test_a_refused_budget_leaves_no_prompt_file(self, tmp_path):
+        launcher, _ = self._launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True):
+            launcher.launch(name="parent", budget_usd=2.0)
+            with pytest.raises(LaunchError, match="insufficient budget"):
+                launcher.launch(name="kid", parent_name="parent", budget_usd=5.0,
+                                initial_prompt="secret task text")
+        assert self._prompt_files(launcher) == []
+
+    def test_an_error_while_waiting_leaves_no_prompt_file(self, tmp_path):
+        launcher, _ = self._launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", side_effect=KeyboardInterrupt):
+            with pytest.raises(KeyboardInterrupt):
+                launcher.launch(name="kid", initial_prompt="secret task text")
+        assert self._prompt_files(launcher) == []
+
     def test_other_backends_paste(self, tmp_path):
         launcher, tmux = self._launcher(tmp_path)
         with patch.object(launcher, "_send_prompt_to_window") as paste:
