@@ -800,6 +800,49 @@ def get_ledger_config() -> dict:
     return {"checkpoint_minutes": minutes if minutes > 0 else 60.0}
 
 
+def get_billing_config() -> dict:
+    """The billing-code shortlist the TUI cycles through with space.
+
+    Config format in ~/.overcode/config.yaml:
+        billing:
+          codes: [client-a, client-b, internal]
+
+    Empty by default (the TUI then cycles only the agent's own name). A
+    number is taken as its text (``- 1234``). Anything else that is not a
+    usable code (a list, a mapping, an empty string), a ``billing`` or
+    ``codes`` of the wrong shape and an unknown key under ``billing`` are
+    ignored with a warning; this never raises.
+
+    Returns:
+        Dict with ``codes`` (list of distinct, stripped strings, in config
+        order) and ``warnings`` (list of strings, empty when all is well).
+    """
+    warnings: List[str] = []
+    cfg = _get_config_value("billing", {})
+    if not isinstance(cfg, dict):
+        return {"codes": [], "warnings": ["billing: should be a mapping with a 'codes' list — ignored"]}
+    for key in cfg:
+        if key != "codes":
+            warnings.append(f"billing: unknown key '{key}' — ignored")
+    raw = cfg.get("codes")
+    if raw is None:
+        raw = []
+    elif not isinstance(raw, list):
+        warnings.append("billing.codes: should be a list of codes — ignored")
+        raw = []
+    codes: List[str] = []
+    for item in raw:
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            item = str(item)
+        if not isinstance(item, str) or not item.strip():
+            warnings.append(f"billing.codes: {item!r} is not a billing code — ignored")
+            continue
+        code = item.strip()
+        if code not in codes:
+            codes.append(code)
+    return {"codes": codes, "warnings": warnings}
+
+
 def get_monitor_daemon_config() -> dict:
     """The monitor daemon's loop interval while nobody is watching.
 
