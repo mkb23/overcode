@@ -651,6 +651,17 @@ def shutdown(
     return report
 
 
+def _keep_for_revive(launcher, session) -> None:
+    """Mark a stopped agent terminated, and exempt its record from archiving.
+
+    Any monitor daemon still running (another tmux session's, or one started
+    after a reboot) archives terminated records after the grace; a record
+    shutdown keeps for ``revive --all`` must outlive that.
+    """
+    launcher.sessions.update_session(
+        session.id, status=STATUS_TERMINATED, kept_for_revive=True)
+
+
 def _stop_agents(ts, launcher, ops: SystemOps, *, force, dry_run, timeout, add,
                  own_window: Optional[str] = None) -> None:
     """Exit the agents in one tmux session, deepest first, keeping records.
@@ -665,7 +676,7 @@ def _stop_agents(ts, launcher, ops: SystemOps, *, force, dry_run, timeout, add,
     for s in [s for s in alive if own_window and s.tmux_window == own_window]:
         alive.remove(s)
         if not dry_run:
-            launcher.sessions.update_session_status(s.id, STATUS_TERMINATED)
+            _keep_for_revive(launcher, s)
         add("agents", s.name, "deferred", "this terminal; ends with its tmux session")
     if not alive:
         add("agents", f"agents [{ts}]", "not-running")
@@ -701,7 +712,7 @@ def _stop_agents(ts, launcher, ops: SystemOps, *, force, dry_run, timeout, add,
 
         for s in group:
             killed = launcher.tmux.kill_window(s.tmux_window)
-            launcher.sessions.update_session_status(s.id, STATUS_TERMINATED)
+            _keep_for_revive(launcher, s)
             if s.id in exited:
                 add("agents", s.name, "exited", "window closed")
             elif force:

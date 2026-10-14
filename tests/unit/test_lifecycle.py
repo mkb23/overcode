@@ -238,6 +238,30 @@ class TestShutdown:
         # And revive brings them back.
         assert [r.ok for r in revive_all(launcher)] == [True, True, True]
 
+    def test_kept_records_survive_a_running_daemons_archive_pass(self, fleet, tmp_path):
+        """Another tmux session's daemon must not archive what shutdown kept."""
+        from datetime import datetime, timedelta
+        from overcode.daemon_cadence import Cadence
+        from overcode.daemon_housekeeping import Housekeeping
+        from overcode.session_manager import PendingUpdates
+
+        launcher, _, sm = fleet
+        _run_shutdown(fleet, FakeOps(["agents", "work"]))
+
+        hk = Housekeeping("work", tmux=MagicMock(), history_path=tmp_path / "h.csv",
+                          log=MagicMock(), housekeeping=Cadence(120),
+                          rotation=Cadence(3600), model_metadata=Cadence(3600))
+        t0 = datetime.now()
+        for now in (t0, t0 + timedelta(days=2)):
+            pending = PendingUpdates()
+            hk.archive_terminated_sessions(sm.list_sessions(), now, pending)
+            sm.commit_pending(pending)
+
+        assert len(sm.list_sessions()) == 3
+        assert [r.ok for r in revive_all(launcher)] == [True, True, True]
+        # Revived, the mark goes: a later death is archived as usual.
+        assert not any(s.kept_for_revive for s in sm.list_sessions())
+
     def test_stragglers_killed_after_timeout(self, fleet):
         ops = FakeOps(["agents"], agents_exit=False)
         report, _ = _run_shutdown(fleet, ops, timeout=2.0)

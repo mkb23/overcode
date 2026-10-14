@@ -178,7 +178,9 @@ class Housekeeping:
         every TUI and daemon on the host parses the file whole. The clock
         starts when this daemon first sees the entry terminated (a restart
         starts it again, so an entry waits at most one extra grace) and is
-        dropped for an entry that is revived or removed. The move itself is
+        dropped for an entry that is revived or removed. An entry ``overcode
+        shutdown`` stopped (``kept_for_revive``) is never archived: shutdown
+        keeps it so ``revive --all`` can bring the agent back. The move itself is
         part of the tick's single commit, with the record ``overcode
         cleanup`` writes.
         """
@@ -190,6 +192,8 @@ class Housekeeping:
         for session in all_sessions:
             if session.status != STATUS_TERMINATED and session.id not in window_gone:
                 continue
+            if session.kept_for_revive and session.id not in window_gone:
+                continue  # stopped by `overcode shutdown`, kept for `revive --all`
             seen.add(session.id)
             since = self.terminated_since.setdefault(session.id, now)
             if staged < ARCHIVE_PER_PASS and should_archive_terminated(since, now, grace):

@@ -879,6 +879,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                                              reset_agent_state=True):
             return False
 
+        if session.kept_for_revive:
+            self.sessions.update_session(session.id, kept_for_revive=False)
         self.sessions.update_stats(session.id, current_task="Restarting...")
         return True
 
@@ -924,6 +926,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             session.id,
             tmux_window=window_name,
             status="running",
+            kept_for_revive=False,
         )
         self.sessions.update_stats(session.id, current_task="Reviving...")
         return True

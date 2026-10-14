@@ -101,6 +101,10 @@ class Session:
 
     # Management
     status: str = "running"
+    # Set by `overcode shutdown` on the agents it stops: the record is kept
+    # for `revive --all`, so the daemon's archive pass leaves it alone.
+    # Cleared when the agent is revived or restarted.
+    kept_for_revive: bool = False
     permissiveness_mode: str = "normal"  # normal, permissive, bypass
     standing_instructions: str = ""  # e.g., "keep herding it on to completion"
     standing_instructions_preset: Optional[str] = None  # preset name if using library preset
