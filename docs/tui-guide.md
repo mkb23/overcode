@@ -103,6 +103,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `G` | New agent defaults |
 | `W` | Skill profiles: build named sets of skills, pin them to folders ([guide](skill-profiles.md)) |
 | `U` | Sister visibility |
+| `/` → "Billing code…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
 
 ### Daemon Control
 
@@ -126,6 +127,32 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `.` | Move timeline baseline forward 15 minutes |
 | `0` | Reset timeline baseline to now |
 | `q` | Quit |
+
+### Billing codes
+
+Every agent bills its spend to a code — its name unless chosen otherwise
+(see [Billing Codes](configuration.md#billing-codes)). The TUI sets it in
+two places, both cycling with `Space` through the agent's own name (shown
+as `(name)`) and then the `billing.codes` shortlist from config.yaml:
+
+```yaml
+billing:
+  codes: [client-a, client-b, internal]
+```
+
+- **New agent** (`n`): the Billing row. `Space` cycles, `Enter` types a
+  code of your own. (A child always takes its parent's code; a dialog
+  opened for a child shows that code, locked.)
+- **An existing agent**: `/`, then "Billing code…". The dialog opens on
+  its current code, ready to type; `Space` cycles, `Enter` applies, `Esc`
+  cancels. Applying it is `overcode rebill`: forward only — the spend so
+  far stays on the old code. Only this agent moves: children already
+  running keep their codes, children it launches later take the new one.
+  A sister's agent has to be rebilled on its own machine.
+
+The Billing column (BILL; hidden below full detail, shown by
+`overcode list`) shows each agent's code, dim while it is still the
+agent's name. A bad `billing:` entry is skipped and the dialog says so.
 
 ## Command Bar
 

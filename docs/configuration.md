@@ -90,6 +90,10 @@ agent_history:
 ledger:
   checkpoint_minutes: 60
 
+# Billing codes the TUI cycles with Space; see "Billing Codes" below
+billing:
+  codes: []                       # e.g. [client-a, client-b, internal]
+
 # Monitor daemon loop interval while nobody is watching
 # See "Unattended Low-Power Mode" below
 monitor_daemon:
@@ -583,6 +587,19 @@ overcode billing --since 30d                          # or --month 2026-09, --js
 agent's spend so far and starts a new segment under the new one. Children
 launched afterwards take the new code; children already running keep
 theirs.
+
+In the TUI, the new-agent dialog's Billing row and the "Billing code…"
+palette command (which rebills, exactly as `overcode rebill` does) cycle
+with `Space` through the agent's own name and a shortlist from config.yaml;
+any other code can be typed. See [TUI guide → Billing codes](tui-guide.md#billing-codes).
+
+```yaml
+billing:
+  codes: [client-a, client-b, internal]   # empty by default
+```
+
+A number is taken as its text; an entry that is not a code, or a `billing`
+or `codes` of the wrong shape, is skipped with a warning in the dialog.
 
 The ledger, `~/.overcode/ledger/YYYY-MM.jsonl`, has one row per spend event,
 each carrying the agent's cumulative spend so far: a final row when the
