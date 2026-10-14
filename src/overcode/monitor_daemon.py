@@ -2062,6 +2062,11 @@ class MonitorDaemon:
             raise
         finally:
             self.log.info("Monitor daemon shutting down")
+            # What quick ticks staged since the last full tick
+            try:
+                self._flush_pending_writes()
+            except Exception as e:
+                self.log.warn(f"sessions.json not written at shutdown: {e}")
             # What the last quick tick recorded (a closed episode, a bell)
             # must not be replayed by the next daemon
             try:

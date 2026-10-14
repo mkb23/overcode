@@ -202,21 +202,23 @@ class WakeLoop:
                    if s.tmux_session == daemon.tmux_session and s.id in ids]
         if not changed:
             return
-        try:
-            daemon.recorder_store.apply_visits(daemon._engine)
-            states, _ = daemon._detect_and_enrich(changed, now, index)
-            fresh = {s.session_id: s for s in states}
-            merged = [fresh.pop(s.session_id, s) for s in daemon.state.sessions]
-            merged += list(fresh.values())
-            # Over the whole fleet: _detect_and_enrich saw only the changed
-            # agents, so a parent re-detected without its children got 0
-            daemon._compute_subtree_costs(merged)
-            save = daemon.clock.monotonic() - daemon._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
-            daemon._publish_state(merged, save=save)
-            # Hook-driven transitions land here: persist what they recorded
-            # (a closed episode, a bell) now, not at the next full tick, so a
-            # restart in between neither replays nor re-rings them. Only
-            # when something changed (RecorderStore.save checks).
-            daemon.recorder_store.save()
-        finally:
-            daemon._flush_pending_writes()
+        # What this re-detection stages for sessions.json (time accumulated,
+        # current task, a persisted status) stays staged: the next full
+        # tick writes it with its own, once. Views get it over engine.sock
+        # now; a write here would rewrite and fsync the file up to four
+        # times a second for an accumulation timestamp alone.
+        daemon.recorder_store.apply_visits(daemon._engine)
+        states, _ = daemon._detect_and_enrich(changed, now, index)
+        fresh = {s.session_id: s for s in states}
+        merged = [fresh.pop(s.session_id, s) for s in daemon.state.sessions]
+        merged += list(fresh.values())
+        # Over the whole fleet: _detect_and_enrich saw only the changed
+        # agents, so a parent re-detected without its children got 0
+        daemon._compute_subtree_costs(merged)
+        save = daemon.clock.monotonic() - daemon._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
+        daemon._publish_state(merged, save=save)
+        # Hook-driven transitions land here: persist what they recorded
+        # (a closed episode, a bell) now, not at the next full tick, so a
+        # restart in between neither replays nor re-rings them. Only
+        # when something changed (RecorderStore.save checks).
+        daemon.recorder_store.save()

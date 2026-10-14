@@ -29,6 +29,14 @@ def _daemon(tmp_path):
     return d
 
 
+@pytest.fixture
+def root_for_ticks(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".overcode" / "sessions").mkdir(parents=True)
+    monkeypatch.setenv("OVERCODE_STATE_DIR", str(home / ".overcode" / "sessions"))
+    return tmp_path
+
+
 def _touch(tmp_path, name, text):
     (tmp_path / f"hook_state_{name}.json").write_text(text)
 
@@ -175,7 +183,37 @@ class TestQuickTick:
         assert detected == ["b"]
         states, save = published[0]
         assert [(s.name, s.current_status) for s in states] == [("a", "running"), ("b", "waiting_user")]
-        d._flush_pending_writes.assert_called_once()
+        # sessions.json is the full tick's to write
+        d._flush_pending_writes.assert_not_called()
+
+    def test_quick_ticks_leave_sessions_json_to_the_full_tick(self, root_for_ticks):
+        """An unchanged agent re-detected on every hook event stages its
+        time accumulation, which the next full tick writes once: no write
+        (and fsync) of sessions.json per quick tick."""
+        from datetime import timedelta
+
+        from tests.daemon_tick_harness import FrozenClock
+        from tests.unit.test_child_results import START, _daemon as tick_daemon, _ticks
+
+        daemon, sm, sessions = tick_daemon(root_for_ticks, {"agent-1": "running"})
+        agent = sessions[1]
+        _ticks(daemon, 2)
+        writes = []
+        commit = sm.commit_pending
+        sm.commit_pending = lambda pending: writes.append(commit(pending)) or writes[-1]
+        with FrozenClock(START + timedelta(seconds=4)).installed() as clock:
+            for i in range(8):
+                clock.now = START + timedelta(seconds=4, milliseconds=250 * i)
+                daemon.wake.quick_tick({agent.id}, clock.now)
+            assert not any(writes)
+            accumulated = clock.now
+            clock.now = START + timedelta(seconds=6)
+            daemon._flush_pending_writes()  # what the full tick ends with
+        assert writes == [True]
+        from overcode.clock import to_epoch
+
+        saved = sm.get_session(agent.id).stats.last_time_accumulation
+        assert to_epoch(saved) == pytest.approx(to_epoch(accumulated.isoformat()))
 
     def test_a_redetected_parent_keeps_its_childrens_cost(self, tmp_path):
         """Only the parent changed: its subtree cost still counts the
