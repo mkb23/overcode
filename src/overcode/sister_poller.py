@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from .clock import from_iso
 from .config import get_hostname, get_sisters_config
 from .session_manager import Session, SessionStats
 
@@ -318,11 +319,31 @@ def _agent_to_session(
         remote_activity_summary_context=agent.get("activity_summary_context", ""),
         # Raw daemon state for generic field forwarding — new SessionDaemonState
         # fields automatically flow through without manual plumbing here.
-        remote_daemon_state=agent.get("daemon_state"),
+        remote_daemon_state=_remote_daemon_state(agent),
         # SSH connectivity
         source_ssh=source_ssh,
         source_tmux_session=source_tmux_session,
     )
+
+
+def _remote_daemon_state(agent: dict) -> Optional[dict]:
+    """The sister's forwarded daemon state, in the 0.6 shape.
+
+    A pre-0.6 sister publishes no ``input_needed_since`` (the start of the
+    stretch its agent has needed input for), which the unvisited marker and
+    the stall notification read. Its daemon's ``status_since`` while the
+    agent is ``waiting_user`` (0.5.8's notion of a stall) stands in for it.
+    """
+    state = agent.get("daemon_state")
+    if not isinstance(state, dict) or "input_needed_since" in state:
+        return state
+    since = None
+    if state.get("current_status") == "waiting_user" and state.get("status_since"):
+        try:
+            since = from_iso(state["status_since"]).timestamp()
+        except (TypeError, ValueError):
+            since = None
+    return {**state, "input_needed_since": since}
 
 
 def _remote_backend_name(agent: dict) -> str:

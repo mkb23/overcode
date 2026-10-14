@@ -58,7 +58,8 @@ class SistersMixin:
     def _apply_remote(self, widget: "SessionSummary") -> bool:
         """A sister's agent from its polled data; a new stretch needing input notifies.
 
-        A 0.6 sister publishes input_needed_since in its forwarded state.
+        A 0.6 sister publishes input_needed_since in its forwarded state;
+        the poller fills it in for an older sister's waiting_user agent.
         The first sight of an agent never notifies (as the engine's bell
         never rings on first sight); a stretch that starts later does.
         """
