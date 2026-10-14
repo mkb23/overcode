@@ -209,6 +209,26 @@ class TestChildrenRollupAndCounts:
         # Counted from the last published tick, for this tick's detection
         assert daemon._children_working[parent.id] == 1
 
+    def test_quick_ticks_keep_the_rollup_over_the_whole_fleet(self, root):
+        """A quick tick re-detects only the agents whose hooks changed: a
+        parent alone keeps its children's rollup, and a child alone
+        updates its parent's."""
+        statuses = {"agent-11": "running"}
+        daemon, sm, sessions = _daemon(root, statuses)
+        parent, child = sessions[1], sessions[11]
+        _ticks(daemon, 2)
+        working = {"working": 1, "unreported": 0, "success": 0, "failure": 0}
+        assert _published(daemon, parent.id).children_rollup == working
+        with FrozenClock(START + timedelta(seconds=10)).installed() as clock:
+            daemon.wake.quick_tick({parent.id}, clock.now)
+            assert _published(daemon, parent.id).children_rollup == working
+            # The child's turn ends: only the child is re-detected
+            statuses["agent-11"] = "waiting_oversight"
+            clock.now = START + timedelta(seconds=11)
+            daemon.wake.quick_tick({child.id}, clock.now)
+        assert _published(daemon, parent.id).children_rollup == {
+            "working": 0, "unreported": 1, "success": 0, "failure": 0}
+
     def test_a_resting_child_is_not_working(self, root):
         daemon, sm, sessions = _daemon(root, {})
         parent, child = sessions[1], sessions[11]

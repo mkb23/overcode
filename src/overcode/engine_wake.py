@@ -213,8 +213,10 @@ class WakeLoop:
         merged = [fresh.pop(s.session_id, s) for s in daemon.state.sessions]
         merged += list(fresh.values())
         # Over the whole fleet: _detect_and_enrich saw only the changed
-        # agents, so a parent re-detected without its children got 0
+        # agents, so a parent re-detected without its children got 0 cost
+        # and no rollup, and a re-detected child's parent kept old counts
         daemon._compute_subtree_costs(merged)
+        daemon._compute_child_rollups(merged, index)
         save = daemon.clock.monotonic() - daemon._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
         daemon._publish_state(merged, save=save)
         # Hook-driven transitions land here: persist what they recorded
