@@ -106,6 +106,41 @@ def spend_of(record) -> Dict[str, float]:
     }
 
 
+def billing_lookup(*groups) -> Dict[str, dict]:
+    """``{id: {billing_code, parent_session_id, name}}`` of records and sessions.
+
+    What ``inherited_billing_code`` walks; the first group to name an id wins.
+    """
+    found: Dict[str, dict] = {}
+    for group in groups:
+        for record in group:
+            sid = _get(record, "id")
+            if isinstance(sid, str) and sid not in found:
+                found[sid] = {key: _get(record, key)
+                              for key in ("billing_code", "parent_session_id", "name")}
+    return found
+
+
+def inherited_billing_code(record, lookup: Dict[str, dict]) -> str:
+    """A record's billing code: its own, else its parent's (up to the root), else its name.
+
+    For records from before billing codes (an upgrade): children always
+    bill to the code their tree's root was launched with.
+    """
+    seen = set()
+    current = record
+    while True:
+        code = _get(current, "billing_code")
+        if code:
+            return code
+        parent_id = _get(current, "parent_session_id")
+        parent = lookup.get(parent_id) if parent_id and parent_id not in seen else None
+        if parent is None:
+            return _get(current, "name") or billing_code_of(record)
+        seen.add(parent_id)
+        current = parent
+
+
 def usage_of(record) -> Dict[str, int]:
     """An agent's cumulative token breakdown, as priced: in, out, cache write, cache read."""
     stats = _get(record, "stats") or {}
@@ -507,28 +542,69 @@ class Ledger:
 
     # ── backfill ────────────────────────────────────────────────────────
 
-    def backfill_from_archive(self, session_manager) -> int:
-        """Give every agent archived before the ledger a ``backfill`` row; once.
+    @property
+    def _backfill_marker(self) -> Path:
+        return self.dir / ".backfilled"
 
-        Its billing code is its own, else its name. A marker file makes it
-        run once; agents already in the ledger are skipped.
+    def backfilled(self) -> bool:
+        """Whether the archive has been backfilled since it last took in old records."""
+        return self._backfill_marker.exists()
+
+    def invalidate_backfill(self) -> None:
+        """Make the next ``backfill_from_archive`` run (old archive records arrived)."""
+        try:
+            self._backfill_marker.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning("could not reset the ledger backfill marker: %s", e)
+
+    def backfill_from_archive(self, session_manager) -> int:
+        """Give every archived agent whose spend the ledger has not closed a ``backfill`` row.
+
+        Idempotent by agent: one with a ``final`` or ``backfill`` row is
+        skipped, so it can run again whenever records arrive from an older
+        overcode (``invalidate_backfill``; a downgrade and re-upgrade). An
+        agent with only a running segment (a checkpoint, then archived by
+        an older overcode) has that segment closed under its code. Its
+        billing code is its own, else its parent's (walking up to the
+        root: children always bill to the parent), else its name. A marker
+        file makes the next call cost one stat.
         """
-        marker = self.dir / ".backfilled"
-        if marker.exists():
+        if self.backfilled():
             return 0
-        known = {row.get("sid") for row in self.iter_rows()}
+        closed, running = set(), {}
+        for row in self.iter_rows():
+            sid = row.get("sid")
+            if row.get("kind") in ("final", "backfill"):
+                closed.add(sid)
+            elif sid not in running or int(running[sid].get("seq", 0)) <= int(row.get("seq", 0)):
+                running[sid] = row
+        records = list(session_manager.iter_archived_records(newest_first=True))
+        lookup = billing_lookup(records, session_manager.list_sessions())
         rows = []
-        for record in session_manager.iter_archived_records(newest_first=True):
-            if record.get("id") in known:
+        for record in records:
+            sid = record.get("id")
+            if sid in closed:
                 continue
-            rows.append(make_row(record, "backfill",
-                                 t=record.get("end_time") or record.get("start_time")))
+            t = record.get("end_time") or record.get("start_time")
+            last = running.get(sid)
+            if last is not None and not record.get("billing_code"):
+                rows.append(make_row(record, "backfill", t=t,
+                                     billing_code=last.get("billing_code"),
+                                     seg=int(last.get("seg", 0) or 0),
+                                     base={"cost": last.get("base_cost", 0.0),
+                                           "tokens": last.get("base_tokens", 0),
+                                           "usage": last.get("base_usage")}))
+            else:
+                rows.append(make_row(record, "backfill", t=t,
+                                     billing_code=inherited_billing_code(record, lookup)))
         rows.reverse()
         for i in range(0, len(rows), 1000):
             self.append(rows[i:i + 1000])
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
-            marker.write_text(datetime.now().isoformat())
+            self._backfill_marker.write_text(datetime.now().isoformat())
         except OSError:
             pass
         return len(rows)

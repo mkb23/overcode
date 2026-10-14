@@ -12,9 +12,11 @@ ledger.
 from the monitor daemon (at start, then with the hourly storage tidy):
 
 1. the single-file archive is split into slim months (``session_archive``);
-2. the ledger is backfilled from the archive, once (billing code: the
-   agent's own, else its name);
-3. live records with no billing code get their name (sticky from now on);
+2. the ledger is backfilled from the archive (billing code: the agent's
+   own, else its parent's up to the root, else its name), again whenever
+   an older overcode's archive file is taken in;
+3. live records with no billing code get their parent's code, up to the
+   root, else their name (sticky from now on);
 4. name-keyed files left in the session directory are packed into today's
    bundle (one member per name, ``"legacy": true``) and removed — except
    those of a live agent launched before the upgrade (no ``agents/<id>/``,
@@ -151,7 +153,8 @@ def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAM
     ``done`` (1 once the marker is written). Never raises.
     """
     counts = {"packed": 0, "skipped": 0, "left": 0, "backfilled": 0, "coded": 0, "done": 0}
-    if layout_version(tmux_session) == LAYOUT_VERSION:
+    if (layout_version(tmux_session) == LAYOUT_VERSION
+            and session_manager.ledger.backfilled()):
         counts["done"] = 1
         return counts
     now = now or datetime.now()
@@ -201,16 +204,24 @@ def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAM
 
 
 def _fill_billing_codes(session_manager) -> int:
-    """Give each live record with no billing code its name (one write, if any)."""
+    """Give each live record with no billing code one (one write, if any).
+
+    Its parent's code, walking up to the root through live and archived
+    records (children always bill to the parent), else its name.
+    """
+    from .ledger import billing_lookup, inherited_billing_code
+
     missing = [s.id for s in session_manager.list_sessions() if not s.billing_code]
     if not missing:
         return 0
+    archived = billing_lookup(session_manager.iter_archived_records(newest_first=True))
     filled = 0
     with session_manager._state_transaction() as txn:
+        lookup = {**archived, **billing_lookup(txn.state.values())}
         for session_id in missing:
             entry = txn.state.get(session_id)
             if entry is not None and not entry.get("billing_code") and entry.get("name"):
-                entry["billing_code"] = entry["name"]
+                entry["billing_code"] = inherited_billing_code(entry, lookup)
                 filled += 1
         txn.dirty = filled > 0
     return filled

@@ -270,7 +270,11 @@ class Housekeeping:
         try:
             from .layout_migration import LAYOUT_VERSION, layout_version, migrate_layout
 
-            if layout_version(self.tmux_session) == LAYOUT_VERSION:
+            # An older overcode's archive file (a downgrade, then this
+            # upgrade) is taken in first: that resets the markers below
+            session_manager._migrate_legacy_archive()
+            if (layout_version(self.tmux_session) == LAYOUT_VERSION
+                    and session_manager.ledger.backfilled()):
                 self.layout_migrated = True
                 return
             moved = migrate_layout(self.tmux_session, session_manager)

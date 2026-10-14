@@ -344,6 +344,8 @@ class SessionArchiveMixin:
                 return
             for month in sorted(by_month):
                 self._append_month_records(month, by_month[month])
+            if by_month:
+                self._old_records_arrived(by_month)
             for path in (old_jsonl, legacy, legacy.with_name(legacy.name + ".migrated")):
                 try:
                     path.unlink()
@@ -352,6 +354,32 @@ class SessionArchiveMixin:
                 except OSError as e:
                     logger.warning("could not remove %s: %s", path, e)
         self.gzip_closed_months()
+
+    def _old_records_arrived(self, by_month: Dict[str, List[dict]]) -> None:
+        """Records an older overcode archived (first upgrade, or after a downgrade).
+
+        The ledger backfills them again (idempotent by agent), and each of
+        their tmux sessions' storage migration runs again: that overcode
+        left name-keyed files too.
+        """
+        ledger = getattr(self, "ledger", None)
+        if ledger is not None:
+            ledger.invalidate_backfill()
+        from . import paths
+        from .layout_migration import layout_marker
+
+        try:
+            if Path(self.state_dir).resolve() != paths.sessions_registry_dir().resolve():
+                return  # another registry's session directories are not ours
+        except OSError:
+            return
+        tmux_sessions = {r.get("tmux_session") for records in by_month.values() for r in records}
+        for tmux_session in tmux_sessions:
+            if isinstance(tmux_session, str) and tmux_session and "/" not in tmux_session:
+                try:
+                    layout_marker(tmux_session).unlink()
+                except OSError:
+                    pass
 
     def _read_old_archives(self) -> Iterator[dict]:
         """The records of ``archive.json`` (dict order) then ``archive.jsonl`` (file order)."""

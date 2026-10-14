@@ -125,6 +125,66 @@ class TestMigrate:
         assert sm.ledger.totals()["shirka"]["cost"] == 4.0
 
 
+def _old_record(sid, name, cost, parent=None, end="2026-08-02T00:00:00"):
+    """A record as an older overcode archived it: no billing code."""
+    session = Session(id=sid, name=name, tmux_session="agents", tmux_window=name,
+                      command=[], start_directory=None, start_time="2026-08-01T00:00:00",
+                      parent_session_id=parent, stats=SessionStats(estimated_cost_usd=cost))
+    return dict(session.to_dict(), status="archived", end_time=end, billing_code=None)
+
+
+class TestChildrenBillToTheParent:
+    def test_live_and_archived_children_take_the_root_code(self, sm):
+        sm.old_archive_file.write_text(
+            json.dumps(_old_record("docs", "proj-docs", 2.0, parent="proj")) + "\n")
+        live = {}
+        for sid, name, parent in (("proj", "proj", None), ("tests", "proj-tests", "proj"),
+                                  ("grand", "proj-tests-sub", "tests")):
+            live[sid] = dict(Session(
+                id=sid, name=name, tmux_session="agents", tmux_window=name, command=[],
+                start_directory=None, start_time="2026-10-01T00:00:00",
+                parent_session_id=parent).to_dict(), billing_code=None)
+        sm._save_state(live)
+        migrate_layout("agents", sm)
+        assert {s.id: s.billing_code for s in sm.list_sessions()} == {
+            "proj": "proj", "tests": "proj", "grand": "proj"}
+        assert set(sm.ledger.totals()) == {"proj"}
+
+    def test_an_archived_child_of_an_archived_parent(self, sm):
+        sm.old_archive_file.write_text(
+            json.dumps(_old_record("root", "lead", 1.0)) + "\n"
+            + json.dumps(_old_record("kid", "lead-kid", 3.0, parent="root")) + "\n")
+        migrate_layout("agents", sm)
+        totals = sm.ledger.totals()
+        assert set(totals) == {"lead"} and totals["lead"]["cost"] == 4.0
+
+
+class TestReupgrade:
+    def test_agents_archived_by_an_older_overcode_after_the_upgrade_get_rows(self, sm):
+        sm.old_archive_file.write_text(json.dumps(_old_record("a", "first", 1.0)) + "\n")
+        assert migrate_layout("agents", sm)["done"] == 1
+        # A checkpoint of a live agent, then a downgrade archives it and another
+        sm.ledger.append([{"sid": "b", "billing_code": "second", "seg": 0, "cost": 2.0,
+                           "tokens": 0, "base_cost": 0.0, "base_tokens": 0,
+                           "kind": "checkpoint", "seq": 1, "t": "2026-10-01T00:00:00"}])
+        sm.old_archive_file.write_text(
+            json.dumps(_old_record("b", "second", 5.0, end="2026-10-03T00:00:00")) + "\n"
+            + json.dumps(_old_record("c", "third", 7.0, end="2026-10-03T00:00:00")) + "\n")
+        _leftovers("third")
+        hk = Housekeeping("agents", tmux=MagicMock(), history_path=None, log=MagicMock(),
+                          housekeeping=MagicMock(), rotation=MagicMock(),
+                          model_metadata=MagicMock())
+        hk.migrate_storage(sm)  # the re-upgraded daemon starts
+        totals = sm.ledger.totals()
+        assert totals["first"]["cost"] == 1.0
+        assert (totals["second"]["cost"], totals["second"]["running"]) == (5.0, 0)
+        assert totals["third"]["cost"] == 7.0
+        assert legacy_files("agents") == {}
+        # Idempotent by agent
+        sm.ledger.invalidate_backfill()
+        assert sm.ledger.backfill_from_archive(sm) == 0
+
+
 class TestDaemonRunsIt:
     def test_each_pass_until_done_then_never(self, sm):
         _leftovers("old")
