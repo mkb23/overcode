@@ -522,6 +522,8 @@ class Ledger:
         for key, row in within.items():
             amounts = contribution(row)
             prior = before.get(key)
+            if prior is not None and not _supersedes(row, prior):
+                continue  # closed before the period: a stale checkpoint after it is no spend
             if prior is not None:
                 earlier = contribution(prior)
                 amounts = {k: max(0, amounts[k] - earlier[k]) for k in AMOUNTS}

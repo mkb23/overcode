@@ -337,6 +337,14 @@ class TestStaleCheckpoints:
         assert sm.ledger.totals()["w"]["running"] == 0  # a full refold agrees
         assert sm.ledger.report()["w"]["running"] == 0
 
+    def test_across_a_period_boundary(self, sm):
+        row = {"sid": "s", "billing_code": "x", "seg": 0, "tokens": 0, "base_cost": 0.0,
+               "base_tokens": 0}
+        sm.ledger.append([dict(row, cost=2.0, kind="final", seq=1, t="2026-09-30T23:59:59"),
+                          dict(row, cost=3.0, kind="checkpoint", seq=2,
+                               t="2026-10-01T00:00:01")])
+        assert sm.ledger.report(since=datetime(2026, 10, 1)) == {}
+
 
 class TestCheckpoints:
     def _hk(self):
