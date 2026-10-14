@@ -26,7 +26,7 @@ def _launch_message(**overrides):
     fields = dict(
         name="worker", is_remote=False, directory="/tmp", bypass_permissions=False,
         agent_teams=False, agent_persona=None, provider=None, backend=None,
-        wrapper=None, extra_cli_args=None, skill_profile=None,
+        wrapper=None, extra_cli_args=None, skill_profile=None, billing_code=None,
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
