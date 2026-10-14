@@ -178,7 +178,8 @@ class WakeLoop:
                 daemon.log.info("User activity detected → waking up")
                 daemon.state.current_interval = DAEMON.interval_fast
                 daemon.state.interval_mode = "attended"
-                daemon.state.save(daemon.state_path)
+                # Guarded: a full disk must not end the engine on a keypress
+                daemon._save_state_file()
                 return
             # Hook-driven changes publish now, not at the next tick
             if not attended and elapsed - last_scan < WAKE_SCAN_UNATTENDED_SECONDS:

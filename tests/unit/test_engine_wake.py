@@ -258,6 +258,24 @@ class TestQuickTick:
             d.wake.sleep(1)
         assert sum(slept) == pytest.approx(1)
 
+    def test_a_keypress_with_a_full_disk_never_ends_the_engine(self, tmp_path):
+        """The activity signal's save is guarded like the tick's: the
+        error is recorded, the sleep ends, the daemon keeps running."""
+        import errno
+
+        from overcode import engine_wake
+
+        d = _daemon(tmp_path)
+        d.state.interval_mode = "unattended"
+        d.state.save = MagicMock(side_effect=OSError(errno.ENOSPC, "No space left on device"))
+        slept = []
+        with patch.object(engine_wake.time, "sleep", slept.append), \
+                patch.object(engine_wake, "check_activity_signal", return_value=True):
+            d.wake.sleep(10)
+        assert slept == [1.0]
+        assert d.state.interval_mode == "attended"
+        assert "No space left" in d.state.state_file_error
+
 
 class TestVisitsAndPersistence:
     def test_a_visit_from_a_view_reaches_the_recorder(self, tmp_path):

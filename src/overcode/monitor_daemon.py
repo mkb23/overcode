@@ -2033,7 +2033,9 @@ class MonitorDaemon:
 
         self.state.status = "active"
         self.state.current_interval = check_interval
-        self.state.save(self.state_path)
+        # Guarded: views need only engine.sock, so an unwritable state
+        # file (full disk) must not stop the engine coming up
+        self._save_state_file()
         self.recorder_store.load()
         self._start_engine_socket()
         # Agent directories a crash or an older overcode left (bounded)
@@ -2061,7 +2063,7 @@ class MonitorDaemon:
             if self._engine is not None:
                 self._engine.stop()
             self.state.status = "stopped"
-            self.state.save(self.state_path)
+            self._save_state_file()
             remove_pid_file(self.pid_path)
 
 
