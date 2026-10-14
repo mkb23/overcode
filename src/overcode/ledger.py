@@ -34,7 +34,6 @@ value by the end less its last one before the start.
 
 from __future__ import annotations
 
-import gzip
 import json
 import logging
 import os
@@ -46,6 +45,8 @@ from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
 from . import paths
 from .clock import stamp
+from .month_files import (GZIP_SUFFIX, PLAIN_SUFFIX, fold_into_gzip, month_files,
+                          read_gzip, writable_month)
 
 try:
     import fcntl
@@ -55,8 +56,6 @@ except ImportError:  # pragma: no cover - Windows
 
 logger = logging.getLogger(__name__)
 
-PLAIN_SUFFIX = ".jsonl"
-GZIP_SUFFIX = ".jsonl.gz"
 TOTALS_VERSION = 1
 # How long a closed segment's contribution is remembered, to replace (not
 # add) a duplicate or revised final row for it
@@ -174,12 +173,18 @@ class Ledger:
         return sorted(found.items())
 
     def append(self, rows: Iterable[dict], *, now: Optional[datetime] = None) -> None:
-        """Append rows to this month's file under the ledger lock; one fsync."""
+        """Append rows to this month's file under the ledger lock; one fsync.
+
+        The month is chosen under the lock and is never a closed one: a
+        late write (a tick's ``now`` from before midnight, a clock behind
+        another writer's) goes to the newest open month instead
+        (``month_files.writable_month``). A row's own ``t`` dates it.
+        """
         rows = [r for r in rows if r.get("sid")]
         if not rows:
             return
-        month = (now or datetime.now()).strftime("%Y-%m")
         with self._lock():
+            month = writable_month(self.dir, (now or datetime.now()).strftime("%Y-%m"))
             path = self.dir / f"{month}{PLAIN_SUFFIX}"
             with open(path, "a+b") as f:
                 f.seek(0, os.SEEK_END)
@@ -194,20 +199,18 @@ class Ledger:
             self._gzip_closed(month)
 
     def _gzip_closed(self, current: str) -> None:
-        """Gzip every plain month before ``current`` (caller holds the lock)."""
-        for month, path in self.months():
-            plain = self.dir / f"{month}{PLAIN_SUFFIX}"
-            if month >= current or not plain.exists():
+        """Gzip every plain month before ``current`` (caller holds the lock).
+
+        Atomic and durable (``month_files.fold_into_gzip``): a plain file
+        next to an existing gzip is folded into it, never dropped.
+        """
+        plain_months, _ = month_files(self.dir)
+        for month in sorted(plain_months):
+            if month >= current:
                 continue
-            target = self.dir / f"{month}{GZIP_SUFFIX}"
+            plain = self.dir / f"{month}{PLAIN_SUFFIX}"
             try:
-                if not target.exists():
-                    tmp = target.with_name(target.name + ".tmp")
-                    with open(plain, "rb") as src, gzip.open(tmp, "wb") as dst:
-                        while chunk := src.read(1 << 20):
-                            dst.write(chunk)
-                    os.replace(tmp, target)
-                plain.unlink()
+                fold_into_gzip(plain, self.dir / f"{month}{GZIP_SUFFIX}")
             except OSError as e:
                 logger.warning("could not gzip ledger month %s: %s", month, e)
 
@@ -217,13 +220,12 @@ class Ledger:
         try:
             st = path.stat()
             if path.name.endswith(GZIP_SUFFIX):
-                with gzip.open(path, "rb") as f:
-                    data, offset = f.read(), 0
+                data, offset = read_gzip(path), 0
             else:
                 with open(path, "rb") as f:
                     f.seek(offset)
                     data = f.read()
-        except (OSError, EOFError, gzip.BadGzipFile):
+        except OSError:
             return [], offset, 0
         cut = data.rfind(b"\n") + 1
         rows = []

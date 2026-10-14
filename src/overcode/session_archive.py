@@ -12,7 +12,7 @@ files in its day bundle (``agent_bundle``) — not the launch command, not a
 sister's API key, not the standing instructions (only whether there were
 any). That keeps a record about 1 KB and the archive free of secrets.
 
-Readers stream: a month at a time, gzipped months through ``gzip.open``.
+Readers stream: a month at a time, gzipped months through ``month_files.read_gzip``.
 A lookup by name or id goes newest month first, and only parses a line
 that contains the name's or id's bytes. The same id can appear twice (a
 crash between the archive append and the live file's write; see
@@ -28,7 +28,6 @@ into months, slimmed, and deleted on first access.
 from __future__ import annotations
 
 import functools
-import gzip
 import json
 import logging
 import os
@@ -37,6 +36,9 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Iterable, Iterator, List, Optional, Tuple
+
+from .month_files import (GZIP_SUFFIX, PLAIN_SUFFIX, fold_into_gzip, month_files,
+                          read_gzip, writable_month)
 
 if TYPE_CHECKING:
     from .session_manager import Session
@@ -66,8 +68,6 @@ ARCHIVE_KEYS = (
     "stats", "bundle", "orphan",
 )
 
-PLAIN_SUFFIX = ".jsonl"
-GZIP_SUFFIX = ".jsonl.gz"
 
 # One closed-month gzip pass at a time per process
 _rollover_lock = threading.Lock()
@@ -237,8 +237,10 @@ class SessionArchiveMixin:
         if not records:
             return
         self._migrate_legacy_archive()
-        month = datetime.now().strftime("%Y-%m")
         with self._archive_lock():
+            # Chosen under the lock, never a closed (gzipped) month: a late
+            # write goes to the newest open one (``month_files``)
+            month = writable_month(self.archive_dir, datetime.now().strftime("%Y-%m"))
             self._append_month_records(month, [slim_record(r) for r in records])
         self._maybe_roll_over(month)
 
@@ -249,11 +251,13 @@ class SessionArchiveMixin:
     # ── rollover and retention ──────────────────────────────────────────
 
     def _maybe_roll_over(self, current: str) -> None:
-        """Gzip any closed month still plain: once, at the first archive of a month."""
-        stale = [m for m, path in self.archive_months()
-                 if m < current and path.name.endswith(PLAIN_SUFFIX)
-                 and not path.name.endswith(GZIP_SUFFIX)]
-        if not stale:
+        """Gzip any closed month still plain: once, at the first archive of a month.
+
+        A plain file beside a month's gzip counts too: its records are
+        hidden from readers until it is folded in.
+        """
+        plain, _ = month_files(self.archive_dir)
+        if not any(m < current for m in plain):
             return
         if self.rollover_in_background:
             threading.Thread(target=self.gzip_closed_months, args=(current,),
@@ -264,8 +268,12 @@ class SessionArchiveMixin:
     def gzip_closed_months(self, current: Optional[str] = None) -> List[str]:
         """Gzip every plain month before ``current`` (default: this month); returns them.
 
-        Write ``.gz.tmp``, rename it into place, then remove the plain file,
-        under the archive lock: a reader sees one or the other, whole.
+        Under the archive lock, atomically and durably
+        (``month_files.fold_into_gzip``): a reader sees the old file or the
+        new one, whole, and a plain file beside an existing gzip (records
+        that reached a closed month) is folded in, never dropped. A crash
+        between the rename and the unlink repeats records; readers keep one
+        per id.
         """
         current = current or datetime.now().strftime("%Y-%m")
         done: List[str] = []
@@ -273,32 +281,13 @@ class SessionArchiveMixin:
             return done
         try:
             with self._archive_lock():
-                for month, path in self.archive_months():
-                    plain = self.archive_dir / f"{month}{PLAIN_SUFFIX}"
-                    if month >= current or not plain.exists():
+                plain_months, _ = month_files(self.archive_dir)
+                for month in sorted(plain_months):
+                    if month >= current:
                         continue
-                    target = self.archive_dir / f"{month}{GZIP_SUFFIX}"
+                    plain = self.archive_dir / f"{month}{PLAIN_SUFFIX}"
                     try:
-                        if not target.exists():
-                            tmp = target.with_name(target.name + ".tmp")
-                            with open(plain, "rb") as src, gzip.open(tmp, "wb") as dst:
-                                while chunk := src.read(1 << 20):
-                                    dst.write(chunk)
-                            with open(tmp, "rb") as f:
-                                os.fsync(f.fileno())
-                            os.replace(tmp, target)
-                        else:
-                            # Records reached a closed month (a re-run migration):
-                            # add them as one more gzip member, never drop them. A
-                            # crash between this and the unlink repeats them, and
-                            # readers keep one record per id.
-                            with open(plain, "rb") as src, open(target, "ab") as raw:
-                                with gzip.GzipFile(fileobj=raw, mode="wb") as dst:
-                                    while chunk := src.read(1 << 20):
-                                        dst.write(chunk)
-                                raw.flush()
-                                os.fsync(raw.fileno())
-                        plain.unlink()
+                        fold_into_gzip(plain, self.archive_dir / f"{month}{GZIP_SUFFIX}")
                         done.append(month)
                     except OSError as e:
                         logger.warning("could not gzip archive month %s: %s", month, e)
@@ -397,11 +386,10 @@ class SessionArchiveMixin:
         """A month file's whole lines (gzipped or plain); [] if it cannot be read."""
         try:
             if path.name.endswith(GZIP_SUFFIX):
-                with gzip.open(path, "rb") as f:
-                    data = f.read()
+                data = read_gzip(path)
             else:
                 data = path.read_bytes()
-        except (OSError, EOFError, gzip.BadGzipFile):
+        except OSError:
             return []
         return _complete_lines(data)
 
