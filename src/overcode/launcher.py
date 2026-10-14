@@ -101,6 +101,12 @@ def validate_session_name(name: str) -> None:
         raise InvalidSessionNameError(name)
 
 
+# The largest first prompt put on an agent's command line; a bigger one is
+# sent once the agent is up. Well under Linux's 128 KiB limit on a single
+# argument, leaving the rest of the argv and environment room in ARG_MAX.
+PROMPT_ARG_MAX_BYTES = 64 * 1024
+
+
 class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
     """Launches interactive agent-CLI sessions in tmux windows.
 
@@ -553,12 +559,15 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                              prompt: Optional[str]) -> Optional[str]:
         """Write the first prompt for a backend that takes it as an argument.
 
-        None (paste it once the agent is up) for other backends and the
-        mock harness. The launch line puts `--` before it, so a prompt
-        starting with "-" is still the prompt, not an option.
+        None (paste it once the agent is up) for other backends, the mock
+        harness, and a prompt too big for one argument (Linux caps one at
+        128 KiB, MAX_ARG_STRLEN: exec would fail and claude never start).
+        The launch line puts `--` before it, so a prompt starting with "-"
+        is still the prompt, not an option.
         """
         if (not prompt or not backend.prompt_as_argument
-                or os.environ.get("MOCK_SCENARIO")):
+                or os.environ.get("MOCK_SCENARIO")
+                or len(prompt.encode("utf-8")) > PROMPT_ARG_MAX_BYTES):
             return None
         from .settings import get_session_dir
         folder = get_session_dir(self.tmux.session_name) / "prompts"

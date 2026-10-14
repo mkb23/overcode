@@ -3157,6 +3157,20 @@ class TestClaudePromptOnTheCommandLine:
         assert words[-1].startswith("$(cat ")
         assert words[-2] == "--"
 
+    def test_a_prompt_too_big_for_one_argument_is_sent_once_up(self, tmp_path):
+        """Linux caps one execve argument at 128 KiB: a bigger prompt on the
+        command line fails exec, claude never starts and the prompt is lost."""
+        from overcode.launcher import PROMPT_ARG_MAX_BYTES
+
+        launcher, tmux = self._launcher(tmp_path)
+        big = "x" * (PROMPT_ARG_MAX_BYTES + 1)
+        with patch.object(launcher, "_send_prompt_to_window") as paste:
+            launcher.launch(name="kid", initial_prompt=big)
+        paste.assert_called_once()
+        assert paste.call_args.args[1] == big
+        assert "$(cat" not in tmux.sent_keys[-1][2]
+        assert PROMPT_ARG_MAX_BYTES < 128 * 1024
+
     def test_other_backends_paste(self, tmp_path):
         launcher, tmux = self._launcher(tmp_path)
         with patch.object(launcher, "_send_prompt_to_window") as paste:
