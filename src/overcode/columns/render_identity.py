@@ -4,7 +4,7 @@ import unicodedata
 from datetime import datetime
 from typing import Optional
 
-from ..clock import from_iso
+from ..clock import from_iso, seconds_since
 from ..status_constants import (
     BADGE_KINDS,
     STATUS_COLOR_GREEN,
@@ -44,8 +44,9 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
             state_start = from_iso(ctx.stats.state_since)
         except (ValueError, TypeError):
             pass
-    if state_start:
-        elapsed = (datetime.now() - state_start).total_seconds()
+    # Epoch arithmetic, so a state spanning a DST change reads true
+    elapsed = seconds_since(state_start, datetime.now().timestamp()) if state_start else None
+    if elapsed is not None:
         return [(f"{format_duration(elapsed):>5} ", ctx.status_color)]
     else:
         return [("    - ", f"dim{ctx.bg}")]
@@ -191,8 +192,8 @@ def render_status_plain(ctx: ColumnContext) -> Optional[str]:
             pass
 
     time_str = ""
-    if state_start:
-        elapsed = (datetime.now() - state_start).total_seconds()
+    elapsed = seconds_since(state_start, datetime.now().timestamp()) if state_start else None
+    if elapsed is not None:
         time_str = f" ({format_duration(elapsed)})"
 
     return f"{ctx.status_symbol} {status}{time_str}"

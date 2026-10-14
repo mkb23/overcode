@@ -61,9 +61,15 @@ def engine_socket_path(tmux_session: str) -> Path:
 
 
 def _iso(epoch: Optional[float]) -> Optional[str]:
+    """An epoch as ISO text that reads back to the same instant.
+
+    Aware (with the local offset): a naive string drops ``fold``, so an
+    instant in the repeated autumn hour would read back an hour early.
+    In memory only; ``clock.to_epoch`` reads it.
+    """
     if not isinstance(epoch, (int, float)):
         return None
-    return datetime.fromtimestamp(epoch).isoformat()
+    return datetime.fromtimestamp(epoch).astimezone().isoformat()
 
 
 def session_stats(base, view: AgentView):
@@ -167,6 +173,9 @@ def status_changed_at(view: AgentView) -> Optional[datetime]:
         live, episode = view.get("live_colour"), view.get("episode_colour")
         ts = view.get("live_since") if live and live != episode else view.get("episode_start")
         if isinstance(ts, (int, float)):
+            # Naive local, with ``fold`` set in the repeated autumn hour;
+            # renderers measure it with ``clock.seconds_since`` (epoch
+            # arithmetic), so a state spanning a DST change reads true
             return datetime.fromtimestamp(ts)
     since = view.get("status_since")
     if since:

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Callable, List, Optional, TYPE_CHECKING, Tuple
 
-from ..clock import from_iso
+from ..clock import seconds_since
 from .column import ALL, HIGH_PLUS, MED_PLUS, SummaryColumn
 from .context import ColumnContext
 from .hover import (
@@ -131,12 +131,8 @@ def _age_seconds(when) -> Optional[float]:
     """Seconds since a datetime or ISO string; None when unknown."""
     if not when:
         return None
-    if isinstance(when, str):
-        try:
-            when = from_iso(when)
-        except (ValueError, TypeError):
-            return None
-    return (datetime.now() - when).total_seconds()
+    # Epoch arithmetic: exact across a DST change (naive or aware, string or datetime)
+    return seconds_since(when, datetime.now().timestamp())
 
 
 def _lower(s) -> Optional[str]:

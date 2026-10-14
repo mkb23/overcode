@@ -22,7 +22,7 @@ class TestSessionStats:
         assert out.state_since == "2026-10-07T12:00:00"
         assert (out.green_time_seconds, out.non_green_time_seconds, out.sleep_time_seconds) \
             == (10.0, 20.0, 3.0)
-        assert out.last_time_accumulation == datetime.fromtimestamp(1_000.0).isoformat()
+        assert out.last_time_accumulation == datetime.fromtimestamp(1_000.0).astimezone().isoformat()
         assert base.estimated_cost_usd == 1.0 and base.current_task == "old"
 
     def test_no_view_is_the_base(self):
@@ -164,3 +164,81 @@ def test_socket_path_is_next_to_the_state_file(monkeypatch):
             get_monitor_daemon_state_path("agents").parent / "engine.sock"
     finally:
         shutil.rmtree(short, ignore_errors=True)
+
+
+
+# ── DST: 25 Oct 2026 in London, 02:00 BST becomes 01:00 GMT ──────────────
+
+
+@pytest.fixture
+def london(monkeypatch):
+    import time
+
+    if not hasattr(time, "tzset"):
+        pytest.skip("needs time.tzset")
+    monkeypatch.setenv("TZ", "Europe/London")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def _frozen_now(epoch):
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(epoch, tz)
+    return Frozen
+
+
+class TestAcrossTheClocksGoingBack:
+    def test_time_in_state_spanning_the_change_is_the_true_elapsed(self, london):
+        """#16: 00:30 BST to 03:00 GMT is 3h30m, not the 2h30m the wall clock says."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from overcode.columns import registry, render_identity
+        from overcode.tui_helpers import format_duration
+
+        start = datetime(2026, 10, 25, 0, 30).timestamp()  # BST
+        now = datetime(2026, 10, 25, 3, 0).timestamp()      # GMT
+        assert now - start == 3.5 * 3600
+        changed_at = tui_engine.status_changed_at(
+            {"current_status": "waiting_user", "live_colour": "red",
+             "episode_colour": "red", "episode_start": start})
+        ctx = SimpleNamespace(status_changed_at=changed_at, stats=SimpleNamespace(state_since=None),
+                              status_color="red", bg="", status_symbol="x", status="waiting_user")
+        with patch.object(render_identity, "datetime", _frozen_now(now)), \
+                patch.object(registry, "datetime", _frozen_now(now)):
+            cell = render_identity.render_time_in_state(ctx)[0][0]
+            plain = render_identity.render_status_plain(ctx)
+            age = registry._age_seconds(changed_at)
+        assert cell.strip() == format_duration(3.5 * 3600)
+        assert f"({format_duration(3.5 * 3600)})" in plain
+        assert age == 3.5 * 3600
+
+    def test_a_state_begun_in_the_repeated_hour_is_never_negative(self, london):
+        from unittest.mock import patch
+
+        from overcode.columns import registry
+
+        start = datetime(2026, 10, 25, 1, 50).timestamp()  # BST, first pass
+        now = start + 20 * 60                                # 01:10 GMT
+        changed_at = tui_engine.status_changed_at(
+            {"current_status": "running", "live_colour": "green",
+             "episode_colour": "green", "episode_start": start})
+        with patch.object(registry, "datetime", _frozen_now(now)):
+            assert registry._age_seconds(changed_at) == 20 * 60
+
+    def test_a_time_base_in_the_repeated_hour_reads_back_exactly(self, london):
+        """#17: the anchor's ISO text dropped fold; the second 01:30 read back as BST."""
+        from overcode.tui_helpers import get_current_state_times
+
+        base_at = datetime(2026, 10, 25, 1, 29, 50, fold=1).timestamp()  # GMT, second pass
+        assert datetime.fromtimestamp(base_at).fold == 1
+        out = tui_engine.session_stats(SessionStats(), {
+            "current_status": "running", "time_base": [0.0, 0.0, 0.0],
+            "time_base_at": base_at,
+        })
+        green, _, _ = get_current_state_times(out, now=datetime.fromtimestamp(base_at + 110))
+        assert green == pytest.approx(110.0)
