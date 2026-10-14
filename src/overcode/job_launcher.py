@@ -151,11 +151,11 @@ class JobLauncher:
             if pane_pid is not None and not _has_child_processes(pane_pid):
                 exit_code = self._read_exit_code(job.id)
                 status = "completed" if exit_code == 0 else "failed"
-                now = datetime.now().isoformat()
                 self.jobs.mark_complete(job.id, exit_code)
                 job.status = status
                 job.exit_code = exit_code
-                job.end_time = now
+                # ``now`` stays the pass's datetime: a later job's age needs it
+                job.end_time = now.isoformat()
                 self._cleanup_exit_code_file(job.id)
 
         return jobs

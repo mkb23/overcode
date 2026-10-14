@@ -152,6 +152,29 @@ class TestJobLauncherListJobs:
         assert len(jobs) == 1
         assert jobs[0].status == "running"
 
+    @patch("overcode.job_launcher._has_child_processes", return_value=False)
+    def test_a_finished_job_does_not_hide_a_later_killed_one(self, mock_has_children, tmp_path):
+        """A finished job rebound the pass's ``now`` to a string, so a later
+        job's age raised, read as 0, and its gone window was never marked killed."""
+        mock_tmux = MagicMock()
+        mock_tmux.list_windows.return_value = [{"name": "done-job", "index": 0}]
+        mock_tmux.get_pane_pid.return_value = 12345
+
+        manager = JobManager(state_dir=tmp_path)
+        manager.create_job(command="true", name="done-job", tmux_window="done-job")
+        gone = manager.create_job(command="sleep 999", name="gone-job", tmux_window="gone-job")
+        manager.update_job(gone.id, start_time="2020-01-01T00:00:00")
+
+        launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
+        launcher._read_exit_code = lambda job_id: 0
+        jobs = {j.name: j for j in launcher.list_jobs(include_completed=True, detect_killed=True)}
+
+        # the order that hit it: the finished job comes first in the pass
+        assert [j.name for j in manager.list_jobs(include_completed=True)] == ["done-job", "gone-job"]
+        assert jobs["done-job"].status == "completed"
+        assert jobs["gone-job"].status == "killed"
+        assert manager.get_job_by_name("gone-job").status == "killed"
+
 
 class TestJobLauncherKill:
     """Test job killing."""
