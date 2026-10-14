@@ -484,6 +484,19 @@ def rename_notice(requested: str, session: Optional["Session"]) -> Optional[str]
     return f"note: agent '{requested}' was renamed to '{session.name}'"
 
 
+class _StatsLog:
+    """The log ``StatsSync`` writes to, outside the daemon: this module's logger."""
+
+    def info(self, message: str) -> None:
+        logger.info(message)
+
+    def warn(self, message: str) -> None:
+        logger.warning(message)
+
+    def debug(self, message: str) -> None:
+        logger.debug(message)
+
+
 class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin):
     """Manages session state persistence.
 
@@ -633,17 +646,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         archived: List[dict] = []
         with self._state_transaction() as txn:
             state = txn.state
-            for session_id in pending.archive:
-                entry = state.pop(session_id, None)
-                if entry is None:
-                    continue  # already gone (cleanup, or another daemon's archive pass)
-                record = entry.copy()
-                record['end_time'] = datetime.now().isoformat()
-                record['status'] = 'archived'
-                if session_id in pointers:
-                    record['bundle'] = pointers[session_id]
-                archived.append(record)
-                txn.dirty = True
+            # Staged values first, so an entry archived in the same commit
+            # takes them (its final ledger row is its last word on spend)
             for session_id, values in pending.fields.items():
                 entry = state.get(session_id)
                 if entry is None:
@@ -664,6 +668,17 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                     if key not in stats or stats[key] != value:
                         stats[key] = value
                         txn.dirty = True
+            for session_id in pending.archive:
+                entry = state.pop(session_id, None)
+                if entry is None:
+                    continue  # already gone (cleanup, or another daemon's archive pass)
+                record = entry.copy()
+                record['end_time'] = datetime.now().isoformat()
+                record['status'] = 'archived'
+                if session_id in pointers:
+                    record['bundle'] = pointers[session_id]
+                archived.append(record)
+                txn.dirty = True
             # Write-ahead: durable in the archive before it leaves the live
             # file (which the transaction writes on exit)
             if archived:
@@ -891,13 +906,40 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
     def delete_sessions(self, session_ids: Iterable[str], archive: bool = True) -> List[str]:
         """Delete many sessions in one commit (``overcode cleanup``); returns those archived."""
         pending = PendingUpdates()
+        session_ids = list(session_ids)
         for session_id in session_ids:
             if archive:
                 pending.archive_session(session_id)
             else:
                 pending.remove_session(session_id)
+        if archive:
+            self._refresh_final_stats(session_ids, pending)
         self.commit_pending(pending)
         return pending.archived
+
+    def _refresh_final_stats(self, session_ids: List[str], pending: "PendingUpdates") -> None:
+        """Read each agent's transcripts once more, into ``pending``, before it is archived.
+
+        The daemon syncs stats every 5 to 60 s; an agent killed in between
+        would otherwise close its ledger segment without its last turn's
+        spend, and nothing adds it later. Never raises.
+        """
+        try:
+            from .daemon_stats_sync import StatsSync
+
+            sync = StatsSync(session_manager=self, log=_StatsLog())
+            snapshot = self._snapshot()
+        except Exception as e:
+            logger.warning("final stats not refreshed: %s", e)
+            return
+        for session_id in session_ids:
+            session = snapshot.get(session_id)
+            if session is None:
+                continue
+            try:
+                sync.sync_agent_stats(session, pending)
+            except Exception as e:
+                logger.warning("final stats of %s not refreshed: %s", session_id, e)
 
     def rebill(self, session_id: str, billing_code: str) -> Optional[str]:
         """Move an agent to another billing code, forward only; returns the old code.

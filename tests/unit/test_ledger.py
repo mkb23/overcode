@@ -118,6 +118,38 @@ class TestRows:
         assert sm.ledger.totals()["a"]["agents"] == 1
 
 
+class TestFinalRow:
+    """The final row is the agent's last word on spend: nothing adds to it later."""
+
+    def test_kill_reads_the_transcript_once_more(self, sm):
+        s = sm.create_session(name="a", tmux_session="agents", tmux_window="a-1", command=[])
+        _spend(sm, s, 1.0)  # the daemon's last sync
+
+        def last_turn(self, session, pending):
+            pending.update_stats(session.id, estimated_cost_usd=3.0)  # the turn since
+
+        with patch("overcode.daemon_stats_sync.StatsSync.sync_agent_stats", last_turn):
+            sm.delete_session(s.id)
+        assert [(r["kind"], r["cost"]) for r in _rows(sm)] == [("final", 3.0)]
+        assert sm.find_archived(s.id).stats.estimated_cost_usd == 3.0
+
+    def test_a_failed_refresh_still_archives(self, sm):
+        s = sm.create_session(name="a", tmux_session="agents", tmux_window="a-1", command=[])
+        _spend(sm, s, 1.0)
+        with patch("overcode.daemon_stats_sync.StatsSync.sync_agent_stats",
+                   side_effect=RuntimeError("unreadable")):
+            sm.delete_session(s.id)
+        assert [(r["kind"], r["cost"]) for r in _rows(sm)] == [("final", 1.0)]
+
+    def test_stats_staged_in_the_archiving_commit_are_kept(self, sm):
+        s = sm.create_session(name="a", tmux_session="agents", tmux_window="a-1", command=[])
+        pending = PendingUpdates()
+        pending.update_stats(s.id, estimated_cost_usd=4.0)
+        pending.archive_session(s.id)
+        sm.commit_pending(pending)
+        assert [(r["kind"], r["cost"]) for r in _rows(sm)] == [("final", 4.0)]
+
+
 class TestRebill:
     def test_forward_only(self, sm):
         s = sm.create_session(name="a", tmux_session="agents", tmux_window="a-1", command=[])
