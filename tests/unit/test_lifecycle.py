@@ -408,8 +408,9 @@ class TestCli:
         from overcode.protocols import TmuxTimeoutError
         sess = MagicMock(name="sess", active_agent_session_id="sid", backend="claude-code")
         launcher = MagicMock()
+        launcher.for_agent.return_value = launcher
         launcher.tmux.window_exists.side_effect = TmuxTimeoutError("slow")
-        with patch("overcode.launcher.AgentLauncher", return_value=launcher), \
+        with patch("overcode.cli.agent.AgentLauncher", return_value=launcher), \
              patch("overcode.cli.agent.find_agent", return_value=sess):
             result = runner.invoke(app, ["restart", "a1"])
         assert result.exit_code == 1
