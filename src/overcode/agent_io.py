@@ -129,6 +129,35 @@ class AgentIOMixin:
                 return False
             time.sleep(0.2)
 
+    def _prompt_landed(self, window_name: str, prompt: str, timeout: float) -> bool:
+        """Whether any sign of ``prompt`` shows in the window within ``timeout``.
+
+        Its first or last line, or codex's "[Pasted Content" placeholder,
+        anywhere in enough scrollback to hold the whole prompt: a long
+        prompt's first line has scrolled away by the time it is drawn. Runs
+        of whitespace match whatever the pane shows for them (tabs come
+        back as spaces, the agent wraps lines).
+        """
+        def squash(text: str) -> str:
+            return " ".join(text.split())
+
+        lines = [squash(line) for line in prompt.splitlines() if line.strip()]
+        if not lines:
+            return True
+        needles = {lines[0][:40], lines[-1][-40:], "[Pasted Content"}
+        # Every prompt line wrapped at a narrow 40 columns, plus the screen
+        depth = 40 + sum(len(line) // 40 + 1 for line in prompt.splitlines())
+        deadline = time.time() + timeout
+        while True:
+            content = get_tmux_pane_content(self.tmux.session_name, window_name, lines=depth)
+            if content:
+                shown = squash(content)
+                if any(needle in shown for needle in needles):
+                    return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.2)
+
     def _send_prompt_to_window(
         self,
         window_name: str,
@@ -152,12 +181,12 @@ class AgentIOMixin:
             )
             # codex 0.156 draws its input line a few seconds before it reads
             # input after the trust dialog, and drops a paste in between:
-            # such a backend has the prompt's first words checked on screen
-            first = prompt.strip().split("\n")[0].strip()[:20]
+            # such a backend has the prompt looked for on screen, and sent
+            # again only when no sign of it shows
             backend = backend or get_backend()
-            if sent and first and backend.confirm_prompt_delivery:
+            if sent and prompt.strip() and backend.confirm_prompt_delivery:
                 for _ in range(3):
-                    if self._pane_shows(window_name, first, timeout=3.0):
+                    if self._prompt_landed(window_name, prompt, timeout=3.0):
                         break
                     sent = send_text_to_tmux_window(
                         self.tmux.session_name, window_name, prompt,

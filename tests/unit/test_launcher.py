@@ -831,23 +831,60 @@ class TestSendPromptToWindow:
 
         launcher, window = self._codex_launcher(tmp_path)
         with patch.object(launcher, "_wait_for_prompt", return_value=True), \
-                patch.object(launcher, "_pane_shows", side_effect=[False, True]) as shows, \
+                patch.object(launcher, "_prompt_landed", side_effect=[False, True]) as shows, \
                 patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
             assert launcher._send_prompt_to_window(
                 window, "Reply pong\nplease", backend=get_backend("codex"))
         assert send.call_count == 2
-        assert shows.call_args.args[1] == "Reply pong"
+        assert shows.call_args.args[1] == "Reply pong\nplease"
 
     def test_a_delivered_prompt_is_not_pasted_twice(self, tmp_path):
         from overcode.backends import get_backend
 
         launcher, window = self._codex_launcher(tmp_path)
         with patch.object(launcher, "_wait_for_prompt", return_value=True), \
-                patch.object(launcher, "_pane_shows", return_value=True), \
+                patch.object(launcher, "_prompt_landed", return_value=True), \
                 patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
             assert launcher._send_prompt_to_window(
                 window, "Reply pong", backend=get_backend("codex"))
         assert send.call_count == 1
+
+    @pytest.mark.parametrize("pane", [
+        # A long brief: its first line has scrolled out of the captured lines
+        "\n".join(f"step {i}: do the thing" for i in range(40, 61))
+        + "\n\n• Working (3s • esc to interrupt)\n› ",
+        # A tab in the first line comes back from the pane as spaces
+        "› Fix   the build\n\n• Working (1s • esc to interrupt)",
+        # codex folds a large paste into a placeholder
+        "› [Pasted Content 2400 chars]",
+    ], ids=["scrolled-long-brief", "tab-as-spaces", "paste-placeholder"])
+    def test_a_delivered_prompt_shown_another_way_is_not_sent_again(self, tmp_path, pane):
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        if "Fix" in pane:
+            prompt = "Fix\tthe build"
+        else:
+            prompt = "\n".join(f"step {i}: do the thing" for i in range(61))
+
+        def capture(session, window_name, lines=50):
+            # A real capture holds the screen plus ``lines`` of scrollback
+            return pane
+
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch("overcode.agent_io.get_tmux_pane_content", side_effect=capture), \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
+            assert launcher._send_prompt_to_window(
+                window, prompt, backend=get_backend("codex"))
+        assert send.call_count == 1
+
+    def test_a_long_prompt_is_looked_for_in_enough_scrollback(self, tmp_path):
+        launcher, window = self._codex_launcher(tmp_path)
+        prompt = "\n".join(f"step {i}: do the thing" for i in range(61))
+        with patch("overcode.agent_io.get_tmux_pane_content", return_value="") as cap, \
+                patch("time.sleep"):
+            assert launcher._prompt_landed(window, prompt, timeout=0) is False
+        assert cap.call_args.kwargs["lines"] > 61
 
     def test_claude_prompt_delivery_is_not_checked(self, tmp_path):
         """Claude folds a long paste into "[Pasted text]": its words never show."""
