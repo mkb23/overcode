@@ -10,17 +10,22 @@ Example config:
 """
 
 import copy
+import logging
 import os
 import re
 import socket
+import stat
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 import yaml
 
 from . import paths
 from .stat_gate import FileSignature, is_settled, stat_signature
+
+logger = logging.getLogger(__name__)
 
 
 # A test points this at its own file; None means paths.config_file().
@@ -90,17 +95,31 @@ def _top_level_blocks(lines: List[str]) -> dict:
     return blocks
 
 
+def _parse_mapping(text: str) -> Optional[dict]:
+    """``text`` parsed as a config mapping; None when it is not one.
+
+    An empty or comments-only file is an empty mapping. A YAML error, or a
+    top-level list or scalar, is None: the file holds something the person
+    wrote that this module cannot read back, so it must not be rewritten.
+    """
+    try:
+        data = yaml.safe_load(text) if text.strip() else {}
+    except yaml.YAMLError:
+        return None
+    if data is None:
+        return {}
+    return data if isinstance(data, dict) else None
+
+
 def _merge_into_text(text: str, config: dict) -> str:
     """``text`` (the current config.yaml) with ``config``'s changes applied.
 
     Only the top-level entries whose values changed are rewritten; every
     other line, comments included, is kept as the person wrote it.
+    ``text`` must parse as a mapping (save_config sets anything else aside).
     """
-    try:
-        current = yaml.safe_load(text) if text.strip() else {}
-    except yaml.YAMLError:
-        current = None
-    if not isinstance(current, dict):
+    current = _parse_mapping(text)
+    if current is None:
         return yaml.dump(config, default_flow_style=False, sort_keys=False)
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
@@ -130,17 +149,46 @@ def _merge_into_text(text: str, config: dict) -> str:
     return yaml.dump(config, default_flow_style=False, sort_keys=False)
 
 
+def _set_aside_unreadable(path: Path) -> Path:
+    """Rename ``path`` to ``<name>.broken-<timestamp>`` next to it and return
+    the new path, so a save never overwrites a config it cannot parse."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    aside = path.with_name(f"{path.name}.broken-{stamp}")
+    n = 1
+    while aside.exists():
+        aside = path.with_name(f"{path.name}.broken-{stamp}-{n}")
+        n += 1
+    os.replace(path, aside)
+    return aside
+
+
 def save_config(config: dict) -> None:
     """Save ``config`` to ~/.overcode/config.yaml, keeping the person's comments.
 
     Only the top-level entries that changed are rewritten, and the file is
     replaced atomically, so a crash never leaves a half-written config.
+
+    A symlinked config.yaml is written through to its target, keeping the
+    link and the target's mode. A config.yaml that does not parse (load_config
+    read it as {}) is never overwritten: it is moved aside to
+    ``config.yaml.broken-<timestamp>`` with a warning, and the save then
+    writes a fresh file, so the person's text survives to be fixed by hand.
     """
-    path = config_path()
+    # Replace the file a symlinked config points at, not the link itself
+    path = Path(os.path.realpath(config_path()))
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         old_text = path.read_text()
+        old_mode: Optional[int] = stat.S_IMODE(os.stat(path).st_mode)
     except FileNotFoundError:
+        old_text, old_mode = "", None
+    if _parse_mapping(old_text) is None:
+        aside = _set_aside_unreadable(path)
+        logger.warning(
+            "%s could not be parsed as a YAML mapping; moved it to %s and "
+            "saved a new config. Fix the old file and copy your settings back.",
+            path, aside,
+        )
         old_text = ""
     new_text = _merge_into_text(old_text, config)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config.", suffix=".tmp")
@@ -149,6 +197,8 @@ def save_config(config: dict) -> None:
             f.write(new_text)
             f.flush()
             os.fsync(f.fileno())
+        if old_mode is not None:
+            os.chmod(tmp, old_mode)
         os.replace(tmp, path)
     except BaseException:
         try:

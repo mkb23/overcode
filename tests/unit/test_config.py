@@ -895,6 +895,90 @@ class TestSaveKeepsComments:
         assert path.read_text() == self.TEXT  # untouched
         assert not list(tmp_path.glob(".config.*.tmp"))
 
+    def test_comments_only_file_keeps_its_comments(self, tmp_path, monkeypatch):
+        path = tmp_path / "config.yaml"
+        path.write_text("# my notes\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", path)
+        config.save_config({"a": 1})
+        assert "# my notes" in path.read_text()
+        assert config.load_config() == {"a": 1}
+
+
+class TestSaveNeverOverwritesAnUnparseableConfig:
+    """A config.yaml with one YAML error loads as {}; the next save (say, the
+    tmux toggle key on startup) used to replace the whole file with that one
+    key, losing sisters, api keys and billing codes for good."""
+
+    BROKEN = (
+        "# my settings\n"
+        "sisters:\n"
+        "  - name: laptop\n"
+        "    url: http://laptop:8080\n"
+        "    api_key: s3cret\n"
+        " billing:\n"  # the stray indent that breaks the file
+        "  codes: [ACME-1]\n"
+    )
+
+    @pytest.mark.parametrize("text", [BROKEN, "- a list\n- not a mapping\n", "just a string\n"])
+    def test_the_unreadable_file_is_set_aside_not_overwritten(self, tmp_path, monkeypatch, caplog, text):
+        path = tmp_path / "config.yaml"
+        path.write_text(text)
+        monkeypatch.setattr(config, "CONFIG_PATH", path)
+        cfg = config.load_config()
+        assert cfg == {}
+        cfg["tmux"] = {"toggle_key": "C-]"}
+        with caplog.at_level("WARNING", logger="overcode.config"):
+            config.save_config(cfg)
+        aside = list(tmp_path.glob("config.yaml.broken-*"))
+        assert len(aside) == 1
+        assert aside[0].read_text() == text  # every byte the person wrote
+        assert config.load_config() == {"tmux": {"toggle_key": "C-]"}}
+        assert str(aside[0]) in caplog.text
+
+    def test_a_second_save_in_the_same_second_keeps_both_copies(self, tmp_path, monkeypatch):
+        path = tmp_path / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", path)
+        monkeypatch.setattr(config.time, "strftime", lambda fmt: "20261014-120000")
+        path.write_text(self.BROKEN)
+        config.save_config({"a": 1})
+        path.write_text("still: [broken\n")
+        config.save_config({"a": 2})
+        texts = sorted(p.read_text() for p in tmp_path.glob("config.yaml.broken-*"))
+        assert texts == sorted([self.BROKEN, "still: [broken\n"])
+
+    def test_a_readable_file_is_never_set_aside(self, tmp_path, monkeypatch):
+        path = tmp_path / "config.yaml"
+        path.write_text("a: 1\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", path)
+        config.save_config({"a": 2})
+        assert not list(tmp_path.glob("config.yaml.broken-*"))
+
+
+class TestSaveKeepsASymlinkedConfig:
+    """save_config's atomic rename replaced a symlinked config.yaml (kept in a
+    dotfiles repo) with a private regular file, cutting the link."""
+
+    def test_writes_through_the_link_to_its_target(self, tmp_path, monkeypatch):
+        import os
+
+        dotfiles = tmp_path / "dotfiles"
+        dotfiles.mkdir()
+        target = dotfiles / "overcode.yaml"
+        target.write_text("# kept\na: 1\n")
+        os.chmod(target, 0o644)
+        home = tmp_path / "home"
+        home.mkdir()
+        link = home / "config.yaml"
+        link.symlink_to(target)
+        monkeypatch.setattr(config, "CONFIG_PATH", link)
+
+        config.save_config({"a": 2})
+
+        assert link.is_symlink() and link.resolve() == target.resolve()
+        assert target.read_text() == "# kept\na: 2\n"
+        assert oct(target.stat().st_mode & 0o777) == oct(0o644)
+        assert not list(home.glob(".config.*")) and not list(dotfiles.glob(".config.*"))
+
 
 class TestOneStatGatedLoader:
     """config.yaml has one parse per change, shared by every reader (no TTL)."""
