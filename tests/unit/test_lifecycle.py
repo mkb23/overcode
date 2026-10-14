@@ -262,6 +262,23 @@ class TestShutdown:
         # Revived, the mark goes: a later death is archived as usual.
         assert not any(s.kept_for_revive for s in sm.list_sessions())
 
+    def test_keep_jobs_with_all_in_a_pre_06_state_tree(self, fleet, tmp_path, monkeypatch):
+        """<state>/jobs and <state>/sessions are not tmux sessions; jobs stay up."""
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+        state = tmp_path / "state"
+        (state / "sessions").mkdir(parents=True)
+        (state / "sessions" / "sessions.json").write_text("{}")
+        (state / "jobs").mkdir()
+        (state / "jobs" / "jobs.json").write_text("[]")
+        ops = FakeOps(["agents", "jobs"])
+
+        report, _ = _run_shutdown(fleet, ops, all_sessions=True, keep_jobs=True)
+
+        assert "jobs" not in ops.killed_sessions
+        assert report.count("jobs", "skipped") == 1
+        targets = {s.target for s in report.steps}
+        assert not any("[jobs]" in t or "[sessions]" in t for t in targets)
+
     def test_stragglers_killed_after_timeout(self, fleet):
         ops = FakeOps(["agents"], agents_exit=False)
         report, _ = _run_shutdown(fleet, ops, timeout=2.0)

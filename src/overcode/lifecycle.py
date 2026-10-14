@@ -474,10 +474,18 @@ class ShutdownReport:
 
 
 def _state_session_names() -> List[str]:
-    from .paths import RESERVED_DIR_NAMES, sessions_root
+    """Tmux sessions with a state directory under the sessions root.
+
+    Not the registry or jobs directory of a pre-0.6 ``OVERCODE_STATE_DIR``
+    tree (``<root>/sessions``, ``<root>/jobs``), which sit among them.
+    """
+    from .paths import RESERVED_DIR_NAMES, jobs_dir, sessions_registry_dir, sessions_root
+    root = sessions_root()
+    not_sessions = {d.name for d in (sessions_registry_dir(), jobs_dir()) if d.parent == root}
     try:
-        return sorted(p.name for p in sessions_root().iterdir()
-                      if p.is_dir() and p.name not in RESERVED_DIR_NAMES)
+        return sorted(p.name for p in root.iterdir()
+                      if p.is_dir() and p.name not in RESERVED_DIR_NAMES
+                      and p.name not in not_sessions)
     except OSError:
         return []
 
@@ -647,6 +655,8 @@ def shutdown(
         for name in targets:
             if name not in live_tmux:
                 continue
+            if keep_jobs and name == JOBS_TMUX_SESSION:
+                continue  # phase 3 left it, as asked
             last = name in own_sessions
             if dry_run:
                 add("tmux", f"tmux session '{name}'", verb,
