@@ -141,49 +141,21 @@ def kill_agent(tmux_session: str, name: str, cascade: bool = True) -> dict:
 
 
 def restart_agent(tmux_session: str, name: str) -> dict:
-    """Ctrl-C + relaunch with same permissions."""
+    """Restart an agent, resuming its conversation (a sister's R from the TUI).
+
+    The launcher's restart, as the local R and ``overcode restart`` use:
+    the full launch line (quoted --settings, resume, model, wrapper, env),
+    not a bare argv joined with spaces. A gone window is revived in a new
+    one (``revive`` restarts in place when the window is there).
+    """
     from .launcher import AgentLauncher
-    from .tmux_manager import TmuxManager
     from .session_manager import SessionManager
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
 
-    # Use the launcher's public builder so backend dispatch applies here too
     launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
-    backend = launcher.backend_for(session)
-    # Same pre-launch staging the launcher does (opencode's telemetry plugin);
-    # this path builds its own shell line, so it has to ask for it explicitly.
-    try:
-        from .backends import LaunchSpec
-        backend.prepare_launch(LaunchSpec(
-            name=session.name,
-            session_id=session.id,
-            tmux_session=tmux_session,
-            start_directory=session.start_directory,
-        ))
-    except Exception:
-        pass
-    cmd_str = " ".join(launcher.build_relaunch_command(session))
-
-    tmux = TmuxManager(tmux_session)
-
-    # Gracefully exit the agent (Claude: Ctrl-C to cancel any in-flight
-    # operation, then /exit to reliably terminate the process).
-    import time
-    for press in backend.graceful_exit_keys():
-        tmux.send_keys(session.tmux_window, press.keys, enter=press.enter)
-        if press.delay_after:
-            time.sleep(press.delay_after)
-    time.sleep(3.0)
-
-    from .agent_files import prepare_agent_dir
-    prepare_agent_dir(tmux_session, session.id, reset=True)
-    env_prefix = (f"OVERCODE_SESSION_NAME={session.name} OVERCODE_SESSION_ID={session.id} "
-                  f"OVERCODE_TMUX_SESSION={tmux_session}")
-    restart_cmd = f"{env_prefix} {cmd_str}"
-
-    if tmux.send_keys(session.tmux_window, restart_cmd, enter=True):
+    if launcher.revive(session):
         return {"ok": True}
     raise ControlError("Failed to restart agent", status=500)
 

@@ -200,17 +200,6 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         """Resolve the agent backend that owns a session's CLI grammar."""
         return get_backend(getattr(session, "backend", DEFAULT_BACKEND))
 
-    def build_relaunch_command(self, session: Session) -> List[str]:
-        """Public argv builder for out-of-module relaunchers (web control API).
-
-        Renders only the session's permission mode — callers that need the
-        full launch context should use `restart`/`revive` instead.
-        """
-        backend = self.backend_for(session)
-        return backend.build_command(
-            LaunchSpec(permissiveness_mode=session.permissiveness_mode)
-        )
-
     def _send_graceful_exit(self, backend: AgentBackend, window_name: str) -> None:
         """Send the backend's shutdown gesture to a window."""
         for press in backend.graceful_exit_keys():

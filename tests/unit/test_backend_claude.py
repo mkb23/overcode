@@ -543,17 +543,3 @@ class TestLauncherDispatch:
         )
         session = _make_session()
         assert launcher.backend_for(session).name == "claude-code"
-
-    def test_build_relaunch_command_matches_backend(self, tmp_path):
-        from tests.tmux_doubles import MockTmux
-        from overcode.tmux_manager import TmuxManager
-
-        launcher = AgentLauncher(
-            tmux_session="agents",
-            tmux_manager=TmuxManager("agents", tmux=MockTmux()),
-            session_manager=SessionManager(state_dir=tmp_path, skip_git_detection=True),
-        )
-        session = _make_session(permissiveness_mode="bypass")
-        assert launcher.build_relaunch_command(session) == [
-            "claude", "--settings", SAFE_SETTINGS, "--dangerously-skip-permissions",
-        ]

@@ -208,44 +208,61 @@ class TestKillAgent:
 
 
 class TestRestartAgent:
-    """Tests for restart_agent handler."""
+    """A sister's restart runs the launcher's restart: the same full, quoted
+    launch line as a local R, resuming the conversation."""
 
-    @patch("time.sleep")
-    @patch(TMUX_PATH)
-    @patch(SM_PATH)
-    def test_sends_ctrl_c_then_restart_command(self, MockSM, MockTmux, mock_sleep):
-        sm = MockSM.return_value
-        sm.resolve_session_name.return_value = _mock_session(permissiveness_mode="normal")
-        tmux = MockTmux.return_value
-        tmux.send_keys.return_value = True
+    def _fleet(self, tmp_path, **fields):
+        from overcode.launcher import AgentLauncher
+        from overcode.session_manager import SessionManager
+        from overcode.tmux_manager import TmuxManager
+        from tests.tmux_doubles import MockTmux
 
-        result = restart_agent("agents", "test-agent")
+        tmux = MockTmux()
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        manager = TmuxManager("agents", tmux=tmux)
 
+        def make_launcher(tmux_session, session_manager=None, **kw):
+            launcher = AgentLauncher(tmux_session, tmux_manager=manager,
+                                     session_manager=session_manager or sm)
+            launcher.sleep = lambda seconds: None
+            return launcher
+
+        with patch("overcode.launcher.require_tmux"), \
+                patch("overcode.launcher.require_agent_cli"):
+            session = make_launcher("agents").launch(name="test-agent", **fields)
+        sm.set_active_agent_session_id(session.id, "conv-123")
+        tmux.sent_keys.clear()
+        return tmux, sm, make_launcher
+
+    def _restart(self, tmp_path, **fields):
+        tmux, sm, make_launcher = self._fleet(tmp_path, **fields)
+        with patch(SM_PATH, return_value=sm), patch(LAUNCHER_PATH, side_effect=make_launcher):
+            result = restart_agent("agents", "test-agent")
+        return result, [k[2:] for k in tmux.sent_keys]
+
+    def test_the_relaunch_line_parses_and_resumes(self, tmp_path):
+        import json
+        import shlex
+
+        result, sent = self._restart(tmp_path)
         assert result == {"ok": True}
-        # First call: Ctrl-C
-        assert tmux.send_keys.call_args_list[0][0] == (1, "C-c")
-        assert tmux.send_keys.call_args_list[0][1] == {"enter": False}
-        # Second call: /exit
-        assert tmux.send_keys.call_args_list[1][0] == (1, "/exit")
-        assert tmux.send_keys.call_args_list[1][1] == {"enter": True}
-        # Third call: restart command
-        restart_call = tmux.send_keys.call_args_list[2]
-        assert "claude" in restart_call[0][1]
-        assert "claude code" not in restart_call[0][1]
+        assert sent[0] == ("C-c", False) and sent[1] == ("/exit", True)
+        words = shlex.split(sent[2][0])
+        json.loads(words[words.index("--settings") + 1])  # one word, valid JSON
+        assert words[words.index("--resume") + 1] == "conv-123"
 
-    @patch("time.sleep")
-    @patch(TMUX_PATH)
+    def test_bypass_permissions_in_restart(self, tmp_path):
+        result, sent = self._restart(tmp_path, dangerously_skip_permissions=True)
+        assert "--dangerously-skip-permissions" in sent[-1][0]
+
+    @patch(LAUNCHER_PATH)
     @patch(SM_PATH)
-    def test_bypass_permissions_in_restart(self, MockSM, MockTmux, mock_sleep):
-        sm = MockSM.return_value
-        sm.resolve_session_name.return_value = _mock_session(permissiveness_mode="bypass")
-        tmux = MockTmux.return_value
-        tmux.send_keys.return_value = True
-
-        restart_agent("agents", "test-agent")
-
-        restart_call = tmux.send_keys.call_args_list[2]
-        assert "--dangerously-skip-permissions" in restart_call[0][1]
+    def test_a_failed_restart_is_an_error(self, MockSM, MockLauncher):
+        MockSM.return_value.resolve_session_name.return_value = _mock_session()
+        MockLauncher.return_value.revive.return_value = False
+        with pytest.raises(ControlError) as err:
+            restart_agent("agents", "test-agent")
+        assert err.value.status == 500
 
 
 class TestLaunchAgent:
