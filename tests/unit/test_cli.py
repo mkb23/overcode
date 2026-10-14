@@ -375,11 +375,79 @@ class TestKillCommandWithMocks:
         assert agent.tmux_window not in fleet.tmux.sessions["agents"]
 
     def test_kill_nonexistent_session(self, fleet):
-        """Kill nonexistent session shows message"""
+        """Kill nonexistent session shows message and fails, like its siblings"""
         result = runner.invoke(app, ["kill", "nonexistent"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "not found" in result.output
+
+    def test_kill_fails_when_the_window_survives(self, fleet, monkeypatch):
+        """`overcode kill x && next` must not go on while x still runs."""
+        agent = fleet.add("test-agent")
+        monkeypatch.setattr(fleet.tmux, "kill_window", lambda session, window: False)
+
+        result = runner.invoke(app, ["kill", "test-agent"])
+
+        assert result.exit_code == 1
+        assert "Failed to kill" in result.output
+        assert fleet.get("test-agent") is not None
+        assert agent.tmux_window in fleet.tmux.sessions["agents"]
+
+    def test_kill_fails_when_a_descendant_survives(self, fleet, monkeypatch):
+        parent = fleet.add("parent")
+        child = fleet.add("child", parent_session_id=parent.id)
+        real_kill = fleet.tmux.kill_window
+        monkeypatch.setattr(fleet.tmux, "kill_window",
+                            lambda s, w: False if w == child.tmux_window else real_kill(s, w))
+
+        result = runner.invoke(app, ["kill", "parent"])
+
+        assert result.exit_code == 1
+        assert fleet.get("child") is not None
+
+
+class TestAgentInAnotherTmuxSession:
+    """Agents are found fleet-wide; kill/restart/revive act in the agent's own tmux session."""
+
+    @staticmethod
+    def _worker(fleet, window=True):
+        fleet.tmux.new_session("work")
+        s = fleet.sm.create_session(
+            name="worker", tmux_session="work", tmux_window="worker-w",
+            command=["claude"], start_directory=None)
+        fleet.sm.update_session(s.id, active_agent_session_id="conv-1")
+        if window:
+            fleet.tmux.new_window("work", "worker-w")
+        fleet.tmux.windows_created.clear()
+        return fleet.sm.get_session(s.id)
+
+    def test_kill_kills_its_window_not_just_the_record(self, fleet):
+        self._worker(fleet)
+
+        result = runner.invoke(app, ["kill", "worker"])
+
+        assert result.exit_code == 0, result.output
+        assert "Killed session 'worker'" in result.output
+        assert fleet.get("worker") is None
+        assert "worker-w" not in fleet.tmux.sessions["work"]
+
+    def test_restart_restarts_in_place_without_a_second_copy(self, fleet):
+        self._worker(fleet)
+
+        result = runner.invoke(app, ["restart", "worker"])
+
+        assert result.exit_code == 0, result.output
+        assert "Restarted agent: worker" in result.output
+        assert fleet.tmux.windows_created == []  # no revive into 'agents'
+        assert fleet.get("worker").tmux_window == "worker-w"
+
+    def test_revive_brings_it_back_in_its_own_tmux_session(self, fleet):
+        sess = self._worker(fleet, window=False)
+
+        assert fleet.launcher("agents").revive(sess) is True
+
+        assert [w["session"] for w in fleet.tmux.windows_created] == ["work"]
+        assert fleet.get("worker").tmux_window in fleet.tmux.sessions["work"]
 
 
 class TestLaunchCommandWithMocks:

@@ -77,7 +77,7 @@ def revive(
             rprint(f"[red]Failed to revive agent: {name}[/red]")
             raise typer.Exit(1)
         rprint(f"[green]Revived agent: {name} ({'resumed' if mode == 'resume' else 'fresh'})[/green]")
-        tmux_sessions = [session]
+        tmux_sessions = [sess.tmux_session or session]  # revived in its own one
         failures = 0
     else:
         if all_sessions:

@@ -376,7 +376,8 @@ class TestCli:
         launcher = MagicMock()
         launcher.tmux.window_exists.return_value = False
         launcher.revive.return_value = True
-        with patch("overcode.launcher.AgentLauncher", return_value=launcher), \
+        launcher.for_agent.return_value = launcher
+        with patch("overcode.cli.agent.AgentLauncher", return_value=launcher), \
              patch("overcode.cli.agent.find_agent", return_value=sess):
             result = runner.invoke(app, ["restart", "a1"])
         assert result.exit_code == 0, result.output

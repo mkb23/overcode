@@ -178,6 +178,10 @@ class AgentLifecycleMixin:
             name: Name of the session to kill
             cascade: If True (default), also kill all descendant agents.
                 If False, orphan children (set their parent_session_id to None).
+
+        Returns:
+            False when ``name`` is not found or a window (its own or, with
+            ``cascade``, a descendant's) could not be killed.
         """
         session = self._resolve(name)
         if session is None:
@@ -185,12 +189,13 @@ class AgentLifecycleMixin:
             return False
 
         # Handle cascade: kill descendants deepest-first (#244)
+        descendants_ok = True
         if cascade:
             descendants = self.sessions.get_descendants(session.id)
             # Sort by depth (deepest first) for clean teardown
             descendants.sort(key=lambda s: self.sessions.compute_depth(s), reverse=True)
-            for desc in descendants:
-                self._kill_single_session(desc)
+            # Every descendant is tried; any that would not die fails the kill
+            descendants_ok = all([self._kill_single_session(desc) for desc in descendants])
         else:
             # Orphan children: set their parent_session_id to None
             children = self.sessions.get_children(session.id)
@@ -199,10 +204,17 @@ class AgentLifecycleMixin:
 
         killed = self._kill_single_session(session)
         self.tidy_agent_storage()
-        return killed
+        return killed and descendants_ok
 
     def _kill_single_session(self, session: Session) -> bool:
-        """Kill a single session (no cascade). Internal helper."""
+        """Kill a single session (no cascade). Internal helper.
+
+        Acts in the agent's own tmux session: looked for in this launcher's,
+        a live window elsewhere reads as gone and only the record would go.
+        """
+        owner = self.for_agent(session)
+        if owner is not self:
+            return owner._kill_single_session(session)
         # Check if the tmux window/session still exists
         window_exists = self.tmux.window_exists(session.tmux_window)
 

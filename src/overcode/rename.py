@@ -15,7 +15,6 @@ its session id (``agents/<id>/``, quality review item 35).
 from .exceptions import AgentBusyError
 from .session_manager import Session
 from .status_constants import GREEN_STATUSES, STATUS_WAITING_APPROVAL
-from .tmux_manager import TmuxManager
 
 
 class RenameMixin:
@@ -108,14 +107,9 @@ class RenameMixin:
         # The agent lives in its own tmux session, which need not be the one
         # this launcher was built for (the CLI's --session default): its
         # window, its hook files and the relaunch all belong to that one.
-        if session.tmux_session and session.tmux_session != self.tmux_session:
-            return type(self)(
-                session.tmux_session,
-                tmux_manager=TmuxManager(
-                    session.tmux_session, tmux=self.tmux.client, socket=self.tmux.socket,
-                ),
-                session_manager=self.sessions,
-            ).rename(
+        owner = self.for_agent(session)
+        if owner is not self:
+            return owner.rename(
                 session, new_name, force=force, graceful_exit_wait=graceful_exit_wait,
             )
 

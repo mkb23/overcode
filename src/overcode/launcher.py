@@ -151,6 +151,24 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             print(notice, file=sys.stderr)
         return session
 
+    def for_agent(self, session: Session) -> "AgentLauncher":
+        """A launcher for the tmux session ``session`` lives in (``self`` if this one).
+
+        Agents are looked up fleet-wide, but this launcher is bound to one
+        tmux session (the CLI's --session default): acting on an agent of
+        another one here would miss its window, so kill would drop a live
+        agent's record and restart would start a second copy of it.
+        """
+        if not session.tmux_session or session.tmux_session == self.tmux_session:
+            return self
+        return type(self)(
+            session.tmux_session,
+            tmux_manager=TmuxManager(
+                session.tmux_session, tmux=self.tmux.client, socket=self.tmux.socket,
+            ),
+            session_manager=self.sessions,
+        )
+
     # Maximum nesting depth for agent hierarchy (#244)
     MAX_HIERARCHY_DEPTH = 5
 
@@ -869,6 +887,9 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             True if the relaunch command was sent, False if the tmux window
             is gone or send failed.
         """
+        owner = self.for_agent(session)
+        if owner is not self:
+            return owner.restart(session, fresh=fresh, graceful_exit_wait=graceful_exit_wait)
         if not self.tmux.window_exists(session.tmux_window):
             return False
 
@@ -903,6 +924,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         Returns:
             True on success, False if window creation or send failed.
         """
+        owner = self.for_agent(session)
+        if owner is not self:  # its window, and its new one, are in its own tmux session
+            return owner.revive(session, fresh=fresh)
+
         # Original window still around — caller probably meant restart.
         if self.tmux.window_exists(session.tmux_window):
             return self.restart(session, fresh=fresh)

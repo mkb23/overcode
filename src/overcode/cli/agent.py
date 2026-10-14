@@ -862,7 +862,10 @@ def kill(
     Use --no-cascade to only kill the named agent and orphan its children.
     """
     launcher = AgentLauncher(session)
-    launcher.kill_session(name, cascade=not no_cascade)
+    # Not found, or its window would not die: a script's `kill x && ...`
+    # must not carry on as if it had (kill_session printed why)
+    if not launcher.kill_session(name, cascade=not no_cascade):
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -899,13 +902,13 @@ def restart(
     The model is the one the agent last ran on (a /model switch is picked
     up from its transcript); --model picks another.
     """
-    from ..launcher import AgentLauncher
-
     launcher = AgentLauncher(session)
     sess = find_agent(launcher.sessions, name)
     if not sess:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
+    # Found fleet-wide: its window is in its own tmux session, not --session's
+    launcher = launcher.for_agent(sess)
 
     if model:
         launcher.sessions.update_session(sess.id, model=model)
