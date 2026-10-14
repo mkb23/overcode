@@ -1446,9 +1446,8 @@ class MonitorDaemon:
 
         A child that turns done has its report copied onto the session if
         ``overcode report`` could not write it there, so the Result column
-        shows it. A stopped child waiting for oversight under the timeout
-        policy gets its deadline here, so the timeout applies whether or
-        not a parent follows it.
+        shows it. A stopped child's oversight deadline is staged in
+        ``_detect_and_enrich``, on that tick's status.
         """
         from .child_lifecycle import read_report, settled_child_status
 
@@ -1470,16 +1469,19 @@ class MonitorDaemon:
                             self._pending.update_session(
                                 session.id, report_status=report["status"],
                                 report_reason=report.get("reason") or "")
-            if (new_status or session.status) == STATUS_WAITING_OVERSIGHT and stopped:
-                self._stage_oversight_deadline(session)
         return newly_done
 
     def _stage_oversight_deadline(self, session) -> None:
-        """Start a stopped child's oversight timeout, once (policy timeout only)."""
+        """Start a stopped child's oversight timeout, once (policy timeout only).
+
+        The timeout applies whether or not a parent follows the child.
+        """
         if (getattr(session, "oversight_policy", "wait") or "wait") != "timeout":
             return
         timeout = getattr(session, "oversight_timeout_seconds", 0.0) or 0.0
         if timeout <= 0 or getattr(session, "oversight_deadline", None):
+            return
+        if not self._hook_stopped(session):
             return
         from datetime import timedelta
         deadline = self.clock.wall() + timedelta(seconds=timeout)
@@ -1623,12 +1625,16 @@ class MonitorDaemon:
                     and effective_status != STATUS_TERMINATED):
                 pending.update_session_status(session.id, "running")
 
-            # A child re-prompted while waiting for oversight is working
-            # again: its timeout must not expire under it (it gets a new
-            # one when it stops)
-            if (session.status == STATUS_WAITING_OVERSIGHT and session.oversight_deadline
-                    and is_green_status(effective_status)):
-                pending.update_session(session.id, oversight_deadline=None)
+            # A child waiting for oversight is timed only while it is not
+            # working. Re-prompted, or busy with its own background work, it
+            # has no deadline (it gets one when it rests). Decided on this
+            # tick's status, so staging and clearing never alternate.
+            if session.status == STATUS_WAITING_OVERSIGHT:
+                if is_green_status(effective_status):
+                    if session.oversight_deadline:
+                        pending.update_session(session.id, oversight_deadline=None)
+                else:
+                    self._stage_oversight_deadline(session)
                 session = pending.view(snapshot)
 
             session_state = self.track_session_stats(session, effective_status, index, now)

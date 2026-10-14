@@ -163,6 +163,24 @@ class TestOversightDeadline:
         _ticks(daemon, 1)
         assert sm.get_session(child.id).oversight_deadline is None
 
+    def test_a_stopped_child_busy_with_background_work_is_not_restaged(self, root):
+        """Stop + a background shell reads busy_sleeping (yellow): no
+        deadline, and no deadline staged and cleared (and logged) each tick."""
+        daemon, sm, sessions = _daemon(root, {"agent-11": "busy_sleeping"})
+        child = sessions[11]
+        sm.update_session(child.id, oversight_policy="timeout", oversight_timeout_seconds=600)
+        _hook(child.name, "Stop")
+        lines = []
+        daemon.log.info = lambda message, *a, **k: lines.append(message)
+        _ticks(daemon, 4)
+        saved = sm.get_session(child.id)
+        assert (saved.status, saved.oversight_deadline) == ("waiting_oversight", None)
+        assert not [m for m in lines if "oversight timeout in" in m]
+        # The background work ends: the child rests and its timeout starts
+        daemon.detector.script = lambda tick, s: ("waiting_user", "activity", "pane")
+        _ticks(daemon, 1)
+        assert sm.get_session(child.id).oversight_deadline is not None
+
 
 class TestReports:
     def test_a_report_file_lands_on_the_session_and_in_the_result(self, root):
