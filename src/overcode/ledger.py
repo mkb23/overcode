@@ -24,7 +24,9 @@ a rebill stays on the old code.
 
 ``ledger/totals.json`` folds the rows incrementally: per month, how far
 they were read; the last row of every open segment; per-code totals of
-closed ones (a ``final`` or ``close`` row closes a segment). A closed
+closed ones (a ``final``, ``close`` or ``backfill`` row closes a segment;
+a later checkpoint, from a snapshot taken before it closed, never reopens
+it). A closed
 segment's contribution is remembered for a while (CLOSED_KEEP_DAYS), so a
 duplicate final row (a crash between the archive and the live file) is
 not counted twice. A report for a period (``--since``, ``--month``) reads
@@ -62,6 +64,8 @@ TOTALS_VERSION = 1
 CLOSED_KEEP_DAYS = 62
 # The numbers a row carries, cumulative, and what totals sum
 AMOUNTS = ("cost", "tokens", "tok_in", "tok_out", "tok_cache")
+# The kinds of row that end a segment
+CLOSING_KINDS = ("final", "close", "backfill")
 
 
 def _get(record, key, default=None):
@@ -127,6 +131,22 @@ def contribution(row: dict) -> Dict[str, float]:
         # The breakdown is not split at a rebill: only cost and tokens are
         out["tok_in"] = out["tok_out"] = out["tok_cache"] = 0
     return out
+
+
+def _supersedes(row: dict, last: Optional[dict]) -> bool:
+    """Whether ``row`` replaces ``last`` as its segment's last row.
+
+    The newer one, except that a closing row is never replaced by a
+    checkpoint (one built from a snapshot taken before the segment
+    closed), and wins over any checkpoint.
+    """
+    if last is None:
+        return True
+    row_closing = row.get("kind") in CLOSING_KINDS
+    last_closing = last.get("kind") in CLOSING_KINDS
+    if row_closing != last_closing:
+        return row_closing
+    return int(last.get("seq", 0)) <= int(row.get("seq", 0))
 
 
 def _key(row: dict) -> str:
@@ -265,10 +285,16 @@ class Ledger:
         """Fold one row into the running totals (see the module docstring)."""
         key = _key(row)
         codes, open_, closed = totals["codes"], totals["open"], totals["closed"]
+        closing = row.get("kind") in CLOSING_KINDS
         if key in closed:
             if int(row.get("seq", 0)) <= int(closed[key].get("seq", 0)):
                 return  # older than what closed it: already counted
-            # A duplicate or revised row of a closed segment: replace its share
+            if not closing:
+                # A checkpoint built from a snapshot taken before the segment
+                # closed (a daemon tick racing a kill or a rebill): a closed
+                # segment never reopens
+                return
+            # A duplicate or revised closing row: replace its share
             code, previous = closed[key]["code"], closed[key]["amounts"]
             entry = codes.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0})
             for name in AMOUNTS:
@@ -276,9 +302,10 @@ class Ledger:
             entry["agents"] = entry.get("agents", 0) - 1
             del closed[key]
         last = open_.get(key)
-        if last is not None and int(last.get("seq", 0)) > int(row.get("seq", 0)):
+        if (last is not None and not closing
+                and int(last.get("seq", 0)) > int(row.get("seq", 0))):
             row = last  # an older row arriving late does not move the segment back
-        if row.get("kind") in ("final", "close", "backfill"):
+        if row.get("kind") in CLOSING_KINDS:
             open_.pop(key, None)
             code = row.get("billing_code") or "?"
             amounts = contribution(row)
@@ -381,8 +408,7 @@ class Ledger:
                 continue
             target = before if t < start else within
             key = _key(row)
-            last = target.get(key)
-            if last is None or int(last.get("seq", 0)) <= int(row.get("seq", 0)):
+            if _supersedes(row, target.get(key)):
                 target[key] = row
         report: Dict[str, dict] = {}
         for key, row in within.items():
@@ -396,7 +422,7 @@ class Ledger:
             for name in AMOUNTS:
                 entry[name] += amounts[name]
             entry["agents"] += 1
-            if row.get("kind") not in ("final", "close", "backfill"):
+            if row.get("kind") not in CLOSING_KINDS:
                 entry["running"] += 1
         return report
 

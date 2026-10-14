@@ -220,6 +220,42 @@ class TestTotals:
         assert runner.invoke(app, ["billing", "--month", "soon"]).exit_code == 1
 
 
+class TestStaleCheckpoints:
+    """A daemon tick's checkpoint, built from its opening snapshot, lands after
+    a kill or a rebill closed the segment: it must not reopen it."""
+
+    def _stale(self, sm, s, cost):
+        stale = sm.get_session(s.id)  # the tick's snapshot
+        stale.stats.estimated_cost_usd = cost  # its staged stats
+        return stale
+
+    def test_after_a_rebill(self, sm):
+        s = sm.create_session(name="a", tmux_session="agents", tmux_window="a-1", command=[])
+        _spend(sm, s, 10.0, 1000)
+        stale = self._stale(sm, s, 15.0)
+        sm.rebill(s.id, "b")
+        sm.ledger.append([make_row(stale, "checkpoint")])  # seg 0, code a, newer seq
+        _spend(sm, s, 15.0, 1500)
+        sm.delete_session(s.id)
+        totals = sm.ledger.totals()
+        assert (totals["a"]["cost"], totals["a"]["running"]) == (10.0, 0)
+        assert (totals["b"]["cost"], totals["b"]["running"]) == (5.0, 0)
+        report = sm.ledger.report()
+        assert report["a"]["cost"] == 10.0 and report["a"]["running"] == 0
+        assert report["b"]["cost"] == 5.0
+
+    def test_after_a_kill(self, sm):
+        s = sm.create_session(name="w", tmux_session="agents", tmux_window="w-1", command=[])
+        _spend(sm, s, 2.0)
+        stale = self._stale(sm, s, 2.0)
+        sm.delete_session(s.id)
+        sm.ledger.append([make_row(stale, "checkpoint")])
+        assert sm.ledger.totals()["w"]["running"] == 0
+        os.unlink(sm.ledger.totals_path)
+        assert sm.ledger.totals()["w"]["running"] == 0  # a full refold agrees
+        assert sm.ledger.report()["w"]["running"] == 0
+
+
 class TestCheckpoints:
     def _hk(self):
         return Housekeeping("agents", tmux=MagicMock(), history_path=None, log=MagicMock(),
