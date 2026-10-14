@@ -234,7 +234,7 @@ class TestPresenceComponent:
     """Test PresenceComponent class."""
 
     def test_get_current_state_falls_back_on_non_macos(self):
-        """Should return classify_state result with idle=0 when macOS APIs unavailable."""
+        """Should return classify_state result with idle unknown when macOS APIs unavailable."""
         from overcode.daemon_presence import PresenceComponent
 
         with patch('overcode.daemon_presence.MACOS_APIS_AVAILABLE', False):
@@ -242,7 +242,7 @@ class TestPresenceComponent:
             state, idle, locked = component.get_current_state()
 
             assert state in (0, 1, 2, 3, 4)  # Valid presence state
-            assert idle == 0.0
+            assert idle is None
             assert locked is False
 
     def test_stop_handles_no_logger(self):
