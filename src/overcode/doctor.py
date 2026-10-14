@@ -672,9 +672,14 @@ def storage_report(tmux_session: str, session_manager) -> dict:
     one per day, month and agent.
     """
     from .layout_migration import layout_version, legacy_files
-    from .paths import agents_dir, bundles_dir
+    from .paths import agent_dir, agents_dir, bundles_dir
 
-    live = {s.id for s in session_manager.list_sessions() if s.tmux_session == tmux_session}
+    sessions = [s for s in session_manager.list_sessions() if s.tmux_session == tmux_session]
+    live = {s.id for s in sessions}
+    # Live agents launched before the upgrade: their hooks still write the
+    # name-keyed files, which move when the agent is next launched
+    prior = {s.name for s in sessions if not agent_dir(tmux_session, s.id).is_dir()}
+    legacy = set(legacy_files(tmux_session))
     try:
         agent_ids = [e.name for e in os.scandir(agents_dir(tmux_session)) if e.is_dir()]
     except OSError:
@@ -695,7 +700,8 @@ def storage_report(tmux_session: str, session_manager) -> dict:
         "ledger_files": ledger_files,
         "ledger_bytes": ledger_bytes,
         "layout": layout_version(tmux_session),
-        "legacy_names": len(legacy_files(tmux_session)),
+        "legacy_names": len(legacy - prior),
+        "legacy_live": len(legacy & prior),
     }
 
 
@@ -713,9 +719,20 @@ def storage_findings(report: dict, *, terminated_grace_seconds: float = 0.0) -> 
         findings.append("archiving is off (session_archive.terminated_grace_seconds < 0): "
                         "sessions.json and agents/ grow with every agent ever launched")
     if report["legacy_names"] and report["layout"] != "2":
-        findings.append(f"{report['legacy_names']} agents' files are still in the pre-0.6 "
-                        "layout; the monitor daemon moves them a batch at a time")
+        findings.append(f"{report['legacy_names']} finished agents' files are still in the "
+                        "pre-0.6 layout; the monitor daemon packs them a batch at a time")
     return findings
+
+
+def storage_notes(report: dict) -> List[str]:
+    """What a ``storage_report`` says that is fine but worth knowing."""
+    notes = []
+    if report.get("legacy_live"):
+        n = report["legacy_live"]
+        notes.append(f"{n} live agent{'s' if n != 1 else ''} launched before the upgrade "
+                     "keep the pre-0.6 file layout until relaunched")
+    return notes
+
 
 
 def snapshot_process_table() -> tuple[Dict[int, List[int]], Dict[int, str]]:

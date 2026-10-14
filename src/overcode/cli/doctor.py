@@ -250,7 +250,7 @@ def _print_storage(session: str, session_manager) -> None:
     """The session's storage: agent directories, bundles, archive, ledger (never fails)."""
     try:
         from ..config import get_session_archive_config
-        from ..doctor import storage_findings, storage_report
+        from ..doctor import storage_findings, storage_notes, storage_report
 
         report = storage_report(session, session_manager)
         grace = get_session_archive_config()["terminated_grace_seconds"]
@@ -268,5 +268,7 @@ def _print_storage(session: str, session_manager) -> None:
     rprint(f"  bundles/  {report['bundles']} days, {mb(report['bundle_bytes'])}")
     rprint(f"  archive/  {report['archive_files']} files, {mb(report['archive_bytes'])}")
     rprint(f"  ledger/   {report['ledger_files']} files, {mb(report['ledger_bytes'])}")
+    for note in storage_notes(report):
+        rprint(f"[dim]  {note}[/dim]")
     for finding in storage_findings(report, terminated_grace_seconds=grace):
         rprint(f"[yellow]⚠[/yellow] {finding}")
