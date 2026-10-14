@@ -157,6 +157,27 @@ class TestAStallRingsOnceThroughTheTick:
         assert state.episode_colour == RED and state.episode_start == stall_start
         assert state.input_needed_since == stall_start
 
+    def test_a_new_agent_red_from_first_sight_rings(self, env, counted):
+        """An agent launched while the engine runs and first seen red (a
+        launch dialog, a turn over before the first tick) rings after G;
+        the fleet that was already red when the engine started does not."""
+        from datetime import timedelta
+
+        from overcode.episodes import EPISODE_MERGE_SECONDS
+
+        def script(tick, s):
+            return ("waiting_user", "Waiting", "")
+
+        daemon, detector, sessions, clock = _fleet(env, script)
+        with clock.installed():
+            run_ticks(daemon, detector, clock, 3)
+            sm = daemon.session_manager
+            new = sm.create_session("late", "agents", "late-0001", ["claude"],
+                                    start_directory=str(env / "work"))
+            sm.update_session(new.id, start_time=(clock.now - timedelta(seconds=1)).isoformat())
+            run_ticks(daemon, detector, clock, int(EPISODE_MERGE_SECONDS / 2.0) + 2)
+        assert daemon._engine.bells == [(new.id, RED)]
+
     def test_a_brief_stall_merges_and_never_rings(self, env, counted):
         def script(tick, s):
             if s.name == "agent-00" and 3 <= tick < 6:  # 6 s of red, well inside G

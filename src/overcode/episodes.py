@@ -30,10 +30,13 @@ stretch, so a visited stall is not shown as unvisited again.
 The **bell** rings once per stretch of input-needed colour (red or orange)
 on the recorded layer. It rings when such a stretch is confirmed, and only
 if it began after the person last visited the agent. orange → red inside
-one stretch does not ring twice.
+one stretch does not ring twice. A stretch already there at first sight
+began at an unknown time and never rings, except for an agent the engine
+saw start (``new_agent``): nothing was there before it, so a stretch it
+opens with rings once it has lasted G, like any other.
 
 Everything is driven by ``observe(colour, now)``: no wall clock and no I/O,
-so the replay harness and the restart replay feed it directly.
+so the replay harness feeds it directly.
 """
 
 from __future__ import annotations
@@ -93,7 +96,8 @@ class EpisodeRecorder:
 
     def __init__(self, merge_seconds: float = EPISODE_MERGE_SECONDS,
                  visited_at: Optional[float] = None,
-                 gap_seconds: float = UNOBSERVED_GAP_SECONDS) -> None:
+                 gap_seconds: float = UNOBSERVED_GAP_SECONDS,
+                 new_agent: bool = False) -> None:
         self.merge_seconds = merge_seconds
         self.gap_seconds = gap_seconds
         self.visited_at = visited_at
@@ -107,6 +111,12 @@ class EpisodeRecorder:
         # Start of the current recorded input-needed stretch, if in one
         self._input_needed_since: Optional[float] = None
         self._rang_for: Optional[float] = None
+        # A new agent's first sight may ring (see the module doc); consumed
+        # by the first coloured observation
+        self._new_agent = new_agent
+        # The input-needed stretch a new agent opened with, until it rings
+        # or ends
+        self._first_stretch: Optional[float] = None
 
     # -- reading --------------------------------------------------------
 
@@ -154,6 +164,7 @@ class EpisodeRecorder:
             "rang_for": self._rang_for,
             "visited_at": self.visited_at,
             "last_seen": self.last_seen,
+            "first_stretch": self._first_stretch,
         }
 
     @classmethod
@@ -175,11 +186,12 @@ class EpisodeRecorder:
                     if isinstance(segment, list) and len(segment) == 2
                     and segment[0] in COLOURS and isinstance(segment[1], (int, float))
                 ]
-        for name in ("input_needed_since", "rang_for", "visited_at", "last_seen"):
+        for name in ("input_needed_since", "rang_for", "visited_at", "last_seen",
+                     "first_stretch"):
             value = data.get(name)
             if isinstance(value, (int, float)):
-                setattr(rec, "_" + name if name in ("input_needed_since", "rang_for") else name,
-                        float(value))
+                private = name in ("input_needed_since", "rang_for", "first_stretch")
+                setattr(rec, "_" + name if private else name, float(value))
         return rec
 
     # -- writing --------------------------------------------------------
@@ -198,16 +210,20 @@ class EpisodeRecorder:
         if (self.episode is not None and last_seen is not None
                 and now - last_seen > self.gap_seconds):
             self._close_at_gap(out, last_seen)
+        new_agent, self._new_agent = self._new_agent, False
         if self.episode is None:
             # First sight, or the first sight after a gap: when this colour
-            # really began is unknown (the restart replay supplies it when
-            # history exists), so it is recorded from now and never rings.
-            # A restart must not ring every red agent's bell (d679fff).
+            # really began is unknown, so it is recorded from now and never
+            # rings: a restart must not ring every red agent's bell
+            # (d679fff). A new agent's began here: it rings once it stands.
             self.episode = Episode(colour, now)
             if colour in INPUT_NEEDED:
                 if self._input_needed_since is None:
                     self._input_needed_since = now
-                    self._rang_for = now
+                    if new_agent:
+                        self._first_stretch = now
+                    else:
+                        self._rang_for = now
             else:
                 self._input_needed_since = None
             return out
@@ -216,6 +232,8 @@ class EpisodeRecorder:
         if not self._excursion:
             if colour != recorded:
                 self._excursion.append((colour, now))
+            else:
+                self._ring_first_stretch(out, now)
             return out
 
         # An excursion is pending
@@ -242,6 +260,21 @@ class EpisodeRecorder:
         return out
 
     # -- internals ------------------------------------------------------
+
+    def _ring_first_stretch(self, out: Observation, now: float) -> None:
+        """Ring a new agent's opening input-needed stretch once it has lasted G."""
+        stretch = self._first_stretch
+        if stretch is None:
+            return
+        if self._input_needed_since != stretch or self._rang_for == stretch:
+            self._first_stretch = None  # it ended, or rang on a confirmed change
+            return
+        if now - stretch < self.merge_seconds:
+            return
+        self._first_stretch = None
+        if self.visited_at is None or stretch > self.visited_at:
+            self._rang_for = stretch
+            out.bell = Bell(self.episode.colour, stretch)
 
     def _close_at_gap(self, out: Observation, last_seen: float) -> None:
         """Nothing was observed after ``last_seen``: close the record there.

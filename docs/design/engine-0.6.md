@@ -109,8 +109,11 @@ keeps the current **episode** (colour, start time) and the previous one.
   rings.
 - **Bell.** It rings when an input-needed episode starts after the person
   last visited the agent (`visited_at`, persisted). Nothing else rings it:
-  no TUI memory of transitions and no first-sight rule (the d679fff
-  stopgap goes).
+  no TUI memory of transitions. As built: a stretch already red or orange
+  when the engine first sees an agent began at an unknown time and does
+  not ring (else a restart or an upgrade would ring the whole fleet), but
+  an agent started after the engine began recording rings for a stretch it
+  opens with once that has lasted G.
 - **Overdue yellow.** A yellow episode whose wakeup is overdue, or whose
   obligations have been silent past their bound, escalates to red with an
   `overdue` badge, so red is trustworthy in both directions. As built: a

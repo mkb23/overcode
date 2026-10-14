@@ -60,6 +60,37 @@ class TestEpisodes:
         _, _, bells, _ = run(ticks((R_, 0, 10), (O_, 10, 60)))
         assert bells == []
 
+    def test_a_new_agent_that_opens_red_rings_once_it_stands(self):
+        """An agent the engine saw start had no colour before: its first
+        stretch began unseen by nobody, so it rings after G, once."""
+        rec = EpisodeRecorder(new_agent=True)
+        _, _, bells, _ = run(ticks((R_, 0, 60)), rec)
+        assert [(round(t, 2), b) for t, b in bells] == [(20.0, Bell(R_, 0.0))]
+
+    def test_a_new_agent_red_only_briefly_does_not_ring(self):
+        rec = EpisodeRecorder(new_agent=True)
+        _, _, bells, _ = run(ticks((R_, 0, 5), (G_, 5, 60), (R_, 60, 70)), rec)
+        assert bells == []
+
+    def test_a_new_agent_opening_orange_then_red_rings_once(self):
+        rec = EpisodeRecorder(new_agent=True)
+        _, _, bells, _ = run(ticks((O_, 0, 10), (R_, 10, 90)), rec)
+        assert [b for _, b in bells] == [Bell(R_, 0.0)]
+
+    def test_a_new_agent_visited_since_its_stretch_began_does_not_ring(self):
+        rec = EpisodeRecorder(new_agent=True)
+        rec.observe(R_, 0.0)
+        rec.visit(5.0)
+        _, _, bells, _ = run(ticks((R_, 0.25, 60)), rec)
+        assert bells == []
+
+    def test_a_new_agents_pending_stretch_survives_a_restart(self):
+        rec = EpisodeRecorder(new_agent=True)
+        run(ticks((R_, 0, 10)), rec)
+        rec = EpisodeRecorder.from_dict(rec.to_dict())
+        _, _, bells, _ = run(ticks((R_, 10, 30)), rec)
+        assert [b for _, b in bells] == [Bell(R_, 0.0)]
+
     def test_a_stall_rings_once_when_confirmed(self):
         rec, closed, bells, _ = run(ticks((G_, 0, 8), (R_, 8, 60)))
         assert [(round(t, 2), b) for t, b in bells] == [(28.0, Bell(R_, 8.0))]

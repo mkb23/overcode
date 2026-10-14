@@ -53,6 +53,9 @@ class RecorderStore:
         self.dirty = False
         # monotonic time of the last engine_state.json write
         self.saved_at = 0.0
+        # When this engine first recorded a colour: an agent started after
+        # it is new, and its first input-needed stretch may ring
+        self.observing_since: Optional[float] = None
 
     @property
     def path(self) -> Path:
@@ -76,10 +79,12 @@ class RecorderStore:
         # Lifecycle states (and not knowing) hold the record where it was
         colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN) \
             else (detail.color if detail else None)
+        if self.observing_since is None:
+            self.observing_since = ts
         recorder = self.recorders.get(session.id)
         if recorder is None:
             recorder = self.recorders[session.id] = EpisodeRecorder(
-                gap_seconds=self._gap_seconds())
+                gap_seconds=self._gap_seconds(), new_agent=self._started_since(session))
             self.dirty = True
         observed = recorder.observe(colour, ts)
         if observed.closed or observed.bell or observed.merged:
@@ -99,6 +104,20 @@ class RecorderStore:
             if engine is not None:
                 engine.ring(session.id, {"colour": observed.bell.colour,
                                          "start": observed.bell.start, "name": session.name})
+
+    def _started_since(self, session) -> bool:
+        """Whether ``session`` started after this engine began recording.
+
+        Such an agent had no colour before its first sight, so a red or
+        orange it opens with began then (engine-0.6.md: the bell has no
+        first-sight rule). One already running when the engine started
+        (a restart, an upgrade with no engine_state.json) may have been
+        red for hours: that stretch never rings.
+        """
+        from .clock import to_epoch
+
+        started = to_epoch(getattr(session, "start_time", None))
+        return started is not None and started > self.observing_since
 
     def load(self) -> None:
         """Restore each agent's recorded episode, rung stretch and last visit."""
