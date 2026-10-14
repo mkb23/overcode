@@ -136,7 +136,9 @@ def _monitor_daemon_status(session: str):
         if state.last_loop_time:
             rprint(f"  Last loop: {_format_loop_time_ago(state.last_loop_time)}")
         if state.presence_available:
-            rprint(f"  Presence: state={state.presence_state}, idle={state.presence_idle_seconds:.0f}s")
+            idle = state.presence_idle_seconds
+            idle_text = f"{idle:.0f}s" if isinstance(idle, (int, float)) else "unknown"
+            rprint(f"  Presence: state={state.presence_state}, idle={idle_text}")
 
 
 @monitor_daemon_app.command("watch")

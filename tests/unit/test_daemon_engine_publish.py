@@ -52,6 +52,24 @@ class TestSnapshot:
         assert diff(a, b).empty
         assert "presence_idle_seconds" not in a.fleet
 
+    def test_without_quartz_idle_is_unknown_and_quiet_ticks_stay_quiet(self, monkeypatch):
+        """No idle source (Linux, no Quartz extra): idle is not 0 ("idle
+        since now", a value that moves every tick), so a quiet fleet sends
+        no deltas."""
+        from overcode import daemon_presence
+        from overcode.engine_protocol import diff
+
+        monkeypatch.setattr(daemon_presence, "PresenceLogger", None)
+        monkeypatch.setattr(daemon_presence, "MACOS_APIS_AVAILABLE", False)
+        presence = daemon_presence.PresenceComponent("agents")
+        snaps = []
+        for t in (1000.0, 1002.0, 1004.0):
+            monkeypatch.setattr("time.time", lambda t=t: t)
+            _, idle, _ = presence.get_current_state()
+            snaps.append(_state(presence_idle_seconds=idle).to_engine_snapshot(t))
+        assert snaps[0].fleet["presence_idle_since"] is None
+        assert diff(snaps[0], snaps[2]).empty
+
     def test_sessions_without_an_id_are_skipped(self):
         state = _state()
         state.sessions.append(SessionDaemonState(session_id="", name="ghost"))

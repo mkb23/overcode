@@ -89,8 +89,9 @@ class PresenceComponent:
 
         Returns:
             Tuple of (state, idle_seconds, locked) or (None, None, None) if unavailable.
-            On non-macOS, idle is always 0 and locked is always False, but sleep
-            detection and TUI heartbeat still produce meaningful state values.
+            Without Quartz, idle is None (unmeasured) and locked is always
+            False, but sleep detection and TUI heartbeat still produce
+            meaningful state values.
         """
         try:
             from .presence_logger import classify_state, DEFAULT_IDLE_THRESHOLD
@@ -112,7 +113,9 @@ class PresenceComponent:
             if MACOS_APIS_AVAILABLE and get_current_presence_state is not None:
                 return get_current_presence_state(tui_active=tui_active)
 
-            # Non-macOS: idle=0, locked=False; TUI heartbeat still works
+            # Non-macOS: locked=False; TUI heartbeat still works. Idle time
+            # is unknown (None), not 0: a 0 would publish "idle since now",
+            # a value that moves every tick and makes every quiet tick a delta
             state = classify_state(
                 locked=False,
                 idle_seconds=0.0,
@@ -120,7 +123,7 @@ class PresenceComponent:
                 idle_threshold=DEFAULT_IDLE_THRESHOLD,
                 tui_active=tui_active,
             )
-            return state, 0.0, False
+            return state, None, False
         except Exception:
             return None, None, None
 
