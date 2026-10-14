@@ -118,6 +118,30 @@ def _pack_legacy(tmux_session: str, name: str, files: List[Path], now: datetime)
     _append_member(bundle_path(tmux_session, now.strftime("%Y-%m-%d")), member)
 
 
+def pack_name(tmux_session: str, name: str, now: Optional[datetime] = None) -> bool:
+    """Pack one name's leftover files into today's bundle, then remove them.
+
+    For a rename of an agent launched before the upgrade: nobody is called
+    ``name`` any more, so its files must go, but packed as ``migrate_layout``
+    would have packed them, never just deleted. False (files left for the
+    migration) when packing fails.
+    """
+    files = legacy_files(tmux_session).get(name)
+    if not files:
+        return True
+    try:
+        _pack_legacy(tmux_session, name, files, now or datetime.now())
+    except Exception as e:
+        logger.warning("could not pack %s's files: %s", name, e)
+        return False
+    for path in files:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return True
+
+
 def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAMES,
                    now: Optional[datetime] = None) -> Dict[str, int]:
     """Move one batch of a tmux session's storage to the 0.6 layout (see module docstring).

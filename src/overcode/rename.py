@@ -171,22 +171,19 @@ class RenameMixin:
         return True
 
     def _drop_name_keyed_files(self, old_name: str) -> None:
-        """Remove what an agent launched before per-agent directories left under ``old_name``.
+        """Bundle and remove what an agent launched before per-agent directories left under ``old_name``.
 
         The renamed agent now lives in its own directory (its relaunch and
         its rename notice create it); nobody is called ``old_name`` any
         more, so a name-keyed file under it would only mislead an older
-        reader.
+        reader. They are its history (hook event log, report), so they are
+        packed into today's bundle first, as the layout migration does.
         """
         if self.sessions.get_session_by_name(old_name) is not None:
             return
-        from .paths import legacy_agent_file
+        from .layout_migration import pack_name
 
-        for kind in ("hook_state", "hook_events", "report", "rename_notice"):
-            try:
-                legacy_agent_file(self.tmux_session, old_name, kind).unlink(missing_ok=True)
-            except OSError:
-                pass
+        pack_name(self.tmux_session, old_name)
 
     def _write_rename_notice(self, session: Session, old_name: str, new_name: str) -> None:
         """Leave the agent a note of its new name for its next prompt (#478).

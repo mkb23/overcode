@@ -3005,6 +3005,30 @@ class TestRename:
         assert not legacy.exists()
         assert not legacy_agent_file("agents", "newname", "hook_state").exists()
 
+    def test_rename_bundles_a_pre_06_agents_name_keyed_history(self, tmp_path):
+        """A rename removes the old name's files, but packed as the migration would."""
+        import shutil
+        from datetime import datetime
+        from overcode.agent_bundle import iter_day
+        from overcode.paths import agent_dir, legacy_agent_file
+
+        launcher, sm = self._launcher(tmp_path)
+        sess = launcher.launch(name="alpha")
+        shutil.rmtree(agent_dir("agents", sess.id))  # launched by 0.5.x
+        events = legacy_agent_file("agents", "alpha", "hook_events")
+        events.write_text('{"event": "PostToolUse"}\n')
+        report = legacy_agent_file("agents", "alpha", "report")
+        report.write_text('{"status": "success", "reason": "done"}')
+
+        assert launcher.rename(sm.get_session(sess.id), "beta", graceful_exit_wait=0) is True
+
+        assert not events.exists() and not report.exists()
+        members = list(iter_day("agents", datetime.now().strftime("%Y-%m-%d")))
+        assert len(members) == 1 and members[0]["name"] == "alpha" and members[0]["legacy"]
+        files = members[0]["files"]
+        assert files[events.name] == '{"event": "PostToolUse"}\n'
+        assert files[report.name] == {"status": "success", "reason": "done"}
+
     def test_rename_rejects_invalid_name(self, tmp_path):
         launcher, _ = self._launcher(tmp_path)
         sess = launcher.launch(name="oldname")
