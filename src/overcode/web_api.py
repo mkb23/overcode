@@ -10,7 +10,7 @@ import subprocess
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from .clock import from_iso, local_naive
+from .clock import local_naive, seconds_since
 from .monitor_daemon_state import (
     get_monitor_daemon_state,
     MonitorDaemonState,
@@ -317,11 +317,12 @@ def _build_time_info(s: SessionDaemonState, now: datetime) -> Dict[str, Any]:
     """Build time-tracking fields for an agent."""
     time_in_state = 0.0
     if s.status_since:
-        try:
-            state_start = from_iso(s.status_since)
-            time_in_state = (now - state_start).total_seconds()
-        except ValueError:
-            pass
+        # Exact across a DST change: naive wall-clock subtraction would be an
+        # hour off for any state spanning one, and a 0.6 viewer derives the
+        # sister's zone offset from this value.
+        elapsed = seconds_since(s.status_since, now.timestamp())
+        if elapsed is not None:
+            time_in_state = elapsed
 
     green_time = s.green_time_seconds
     non_green_time = s.non_green_time_seconds

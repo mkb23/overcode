@@ -473,3 +473,33 @@ class TestWireTimesStayNaive:
         assert _wire_time(None) is None
         assert _wire_time("") == ""
         assert _wire_time("not a time") == "not a time"
+
+
+class TestTimeInStateAcrossDst:
+    """A state spanning a DST change reads its real length, not wall-clock."""
+
+    def test_asleep_across_autumn_change_reads_real_hours(self, monkeypatch):
+        import time
+        import pytest
+        if not hasattr(time, "tzset"):
+            pytest.skip("needs time.tzset")
+        monkeypatch.setenv("TZ", "Europe/London")
+        time.tzset()
+        try:
+            from overcode.web_api import _build_time_info
+            from overcode.monitor_daemon_state import SessionDaemonState
+
+            # Sat 24 Oct 18:00 BST -> Sun 25 Oct 10:00 GMT is 17 real hours.
+            session = SessionDaemonState(
+                session_id="dst",
+                name="sleeper",
+                current_status="asleep",
+                status_since="2026-10-24T18:00:00",
+                green_time_seconds=0.0,
+                non_green_time_seconds=0.0,
+            )
+            info = _build_time_info(session, datetime(2026, 10, 25, 10, 0, 0))
+            assert info["time_in_state_raw"] == 17 * 3600
+        finally:
+            monkeypatch.undo()
+            time.tzset()
