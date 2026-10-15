@@ -262,6 +262,40 @@ class TestShutdown:
         # Revived, the mark goes: a later death is archived as usual.
         assert not any(s.kept_for_revive for s in sm.list_sessions())
 
+    def test_finished_child_is_not_kept_and_is_archived(self, fleet, tmp_path):
+        """A done child shutdown stops is archived after the grace, not kept for good.
+
+        revive --all skips a reported child, so a kept mark would never be
+        cleared and the record would stay in sessions.json for ever.
+        """
+        from datetime import datetime, timedelta
+        from overcode.daemon_cadence import Cadence
+        from overcode.daemon_housekeeping import Housekeeping
+        from overcode.session_manager import PendingUpdates
+
+        launcher, _, sm = fleet
+        grandchild = sm.get_session_by_name("grandchild")
+        sm.update_session(grandchild.id, status="done")
+        _run_shutdown(fleet, FakeOps(["agents"]))
+        assert not sm.get_session(grandchild.id).kept_for_revive
+
+        def report_for(tmux_session, name, session_id):
+            return {"status": "success"} if session_id == grandchild.id else None
+
+        with patch("overcode.child_lifecycle.read_report", side_effect=report_for):
+            assert [r.name for r in revive_all(launcher)] == ["parent", "child"]
+
+        hk = Housekeeping("agents", tmux=MagicMock(), history_path=tmp_path / "h.csv",
+                          log=MagicMock(), housekeeping=Cadence(120),
+                          rotation=Cadence(3600), model_metadata=Cadence(3600))
+        t0 = datetime.now()
+        for now in (t0, t0 + timedelta(days=30)):
+            pending = PendingUpdates()
+            hk.archive_terminated_sessions(sm.list_sessions(), now, pending)
+            sm.commit_pending(pending)
+        assert sm.get_session(grandchild.id) is None
+        assert {s.name for s in sm.list_sessions()} == {"parent", "child"}
+
     def test_keep_jobs_with_all_in_a_pre_06_state_tree(self, fleet, tmp_path, monkeypatch):
         """<state>/jobs and <state>/sessions are not tmux sessions; jobs stay up."""
         monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))

@@ -687,9 +687,15 @@ def _keep_for_revive(launcher, session) -> None:
     Any monitor daemon still running (another tmux session's, or one started
     after a reboot) archives terminated records after the grace; a record
     shutdown keeps for ``revive --all`` must outlive that.
+
+    A finished child (done, or one that filed its report) is not kept:
+    ``revive --all`` skips it, so nothing would ever clear the flag, and it
+    would stay in sessions.json for good instead of being archived after
+    the grace like any other terminated record.
     """
+    finished = session.status == "done" or _has_report(session)
     launcher.sessions.update_session(
-        session.id, status=STATUS_TERMINATED, kept_for_revive=True)
+        session.id, status=STATUS_TERMINATED, kept_for_revive=not finished)
 
 
 def _stop_agents(ts, launcher, ops: SystemOps, *, force, dry_run, timeout, add,
