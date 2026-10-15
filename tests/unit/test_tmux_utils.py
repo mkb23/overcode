@@ -587,6 +587,46 @@ class TestSendKeysToPane:
 
         assert timeline == expected
 
+    @pytest.mark.parametrize("prefix", ["", "/", "!"])
+    def test_a_long_single_line_arrives_whole(self, prefix):
+        """tmux refuses one command over ~16 KB and libtmux does not raise:
+        a long one-line `overcode send` vanished, only its Enter arrived."""
+        from overcode.tmux_utils import TYPE_CHUNK_BYTES, send_keys_to_pane
+
+        class Pane(_RecordingPane):
+            def cmd(self, *args):
+                self.timeline.append(("cmd", args))
+                return MagicMock(stderr=[])
+
+        text = prefix + "x" * 20000 + "é" * 9000 + "-y" * 5000
+        timeline = []
+        with patch("overcode.tmux_utils.time.sleep"):
+            send_keys_to_pane(Pane(timeline), text, enter=True)
+        typed = []
+        for entry in timeline[:-1]:
+            if entry[0] == "cmd":
+                assert entry[1][:3] == ("send-keys", "-l", "--")
+                typed.append(entry[1][3])
+            else:
+                assert entry[2].get("enter") is False
+                typed.append(entry[1])
+        assert all(len(t.encode()) <= TYPE_CHUNK_BYTES for t in typed)
+        assert "".join(typed) == text
+        assert timeline[-1] == ("send", "", {"enter": True})
+
+    def test_a_refused_piece_fails_the_send_before_enter(self):
+        from libtmux.exc import LibTmuxException
+        from overcode.tmux_utils import send_keys_to_pane
+
+        class Pane(_RecordingPane):
+            def cmd(self, *args):
+                return MagicMock(stderr=["command too long"])
+
+        timeline = []
+        with patch("overcode.tmux_utils.time.sleep"), pytest.raises(LibTmuxException):
+            send_keys_to_pane(Pane(timeline), "x" * 20000, enter=True)
+        assert timeline == []
+
 
 class TestTypeTextToTmuxWindow:
     def test_each_line_break_is_a_backslash_and_enter(self):

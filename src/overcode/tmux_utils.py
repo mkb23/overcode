@@ -259,11 +259,36 @@ def pane_for_window(panes: Mapping[str, PaneInfo], window: str) -> Optional[Pane
     return info
 
 
+def _send_text_to_pane(pane, text: str, literal: bool = False) -> None:
+    """Send text to a pane without Enter, in pieces tmux accepts.
+
+    tmux refuses one command over ~16 KB ("command too long") and libtmux
+    does not raise, so a long single-line send used to vanish while the
+    Enter after it still arrived. Text over TYPE_CHUNK_BYTES goes as several
+    ``send-keys -l --`` (literal: a piece must not be read as a key name or,
+    starting with "-", as a flag); a refused piece raises LibTmuxException
+    before any Enter, so the send reports failure.
+    """
+    if len(text.encode('utf-8', 'surrogatepass')) <= TYPE_CHUNK_BYTES:
+        if literal:
+            pane.send_keys(text, enter=False, literal=True)
+        else:
+            pane.send_keys(text, enter=False)
+        return
+    from libtmux.exc import LibTmuxException
+    for piece in _split_utf8(text, TYPE_CHUNK_BYTES):
+        result = pane.cmd('send-keys', '-l', '--', piece)
+        if getattr(result, 'stderr', None):
+            raise LibTmuxException(f"send-keys refused: {result.stderr}")
+
+
 def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:
     """Send keys to a tmux pane with special-case handling for ! and / prefixes.
 
     For Claude Code: text and Enter must be sent as SEPARATE commands
     with a small delay, otherwise Claude Code doesn't process the Enter.
+
+    Text of any length arrives whole (``_send_text_to_pane``).
 
     Args:
         pane: A libtmux Pane object
@@ -282,17 +307,17 @@ def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:
             # Send the rest (without the !)
             rest = keys[1:]
             if rest:
-                pane.send_keys(rest, enter=False)
+                _send_text_to_pane(pane, rest)
                 time.sleep(0.1)
         elif keys.startswith('/') and len(keys) > 1:
             # Send slash commands as one literal string so the full text
             # lands in the input buffer before the autocomplete menu can
             # interfere.  A 0.5s delay before Enter lets Claude Code
             # process the text and match the correct command.
-            pane.send_keys(keys, enter=False, literal=True)
+            _send_text_to_pane(pane, keys, literal=True)
             time.sleep(0.5)
         else:
-            pane.send_keys(keys, enter=False)
+            _send_text_to_pane(pane, keys)
             # Small delay for Claude Code to process text
             time.sleep(0.1)
 
