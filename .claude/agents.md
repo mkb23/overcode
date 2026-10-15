@@ -20,6 +20,13 @@ add an entry when something bites.
   unmocked restarts the user's dashboard and replaces the pytest process.
   Patch `overcode.cli.split.open_split`.
 - Fixtures are synthetic. Never copy real `~/.overcode` data into the repo.
+- Real-state guard (`paths.guard_real_state`): inside an agent
+  (`OVERCODE_SESSION_ID`/`_NAME` set), a process that is not an overcode
+  entry point gets `RealStateRefused` when any path resolves into the real
+  `~/.overcode`. Ad-hoc scripts: set `OVERCODE_DIR` and `OVERCODE_STATE_DIR`
+  to a temp dir (`OVERCODE_ALLOW_REAL_STATE=1` only if you mean it). A new
+  entry point (a daemon, a console script) calls `paths.mark_entry_point()`
+  first thing; `python -m overcode.<module>` is allowed already.
 - TUI pilot tests build the app with the `make_tui` fixture
   (`tests/tui_harness.py`): no periodic timers (call the tick you test),
   and an in-memory engine connected from mount. An app with real timers

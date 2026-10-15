@@ -35,6 +35,9 @@ def log(session: str, message: str) -> None:
 
 
 def main():
+    from .paths import mark_entry_point
+
+    mark_entry_point()
     parser = argparse.ArgumentParser(description="Run the Overcode API server (sister API)")
     parser.add_argument("--session", "-s", required=True, help="Session name")
     parser.add_argument("--port", "-p", type=int, default=8080, help="Port to listen on")

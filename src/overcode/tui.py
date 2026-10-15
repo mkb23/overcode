@@ -2561,6 +2561,10 @@ def run_tui(
     import os
     import sys
 
+    from .paths import mark_entry_point
+
+    mark_entry_point()
+
     # Ensure we're using a proper terminal
     if not sys.stdout.isatty():
         print("Error: Must run in a TTY terminal", file=sys.stderr)

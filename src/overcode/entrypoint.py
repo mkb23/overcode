@@ -21,6 +21,9 @@ def main() -> None:
     Only ``hook-handler`` and ``hook-handler --backend <name>`` take the
     fast path; any other shape (``--help``) goes to the typer CLI.
     """
+    from .paths import mark_entry_point
+
+    mark_entry_point()
     argv = sys.argv[1:]
     if argv and argv[0] == "hook-handler":
         if len(argv) == 1 or (len(argv) == 3 and argv[1] == "--backend"):

@@ -2092,6 +2092,10 @@ def main() -> int:
     """CLI entrypoint for monitor daemon."""
     import argparse
 
+    from .paths import mark_entry_point
+
+    mark_entry_point()
+
     parser = argparse.ArgumentParser(description="Overcode Monitor Daemon")
     parser.add_argument(
         "--session", "-s",

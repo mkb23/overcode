@@ -975,6 +975,10 @@ class SupervisorDaemon:
 def main():
     import argparse
 
+    from .paths import mark_entry_point
+
+    mark_entry_point()
+
     parser = argparse.ArgumentParser(description="Overcode Supervisor Daemon")
     parser.add_argument(
         "--session",

@@ -33,9 +33,32 @@ written either way is still read: see :func:`sessions_registry_dir` and
 
 This module imports nothing from overcode: the hook handler runs it on
 every agent event.
+
+The real-state guard
+--------------------
+A script that imports overcode as a library and runs inside an overcode
+agent (``OVERCODE_SESSION_ID`` / ``OVERCODE_SESSION_NAME`` set: an agent's
+shell, a review or repro script it runs) must not read or write the user's
+real tree: a repro script once registered fake sessions, archive records
+and ledger rows there. So :func:`overcode_dir` and :func:`sessions_root`,
+which every path goes through, raise :class:`RealStateRefused` when they
+resolve to the real default tree (``~/.overcode``, however reached) and
+
+- the process was not started by one of overcode's own entry points
+  (they call :func:`mark_entry_point`; any ``python -m overcode.<module>``
+  counts too), and
+- it runs inside an agent, and
+- ``OVERCODE_ALLOW_REAL_STATE=1`` is not set.
+
+Reads are refused as well as writes: the check is on resolution, the one
+place every path is built. A human's own shell (no agent variables) is
+never refused. The mark is a process-local flag, never an environment
+variable, so it does not leak into an agent's shell through the processes
+overcode starts.
 """
 
 import os
+import sys
 from pathlib import Path
 
 # The per-agent files, by kind. An agent's files live in its own directory,
@@ -70,16 +93,80 @@ AGENT_FILES = {
 RESERVED_DIR_NAMES = frozenset({"archive", "ledger"})
 
 
+class RealStateRefused(RuntimeError):
+    """A script inside an agent resolved the real state dir (see the module doc)."""
+
+
+REFUSAL_MESSAGE = (
+    "overcode: refusing to use the real state dir from a script inside an "
+    "agent; set OVERCODE_STATE_DIR/OVERCODE_DIR to a temp dir, or "
+    "OVERCODE_ALLOW_REAL_STATE=1 if you mean it"
+)
+
+# Set by overcode's own entry points (the ``overcode`` command, the daemons
+# and servers it spawns): this process may use the real tree.
+_entry_point = False
+
+
+def mark_entry_point() -> None:
+    """Mark this process as one of overcode's own entry points.
+
+    Called first thing by ``entrypoint.main`` (the ``overcode`` command,
+    hook-handler fast path included), ``cli.main`` (``python -m
+    overcode.cli``), the daemons' and servers' ``main`` and ``run_tui``.
+    """
+    global _entry_point
+    _entry_point = True
+
+
+def _started_as_overcode_module() -> bool:
+    """True when ``__main__`` is an overcode module (``python -m overcode.x``)."""
+    spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+    name = getattr(spec, "name", None) or ""
+    return name == "overcode" or name.startswith("overcode.")
+
+
+def real_overcode_dir() -> Path:
+    """The real default tree: ``~/.overcode`` of the current ``HOME``."""
+    return Path.home() / ".overcode"
+
+
+def _is_real(path: Path) -> bool:
+    """True when ``path`` is the real default tree or inside it."""
+    real = os.path.realpath(real_overcode_dir())
+    resolved = os.path.realpath(path)
+    return resolved == real or resolved.startswith(real + os.sep)
+
+
+def guard_real_state(path: Path) -> Path:
+    """``path``, unless a script inside an agent resolved the real tree.
+
+    Raises :class:`RealStateRefused` then (see the module doc). The common
+    cases (an entry point, a shell outside any agent) cost one flag test
+    and two dictionary lookups.
+    """
+    if _entry_point:
+        return path
+    env = os.environ
+    if not (env.get("OVERCODE_SESSION_ID") or env.get("OVERCODE_SESSION_NAME")):
+        return path
+    if env.get("OVERCODE_ALLOW_REAL_STATE") == "1":
+        return path
+    if _started_as_overcode_module() or not _is_real(path):
+        return path
+    raise RealStateRefused(REFUSAL_MESSAGE)
+
+
 def overcode_dir() -> Path:
     """overcode's data directory: ``$OVERCODE_DIR``, default ``~/.overcode``."""
     env = os.environ.get("OVERCODE_DIR")
-    return Path(env) if env else Path.home() / ".overcode"
+    return guard_real_state(Path(env) if env else Path.home() / ".overcode")
 
 
 def sessions_root() -> Path:
     """The sessions root: ``$OVERCODE_STATE_DIR``, default ``overcode_dir()/sessions``."""
     env = os.environ.get("OVERCODE_STATE_DIR")
-    return Path(env) if env else overcode_dir() / "sessions"
+    return guard_real_state(Path(env)) if env else overcode_dir() / "sessions"
 
 
 def session_dir(tmux_session: str) -> Path:
@@ -109,7 +196,7 @@ def _registry_or_legacy(current: Path, legacies, file_name: str) -> Path:
         return current
     for legacy in legacies:
         if legacy is not None and (legacy / file_name).exists():
-            return legacy
+            return guard_real_state(legacy)
     return current
 
 

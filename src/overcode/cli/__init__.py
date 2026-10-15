@@ -38,6 +38,9 @@ from . import keys  # noqa: F401
 
 def main():
     """Main entry point for the CLI."""
+    from ..paths import mark_entry_point
+
+    mark_entry_point()
     app()
 
 

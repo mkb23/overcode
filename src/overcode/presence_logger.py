@@ -530,6 +530,9 @@ def main() -> int:
 
         overcode presence
     """
+    from .paths import mark_entry_point
+
+    mark_entry_point()
     if not MACOS_APIS_AVAILABLE:
         print("Note: macOS Quartz APIs not available; idle and screen-lock detection disabled.")
         print("Sleep detection and TUI heartbeat still work.")
