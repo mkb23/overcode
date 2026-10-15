@@ -1771,8 +1771,9 @@ class TestInSessionPermissionMode:
         ("normal", "accept_edits", "accept_edits"),
         ("normal", "auto", "auto"),
         ("normal", "plan", "plan"),
-        ("bypass", "accept_edits", "bypass"),
-        ("permissive", "auto", "permissive"),
+        ("bypass", "accept_edits", "accept_edits"),  # the status bar is the live mode
+        ("permissive", "auto", "auto"),
+        ("bypass", "", "bypass"),
         ("bypass", "plan", "plan"),
     ])
     def test_effective_mode(self, launch, in_session, mode):

@@ -294,13 +294,11 @@ def effective_permission_mode(launch_mode: str, in_session_mode: str = "") -> st
     """The mode an agent is in now: its launch setting, overlaid by the
     in-session mode its status bar shows.
 
-    Plan mode always shows, whatever the launch. Accept edits and auto mode
-    show over a normal launch only; a permissive or bypass launch keeps its
-    own emoji, as #444 chose for accept edits.
+    The status bar is the live truth: a mode switched on in the session
+    (Shift+Tab) shows whatever the agent was launched with. Bypass and
+    don't-ask show no in-session mode, so the launch mode stands for them.
     """
-    if in_session_mode == "plan":
-        return "plan"
-    if in_session_mode in ("accept_edits", "auto") and launch_mode == "normal":
+    if in_session_mode in ("plan", "accept_edits", "auto"):
         return in_session_mode
     return launch_mode
 
