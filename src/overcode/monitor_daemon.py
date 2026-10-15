@@ -661,6 +661,8 @@ class MonitorDaemon:
         last_hook_at = getattr(self.detector, "get_last_hook_at", None)
         last_hook_at = last_hook_at(session.name) if callable(last_hook_at) else None
         result, reason = task_result(session, status)
+        swarm_rollup = getattr(self.detector, "get_swarm_rollup", None)
+        swarm_rollup = swarm_rollup(session.name) if callable(swarm_rollup) else None
         return SessionDaemonState(
             last_hook_at=last_hook_at if isinstance(last_hook_at, (int, float)) else None,
             session_id=session_id,
@@ -722,6 +724,7 @@ class MonitorDaemon:
             oversight_deadline=getattr(session, 'oversight_deadline', None),
             task_result=result,
             task_reason=reason,
+            swarm_rollup=swarm_rollup if isinstance(swarm_rollup, dict) else None,
             # Last user command (from history sync)
             last_command=self.stats_sync.last_commands.get(session_id),
             pr_number=session.pr_number,

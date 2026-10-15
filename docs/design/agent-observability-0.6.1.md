@@ -374,6 +374,36 @@ Phase 0 stays on release/0.6.1; it is not cherry-picked to main.
 
 ---
 
+## Phase 1 as built
+
+- `src/overcode/swarm.py`: the hook side folds SubagentStart/Stop,
+  TeammateIdle (now registered), the Agent and Workflow `PostToolUse`
+  responses, `<task-notification>` prompts and `background_tasks` into the
+  parent's hook state (`subagents` live map, `swarm` record: done map
+  capped at 200, workflow runs, teammate names, background-launch ids).
+  The daemon side is `rollup` (published as `swarm_rollup`) and `in_flight`
+  (the armed rule's count).
+- Reconciling: the parent's Stop ends every subagent its list leaves out
+  (no foreground call can be running then); a SubagentStop's list ends only
+  always-background work (workflows, teammates, `async_launched` agents),
+  so parallel foreground agents are safe. Once a list has been seen there
+  is no timer; the 1 h timer stays for hook state written before it.
+- A workflow counts once in the light ("Waiting on 1 workflow"), whatever
+  its agents do; its agents count in the 👥 total. An idle teammate counts
+  in the total but not in flight.
+- ✅ unless a notification's `<status>` or a foreground call's response
+  says otherwise (❌). SessionEnd (exit or /clear) clears the record rather
+  than marking live work killed: the conversation it belonged to is over.
+- Background shells in `background_tasks` are left to the pane's status bar
+  count, as before: nothing fires when a shell exits, so a list entry could
+  hold the parent yellow after it ended.
+- `observability.finished_row_seconds` (default 30) is read by
+  `config.get_observability_config()`; nothing uses it until phase 2's rows.
+- Bell: virtual work has no episodes; a test replays a busy swarm through
+  the episode recorder and finds no bell before the parent's own last Stop.
+
+---
+
 ## Appendix: capture index
 
 `docs/design/spike-agent-types/captures/`, scrubbed (paths become `~`,

@@ -53,6 +53,32 @@ def test_stats_columns_refresh_every_five_seconds_while_watched():
     assert STATS_SYNC_UNATTENDED_SECONDS <= 60  # budgets still enforced unattended
 
 
+def test_delegated_work_is_reconciled_by_claude_s_list_not_a_timer():
+    """agent-observability-0.6.1.md §3.3: once a Stop or SubagentStop has
+    carried background_tasks, a quiet background agent stays in flight for
+    as long as the list says so; the 1 h timer is only for older state."""
+    from overcode import swarm
+
+    assert swarm.LEGACY_STALE_SECONDS == 3600.0
+    state = {"subagents": {"a1": {"kind": "subagent", "last_seen": 0.0}},
+             "swarm": {"bg_at": 0.0}}
+    assert swarm.in_flight(state, 10 * swarm.LEGACY_STALE_SECONDS) == (1, 0)
+
+
+def test_the_delegated_work_rollup_is_counts_that_hold_still():
+    """The 👥 rollup is published every tick (swarm_rollup): counts only, no
+    times, so a quiet swarm sends no delta (engine-0.6.md)."""
+    from overcode import swarm
+    from overcode.monitor_daemon_state import MonitorDaemonState
+
+    state = {"subagents": {"a1": {"kind": "subagent", "last_seen": 0.0}},
+             "swarm": {"bg_at": 0.0, "done": {"a2": {"result": "ok", "ended_at": 5.0}}}}
+    rollups = [swarm.rollup(state, t) for t in (10.0, 1e4, 1e6)]
+    assert rollups[0] == rollups[1] == rollups[2]
+    assert all(isinstance(v, int) for v in rollups[0].values())
+    assert "swarm_rollup" not in MonitorDaemonState.ENGINE_TICK_AGENT_FIELDS
+
+
 def test_git_columns_refresh_every_fifteen_seconds_and_burn_every_ten():
     from overcode.monitor_daemon import BURN_SYNC_SECONDS, GIT_SYNC_SECONDS
 

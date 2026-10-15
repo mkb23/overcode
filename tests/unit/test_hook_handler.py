@@ -161,14 +161,16 @@ class TestApplySubagentEvent:
 
     PARENT = {"event": "Stop", "timestamp": 100.0, "loaded_skills": ["x"]}
 
-    def test_start_records_and_stop_forgets(self):
+    def test_start_records_and_stop_moves_it_to_done(self):
         s = _apply_subagent_event(self.PARENT, "SubagentStart", "a1",
                                   {"agent_type": "general-purpose"}, 110.0)
-        assert s["subagents"] == {"a1": {"type": "general-purpose",
+        assert s["subagents"] == {"a1": {"type": "general-purpose", "kind": "subagent",
                                          "started_at": 110.0, "last_seen": 110.0}}
         assert s["event"] == "Stop" and s["timestamp"] == 100.0
         s = _apply_subagent_event(s, "SubagentStop", "a1", {}, 120.0)
         assert "subagents" not in s
+        assert s["swarm"]["done"] == {"a1": {"kind": "subagent", "result": "ok",
+                                             "ended_at": 120.0}}
         assert s["event"] == "Stop" and s["loaded_skills"] == ["x"]
 
     def test_tool_events_touch_only_last_seen(self):

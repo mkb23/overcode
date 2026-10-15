@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .paths import agent_dir, agent_file, legacy_agent_file
 from . import hook_dialects
+from . import swarm
 
 try:
     import fcntl
@@ -38,8 +39,15 @@ logger = logging.getLogger(__name__)
 # the hook_state file so the detector can read it without re-parsing every
 # event.
 #
+# Arming: Bash only with run_in_background. Agent runs in the background
+# unless run_in_background is false (the default since Claude Code 2.1.300:
+# a plain call returns "async_launched"), and Workflow always does (it has
+# no such flag); both arm until their launch call returns. From there the
+# work is tracked by agent id and workflow run (``swarm``), reconciled at
+# each Stop/SubagentStop against Claude's own background_tasks list.
+#
 # Disarm rules:
-#   - Bash/Agent/Workflow with run_in_background → PostToolUse(same id) removes
+#   - Bash/Agent/Workflow in the background      → PostToolUse(same id) removes
 #   - Monitor                                    → PostToolUse(same id) removes
 #   - ScheduleWakeup                             → next UserPromptSubmit
 #                                                   (wakeup fires as a prompt),
@@ -60,7 +68,9 @@ _UNCONDITIONAL_ARMING_TOOLS: dict[str, str] = {
 }
 
 # Tools that arm ONLY when tool_input.run_in_background is truthy
-_CONDITIONAL_BG_TOOLS: frozenset[str] = frozenset({"Bash", "Agent", "Workflow"})
+_CONDITIONAL_BG_TOOLS: frozenset[str] = frozenset({"Bash"})
+# Tools that run in the background unless run_in_background is false
+_DEFAULT_BG_TOOLS: frozenset[str] = frozenset({"Agent", "Task", "Workflow"})
 
 # Obligation kinds that represent *persistent* state registered with the
 # system. Their PostToolUse means "the registration call completed" not
@@ -78,6 +88,9 @@ def _obligation_kind(tool_name: str | None, tool_input: dict | None) -> str | No
         return _UNCONDITIONAL_ARMING_TOOLS[tool_name]
     if tool_name in _CONDITIONAL_BG_TOOLS:
         if isinstance(tool_input, dict) and tool_input.get("run_in_background"):
+            return "bg_task"
+    if tool_name in _DEFAULT_BG_TOOLS:
+        if not (isinstance(tool_input, dict) and tool_input.get("run_in_background") is False):
             return "bg_task"
     return None
 
@@ -256,25 +269,24 @@ def _update_obligations(
 _EVENT_STATE_KEYS = ("event", "timestamp", "tool_name", "tool_input", "tool_use_id", "foreground")
 
 
+def _store_swarm(state: dict, subagents: dict, swarm_state: dict) -> None:
+    """Put the live map and the swarm (see ``swarm``) into a hook state."""
+    for key, value in (("subagents", subagents), ("swarm", swarm_state)):
+        if value:
+            state[key] = value
+        else:
+            state.pop(key, None)
+
+
 def _apply_subagent_event(prev: dict, event: str, agent_id: str, data: dict, now: float) -> dict:
     """Return the parent's hook state after one of its subagents' events.
 
-    Pure function — no I/O.
+    The live map and the 👥 rollup's record are ``swarm``'s; this adds the
+    permission lift. Pure function — no I/O.
     """
     state = dict(prev)
-    subagents = dict(state.get("subagents") or {})
-    if event == "SubagentStop":
-        subagents.pop(agent_id, None)
-    elif event == "SubagentStart":
-        subagents[agent_id] = {
-            "type": data.get("agent_type"), "started_at": now, "last_seen": now,
-        }
-    elif agent_id in subagents:
-        subagents[agent_id] = {**subagents[agent_id], "last_seen": now}
-    if subagents:
-        state["subagents"] = subagents
-    else:
-        state.pop("subagents", None)
+    _store_swarm(state, *swarm.apply_subagent_event(
+        state.get("subagents"), state.get("swarm"), event, agent_id, data, now))
 
     if event == "PermissionRequest":
         if state.get("permission_agent_id") is None:
@@ -331,6 +343,8 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     # Bracket each subagent, background ones included (#507)
     ("SubagentStart", "overcode hook-handler"),
     ("SubagentStop", "overcode hook-handler"),
+    # An in-process teammate went idle: listening, not working (0.6.1)
+    ("TeammateIdle", "overcode hook-handler"),
 ]
 
 # Retention window for the hook-state session-id history. Every backend that
@@ -775,6 +789,7 @@ def write_hook_state(
     synced_session_id: str | None = None,
     pending_session_id: str | None = None,
     prev_state: dict | None = None,
+    data: dict | None = None,
 ) -> None:
     """Write hook state JSON for status detection.
 
@@ -793,6 +808,10 @@ def write_hook_state(
     turn's ``promptId``, then preserved across later events (mirroring
     ``agent_session_id``) so the stale-turn check can compare a later
     turn-end report's ``promptId`` against it.
+
+    ``data`` is the event's whole payload, for what ``swarm`` reads from it
+    (``background_tasks``, an Agent or Workflow call's ``tool_response``, a
+    ``<task-notification>`` prompt).
     """
     state_path = _get_hook_state_path(tmux_session, session_name)
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -806,6 +825,7 @@ def write_hook_state(
     prev_active_prompt_id: str | None = None
     prev_synced_agent_session_id: str | None = None
     prev_subagents: dict | None = None
+    prev_swarm: dict | None = None
     try:
         prev = prev_state if prev_state is not None else json.loads(state_path.read_text())
         prev_skills = prev.get("loaded_skills", [])
@@ -815,6 +835,7 @@ def write_hook_state(
         prev_active_prompt_id = prev.get("active_prompt_id")
         prev_synced_agent_session_id = prev.get("agent_session_id_synced")
         prev_subagents = prev.get("subagents")
+        prev_swarm = prev.get("swarm")
     except (json.JSONDecodeError, FileNotFoundError, OSError):
         pass
 
@@ -860,9 +881,10 @@ def write_hook_state(
     if obligations:
         state["pending_obligations"] = obligations
 
-    # Subagents outlive the parent's turns; only the session ending drops them
-    if prev_subagents and event != "SessionEnd":
-        state["subagents"] = prev_subagents
+    # Subagents outlive the parent's turns; only the session ending drops
+    # them. The parent's own events reconcile them (swarm).
+    _store_swarm(state, *swarm.apply_parent_event(
+        prev_subagents, prev_swarm, event, tool_name, tool_input, data, now))
 
     # Foreground detail — only populated mid-tool (PreToolUse); cleared by
     # any subsequent event so a stale entry can't outlive its tool call.
@@ -1087,6 +1109,7 @@ def handle_hook_event(backend: str | None = None) -> None:
             synced_session_id=synced_session_id,
             pending_session_id=pending_session_id,
             prev_state=prev_state,
+            data=data,
         )
     append_hook_event(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
 

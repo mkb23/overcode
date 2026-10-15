@@ -113,7 +113,7 @@ class TestHoverText:
             StatusBadge("schedule_wakeup", eta_seconds=300),
         ])
         tip = hover_status_detail(_ctx(status_detail=detail)).plain
-        assert "👥  subagent still running ×2" in tip
+        assert "👥  subagent, workflow or teammate still running ×2" in tip
         assert "wakeup scheduled, in 5" in tip
 
     def test_nothing_to_explain_is_no_popup(self):

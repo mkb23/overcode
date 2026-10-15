@@ -175,6 +175,11 @@ class SessionDaemonState:
     # "unreported", "success", "failure"} counts (a timeout is a failure).
     # None for an agent without children.
     children_rollup: Optional[dict] = None
+    # Work a Claude agent delegated inside its session (subagents, forks,
+    # workflows, teammates), for the 👥 column (swarm.rollup): {"total",
+    # "running", "waiting", "idle", "ok", "failed", "workflows",
+    # "workflows_running"} counts. None for an agent that never delegated.
+    swarm_rollup: Optional[dict] = None
 
     # Skills (#252)
     available_skills: List[str] = field(default_factory=list)  # All skills in ~/.claude/skills

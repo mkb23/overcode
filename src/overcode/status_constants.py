@@ -480,7 +480,7 @@ BADGE_MEANINGS: dict[str, str] = {
     "monitor":         "watching a Monitor stream",
     "bg_task":         "background shell or task running",
     "heartbeat":       "overcode heartbeat will re-prompt",
-    "subagent":        "subagent still running",
+    "subagent":        "subagent, workflow or teammate still running",
     "children":        "child agents still working",
     "oversight":       "child at rest (an older sister)",
     "generating":      "generating a response",

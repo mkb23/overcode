@@ -233,6 +233,11 @@ class StatusDetectorDispatcher:
         getter = getattr(self._last_detector.get(session_name), "get_last_hook_at", None)
         return getter(session_name) if getter is not None else None
 
+    def get_swarm_rollup(self, session_name: str) -> Optional[dict]:
+        """The 👥 rollup of the session's delegated work (None: none, or not hooks)."""
+        getter = getattr(self._last_detector.get(session_name), "get_swarm_rollup", None)
+        return getter(session_name) if getter is not None else None
+
     @staticmethod
     def _has_hook_state(hooks, session: "Session") -> bool:
         path_for = getattr(hooks, "_hook_state_path", None)

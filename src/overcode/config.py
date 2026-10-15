@@ -759,6 +759,34 @@ def get_session_archive_config() -> dict:
     return {"terminated_grace_seconds": grace}
 
 
+FINISHED_ROW_SECONDS_DEFAULT = 30.0
+
+
+def get_observability_config() -> dict:
+    """How the TUI shows the work an agent delegates inside its session.
+
+    docs/design/agent-observability-0.6.1.md, decision 3: a subagent,
+    workflow agent or teammate that has finished keeps its own (dimmed) row
+    under its parent for ``finished_row_seconds``, then folds into the
+    parent's 👥 counts. The counts always include it; the rows arrive with
+    expandable groups (phase 2).
+
+    Config format in ~/.overcode/config.yaml:
+        observability:
+          finished_row_seconds: 30   # 0 folds a finished agent at once
+
+    Returns:
+        Dict with ``finished_row_seconds`` (float, never negative); a
+        missing or invalid entry falls back to 30.
+    """
+    cfg = _get_config_value("observability", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {"finished_row_seconds": _non_negative(
+        cfg.get("finished_row_seconds", FINISHED_ROW_SECONDS_DEFAULT),
+        FINISHED_ROW_SECONDS_DEFAULT)}
+
+
 _SIZE_UNITS = {"": 1, "B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
 
 

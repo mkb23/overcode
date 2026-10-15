@@ -49,6 +49,8 @@ SAFE_SETTINGS = (
     '"SubagentStart": [{"matcher": "", "hooks": [{"type": "command", "command": '
     '"/usr/local/bin/overcode hook-handler"}]}], "SubagentStop": [{"matcher": "", "hooks": '
     '[{"type": "command", "command": "/usr/local/bin/overcode hook-handler"}]}], '
+    '"TeammateIdle": [{"matcher": "", "hooks": [{"type": "command", "command": '
+    '"/usr/local/bin/overcode hook-handler"}]}], '
     '"SessionStart": [{"matcher": "clear|resume", "hooks": [{"type": "command", '
     '"command": "/usr/local/bin/overcode hook-handler"}]}], '
     '"Notification": [{"matcher": "idle_prompt", "hooks": [{"type": "command", '

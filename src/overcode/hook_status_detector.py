@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from . import swarm
 from .clock import SYSTEM_CLOCK, Clock
 from .paths import agent_path, session_dir
 from .status_constants import (
@@ -168,13 +169,6 @@ _RECENT_ACTIVITY_WINDOW_SECONDS = 1.5
 # How many log lines to keep in memory per read — plenty for a 1.5s window.
 _RECENT_EVENTS_LIMIT = 50
 
-# A subagent unheard from for this long is assumed gone (#507). SubagentStop
-# can be lost (a crash, an interrupt), and an entry left behind would hold
-# the parent yellow forever. A live subagent blocked on a long wait sends no
-# events, so this is generous.
-_SUBAGENT_STALE_SECONDS = 3600.0
-
-
 # A foreground sleep: the command is ``sleep N``, perhaps after a ``cd``
 _FOREGROUND_SLEEP_RE = re.compile(
     r"^\s*(?:cd\s+\S+\s*&&\s*)?sleep\s+(\d+(?:\.\d+)?)([smhd]?)(?![\w.])")
@@ -197,16 +191,8 @@ _STATUS_BAR_HOLD_SECONDS = 30.0
 
 
 def _live_subagent_count(hook_state: dict, now: float) -> int:
-    """Subagents the parent is waiting on, per the hook state's map (#507)."""
-    subagents = hook_state.get("subagents")
-    if not isinstance(subagents, dict):
-        return 0
-    live = 0
-    for entry in subagents.values():
-        seen = entry.get("last_seen") if isinstance(entry, dict) else None
-        if isinstance(seen, (int, float)) and now - seen <= _SUBAGENT_STALE_SECONDS:
-            live += 1
-    return live
+    """Delegated work the parent is waiting on: agents plus workflow runs."""
+    return sum(swarm.in_flight(hook_state, now))
 
 
 # A wakeup fires as a prompt at its time. One this long past it with no
@@ -381,7 +367,8 @@ class TickContext:
     running_age: Optional[float] = None   # seconds since the last RUNNING-class event (Stop only)
     monitors: int = 0                     # status-bar counts, held while the bar is covered
     shells: int = 0
-    subagents: Optional[int] = None       # default: live entries in the hook state's map
+    subagents: Optional[int] = None       # default: delegated work in flight (swarm.in_flight)
+    workflows: int = 0                    # of which workflow runs (for the words)
     children: int = 0                     # its child agents still working (last tick's)
     obligations: list = field(init=False)  # pending obligations that can still fire
     overdue: int = field(init=False)       # wakeups that never came
@@ -390,7 +377,8 @@ class TickContext:
         if not self.event:
             self.event = self.hook_state.get("event", "") or ""
         if self.subagents is None:
-            self.subagents = _live_subagent_count(self.hook_state, self.now)
+            agents, self.workflows = swarm.in_flight(self.hook_state, self.now)
+            self.subagents = agents + self.workflows
         raw = self.hook_state.get("pending_obligations") or []
         self.obligations = _live_obligations(raw, self.now)
         self.overdue = len(raw) - len(self.obligations)
@@ -585,6 +573,17 @@ def rule_sticky_green(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
                    v.activity)
 
 
+def _waiting_on_delegated(units: int, workflows: int) -> str:
+    """The words for it: "Waiting on 2 background agents and 1 workflow"."""
+    agents = max(0, units - workflows)
+    parts = []
+    if agents or not workflows:
+        parts.append(_plural(agents, "background agent"))
+    if workflows:
+        parts.append(_plural(workflows, "workflow"))
+    return "Waiting on " + " and ".join(parts)
+
+
 # Obligations that wake an agent later without anything running meanwhile
 _SCHEDULED_KINDS = frozenset({"schedule_wakeup", "cron", "heartbeat"})
 
@@ -630,7 +629,7 @@ def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     elif ctx.children:
         activity = f"Waiting on {ctx.children} child{'' if ctx.children == 1 else 'ren'}"
     elif ctx.subagents:
-        activity = f"Waiting on {_plural(ctx.subagents, 'background agent')}"
+        activity = _waiting_on_delegated(ctx.subagents, ctx.workflows)
     elif ctx.shells:
         activity = f"Waiting on {_plural(ctx.shells, 'background shell')}"
     else:
@@ -937,6 +936,9 @@ class HookStatusDetector:
         self._busy_marker_seen = False
         # The timestamp of the hook state behind each session's last status
         self._last_hook_at: Dict[str, float] = {}
+        # The 👥 rollup of each agent's delegated work, as of its last
+        # detect_status (swarm.rollup); absent when it never delegated
+        self._swarm_rollups: Dict[str, dict] = {}
         # Last visible status-bar counts: (seen_at, monitors, shells) (#507)
         self._status_bar_counts: Dict[str, Tuple[float, int, int]] = {}
         # The PermissionRequest (by hook-state timestamp) whose dialog has
@@ -1126,6 +1128,7 @@ class HookStatusDetector:
         # leaves none, so a previous tick's colour can never stand in
         self._status_details.pop(session.name, None)
         self._last_hook_at.pop(session.name, None)
+        self._swarm_rollups.pop(session.name, None)
 
         if hook_state is None:
             # No hook state file — agent hasn't triggered a hook yet.
@@ -1153,6 +1156,9 @@ class HookStatusDetector:
             self._loaded_skills[session.name].update(persisted_skills)
 
         self._last_hook_at[session.name] = float(hook_state["timestamp"])
+        rollup = swarm.rollup(hook_state, now)
+        if rollup is not None:
+            self._swarm_rollups[session.name] = rollup
 
         pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
         ctx = self._tick_context(session, hook_state, pane_content, now)
@@ -1326,6 +1332,10 @@ class HookStatusDetector:
     def get_last_hook_at(self, session_name: str) -> Optional[float]:
         """Epoch seconds of the hook event behind the last detect_status, or None."""
         return self._last_hook_at.get(session_name)
+
+    def get_swarm_rollup(self, session_name: str) -> Optional[dict]:
+        """The 👥 counts from the last detect_status (swarm.rollup), or None."""
+        return self._swarm_rollups.get(session_name)
 
     def get_status_detail(self, session_name: str) -> Optional[StatusDetail]:
         """Return the most recent StatusDetail for a session, or None.

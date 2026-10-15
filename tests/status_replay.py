@@ -188,6 +188,30 @@ def rec(t: float, record: dict) -> Step:
     return Step(t, record=record)
 
 
+CAPTURES = (Path(__file__).resolve().parent.parent
+            / "docs" / "design" / "spike-agent-types" / "captures")
+
+
+def capture_steps(name: str) -> list[Step]:
+    """A spike capture's hook payloads, verbatim, at their recorded times.
+
+    ``name`` is a directory under ``docs/design/spike-agent-types/captures``
+    (Claude Code 2.1.300, scrubbed). Its ``hooks.jsonl`` holds every event
+    the logging hook saw, registered by overcode or not; ``_delivered``
+    drops those overcode does not register, as Claude would never call the
+    hook for them. Times are seconds from the first event.
+    """
+    steps, t0 = [], None
+    with open(CAPTURES / name / "hooks.jsonl") as f:
+        for line in f:
+            payload = json.loads(line)
+            t = payload.pop("_t")
+            payload.pop("_event", None)
+            t0 = t if t0 is None else t0
+            steps.append(Step(round(t - t0, 3), payload=payload))
+    return steps
+
+
 def frame(t: float, pane: str, busy: Optional[bool] = None) -> Step:
     """The pane changes to ``pane`` at time ``t``.
 
@@ -248,6 +272,7 @@ class Sample:
     status: str
     colour: Optional[str]
     badges: tuple[str, ...]
+    rollup: Optional[dict] = None   # the 👥 counts (swarm.rollup) the engine would publish
 
 
 class _Clock:
@@ -450,6 +475,7 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
                 t, status,
                 detail.color if detail else None,
                 tuple(b.kind for b in detail.badges) if detail else (),
+                detector.get_swarm_rollup(AGENT),
             ))
     return samples
 
