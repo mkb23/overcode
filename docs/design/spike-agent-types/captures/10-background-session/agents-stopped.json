@@ -1,0 +1,14 @@
+{
+ "elapsed_s": 0.12,
+ "total_entries": 8,
+ "other_entries_key_sets": {
+  "[\"cwd\", \"id\", \"kind\", \"name\", \"sessionId\", \"startedAt\", \"state\"]": 1,
+  "[\"cwd\", \"kind\", \"name\", \"pid\", \"sessionId\", \"startedAt\", \"status\"]": 7
+ },
+ "other_entries_kind_status": {
+  "background/None/blocked": 1,
+  "interactive/busy/None": 2,
+  "interactive/idle/None": 5
+ },
+ "spike_entries": []
+}

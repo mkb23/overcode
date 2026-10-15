@@ -1,0 +1,5 @@
+  291430  <project>/639573ba-1f23-464c-81a9-4854833300f1.jsonl
+  163740  <project>/639573ba-1f23-464c-81a9-4854833300f1/subagents/agent-aa771e1c281ee06c7.jsonl
+     204  <project>/639573ba-1f23-464c-81a9-4854833300f1/subagents/agent-aa771e1c281ee06c7.meta.json
+    link  <tmp-task-dir>/639573ba-1f23-464c-81a9-4854833300f1/tasks/aa771e1c281ee06c7.output -> ~/.claude/projects/<proj>-spike-runs-bg-work/639573ba-1f23-464c-81a9-4854833300f1/subagents/agent-aa771e1c281ee06c7.jsonl
+      10  <tmp-task-dir>/639573ba-1f23-464c-81a9-4854833300f1/tasks/bihkm9kki.output

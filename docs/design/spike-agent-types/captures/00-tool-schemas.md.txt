@@ -1,0 +1,140 @@
+I'm reproducing these from the tool definitions in my context, without calling any tools. The short descriptions are exact. Where a description is long, I've shortened it and marked it with "…".
+
+```json
+{
+  "Agent": {
+    "type": "object",
+    "properties": {
+      "description": {
+        "type": "string",
+        "description": "A short (3-5 word) description of the task"
+      },
+      "prompt": {
+        "type": "string",
+        "description": "The task for the agent to perform"
+      },
+      "effort": {
+        "type": "string",
+        "enum": ["low", "medium", "high", "xhigh", "max"],
+        "description": "Reasoning effort for this agent. Set this ONLY when the user, or instructions such as CLAUDE.md or a skill, explicitly ask that this agent or delegated work run at a specific effort level, never on your own judgment; otherwise omit it and the agent runs at its usual effort."
+      },
+      "isolation": {
+        "type": "string",
+        "enum": ["worktree", "remote"],
+        "description": "Isolation mode. \"worktree\" creates a temporary git worktree so the agent works on an isolated copy of the repo. \"remote\" launches the agent in a remote cloud environment (always runs in background; availability is gated)."
+      },
+      "model": {
+        "type": "string",
+        "enum": ["sonnet", "opus", "haiku", "fable"],
+        "description": "Optional model override for this agent. Takes precedence over the agent definition's model frontmatter and the configured default subagent model. If omitted, uses the agent definition's model, else the default (inherits from the parent unless a default subagent model is configured). Ignored for subagent_type: \"fork\" — forks always inherit the parent model."
+      },
+      "run_in_background": {
+        "type": "boolean",
+        "description": "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work."
+      },
+      "subagent_type": {
+        "type": "string",
+        "description": "The type of specialized agent to use for this task"
+      }
+    },
+    "required": ["description", "prompt"],
+    "additionalProperties": false
+  },
+  "SendMessage": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "default": "",
+        "description": "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention."
+      },
+      "notify_when_idle": {
+        "type": "boolean",
+        "description": "Ask a session ON THIS MACHINE to send you ONE notice when it next goes idle (finishes its turn with nothing queued) or exits — opt-in, one-shot, no polling. With a message: deliver it now AND subscribe. Without a message (omit it): a pure subscription that costs the other session nothing."
+      },
+      "summary": {
+        "type": "string",
+        "maxLength": 200,
+        "description": "A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of `message`). Truncated to 200 characters rather than rejected."
+      },
+      "to": {
+        "type": "string",
+        "allOf": [{"pattern": "^[^\\n\\r]*$"}, {"pattern": "^[\\s\\S]{0,300}$"}],
+        "description": "Recipient: a name from ListAgents (append its \" [ref]\" only when a listing or an error shows one), a teammate name, \"main\", or a background agent's agentId"
+      }
+    },
+    "required": ["to", "message"],
+    "additionalProperties": false
+  },
+  "TaskStop": {
+    "type": "object",
+    "properties": {
+      "shell_id": {
+        "type": "string",
+        "description": "Deprecated: use task_id instead"
+      },
+      "task_id": {
+        "type": "string",
+        "description": "The ID of the background task to stop. Agent-team teammates and named background agents are also accepted by agent ID or name."
+      }
+    }
+  },
+  "ListAgents": {
+    "type": "object",
+    "properties": {
+      "channel": {
+        "type": "string",
+        "maxLength": 256,
+        "description": "Not available in this build; leave unset."
+      },
+      "q": {
+        "type": "string",
+        "maxLength": 256,
+        "description": "Not available in this build; leave unset."
+      }
+    },
+    "additionalProperties": false
+  },
+  "Workflow": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "description": "Optional input value exposed to the script as the global `args`, verbatim. Pass arrays/objects as actual JSON values, NOT as a JSON-encoded string — a stringified list breaks `args.filter`/`args.map` in the script. Use for parameterized named workflows (e.g. a research question)."
+      },
+      "description": {
+        "type": "string",
+        "description": "Ignored — set the workflow description in the script's `meta` block."
+      },
+      "name": {
+        "type": "string",
+        "description": "Name of a predefined workflow (built-in or from .claude/workflows/). Resolves to a self-contained script."
+      },
+      "resumeFromRunId": {
+        "type": "string",
+        "pattern": "^wf_[a-z0-9-]{6,}$",
+        "description": "Run ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run. Same-session only. Stop the prior run first (TaskStop) before resuming."
+      },
+      "script": {
+        "type": "string",
+        "maxLength": 524288,
+        "description": "Self-contained workflow script. Must begin with `export const meta = { name, description, phases }` (pure literal, no computed values) followed by the script body using agent()/parallel()/pipeline()/phase()."
+      },
+      "scriptPath": {
+        "type": "string",
+        "description": "Path to a workflow script file on disk. Every Workflow invocation persists its script under the session directory and returns the path in the tool result. To iterate, edit that file with Write/Edit and re-invoke Workflow with the same `scriptPath` instead of re-sending the full script. Takes precedence over `script` and `name`."
+      },
+      "title": {
+        "type": "string",
+        "description": "Ignored — set the workflow title in the script's `meta` block."
+      }
+    },
+    "type": "object",
+    "additionalProperties": false
+  }
+}
+```
+
+Notes:
+- The `Agent` tool is listed under that name. I don't see a separate `Task` alias in my definitions.
+- `Workflow.args` has no `type` field in its definition, so I left it untyped.
+- The `Workflow` and `Agent` descriptions above are the parameter-level text only. The longer tool-level usage guidance is not part of `input_schema`, so I've left it out.

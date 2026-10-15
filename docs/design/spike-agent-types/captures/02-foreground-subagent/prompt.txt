@@ -1,0 +1,1 @@
+Call the Agent tool exactly once with run_in_background set to false, subagent_type "general-purpose", description "echo test", and prompt: "Run the Bash command: echo hello-from-sub . Reply with its output only." After it returns, reply with only its output.

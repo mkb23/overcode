@@ -1,0 +1,19 @@
+{
+  "_note": "~/.claude/teams/session-<8>/config.json, read while the lead was alive (teammates already shut down, so only the lead remains). The whole team dir was deleted when the lead session exited. Inboxes: inboxes/alice.json, bob.json, team-lead.json.",
+  "name": "session-bc0ccc1e",
+  "createdAt": 1792060362407,
+  "leadAgentId": "team-lead@session-bc0ccc1e",
+  "leadSessionId": "bc0ccc1e-f5d9-4330-b922-702f00f95c48",
+  "members": [
+    {
+      "agentId": "team-lead@session-bc0ccc1e",
+      "name": "team-lead",
+      "agentType": "team-lead",
+      "joinedAt": 1792060362407,
+      "tmuxPaneId": "leader",
+      "cwd": "$SPIKE/runs/teami/work",
+      "subscriptions": [],
+      "backendType": "in-process"
+    }
+  ]
+}

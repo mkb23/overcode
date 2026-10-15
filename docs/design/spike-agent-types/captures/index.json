@@ -1,0 +1,13 @@
+{
+ "01-default-agent-call": "01-default-agent-call (no run_in_background: launched async)",
+ "02-foreground-subagent": "02-foreground-subagent (run_in_background=false)",
+ "03-background-subagent-with-SendMessage": "03-background-subagent-with-SendMessage",
+ "04-fork": "04-fork (CLAUDE_CODE_FORK_SUBAGENT=1)",
+ "05-workflow-small": "05-workflow-small",
+ "06-workflow-slow-live-watch": "06-workflow-slow-live-watch",
+ "07-team-print-mode": "07-team-print-mode (no team tools)",
+ "08-team-in-process": "08-team-in-process (interactive, AGENT_TEAMS=1)",
+ "09-team-tmux-teammate": "09-team-tmux-teammate (interactive, AGENT_TEAMS=1)",
+ "10-background-session": "10-background-session (claude --bg)",
+ "11-interactive-session-registry": "11-interactive-session-registry"
+}

@@ -1,0 +1,1 @@
+Call the Agent tool once with subagent_type "fork", description "fork echo", and prompt: "Run the Bash command: echo hello-from-fork . Reply with its output only." Wait for its completion notification and then reply with only its result.

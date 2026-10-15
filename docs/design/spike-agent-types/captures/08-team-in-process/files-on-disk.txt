@@ -1,0 +1,5 @@
+  639601  <project>/bc0ccc1e-f5d9-4330-b922-702f00f95c48.jsonl
+  313998  <project>/bc0ccc1e-f5d9-4330-b922-702f00f95c48/subagents/agent-aalice-acd486ba2d22120c.jsonl
+     305  <project>/bc0ccc1e-f5d9-4330-b922-702f00f95c48/subagents/agent-aalice-acd486ba2d22120c.meta.json
+  314606  <project>/bc0ccc1e-f5d9-4330-b922-702f00f95c48/subagents/agent-abob-e0a49731bf5fd7f1.jsonl
+     300  <project>/bc0ccc1e-f5d9-4330-b922-702f00f95c48/subagents/agent-abob-e0a49731bf5fd7f1.meta.json

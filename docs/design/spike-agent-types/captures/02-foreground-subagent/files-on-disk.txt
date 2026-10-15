@@ -1,0 +1,4 @@
+  209410  <project>/26e63624-b436-4c93-89e3-d6309967a834.jsonl
+  156462  <project>/26e63624-b436-4c93-89e3-d6309967a834/subagents/agent-ae18fbb2d896c5b0f.jsonl
+     174  <project>/26e63624-b436-4c93-89e3-d6309967a834/subagents/agent-ae18fbb2d896c5b0f.meta.json
+    link  <tmp-task-dir>/26e63624-b436-4c93-89e3-d6309967a834/tasks/ae18fbb2d896c5b0f.output -> ~/.claude/projects/<proj>-spike-runs-fg2-work/26e63624-b436-4c93-89e3-d6309967a834/subagents/agent-ae18fbb2d896c5b0f.jsonl

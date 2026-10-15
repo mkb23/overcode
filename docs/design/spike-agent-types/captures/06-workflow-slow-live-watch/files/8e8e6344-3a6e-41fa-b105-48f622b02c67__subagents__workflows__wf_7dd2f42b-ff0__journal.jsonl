@@ -1,0 +1,9 @@
+{"type":"launched"}
+{"type":"started","key":"v2:44c22d62045cbfec2fbcc3efb79a1143875484e7b55e2ff3e06cae6cedda06da","agentId":"a2ae5f43fc5d905d5","label":"sleeper-1","phase":"Sleep"}
+{"type":"started","key":"v2:a93cc6d52958d48378925fb1fe7d9e25261e1ccea9f22ceb70eafa4637b60e4f","agentId":"a47ddd44251466b42","label":"sleeper-2","phase":"Sleep"}
+{"type":"started","key":"v2:3e6d085672a42f5331713a3a64460f39b715856dc8b8ac5c5f6b3bfb45611a65","agentId":"ae276ff4aa1355f94","label":"sleeper-3","phase":"Sleep"}
+{"type":"result","key":"v2:44c22d62045cbfec2fbcc3efb79a1143875484e7b55e2ff3e06cae6cedda06da","agentId":"a2ae5f43fc5d905d5","result":"slept-1"}
+{"type":"result","key":"v2:a93cc6d52958d48378925fb1fe7d9e25261e1ccea9f22ceb70eafa4637b60e4f","agentId":"a47ddd44251466b42","result":"slept-2"}
+{"type":"result","key":"v2:3e6d085672a42f5331713a3a64460f39b715856dc8b8ac5c5f6b3bfb45611a65","agentId":"ae276ff4aa1355f94","result":"slept-3"}
+{"type":"started","key":"v2:b3e3702f843a0aee56caab5b8178ff00eec4483d3311b92199bdcc326a26f8c7","agentId":"aa337da00a88c782c","label":"join","phase":"Join"}
+{"type":"result","key":"v2:b3e3702f843a0aee56caab5b8178ff00eec4483d3311b92199bdcc326a26f8c7","agentId":"aa337da00a88c782c","result":"slept-1,slept-2,slept-3"}

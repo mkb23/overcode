@@ -1,0 +1,11 @@
+  231804  <project>/f2e4e7d6-9467-4411-b749-c838d9497172.jsonl
+  118147  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/subagents/workflows/wf_77be7caa-3b5/agent-a1aa94e9c591218da.jsonl
+     148  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/subagents/workflows/wf_77be7caa-3b5/agent-a1aa94e9c591218da.meta.json
+  118171  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/subagents/workflows/wf_77be7caa-3b5/agent-a45fc96dd5bd9552a.jsonl
+     151  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/subagents/workflows/wf_77be7caa-3b5/agent-a45fc96dd5bd9552a.meta.json
+  120906  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/subagents/workflows/wf_77be7caa-3b5/agent-afc08e0045116b938.jsonl
+     149  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/subagents/workflows/wf_77be7caa-3b5/agent-afc08e0045116b938.meta.json
+     913  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/subagents/workflows/wf_77be7caa-3b5/journal.jsonl
+     642  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/workflows/scripts/spike-wf-wf_77be7caa-3b5.js
+    2752  <project>/f2e4e7d6-9467-4411-b749-c838d9497172/workflows/wf_77be7caa-3b5.json
+    2094  <tmp-task-dir>/f2e4e7d6-9467-4411-b749-c838d9497172/tasks/w0dqt3kve.output

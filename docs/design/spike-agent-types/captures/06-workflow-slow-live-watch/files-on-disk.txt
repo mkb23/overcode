@@ -1,0 +1,13 @@
+  228683  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67.jsonl
+  134107  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-a2ae5f43fc5d905d5.jsonl
+     155  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-a2ae5f43fc5d905d5.meta.json
+  134107  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-a47ddd44251466b42.jsonl
+     155  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-a47ddd44251466b42.meta.json
+  121642  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-aa337da00a88c782c.jsonl
+     149  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-aa337da00a88c782c.meta.json
+  136403  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-ae276ff4aa1355f94.jsonl
+     155  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/agent-ae276ff4aa1355f94.meta.json
+    1246  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/subagents/workflows/wf_7dd2f42b-ff0/journal.jsonl
+     546  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/workflows/scripts/spike-wf-slow-wf_7dd2f42b-ff0.js
+    3386  <project>/8e8e6344-3a6e-41fa-b105-48f622b02c67/workflows/wf_7dd2f42b-ff0.json
+    3019  <tmp-task-dir>/8e8e6344-3a6e-41fa-b105-48f622b02c67/tasks/wue8bf770.output

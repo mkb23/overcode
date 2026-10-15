@@ -1,0 +1,5 @@
+  214126  <project>/4a179f66-13f6-48d9-b295-ffd253f1b709.jsonl
+  222809  <project>/ee4f2e68-8c20-40a0-bb7d-3b7a47b70f08.jsonl
+   77259  <project>/ee4f2e68-8c20-40a0-bb7d-3b7a47b70f08/subagents/agent-a38c743f5b2753cd7.jsonl
+     195  <project>/ee4f2e68-8c20-40a0-bb7d-3b7a47b70f08/subagents/agent-a38c743f5b2753cd7.meta.json
+    link  <tmp-task-dir>/ee4f2e68-8c20-40a0-bb7d-3b7a47b70f08/tasks/a38c743f5b2753cd7.output -> ~/.claude/projects/<proj>-spike-runs-fork-work/ee4f2e68-8c20-40a0-bb7d-3b7a47b70f08/subagents/agent-a38c743f5b2753cd7.jsonl

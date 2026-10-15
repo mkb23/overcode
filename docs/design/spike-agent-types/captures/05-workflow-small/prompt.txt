@@ -1,0 +1,16 @@
+Call the Workflow tool exactly once, passing this exact JavaScript as the `script` parameter (do not change it), wait for it to finish, then reply with only its result.
+
+export const meta = {
+  name: 'spike-wf',
+  description: 'Tiny spike workflow with two phases',
+  phases: [ { title: 'Ask', detail: 'two agents in parallel' }, { title: 'Merge', detail: 'one agent' } ],
+}
+phase('Ask')
+const words = await parallel([
+  () => agent('Reply with the single word ALPHA and nothing else.', { label: 'alpha', effort: 'low' }),
+  () => agent('Reply with the single word BETA and nothing else.', { label: 'beta', effort: 'low' }),
+])
+phase('Merge')
+const merged = await agent('Reply with exactly this text and nothing else: ' + words.join('-'), { label: 'merge', effort: 'low' })
+log('merged ' + merged)
+return merged

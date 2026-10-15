@@ -1,0 +1,26 @@
+{
+ "elapsed_s": 0.12,
+ "total_entries": 9,
+ "other_entries_key_sets": {
+  "[\"cwd\", \"id\", \"kind\", \"name\", \"sessionId\", \"startedAt\", \"state\"]": 1,
+  "[\"cwd\", \"kind\", \"name\", \"pid\", \"sessionId\", \"startedAt\", \"status\"]": 7
+ },
+ "other_entries_kind_status": {
+  "background/None/blocked": 1,
+  "interactive/busy/None": 2,
+  "interactive/idle/None": 5
+ },
+ "spike_entries": [
+  {
+   "pid": 64761,
+   "id": "b32fbee4",
+   "cwd": "$SPIKE/runs/teamt/work",
+   "kind": "background",
+   "startedAt": 1792060616477,
+   "sessionId": "b32fbee4-2c5e-435f-a55e-a2a6da6185ba",
+   "name": "spike-bg-probe",
+   "status": "idle",
+   "state": "done"
+  }
+ ]
+}

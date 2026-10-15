@@ -1,0 +1,36 @@
+{
+ "_note": "~/.claude/jobs/<short id>/state.json for the spike background session, read after it finished and before `claude rm` (rm deletes the whole jobs/<id> dir). timeline.jsonl beside it is shown under _timeline. A blocked job (another, real session; values not copied) also carries `needs` (the question text), bgIsolation, bridge* fields and `children` such as [{id, href, kind: 'pr'}].",
+ "state": "done",
+ "detail": "ran sleep 20 probe; echoed bg-probe-done",
+ "tempo": "idle",
+ "inFlight": {"tasks": 0, "queued": 0, "kinds": [], "drainableMonitors": 0},
+ "tokens": 177,
+ "output": {"result": "bg-probe-done"},
+ "children": null,
+ "linkScanOffset": 352685,
+ "linkScanPath": "~/.claude/projects/<proj>-spike-runs-teamt-work/b32fbee4-2c5e-435f-a55e-a2a6da6185ba.jsonl",
+ "template": "bg",
+ "respawnFlags": ["--settings", "$SPIKE/settings.json", "--dangerously-skip-permissions", "-n", "spike-bg-probe", "--model", "haiku"],
+ "intent": "Run the Bash command: sleep 20 && echo bg-probe-done . Then reply with its output only.",
+ "name": "spike-bg-probe",
+ "nameSource": "user",
+ "sessionId": "b32fbee4-2c5e-435f-a55e-a2a6da6185ba",
+ "resumeSessionId": "b32fbee4-2c5e-435f-a55e-a2a6da6185ba",
+ "daemonShort": "b32fbee4",
+ "cliVersion": "2.1.300",
+ "cwd": "$SPIKE/runs/teamt/work",
+ "providerEnv": {},
+ "backend": "daemon",
+ "createdAt": "2026-10-15T10:36:55.800Z",
+ "updatedAt": "2026-10-15T10:37:23.213Z",
+ "firstTerminalAt": "2026-10-15T10:37:23.213Z",
+ "lastTerminalAt": "2026-10-15T10:37:23.213Z",
+ "_timeline": [
+  {"at": "2026-10-15T10:37:00.182Z", "state": "working", "detail": "Sleeping 20 seconds then echo completion marker", "text": ""},
+  {"at": "2026-10-15T10:37:23.213Z", "state": "done", "detail": "ran sleep 20 probe; echoed bg-probe-done", "text": "bg-probe-done"}
+ ],
+ "_daemon_log": [
+  "[bg] bg claimed-spare b32fbee4 (shell)",
+  "[bg] bg settled b32fbee4 (killed)"
+ ]
+}

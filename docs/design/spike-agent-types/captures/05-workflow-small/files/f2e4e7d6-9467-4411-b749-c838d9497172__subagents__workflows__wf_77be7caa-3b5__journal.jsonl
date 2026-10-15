@@ -1,0 +1,7 @@
+{"type":"launched"}
+{"type":"started","key":"v2:cfa722591b6bcff53d83e8ddc33107cfdfcadd98140a29c7acaed97f952a08c0","agentId":"afc08e0045116b938","label":"alpha","phase":"Ask"}
+{"type":"started","key":"v2:0827cb975fbc2afe8461a48e727cce0b7619ca1cc36f833c544bb2ea501d9172","agentId":"a1aa94e9c591218da","label":"beta","phase":"Ask"}
+{"type":"result","key":"v2:cfa722591b6bcff53d83e8ddc33107cfdfcadd98140a29c7acaed97f952a08c0","agentId":"afc08e0045116b938","result":"ALPHA"}
+{"type":"result","key":"v2:0827cb975fbc2afe8461a48e727cce0b7619ca1cc36f833c544bb2ea501d9172","agentId":"a1aa94e9c591218da","result":"BETA"}
+{"type":"started","key":"v2:9bb1800b84eff96f6f4e7febe7ef2b587fe4fb22b2340109666841526a8243bd","agentId":"a45fc96dd5bd9552a","label":"merge","phase":"Merge"}
+{"type":"result","key":"v2:9bb1800b84eff96f6f4e7febe7ef2b587fe4fb22b2340109666841526a8243bd","agentId":"a45fc96dd5bd9552a","result":"ALPHA-BETA"}

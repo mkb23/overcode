@@ -1,0 +1,1 @@
+{"agentType":"bob","description":"Teammate bob echo task","name":"bob","spawnDepth":0,"requestShape":"background","requestNonInteractive":true,"model":"haiku","taskKind":"in_process_teammate","teamName":"session-bc0ccc1e","color":"green","planModeRequired":false,"permissionMode":"bypassPermissions"}

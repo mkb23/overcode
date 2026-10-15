@@ -1,0 +1,60 @@
+Token totals per session: naive per-line sum (what history_reader does today) vs
+dedup by message.id across parent + subagents/**/agent-*.jsonl vs Claude's own cost-state record.
+
+== fg
+f885c53e files 2
+  naive per-line sum   {'input_tokens': 14, 'output_tokens': 528, 'cache_creation_input_tokens': 45329, 'cache_read_input_tokens': 78478}
+  dedup by message.id  {'input_tokens': 10, 'output_tokens': 341, 'cache_creation_input_tokens': 28248, 'cache_read_input_tokens': 56939}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 10, 'outputTokens': 341, 'cacheReadInputTokens': 56939, 'cacheCreationInputTokens': 28248, 'costUSD': 0.00531709}} total 0.00531709
+== fg2
+26e63624 files 2
+  naive per-line sum   {'input_tokens': 10, 'output_tokens': 290, 'cache_creation_input_tokens': 45886, 'cache_read_input_tokens': 50175}
+  dedup by message.id  {'input_tokens': 8, 'output_tokens': 284, 'cache_creation_input_tokens': 30299, 'cache_read_input_tokens': 50175}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 8, 'outputTokens': 284, 'cacheReadInputTokens': 50175, 'cacheCreationInputTokens': 30299, 'costUSD': 0.005394324999999999}} total 0.005394324999999999
+== bg
+639573ba files 2
+  naive per-line sum   {'input_tokens': 30, 'output_tokens': 3062, 'cache_creation_input_tokens': 63525, 'cache_read_input_tokens': 211600}
+  dedup by message.id  {'input_tokens': 16, 'output_tokens': 1751, 'cache_creation_input_tokens': 27123, 'cache_read_input_tokens': 125312}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 16, 'outputTokens': 1751, 'cacheReadInputTokens': 125312, 'cacheCreationInputTokens': 27123, 'costUSD': 0.006753145}} total 0.006753145
+== fork
+4a179f66 files 1
+  naive per-line sum   {'input_tokens': 6, 'output_tokens': 954, 'cache_creation_input_tokens': 15263, 'cache_read_input_tokens': 54218}
+  dedup by message.id  {'input_tokens': 4, 'output_tokens': 539, 'cache_creation_input_tokens': 12867, 'cache_read_input_tokens': 32655}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 4, 'outputTokens': 539, 'cacheReadInputTokens': 32655, 'cacheCreationInputTokens': 12867, 'costUSD': 0.00316985}} total 0.00316985
+ee4f2e68 files 2
+  naive per-line sum   {'input_tokens': 26, 'output_tokens': 811, 'cache_creation_input_tokens': 52323, 'cache_read_input_tokens': 154110}
+  dedup by message.id  {'input_tokens': 14, 'output_tokens': 560, 'cache_creation_input_tokens': 26999, 'cache_read_input_tokens': 89469}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 14, 'outputTokens': 560, 'cacheReadInputTokens': 89469, 'cacheCreationInputTokens': 26999, 'costUSD': 0.0064261150000000005}} total 0.0064261150000000005
+== wf
+f2e4e7d6 files 4
+  naive per-line sum   {'input_tokens': 20, 'output_tokens': 1039, 'cache_creation_input_tokens': 62999, 'cache_read_input_tokens': 123004}
+  dedup by message.id  {'input_tokens': 16, 'output_tokens': 601, 'cache_creation_input_tokens': 47030, 'cache_read_input_tokens': 99269}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 16, 'outputTokens': 601, 'cacheReadInputTokens': 99269, 'cacheCreationInputTokens': 47030, 'costUSD': 0.00844914}} total 0.00844914
+== wf2
+8e8e6344 files 5
+  naive per-line sum   {'input_tokens': 28, 'output_tokens': 1477, 'cache_creation_input_tokens': 71043, 'cache_read_input_tokens': 156113}
+  dedup by message.id  {'input_tokens': 22, 'output_tokens': 1060, 'cache_creation_input_tokens': 51532, 'cache_read_input_tokens': 122758}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 22, 'outputTokens': 1060, 'cacheReadInputTokens': 122758, 'cacheCreationInputTokens': 51532, 'costUSD': 0.009345255}} total 0.009345255
+== teami
+bc0ccc1e files 3
+  naive per-line sum   {'input_tokens': 82, 'output_tokens': 10292, 'cache_creation_input_tokens': 220347, 'cache_read_input_tokens': 1346658}
+  dedup by message.id  {'input_tokens': 44, 'output_tokens': 4182, 'cache_creation_input_tokens': 111912, 'cache_read_input_tokens': 711442}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 1359, 'outputTokens': 4357, 'cacheReadInputTokens': 711442, 'cacheCreationInputTokens': 111912, 'costUSD': 0.026462145000000003}} total 0.026462145000000003
+== teamt
+13e5bccd files 1
+  naive per-line sum   {'input_tokens': 20, 'output_tokens': 1781, 'cache_creation_input_tokens': 32980, 'cache_read_input_tokens': 304334}
+  dedup by message.id  {'input_tokens': 12, 'output_tokens': 1013, 'cache_creation_input_tokens': 18087, 'cache_read_input_tokens': 195446}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 1257, 'outputTokens': 1179, 'cacheReadInputTokens': 195446, 'cacheCreationInputTokens': 18087, 'costUSD': 0.0062870600000000006}} total 0.0062870600000000006
+23aae024 files 1
+  naive per-line sum   {'input_tokens': 16, 'output_tokens': 1456, 'cache_creation_input_tokens': 83380, 'cache_read_input_tokens': 179741}
+  dedup by message.id  {'input_tokens': 10, 'output_tokens': 798, 'cache_creation_input_tokens': 41967, 'cache_read_input_tokens': 110577}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 10, 'outputTokens': 798, 'cacheReadInputTokens': 110577, 'cacheCreationInputTokens': 41967, 'costUSD': 0.00989917}} total 0.00989917
+b32fbee4 files 1
+  naive per-line sum   {'input_tokens': 6, 'output_tokens': 255, 'cache_creation_input_tokens': 20607, 'cache_read_input_tokens': 102773}
+  dedup by message.id  {'input_tokens': 4, 'output_tokens': 177, 'cache_creation_input_tokens': 16409, 'cache_read_input_tokens': 64445}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 4, 'outputTokens': 177, 'cacheReadInputTokens': 64445, 'cacheCreationInputTokens': 16409, 'costUSD': 0.00401515}} total 0.00401515
+== reg
+3e6a6fd1 files 2
+  naive per-line sum   {'input_tokens': 14, 'output_tokens': 870, 'cache_creation_input_tokens': 86637, 'cache_read_input_tokens': 161438}
+  dedup by message.id  {'input_tokens': 8, 'output_tokens': 499, 'cache_creation_input_tokens': 44356, 'cache_read_input_tokens': 94272}
+  cost-state           {'claude-haiku-5-5': {'inputTokens': 1257, 'outputTokens': 515, 'cacheReadInputTokens': 94272, 'cacheCreationInputTokens': 44356, 'costUSD': 0.008008545}} total 0.008008545

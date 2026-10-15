@@ -1,0 +1,4 @@
+  358413  <project>/3e6a6fd1-ca05-4dbe-b6c9-5dfb7bc3cd0b.jsonl
+  250365  <project>/3e6a6fd1-ca05-4dbe-b6c9-5dfb7bc3cd0b/subagents/agent-ac1d45693dc07c9e2.jsonl
+     196  <project>/3e6a6fd1-ca05-4dbe-b6c9-5dfb7bc3cd0b/subagents/agent-ac1d45693dc07c9e2.meta.json
+    link  <tmp-task-dir>/3e6a6fd1-ca05-4dbe-b6c9-5dfb7bc3cd0b/tasks/ac1d45693dc07c9e2.output -> ~/.claude/projects/<proj>-spike-runs-reg-work/3e6a6fd1-ca05-4dbe-b6c9-5dfb7bc3cd0b/subagents/agent-ac1d45693dc07c9e2.jsonl

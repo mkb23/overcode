@@ -1,0 +1,4 @@
+  222629  <project>/f885c53e-528c-4c1d-b4ef-25fa37635879.jsonl
+  126353  <project>/f885c53e-528c-4c1d-b4ef-25fa37635879/subagents/agent-aa583020cc2dd031e.jsonl
+     204  <project>/f885c53e-528c-4c1d-b4ef-25fa37635879/subagents/agent-aa583020cc2dd031e.meta.json
+    link  <tmp-task-dir>/f885c53e-528c-4c1d-b4ef-25fa37635879/tasks/aa583020cc2dd031e.output -> ~/.claude/projects/<proj>-spike-runs-fg-work/f885c53e-528c-4c1d-b4ef-25fa37635879/subagents/agent-aa583020cc2dd031e.jsonl

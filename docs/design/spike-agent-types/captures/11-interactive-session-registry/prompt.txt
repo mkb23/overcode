@@ -1,0 +1,1 @@
+Launch one background agent with the Agent tool (description "nap", prompt "Run the Bash command: sleep 10 && echo napped . Reply with its output only."). Then, without waiting, ask me with the AskUserQuestion tool whether I prefer tea or coffee.

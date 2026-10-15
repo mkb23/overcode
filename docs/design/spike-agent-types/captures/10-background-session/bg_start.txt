@@ -1,0 +1,6 @@
+Starting background service…
+backgrounded · b32fbee4 · spike-bg-probe
+  claude agents             list sessions
+  claude attach b32fbee4    open in this terminal
+  claude logs b32fbee4      show recent output
+  claude stop b32fbee4      stop this session

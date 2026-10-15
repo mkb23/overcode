@@ -1,0 +1,11 @@
+Call the Workflow tool exactly once, passing this exact JavaScript as the `script` parameter (do not change it), wait for it to finish, then reply with only its result.
+
+export const meta = {
+  name: 'spike-wf-slow',
+  description: 'Spike workflow with slow agents',
+  phases: [ { title: 'Sleep', detail: 'three sleepers' }, { title: 'Join', detail: 'one agent' } ],
+}
+phase('Sleep')
+const r = await parallel([1, 2, 3].map(i => () => agent('Run the Bash command: sleep ' + (4 * i) + ' && echo slept-' + i + ' . Reply with its output only.', { label: 'sleeper-' + i, effort: 'low' })))
+phase('Join')
+return await agent('Reply with exactly this text and nothing else: ' + r.join(','), { label: 'join', effort: 'low' })

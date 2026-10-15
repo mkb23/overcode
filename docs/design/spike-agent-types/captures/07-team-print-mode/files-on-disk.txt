@@ -1,0 +1,7 @@
+  373363  <project>/28217765-c6fc-4d54-9aae-6ecbfc63728d.jsonl
+  158338  <project>/28217765-c6fc-4d54-9aae-6ecbfc63728d/subagents/agent-a45fd6828f8f24ae5.jsonl
+     203  <project>/28217765-c6fc-4d54-9aae-6ecbfc63728d/subagents/agent-a45fd6828f8f24ae5.meta.json
+  159194  <project>/28217765-c6fc-4d54-9aae-6ecbfc63728d/subagents/agent-aff94e4449ed83bb3.jsonl
+     199  <project>/28217765-c6fc-4d54-9aae-6ecbfc63728d/subagents/agent-aff94e4449ed83bb3.meta.json
+    link  <tmp-task-dir>/28217765-c6fc-4d54-9aae-6ecbfc63728d/tasks/a45fd6828f8f24ae5.output -> ~/.claude/projects/<proj>-spike-runs-team-work/28217765-c6fc-4d54-9aae-6ecbfc63728d/subagents/agent-a45fd6828f8f24ae5.jsonl
+    link  <tmp-task-dir>/28217765-c6fc-4d54-9aae-6ecbfc63728d/tasks/aff94e4449ed83bb3.output -> ~/.claude/projects/<proj>-spike-runs-team-work/28217765-c6fc-4d54-9aae-6ecbfc63728d/subagents/agent-aff94e4449ed83bb3.jsonl

@@ -1,0 +1,11 @@
+[
+  {
+    "from": "team-lead",
+    "text": "{\"type\":\"shutdown_request\",\"requestId\":\"shutdown-1792060348307@alice\",\"from\":\"team-lead\",\"reason\":\"spiketeam work complete; shut down and clean up\",\"timestamp\":\"2026-10-15T10:32:28.307Z\"}",
+    "timestamp": "2026-10-15T10:32:28.307Z",
+    "msgV": 1,
+    "msg_id": "e670acfd-11d5-4070-8eac-ae24f2d291a1",
+    "type": "message",
+    "read": false
+  }
+]
