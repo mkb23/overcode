@@ -1005,6 +1005,9 @@ def handle_hook_event(backend: str | None = None) -> None:
     if agent_id:
         # A subagent's event: bookkeeping on the parent, not the parent's turn
         with _locked_hook_state(tmux_session, session_name) as prev_state:
+            session_id, current = data.get("session_id"), prev_state.get("agent_session_id")
+            if session_id and current and session_id != current:
+                return  # another conversation's subagent (a nested or background CLI)
             _write_state_file(
                 _get_hook_state_path(tmux_session, session_name),
                 _apply_subagent_event(prev_state, event, agent_id, data, time.time()),

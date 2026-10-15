@@ -136,6 +136,17 @@ class TestLifecycle:
         assert len(sw["done"]) == swarm.DONE_KEEP
         assert swarm.rollup(_state(subs, sw), 1.0) == _rollup(total=n, ok=n)
 
+    def test_a_stop_never_seen_starting_is_one_of_claude_s_own_helpers(self):
+        """The away summary and auto-compaction fire SubagentStop only (seen live)."""
+        subs, sw = _sub({}, {}, "SubagentStop", "af208a238f5e49046", 2.0)
+        assert swarm.rollup(_state(subs, sw), 2.0) is None
+
+    def test_a_background_agent_whose_start_was_lost_still_counts(self):
+        subs, sw = _parent({}, {}, "PostToolUse", "Agent", {},
+                           tool_response={"status": "async_launched", "agentId": "a9"})
+        subs, sw = _sub(subs, sw, "SubagentStop", "a9", 2.0)
+        assert swarm.rollup(_state(subs, sw), 2.0) == _rollup(total=1, ok=1)
+
     def test_never_delegated_is_none(self):
         assert swarm.rollup({"event": "Stop"}, 1.0) is None
         assert swarm.rollup(None, 1.0) is None

@@ -262,10 +262,15 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
             # A teammate stops each time it goes idle; it is still listening
             entry.pop("waiting", None)
             entry.update(idle=True, last_seen=now)
-        else:
+        elif entry is not None or agent_id in (swarm.get("async") or []):
             if entry is None:
                 subagents[agent_id] = {"kind": agent_kind(agent_id, data.get("agent_type"), swarm)}
             _finish(subagents, swarm, agent_id, RESULT_OK, now)
+        # else: a stop for an agent never seen starting is one of Claude's
+        # own helpers (the away summary, auto-compaction), which fire
+        # SubagentStop with no SubagentStart and write no transcript: not
+        # delegated work. A real agent whose start was lost is still seen
+        # through its Agent call's response, or as async-launched.
         tasks = data.get("background_tasks")
         if isinstance(tasks, list):
             _reconcile(subagents, swarm, tasks, now, turn_over=False, exclude=agent_id)

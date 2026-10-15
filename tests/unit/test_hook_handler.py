@@ -243,6 +243,14 @@ class TestSubagentRouting:
         self._send({"hook_event_name": "SessionEnd"})
         assert "subagents" not in self._state()
 
+    def test_another_conversation_s_subagents_are_not_this_agent_s(self):
+        """A nested or background CLI that inherited the agent's env."""
+        self._send({"hook_event_name": "UserPromptSubmit", "session_id": "mine"})
+        self._send({"hook_event_name": "SubagentStart", "agent_id": "x1", "session_id": "other"})
+        assert "subagents" not in self._state()
+        self._send({"hook_event_name": "SubagentStart", "agent_id": "a1", "session_id": "mine"})
+        assert list(self._state()["subagents"]) == ["a1"]
+
     def test_subagent_events_are_logged_with_their_agent_id(self):
         self._send({"hook_event_name": "SubagentStart", "agent_id": "a1"})
         entries = [json.loads(line) for line in self.log_path.read_text().splitlines()]
