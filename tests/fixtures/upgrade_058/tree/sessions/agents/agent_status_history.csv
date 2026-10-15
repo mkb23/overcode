@@ -1,0 +1,5 @@
+timestamp,agent,status,activity,session_id,hostname
+2026-09-30T09:00:00,orchestrator,running,planning,5e550030-0000-4000-8000-000000000030,fixture-host
+2026-09-30T09:05:00,worker-a,running,pytest -q,5e550033-0000-4000-8000-000000000033,fixture-host
+2026-09-30T09:20:00,worker-b,waiting_oversight,,5e550034-0000-4000-8000-000000000034,fixture-host
+2026-09-30T09:30:00,surveyor,waiting_user,asked a question,5e550036-0000-4000-8000-000000000036,fixture-host

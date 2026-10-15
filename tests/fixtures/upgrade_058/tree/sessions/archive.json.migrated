@@ -1,0 +1,49 @@
+{
+  "0a000000-0000-4000-8000-000000000001": {
+    "id": "0a000000-0000-4000-8000-000000000001",
+    "name": "legacy-alpha",
+    "tmux_session": "agents",
+    "tmux_window": 3,
+    "command": [
+      "claude",
+      "--api-key",
+      "FAKE-CMD-KEY-0010"
+    ],
+    "start_directory": "/home/dev/src/legacy",
+    "start_time": "2026-02-02T10:00:00",
+    "end_time": "2026-02-03T18:30:00",
+    "status": "archived",
+    "standing_instructions": "Old orders with FAKE-SI-TOKEN-0011 inside",
+    "claude_session_ids": [
+      "c1a0c1a0-0000-4000-8000-00000000aaaa"
+    ],
+    "time_context_enabled": true,
+    "stats": {
+      "estimated_cost_usd": 0.5,
+      "total_tokens": 40000,
+      "input_tokens": 30000,
+      "output_tokens": 10000,
+      "interaction_count": 4,
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  "0a000000-0000-4000-8000-000000000002": {
+    "id": "0a000000-0000-4000-8000-000000000002",
+    "name": "legacy-beta",
+    "tmux_session": "agents",
+    "tmux_window": 4,
+    "command": [
+      "claude"
+    ],
+    "start_directory": "/home/dev/src/legacy",
+    "start_time": "2026-03-01T08:00:00",
+    "end_time": "2026-03-01T09:15:00",
+    "status": "archived",
+    "parent_session_id": "0a000000-0000-4000-8000-000000000001",
+    "stats": {
+      "estimated_cost_usd": 0.25,
+      "total_tokens": 9000,
+      "interaction_count": 2
+    }
+  }
+}

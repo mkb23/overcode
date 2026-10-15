@@ -1,0 +1,3 @@
+{"event": "SessionStart", "timestamp": 1792024536.107538}
+{"event": "UserPromptSubmit", "timestamp": 1792024536.107816}
+{"event": "PreToolUse", "timestamp": 1792024536.1080241, "tool_name": "Bash", "tool_input": {"command": "pytest -q"}}

@@ -1,0 +1,62 @@
+{
+  "DO_NOTHING": {
+    "name": "DO_NOTHING",
+    "description": "Supervisor ignores this agent (default)",
+    "instructions": "Do not interact with this agent at all. Do not approve or reject any prompts. Do not send any input. Leave the agent completely alone and let it wait for the human user. This agent is not under supervisor control."
+  },
+  "STANDARD": {
+    "name": "STANDARD",
+    "description": "General-purpose safe automation",
+    "instructions": "Approve safe operations within the working directory: file reads/writes/edits, web fetches, git status/add/commit, running tests. Reject operations outside the project, rm -rf, or anything that could affect system stability. When uncertain, err on the side of caution."
+  },
+  "PERMISSIVE": {
+    "name": "PERMISSIVE",
+    "description": "Trusted agent, minimal friction",
+    "instructions": "Approve most permission requests to keep work flowing. Trust the agent's judgment on file operations, web access, and shell commands within reason. Only reject clearly dangerous operations like rm -rf on large directories, operations on system files, or commands that could crash the system."
+  },
+  "CAUTIOUS": {
+    "name": "CAUTIOUS",
+    "description": "Sensitive project, careful oversight",
+    "instructions": "Take a conservative approach. Approve read operations freely. For writes, check they're within the project and make sense for the task. Reject any git push, deployment commands, or operations that can't be easily undone. When in doubt, let the session wait for the human user."
+  },
+  "RESEARCH": {
+    "name": "RESEARCH",
+    "description": "Information gathering, exploration",
+    "instructions": "Approve all read operations: file reads, web searches, web fetches, grep, glob, directory listings. Approve writing notes or summary files. Be cautious with code modifications - the goal is gathering information, not making changes. Reject shell commands that modify state."
+  },
+  "CODING": {
+    "name": "CODING",
+    "description": "Active development work",
+    "instructions": "Approve file operations within the project: reads, writes, edits. Approve running tests, linters, and build commands. Approve git add and commit. Be cautious with git push - only if tests pass and work looks complete. Reject operations outside the project directory."
+  },
+  "TESTING": {
+    "name": "TESTING",
+    "description": "Running and fixing tests",
+    "instructions": "Approve running test suites (pytest, jest, etc.) and viewing results. Approve file edits to fix failing tests. Approve re-running tests after fixes. Keep the agent focused on making tests pass. Reject unrelated changes or scope creep beyond test fixes."
+  },
+  "REVIEW": {
+    "name": "REVIEW",
+    "description": "Code review, analysis only",
+    "instructions": "Approve only read operations: file reads, git log, git diff, grep searches. The agent should analyze and report, not modify. Reject all write operations, edits, and shell commands that change state. Let the agent provide analysis and recommendations only."
+  },
+  "DEPLOY": {
+    "name": "DEPLOY",
+    "description": "Deployment and release tasks",
+    "instructions": "Approve deployment-related commands: git push, npm publish, docker build/push, deployment scripts. Verify tests pass before approving pushes. Approve version bumps and changelog updates. Be careful with production database commands - verify they're read-only or explicitly requested."
+  },
+  "AUTONOMOUS": {
+    "name": "AUTONOMOUS",
+    "description": "Fully autonomous operation",
+    "instructions": "Approve all reasonable operations to maximize autonomous progress. Trust the agent to make good decisions. Only intervene for clearly dangerous operations (system file modifications, recursive deletes, credential exposure). The goal is minimal human interruption."
+  },
+  "MINIMAL": {
+    "name": "MINIMAL",
+    "description": "Just keep it from stalling",
+    "instructions": "Only intervene when the agent is completely stuck on a permission prompt. Approve simple, safe operations. For anything complex or uncertain, let it wait for the human user. Don't provide guidance or redirect the agent - just handle permission gates."
+  },
+  "SHIP-IT": {
+    "name": "SHIP-IT",
+    "description": "Drive to a merged PR",
+    "instructions": "Push until the PR is merged. Never paste FAKE-SI-TOKEN-0009."
+  }
+}

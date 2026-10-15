@@ -1,0 +1,23 @@
+# overcode config (synthetic fixture)
+hostname: fixture-host
+default_standing_instructions: "Keep going until the task is done."
+
+web:
+  port: 15337
+  api_key: FAKE-WEB-KEY-0000
+
+# Sister machines, written as a column-0 list (PyYAML's own dump style)
+sisters:
+- name: desk-mini
+  url: http://desk-mini.local:15337
+  api_key: FAKE-SISTER-KEY-0002
+  ssh: dev@desk-mini.local
+- name: build-box
+  url: http://build-box.local:15337/
+  tmux_session: agents
+
+summarizer:
+  api_key_var: FAKE_SUMMARIZER_KEY_VAR
+
+session_archive:
+  terminated_grace_seconds: 600

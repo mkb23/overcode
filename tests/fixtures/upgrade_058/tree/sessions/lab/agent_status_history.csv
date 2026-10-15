@@ -1,0 +1,2 @@
+timestamp,agent,status,activity,session_id,hostname
+2026-09-30T09:00:00,experiment,running,,5e550052-0000-4000-8000-000000000052,fixture-host

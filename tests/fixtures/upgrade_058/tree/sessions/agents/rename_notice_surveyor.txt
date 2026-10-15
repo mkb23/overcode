@@ -1,0 +1,1 @@
+[overcode] This agent was renamed from 'scout' to 'surveyor'. Use 'surveyor' as your name from now on; other agents and overcode commands now address you by it.

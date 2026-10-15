@@ -1,0 +1,2 @@
+timestamp,agent,status,activity,session_id,hostname
+2026-09-30T09:00:00,builder,running,make build,5e550040-0000-4000-8000-000000000040,fixture-host

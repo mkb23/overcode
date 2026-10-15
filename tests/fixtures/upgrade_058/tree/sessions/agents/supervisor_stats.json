@@ -1,0 +1,14 @@
+{
+  "supervisor_launches": 3,
+  "supervisor_tokens": 12000,
+  "supervisor_input_tokens": 0,
+  "supervisor_output_tokens": 0,
+  "supervisor_cache_tokens": 0,
+  "last_sync_time": null,
+  "seen_session_ids": [],
+  "supervisor_claude_running": false,
+  "supervisor_claude_started_at": null,
+  "supervisor_claude_total_run_seconds": 0.0,
+  "consecutive_timeouts": 0,
+  "last_timeout_at": null
+}

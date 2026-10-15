@@ -1,0 +1,229 @@
+{
+ "archive_lines": 14,
+ "archive_months": [
+  "2026-02",
+  "2026-03",
+  "2026-04",
+  "2026-05",
+  "2026-06",
+  "2026-07",
+  "2026-08",
+  "2026-09"
+ ],
+ "archived_ids": [
+  "0a000000-0000-4000-8000-000000000001",
+  "0a000000-0000-4000-8000-000000000002",
+  "5e550001-0000-4000-8000-000000000001",
+  "5e550002-0000-4000-8000-000000000002",
+  "5e550010-0000-4000-8000-000000000010",
+  "5e550011-0000-4000-8000-000000000011",
+  "5e550012-0000-4000-8000-000000000012",
+  "5e550020-0000-4000-8000-000000000020",
+  "5e550021-0000-4000-8000-000000000021",
+  "5e550031-0000-4000-8000-000000000031",
+  "5e550032-0000-4000-8000-000000000032",
+  "5e550050-0000-4000-8000-000000000050",
+  "5e550051-0000-4000-8000-000000000051"
+ ],
+ "archived_names": {
+  "0a000000-0000-4000-8000-000000000001": "legacy-alpha",
+  "0a000000-0000-4000-8000-000000000002": "legacy-beta",
+  "5e550001-0000-4000-8000-000000000001": "nightly-audit",
+  "5e550002-0000-4000-8000-000000000002": "bedrock-run",
+  "5e550010-0000-4000-8000-000000000010": "migrate-db",
+  "5e550011-0000-4000-8000-000000000011": "migrate-db-schema",
+  "5e550012-0000-4000-8000-000000000012": "schema-check",
+  "5e550020-0000-4000-8000-000000000020": "pathfinder",
+  "5e550021-0000-4000-8000-000000000021": "sister-mirror",
+  "5e550031-0000-4000-8000-000000000031": "orch-helper-1",
+  "5e550032-0000-4000-8000-000000000032": "orch-helper-1-sub",
+  "5e550050-0000-4000-8000-000000000050": "fix-tests",
+  "5e550051-0000-4000-8000-000000000051": "fix-tests"
+ },
+ "billing_code_by_archived_id": {
+  "0a000000-0000-4000-8000-000000000001": "legacy-alpha",
+  "0a000000-0000-4000-8000-000000000002": "legacy-alpha",
+  "5e550001-0000-4000-8000-000000000001": "nightly-audit",
+  "5e550002-0000-4000-8000-000000000002": "bedrock-run",
+  "5e550010-0000-4000-8000-000000000010": "migrate-db",
+  "5e550011-0000-4000-8000-000000000011": "migrate-db",
+  "5e550012-0000-4000-8000-000000000012": "migrate-db",
+  "5e550020-0000-4000-8000-000000000020": "pathfinder",
+  "5e550021-0000-4000-8000-000000000021": "sister-mirror",
+  "5e550031-0000-4000-8000-000000000031": "orchestrator",
+  "5e550032-0000-4000-8000-000000000032": "orchestrator",
+  "5e550050-0000-4000-8000-000000000050": "fix-tests",
+  "5e550051-0000-4000-8000-000000000051": "fix-tests"
+ },
+ "duplicate_archive_id": "5e550002-0000-4000-8000-000000000002",
+ "expected_ledger_totals": {
+  "bedrock-run": {
+   "agents": 1,
+   "cost": 2.25,
+   "tokens": 165000
+  },
+  "fix-tests": {
+   "agents": 2,
+   "cost": 2.0,
+   "tokens": 150000
+  },
+  "legacy-alpha": {
+   "agents": 2,
+   "cost": 0.75,
+   "tokens": 49000
+  },
+  "migrate-db": {
+   "agents": 3,
+   "cost": 6.75,
+   "tokens": 550000
+  },
+  "nightly-audit": {
+   "agents": 1,
+   "cost": 3.1,
+   "tokens": 210000
+  },
+  "orchestrator": {
+   "agents": 2,
+   "cost": 0.8,
+   "tokens": 68000
+  },
+  "pathfinder": {
+   "agents": 1,
+   "cost": 0.66,
+   "tokens": 50000
+  },
+  "sister-mirror": {
+   "agents": 1,
+   "cost": 0.4,
+   "tokens": 25000
+  }
+ },
+ "expected_live_billing_codes": {
+  "5e550030-0000-4000-8000-000000000030": "orchestrator",
+  "5e550033-0000-4000-8000-000000000033": "orchestrator",
+  "5e550034-0000-4000-8000-000000000034": "orchestrator",
+  "5e550035-0000-4000-8000-000000000035": "orchestrator",
+  "5e550036-0000-4000-8000-000000000036": "surveyor",
+  "5e550040-0000-4000-8000-000000000040": "builder",
+  "5e550041-0000-4000-8000-000000000041": "reviewer",
+  "5e550052-0000-4000-8000-000000000052": "experiment"
+ },
+ "generated_by": "tests/fixtures/upgrade_058/generate.py on overcode 0.5.8",
+ "legacy_files": {
+  "agents": [
+   "episodes_orch-helper-1.jsonl",
+   "heartbeat_orchestrator.last",
+   "hook_events_done-child.jsonl",
+   "hook_events_ghost.jsonl",
+   "hook_events_migrate-db-schema.jsonl",
+   "hook_events_migrate-db.jsonl",
+   "hook_events_migrate-db.jsonl.1",
+   "hook_events_orch-helper-1-sub.jsonl",
+   "hook_events_orch-helper-1.jsonl",
+   "hook_events_orchestrator.jsonl",
+   "hook_events_pathfinder.jsonl",
+   "hook_events_schema-check.jsonl",
+   "hook_events_surveyor.jsonl",
+   "hook_events_worker-a.jsonl",
+   "hook_events_worker-b.jsonl",
+   "hook_state_done-child.json",
+   "hook_state_ghost.json",
+   "hook_state_migrate-db-schema.json",
+   "hook_state_migrate-db.json",
+   "hook_state_orch-helper-1-sub.json",
+   "hook_state_orch-helper-1.json",
+   "hook_state_orchestrator.json",
+   "hook_state_orchestrator.json.lock",
+   "hook_state_pathfinder.json",
+   "hook_state_schema-check.json",
+   "hook_state_scout.json",
+   "hook_state_surveyor.json",
+   "hook_state_worker-a.json",
+   "hook_state_worker-b.json",
+   "rename_notice_surveyor.txt",
+   "report_done-child.json",
+   "report_migrate-db-schema.json",
+   "report_orch-helper-1-sub.json",
+   "report_schema-check.json"
+  ],
+  "lab": [
+   "hook_events_experiment.jsonl",
+   "hook_events_fix-tests.jsonl",
+   "hook_state_experiment.json",
+   "hook_state_fix-tests.json"
+  ],
+  "work": [
+   "hook_events_bedrock-run.jsonl",
+   "hook_events_bedrock-run.jsonl.1",
+   "hook_events_builder.jsonl",
+   "hook_events_nightly-audit.jsonl",
+   "hook_events_reviewer.jsonl",
+   "hook_state_bedrock-run.json",
+   "hook_state_builder.json",
+   "hook_state_nightly-audit.json",
+   "hook_state_reviewer.json"
+  ]
+ },
+ "live_ids": [
+  "5e550030-0000-4000-8000-000000000030",
+  "5e550033-0000-4000-8000-000000000033",
+  "5e550034-0000-4000-8000-000000000034",
+  "5e550035-0000-4000-8000-000000000035",
+  "5e550036-0000-4000-8000-000000000036",
+  "5e550040-0000-4000-8000-000000000040",
+  "5e550041-0000-4000-8000-000000000041",
+  "5e550052-0000-4000-8000-000000000052"
+ ],
+ "live_names": {
+  "5e550030-0000-4000-8000-000000000030": "orchestrator",
+  "5e550033-0000-4000-8000-000000000033": "worker-a",
+  "5e550034-0000-4000-8000-000000000034": "worker-b",
+  "5e550035-0000-4000-8000-000000000035": "done-child",
+  "5e550036-0000-4000-8000-000000000036": "surveyor",
+  "5e550040-0000-4000-8000-000000000040": "builder",
+  "5e550041-0000-4000-8000-000000000041": "reviewer",
+  "5e550052-0000-4000-8000-000000000052": "experiment"
+ },
+ "live_secrets": [
+  "FAKE-SI-TOKEN-0004",
+  "FAKE-CMD-KEY-0005"
+ ],
+ "never_archived_name": "ghost",
+ "renamed": {
+  "archived": {
+   "id": "5e550020-0000-4000-8000-000000000020",
+   "name": "pathfinder",
+   "previous": "scout-old"
+  },
+  "live": {
+   "id": "5e550036-0000-4000-8000-000000000036",
+   "name": "surveyor",
+   "previous": "scout"
+  }
+ },
+ "reused_name": {
+  "ids": [
+   "5e550050-0000-4000-8000-000000000050",
+   "5e550051-0000-4000-8000-000000000051"
+  ],
+  "name": "fix-tests"
+ },
+ "secrets": [
+  "FAKE-SISTER-KEY-0002",
+  "FAKE-CMD-KEY-0003",
+  "FAKE-CMD-KEY-0010",
+  "FAKE-CMD-KEY-0012",
+  "FAKE-SI-TOKEN-0001",
+  "FAKE-SI-TOKEN-0009",
+  "FAKE-SI-TOKEN-0011"
+ ],
+ "sisters": [
+  "desk-mini",
+  "build-box"
+ ],
+ "tmux_sessions": [
+  "agents",
+  "lab",
+  "work"
+ ]
+}
