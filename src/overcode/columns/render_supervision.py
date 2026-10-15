@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from ..clock import from_iso
+from ..clock import from_iso, stamp_epoch
 from ..tui_helpers import format_duration
 from .column import _make_simple_render, _make_simple_render_plain
 from .context import ColumnContext, ColumnOutput
@@ -182,8 +182,13 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
 
     try:
         hg = ctx.e("⏳")
-        deadline = from_iso(deadline_str)
-        remaining = (deadline - datetime.now()).total_seconds()
+        # Epoch arithmetic, the stamp placed by its stored epoch: a deadline
+        # across the autumn clock change, subtracted as naive wall-clock
+        # times, reads an hour off
+        deadline_at = stamp_epoch(deadline_str, getattr(ctx.session, "oversight_deadline_at", None))
+        if deadline_at is None:
+            raise ValueError(deadline_str)
+        remaining = deadline_at - datetime.now().timestamp()
         if remaining <= 0:
             return [(f" {hg} 0s  ", f"bold blink red{ctx.bg}")]
 

@@ -1722,3 +1722,40 @@ class TestChildRollup:
         text = self._text(child_count=2, child_rollup={"working": 1, "success": 1},
                           emoji_free=True)
         assert text == " Ch 2 1> 1ok"
+
+
+class TestOversightCountdownAcrossTheAutumnChange:
+    """25 Oct 2026, London: 02:00 BST becomes 01:00 GMT."""
+
+    @pytest.fixture
+    def london(self, monkeypatch):
+        import time
+
+        if not hasattr(time, "tzset"):
+            pytest.skip("needs time.tzset")
+        monkeypatch.setenv("TZ", "Europe/London")
+        time.tzset()
+        yield
+        monkeypatch.undo()
+        time.tzset()
+
+    def test_a_deadline_after_the_change_counts_down_the_real_time_left(self, london, monkeypatch):
+        from datetime import timezone
+
+        from overcode.columns import render_supervision
+        from overcode.columns.render_supervision import render_oversight_countdown
+
+        staged = datetime(2026, 10, 25, 0, 50, tzinfo=timezone.utc).timestamp()  # 01:50 BST
+        deadline_at = staged + 1800  # 01:20 GMT, stamped naive '01:20'
+        session = _make_session(status="waiting_oversight",
+                                oversight_deadline="2026-10-25T01:20:00",
+                                oversight_deadline_at=deadline_at)
+        now = staged + 300  # 01:55 BST: 25 min left
+        frozen = type("Frozen", (datetime,), {
+            "now": classmethod(lambda cls, tz=None: datetime.fromtimestamp(now))})
+        monkeypatch.setattr(render_supervision, "datetime", frozen)
+        ctx = _make_ctx(session=session, status="waiting_oversight",
+                        oversight_deadline="2026-10-25T01:20:00")
+        [(text, style)] = render_oversight_countdown(ctx)
+        assert text.endswith("25m00s")
+        assert "yellow" in style
