@@ -163,6 +163,20 @@ class TestReconcile:
         assert set(subs) == {"a2"}
         assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=2, running=1, ok=1)
 
+    def test_a_stopped_agent_still_listed_is_running_again(self):
+        """Seen live: a background subagent backgrounds its own shell and ends
+        its turn (SubagentStop), and Claude keeps listing it until the shell ends."""
+        subs, sw = _parent({}, {}, "PostToolUse", "Agent", {},
+                           tool_response={"status": "async_launched", "agentId": "a1"})
+        subs, sw = _sub(subs, sw, "SubagentStart", "a1", 1.0)
+        subs, sw = _sub(subs, sw, "SubagentStop", "a1", 2.0, background_tasks=[
+            {"id": "a1", "type": "subagent", "status": "running"}])
+        subs, sw = _parent(subs, sw, "Stop", now=3.0, background_tasks=[
+            {"id": "a1", "type": "subagent", "status": "running"}])
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
+        subs, sw = _parent(subs, sw, "Stop", now=50.0, background_tasks=[])
+        assert swarm.rollup(_state(subs, sw), 50.0) == _rollup(total=1, ok=1)
+
     def test_another_agent_s_stop_leaves_a_foreground_one_alone(self):
         """Two foreground agents in parallel (07): the first one's
         SubagentStop lists neither, and the second is still working."""

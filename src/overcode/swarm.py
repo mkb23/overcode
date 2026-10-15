@@ -232,15 +232,22 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
             _finish(subagents, swarm, agent_id, RESULT_OK, now)
     _end_orphan_workflow_agents(subagents, swarm, now)
 
-    # In flight but never seen starting (its SubagentStart was lost)
+    # In flight but never seen starting (its SubagentStart was lost), or
+    # seen stopping while Claude still runs it: a subagent that ends its
+    # turn with its own background work going (a shell) fires SubagentStop,
+    # and Claude reports it "waiting on its own background work" in this
+    # list until that work ends. It is running again, not finished.
     done = swarm.get("done") or {}
     for t in running:
-        if t.get("type") == "subagent" and t["id"] not in subagents and t["id"] not in done:
-            agent_type = t.get("agent_type")
-            subagents[t["id"]] = {
-                "type": agent_type, "kind": agent_kind(t["id"], agent_type, swarm),
-                "started_at": now, "last_seen": now,
-            }
+        if t.get("type") != "subagent" or t["id"] in subagents:
+            continue
+        ended = done.pop(t["id"], None)
+        agent_type = t.get("agent_type")
+        subagents[t["id"]] = {
+            "type": agent_type,
+            "kind": (ended or {}).get("kind") or agent_kind(t["id"], agent_type, swarm),
+            "started_at": now, "last_seen": now,
+        }
 
 
 def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
