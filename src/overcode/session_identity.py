@@ -69,7 +69,11 @@ def advance_entry(
     if known and ids[-1] != agent_session_id:
         return "superseded", active, False
 
-    if not known and not (allow_new or (allow_first and not active)):
+    # ``allow_first`` admits the conversation a launch starts: the agent's
+    # first, or the one after a fresh relaunch of a backend that mints its
+    # own ids, whose record still names the conversation it discarded.
+    fresh = not active or bool(entry.get('agent_session_fresh_pending'))
+    if not known and not (allow_new or (allow_first and fresh)):
         return "rejected", active, False
 
     # Age check, for a delayed hook whose id has never been seen: two
@@ -97,6 +101,7 @@ def advance_entry(
 
     entry['agent_session_ids'] = ids
     entry.pop('claude_session_ids', None)  # a pre-0.6 twin
+    entry.pop('agent_session_fresh_pending', None)
     entry['active_agent_session_id'] = agent_session_id
     entry.pop('active_claude_session_id', None)  # a pre-0.6 twin
     confirmed = ordinal is not None and not ages_tied
@@ -174,6 +179,9 @@ class SessionIdentityMixin:
                 state[session_id].pop('active_claude_session_id', None)  # a pre-0.6 twin
                 state[session_id].pop('active_agent_session_ordinal', None)
                 state[session_id]['active_agent_session_unordered'] = True
+                # A fresh launch's conversation, once named, is the one
+                # the launch was waiting for.
+                state[session_id].pop('agent_session_fresh_pending', None)
 
     def advance_active_agent_session_id(
         self, session_id: str, agent_session_id: str, ordinal: float | None = None,

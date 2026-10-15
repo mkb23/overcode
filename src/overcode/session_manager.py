@@ -153,6 +153,11 @@ class Session:
     # has never seen before.
     active_agent_session_ordinal: float | None = None
     active_agent_session_unordered: bool = False
+    # Set by a fresh launch whose backend mints its own conversation id
+    # (codex, opencode): the conversation that launch starts is new, so its
+    # first SessionStart may replace active_agent_session_id, which still
+    # names the conversation the launch discarded.
+    agent_session_fresh_pending: bool = False
 
     # Heartbeat configuration (#171)
     heartbeat_enabled: bool = False

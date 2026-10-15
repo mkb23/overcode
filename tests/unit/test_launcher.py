@@ -2599,6 +2599,62 @@ class TestBuildLaunchSettings:
             assert p in allow
 
 
+class TestFreshRestartOfASelfNamingBackend:
+    """codex mints its own conversation ids, so ``restart --fresh`` cannot
+    bind the new one up front: the record keeps naming the discarded
+    conversation until the new process's SessionStart replaces it."""
+
+    def _codex_agent(self, tmp_path):
+        from overcode import hook_handler
+        mock_tmux = MockTmux()
+        sm = SessionManager(skip_git_detection=True)
+        launcher = AgentLauncher("agents", TmuxManager("agents", tmux=mock_tmux), sm)
+        session = launcher.launch(name="cx", backend="codex", start_directory=str(tmp_path))
+        hook_handler._sync_agent_session_id("cx", "conv-A", None, event="SessionStart", source="startup")
+        assert sm.get_session(session.id).active_agent_session_id == "conv-A"
+        return launcher, sm, session, mock_tmux
+
+    def test_the_new_conversation_replaces_the_discarded_one(self, tmp_path):
+        from overcode import hook_handler
+        launcher, sm, session, mock_tmux = self._codex_agent(tmp_path)
+
+        with patch("overcode.launcher.time.sleep"):
+            assert launcher.restart(sm.get_session(session.id), fresh=True)
+        effective, _ = hook_handler._sync_agent_session_id(
+            "cx", "conv-C", None, event="SessionStart", source="startup")
+
+        after = sm.get_session(session.id)
+        assert effective == "conv-C"
+        assert after.active_agent_session_id == "conv-C"
+        assert after.agent_session_ids == ["conv-A", "conv-C"]
+
+        # The next plain restart resumes the fresh conversation, not the old one.
+        mock_tmux.sent_keys.clear()
+        with patch("overcode.launcher.time.sleep"):
+            assert launcher.restart(after)
+        cmd = [k[2] for k in mock_tmux.sent_keys if "OVERCODE_SESSION_NAME=cx" in k[2]][-1]
+        assert "conv-C" in cmd and "conv-A" not in cmd
+
+    def test_only_the_first_new_conversation_is_adopted(self, tmp_path):
+        # Once the fresh conversation is in, a nested codex's startup event
+        # is a stranger again (#500).
+        from overcode import hook_handler
+        launcher, sm, session, _ = self._codex_agent(tmp_path)
+        with patch("overcode.launcher.time.sleep"):
+            assert launcher.restart(sm.get_session(session.id), fresh=True)
+        hook_handler._sync_agent_session_id("cx", "conv-C", None, event="SessionStart", source="startup")
+        hook_handler._sync_agent_session_id("cx", "nested", None, event="SessionStart", source="startup")
+        assert sm.get_session(session.id).active_agent_session_id == "conv-C"
+
+    def test_a_resuming_restart_keeps_strangers_out(self, tmp_path):
+        from overcode import hook_handler
+        launcher, sm, session, _ = self._codex_agent(tmp_path)
+        with patch("overcode.launcher.time.sleep"):
+            assert launcher.restart(sm.get_session(session.id))
+        hook_handler._sync_agent_session_id("cx", "nested", None, event="SessionStart", source="startup")
+        assert sm.get_session(session.id).active_agent_session_id == "conv-A"
+
+
 class TestLauncherRestart:
     """Test AgentLauncher.restart — restart preserves full launch context (#XXX)."""
 

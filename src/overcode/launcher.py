@@ -887,6 +887,14 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         claude_cmd = backend.build_command(spec)
         cmd_str = self._build_launch_cmd_str(backend, spec, claude_cmd)
 
+        # A fresh launch whose backend mints the new conversation's id leaves
+        # the record on the discarded one until the agent's first
+        # SessionStart names the new one; this lets that event replace it.
+        # Written before the CLI starts, so its first hook sees it.
+        fresh_pending = resume_sid is None and new_claude_sid is None
+        if fresh_pending or session.agent_session_fresh_pending:
+            self.sessions.update_session(session.id, agent_session_fresh_pending=fresh_pending)
+
         if not self.tmux.send_keys(window_name, cmd_str, enter=True):
             return False
 
