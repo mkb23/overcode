@@ -193,6 +193,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             session_manager=self.sessions,
         )
 
+    def _window_alive(self, session: Session) -> bool:
+        """Whether ``session``'s window exists, in whichever tmux session it lives in."""
+        return self.for_agent(session).tmux.window_exists(session.tmux_window)
+
     # Maximum nesting depth for agent hierarchy (#244)
     MAX_HIERARCHY_DEPTH = 5
 
@@ -484,9 +488,12 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         existing = self.sessions.get_session_by_name(name)
         with _tmux_answers():
             if existing:
-                # Check if its tmux window still exists
-                if self.tmux.window_exists(existing.tmux_window):
-                    print(f"Session '{name}' already exists in window {existing.tmux_window}")
+                # The name is taken fleet-wide: look for its window in the
+                # tmux session it lives in, not this launcher's, or a live
+                # agent elsewhere reads as stale and loses its record.
+                if self._window_alive(existing):
+                    print(f"Session '{name}' already exists in window "
+                          f"{existing.tmux_session or self.tmux_session}:{existing.tmux_window}")
                     return existing
                 else:
                     # Window is gone, clean up the stale session
@@ -679,8 +686,9 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         existing = self.sessions.get_session_by_name(name)
         with _tmux_answers("fork"):
             if existing:
-                if self.tmux.window_exists(existing.tmux_window):
-                    print(f"Session '{name}' already exists in window {existing.tmux_window}")
+                if self._window_alive(existing):
+                    print(f"Session '{name}' already exists in window "
+                          f"{existing.tmux_session or self.tmux_session}:{existing.tmux_window}")
                     return existing
                 else:
                     self.sessions.delete_session(existing.id)

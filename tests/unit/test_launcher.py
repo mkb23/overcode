@@ -3407,3 +3407,61 @@ class TestActsInTheAgentsOwnTmuxSession:
             assert launcher.get_session_output("worker") == "hello"
         cmd = run.call_args.args[0]
         assert cmd[cmd.index("-t") + 1].startswith("work:")
+
+
+class TestNameTakenInAnotherTmuxSession:
+    """A name held by a live agent in another tmux session is not stale.
+
+    Names are unique fleet-wide, so launch/fork must look for the holder's
+    window in the tmux session it lives in. Looking in the launcher's own
+    (the --session default) deleted the live agent's record and left its
+    window running untracked.
+    """
+
+    def _launchers(self, tmp_path):
+        mock_tmux = MockTmux()
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        work = AgentLauncher(
+            tmux_session="work",
+            tmux_manager=TmuxManager("work", tmux=mock_tmux),
+            session_manager=sm,
+        )
+        agents = AgentLauncher(
+            tmux_session="agents",
+            tmux_manager=TmuxManager("agents", tmux=mock_tmux),
+            session_manager=sm,
+        )
+        return work, agents, sm, mock_tmux
+
+    def test_launch_keeps_live_agent_of_another_session(self, tmp_path):
+        work, agents, sm, _ = self._launchers(tmp_path)
+        live = work.launch(name="foo")
+
+        again = agents.launch(name="foo")
+
+        assert sm.get_session(live.id) is not None
+        assert again.id == live.id
+        assert [s.id for s in sm.list_sessions()] == [live.id]
+
+    def test_launch_replaces_dead_agent_of_another_session(self, tmp_path):
+        work, agents, sm, mock_tmux = self._launchers(tmp_path)
+        dead = work.launch(name="foo")
+        mock_tmux.kill_window("work", dead.tmux_window)
+
+        fresh = agents.launch(name="foo")
+
+        assert fresh.id != dead.id
+        assert fresh.tmux_session == "agents"
+        assert sm.get_session(dead.id) is None
+
+    def test_fork_keeps_live_agent_of_another_session(self, tmp_path):
+        work, agents, sm, _ = self._launchers(tmp_path)
+        live = work.launch(name="foo")
+        source = agents.launch(name="src")
+        sm.set_active_agent_session_id(source.id, "claude-session-abc123")
+        source = sm.get_session(source.id)
+
+        forked = agents.launch_fork(name="foo", source_session=source)
+
+        assert sm.get_session(live.id) is not None
+        assert forked.id == live.id
