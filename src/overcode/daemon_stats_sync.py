@@ -16,7 +16,7 @@ from .clock import SYSTEM_CLOCK, Clock, stamp
 from .energy import estimate_energy_joules
 from .monitor_daemon_core import calculate_total_tokens
 from .pricing import calculate_cost_estimate
-from .session_manager import PendingUpdates
+from .session_manager import PendingUpdates, lowers_spend
 from .stats_reader import AgentSessionStats, stats_reader_for_session
 
 
@@ -277,9 +277,8 @@ class StatsSync:
             stats.cache_creation_tokens,
             stats.cache_read_tokens,
         )
-        pending.update_stats(
-            session.id,
-            **extra,
+        usage = dict(
+            extra,
             total_tokens=total_tokens,
             input_tokens=stats.input_tokens,
             output_tokens=stats.output_tokens,
@@ -293,6 +292,13 @@ class StatsSync:
             current_context_tokens=stats.current_context_tokens,
             last_stats_update=stamp(now),
         )
+        if lowers_spend(session.stats, usage):
+            # Transcripts on record are gone (pruned, or a pre-upgrade
+            # record): the reader's lower totals must not replace the
+            # spend, or the next ledger row records the loss
+            self.log.debug(f"{session.name}: stats read lower than on record, kept")
+            return
+        pending.update_stats(session.id, **usage)
 
     def note_stats_view(self, session, stats: Optional[AgentSessionStats]) -> None:
         """Keep the transcript-derived values views render, from one sync.

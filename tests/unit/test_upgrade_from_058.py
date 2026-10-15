@@ -348,6 +348,30 @@ def test_archiving_a_pre_upgrade_agent_keeps_its_spend(upgraded):
     assert final and final[-1]["cost"] == spent
 
 
+def test_the_daemon_stats_sync_keeps_a_pre_upgrade_agents_spend(upgraded):
+    """The daemon reads a done agent's transcripts too; gone ones read as zeros."""
+    from overcode.daemon_stats_sync import StatsSync
+    from overcode.session_manager import PendingUpdates, _StatsLog
+
+    root, out, before = upgraded
+    sm = out["sm"]
+    child = next(s for s in sm.list_sessions() if s.name == "done-child")
+    spent, tokens = child.stats.estimated_cost_usd, child.stats.total_tokens
+    assert spent > 0
+    sm.update_session(child.id, agent_session_ids=["c1a0c1a0-0000-4000-8000-0000000000dc"])
+    pending = PendingUpdates()
+    StatsSync(session_manager=sm, log=_StatsLog()).sync_agent_stats(
+        sm.get_session(child.id), pending)  # the daemon's tick
+    sm.commit_pending(pending)
+    kept = sm.get_session(child.id).stats
+    assert (kept.estimated_cost_usd, kept.total_tokens) == (spent, tokens)
+    archive = PendingUpdates()
+    archive.archive_session(child.id)  # housekeeping's archive
+    sm.commit_pending(archive)
+    final = [r for r in sm.ledger.iter_rows() if r["sid"] == child.id and r["kind"] == "final"]
+    assert final and final[-1]["cost"] == spent
+
+
 def test_ledger_by_month(upgraded):
     """A month's report holds the agents archived that month (backfill rows keep their time)."""
     from datetime import datetime

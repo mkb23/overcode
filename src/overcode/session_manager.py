@@ -323,16 +323,28 @@ _STATS_FIELD_NAMES = frozenset(f.name for f in fields(SessionStats))
 _StateTxn = Transaction
 
 
-_CUMULATIVE_STATS = ("estimated_cost_usd", "total_tokens", "input_tokens", "output_tokens")
+_CUMULATIVE_TOKENS = ("total_tokens", "input_tokens", "output_tokens")
 
 
-def _lowers_spend(stats: "SessionStats", staged: Dict[str, object]) -> bool:
-    """Whether ``staged`` stats would lower a cumulative counter on record."""
-    for key in _CUMULATIVE_STATS:
-        new, old = staged.get(key), getattr(stats, key, None)
-        if isinstance(new, (int, float)) and isinstance(old, (int, float)) and new < old:
+def lowers_spend(stats: "SessionStats", staged: Mapping[str, object]) -> bool:
+    """Whether ``staged`` stats would lose spend already on record.
+
+    Token counts and cost are cumulative, so a read that lowers a token
+    count, or zeroes a cost on record, comes from transcripts that are
+    gone (pruned after Claude's cleanupPeriodDays, or a pre-upgrade record
+    kept elsewhere), not from less work. A cost that drops while the
+    tokens hold (a pricing-table fix) is a real change and passes.
+    """
+    def number(source, key):
+        value = source.get(key) if isinstance(source, Mapping) else getattr(source, key, None)
+        return value if isinstance(value, (int, float)) else None
+
+    for key in _CUMULATIVE_TOKENS:
+        new, old = number(staged, key), number(stats, key)
+        if new is not None and old is not None and new < old:
             return True
-    return False
+    new, old = number(staged, "estimated_cost_usd"), number(stats, "estimated_cost_usd")
+    return new is not None and old is not None and new <= 0 < old
 
 
 class PendingUpdates:
@@ -957,15 +969,12 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             except Exception as e:
                 logger.warning("final stats of %s not refreshed: %s", session_id, e)
                 continue
-            staged = scratch.stats.get(session_id, {})
-            if _lowers_spend(session.stats, staged):
-                # The transcript is gone (pruned, or a pre-upgrade record):
-                # the reader's zeros must not replace the spend on record
-                staged = {}
+            # ``sync_agent_stats`` stages nothing that lowers the spend on
+            # record (``lowers_spend``), so a gone transcript keeps it
             for key, changes in scratch.fields.items():
                 pending.update_session(key, **changes)
-            if staged:
-                pending.update_stats(session_id, **staged)
+            for key, changes in scratch.stats.items():
+                pending.update_stats(key, **changes)
 
     def rebill(self, session_id: str, billing_code: str) -> Optional[str]:
         """Move an agent to another billing code, forward only; returns the old code.
