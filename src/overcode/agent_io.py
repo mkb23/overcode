@@ -244,7 +244,13 @@ class AgentIOMixin:
         """Send text/keys to an already-resolved session.
 
         Internal helper shared by send_to_session() and send_to_session_by_id().
+        Sent in the agent's own tmux session: agents are found fleet-wide,
+        and this launcher's may not be theirs (the CLI's --session default).
         """
+        owner = self.for_agent(session)
+        if owner is not self:
+            return owner._send_to_resolved_session(session, text, enter)
+
         # Handle special keys
         special_keys = {
             "enter": "",  # Empty string + Enter = just press Enter
@@ -330,6 +336,7 @@ class AgentIOMixin:
         if session is None:
             print(f"Session '{name}' not found")
             return None
+        tmux_session = self.for_agent(session).tmux.session_name  # its own, not ours
 
         try:
             from .tmux_utils import _build_tmux_cmd
@@ -337,7 +344,7 @@ class AgentIOMixin:
             result = subprocess.run(
                 [
                     *_build_tmux_cmd(), "capture-pane",
-                    "-t", tmux_window_target(self.tmux.session_name, session.tmux_window),
+                    "-t", tmux_window_target(tmux_session, session.tmux_window),
                     "-p",  # Print to stdout
                     "-S", f"-{lines}",  # Capture last N lines
                 ],

@@ -3357,3 +3357,41 @@ class TestTmuxNotAnswering:
         tmux.unresponsive = True
         assert launcher.kill_session("kid") is False
         assert sm.get_session(session.id) is not None
+
+
+class TestActsInTheAgentsOwnTmuxSession:
+    """An agent found fleet-wide is sent to, read and attached in its own
+    tmux session, not the one the launcher was built for (--session)."""
+
+    def _setup(self, tmp_path):
+        tmux = MockTmux()
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        sm.create_session("worker", "work", "worker-abcd", ["claude"])
+        tmux.new_session("work")
+        tmux.new_window("work", "worker-abcd")
+        launcher = AgentLauncher("agents", TmuxManager("agents", tmux=tmux), sm)
+        return launcher, tmux
+
+    def test_send(self, tmp_path):
+        launcher, tmux = self._setup(tmp_path)
+        assert launcher.send_to_session("worker", "continue") is True
+        assert [(s, w) for s, w, *_ in tmux.sent_keys] == [("work", "worker-abcd")]
+
+    def test_send_raw_key(self, tmp_path):
+        launcher, tmux = self._setup(tmp_path)
+        assert launcher.send_to_session("worker", "escape") is True
+        assert {s for s, *_ in tmux.sent_keys} == {"work"}
+
+    def test_attach(self, tmp_path):
+        launcher, tmux = self._setup(tmp_path)
+        with patch.object(tmux, "attach") as attach:
+            launcher.attach(name="worker")
+        attach.assert_called_once_with("work", window="worker-abcd", bare=False)
+
+    def test_session_output(self, tmp_path):
+        launcher, _ = self._setup(tmp_path)
+        done = MagicMock(returncode=0, stdout="hello\n")
+        with patch("overcode.agent_io.subprocess.run", return_value=done) as run:
+            assert launcher.get_session_output("worker") == "hello"
+        cmd = run.call_args.args[0]
+        assert cmd[cmd.index("-t") + 1].startswith("work:")

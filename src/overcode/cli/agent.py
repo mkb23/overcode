@@ -1334,6 +1334,8 @@ def show(
         rprint(f"[red]✗[/red] Agent '[bold]{name}[/bold]' not found")
         raise typer.Exit(1)
     name = sess.name  # an old name resolved; show under the current one
+    # Found fleet-wide: its daemon state and window are in its own tmux session
+    session = sess.tmux_session or session
 
     # Read daemon state for status/activity (single source of truth)
     daemon_state = get_monitor_daemon_state(session)

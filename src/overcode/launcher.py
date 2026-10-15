@@ -1008,17 +1008,24 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             name: optional agent name to focus on
             bare: if True, strip tmux chrome for embedding in other terminals
         """
+        if not name:
+            return self._attach_to(None, name, bare)
+        session = self._resolve(name)
+        if session is None:
+            print(f"Error: agent '{name}' not found")
+            return
+        # Found fleet-wide: attach to its own tmux session, not --session's
+        return self.for_agent(session)._attach_to(session, name, bare)
+
+    def _attach_to(self, session: Optional[Session], name: Optional[str], bare: bool):
+        """Attach to this launcher's tmux session, on ``session``'s window if given."""
         if not self.tmux.session_exists():
             print(f"Error: tmux session '{self.tmux.session_name}' does not exist")
             print("No active sessions to attach to. Launch a session first with 'overcode launch'")
             return
 
         window = None
-        if name:
-            session = self._resolve(name)
-            if session is None:
-                print(f"Error: agent '{name}' not found")
-                return
+        if session is not None:
             if not self.tmux.window_exists(session.tmux_window):
                 print(f"Error: agent '{name}' tmux window no longer exists")
                 return

@@ -331,6 +331,30 @@ class TestShowCommandWithMocks:
         assert "3 background bashes" in output
         assert "Δ3 files" in output
 
+    def test_show_reads_the_agents_own_tmux_session(self, fleet):
+        """An agent of another tmux session: its daemon state, not --session's."""
+        from datetime import datetime
+        from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
+        from overcode.settings import get_monitor_daemon_state_path
+
+        s = fleet.add("worker", tmux_session="work")
+        MonitorDaemonState(
+            sessions=[SessionDaemonState(session_id=s.id, name="worker",
+                                         current_status="waiting_user",
+                                         current_activity="Waiting in work")],
+            pid=1, status="active", last_loop_time=datetime.now().isoformat(),
+        ).save(get_monitor_daemon_state_path("work"))
+        dispatcher = MagicMock()
+        dispatcher.return_value.get_pane_content.return_value = ""
+        with _detector_seeing("running", "Seen in agents", ""), \
+                patch('overcode.status_detector_factory.StatusDetectorDispatcher',
+                      dispatcher):
+            result = runner.invoke(app, ["show", "worker", "-n", "0"])
+
+        assert result.exit_code == 0, result.output
+        assert "Waiting in work" in result.output
+        dispatcher.assert_called_once_with("work")
+
     def test_show_agent_not_found(self, fleet):
         """Show exits with error when agent not found"""
         result = runner.invoke(app, ["show", "nonexistent"])
