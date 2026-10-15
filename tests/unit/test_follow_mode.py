@@ -332,20 +332,17 @@ class TestPollForReport:
         mock_sessions = MagicMock()
         mock_sessions.get_session_by_name.return_value = MagicMock()
 
-        from datetime import datetime, timedelta
-
-        # First now() sets deadline, second now() checks against it
+        # First time() sets deadline, second time() checks against it
         times = iter([
-            datetime(2024, 1, 1, 12, 0, 0),   # deadline = this + 1s
-            datetime(2024, 1, 1, 12, 0, 10),   # past deadline -> timeout
+            1_000_000.0,   # deadline = this + 1s
+            1_000_010.0,   # past deadline -> timeout
         ])
 
         with patch("overcode.follow_mode._check_report", return_value=None):
             with patch("overcode.follow_mode._check_session_terminated", return_value=False):
                 with patch("overcode.follow_mode._capture_pane", return_value=None):
                     with patch("overcode.follow_mode.time.sleep"):
-                        with patch("overcode.follow_mode.datetime") as mock_dt:
-                            mock_dt.now.side_effect = lambda: next(times)
+                        with patch("overcode.follow_mode.time.time", side_effect=lambda: next(times)):
                             result = _poll_for_report(
                                 "test", "agents", mock_sessions, 1,
                                 "timeout", 1.0, 0.1, deque(),
@@ -371,6 +368,42 @@ class TestPollForReport:
         assert result == 2
         mock_sessions.update_session.assert_called_once_with(
             session.id, report_status="failure", report_reason="Oversight timeout expired")
+
+    def test_a_deadline_in_the_second_autumn_pass_is_not_already_past(self, monkeypatch):
+        """The daemon stages a deadline that falls in the repeated autumn
+        hour while the clock is still in its first pass: the naive stamp
+        must not read as already past, failing the child at once."""
+        import time as _time
+        from datetime import datetime, timedelta, timezone
+        from overcode.clock import stamp
+
+        if not hasattr(_time, "tzset"):
+            pytest.skip("needs time.tzset")
+        monkeypatch.setenv("TZ", "America/New_York")
+        _time.tzset()
+        try:
+            now = datetime(2026, 11, 1, 5, 50, tzinfo=timezone.utc).astimezone()  # 01:50 EDT
+            due = now + timedelta(minutes=20)  # 01:10 EST
+            for deadline_at in (due.timestamp(), None):
+                session = MagicMock(oversight_deadline=stamp(due), oversight_deadline_at=deadline_at)
+                assert session.oversight_deadline == "2026-11-01T01:10:00"
+                mock_sessions = MagicMock()
+                mock_sessions.get_session_by_name.return_value = session
+                reports = iter([None, {"status": "success"}])
+                with patch("overcode.follow_mode._check_report", side_effect=lambda *a: next(reports)), \
+                        patch("overcode.follow_mode._check_session_terminated", return_value=False), \
+                        patch("overcode.follow_mode._capture_pane", return_value=None), \
+                        patch("overcode.follow_mode.time.sleep"), \
+                        patch("overcode.follow_mode.time.time", return_value=now.timestamp()), \
+                        patch("overcode.follow_mode.datetime") as mock_dt:
+                    mock_dt.now.return_value = now.replace(tzinfo=None)
+                    result = _poll_for_report("test", "agents", mock_sessions, 1,
+                                              "timeout", 1200.0, 0.1, deque())
+                assert result == 0
+                mock_sessions.update_session.assert_not_called()
+        finally:
+            monkeypatch.undo()
+            _time.tzset()
 
     def test_returns_1_on_terminated(self):
         mock_sessions = MagicMock()

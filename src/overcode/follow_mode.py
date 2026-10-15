@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .clock import from_iso
+from .clock import stamp, stamp_epoch, to_epoch
 from .session_manager import Session, SessionManager, rename_notice
 from .status_patterns import strip_ansi
 from .child_lifecycle import OVERSIGHT_TIMEOUT_REASON, hook_stopped, read_report
@@ -254,11 +254,15 @@ def follow_agent(
                 if session:
                     if (oversight_policy == "timeout" and oversight_timeout_seconds > 0
                             and not session.oversight_deadline):
-                        deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
+                        deadline = datetime.now().astimezone() + timedelta(
+                            seconds=oversight_timeout_seconds)
+                        # The epoch beside the naive stamp places it in the
+                        # repeated autumn hour, as the daemon's does
                         sessions.update_session(
                             session.id,
                             status=STATUS_WAITING_OVERSIGHT,
-                            oversight_deadline=deadline.isoformat(),
+                            oversight_deadline=stamp(deadline),
+                            oversight_deadline_at=deadline.timestamp(),
                         )
                         sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
                     else:
@@ -312,18 +316,24 @@ def _poll_for_report(
     Returns:
         0 on success report, 1 on failure report or terminated, 2 on timeout
     """
-    deadline = None
+    # Epoch seconds: the stored deadline is a naive local stamp, which a
+    # naive now misreads in the repeated autumn hour (a deadline in the
+    # second pass read as already past in the first)
+    deadline: Optional[float] = None
     if oversight_policy == "timeout" and oversight_timeout_seconds > 0:
-        deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
+        now_at = time.time()
+        deadline = now_at + oversight_timeout_seconds
         # The session's own deadline when one is set: the daemon enforces
         # that one too, so both agree on when the child times out
         session = _lookup(sessions, name, session_id)
         set_deadline = getattr(session, "oversight_deadline", None)
         if isinstance(set_deadline, str) and set_deadline:
-            try:
-                deadline = from_iso(set_deadline)
-            except ValueError:
-                pass
+            set_at = getattr(session, "oversight_deadline_at", None)
+            placed = isinstance(set_at, (int, float)) and not isinstance(set_at, bool)
+            set_epoch = (stamp_epoch(set_deadline, set_at) if placed
+                         else to_epoch(set_deadline, near=now_at, ahead=True))
+            if set_epoch is not None:
+                deadline = set_epoch
 
     while True:
         name, window_name = _current_identity(sessions, session_id, name, window_name)
@@ -333,7 +343,7 @@ def _poll_for_report(
             return _handle_report(report, name, sessions, session_id)
 
         # Check timeout
-        if deadline and datetime.now() >= deadline:
+        if deadline is not None and time.time() >= deadline:
             session = _lookup(sessions, name, session_id)
             if session:
                 sessions.update_session(
