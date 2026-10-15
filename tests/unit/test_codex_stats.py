@@ -481,6 +481,37 @@ class TestMissingRollouts:
         assert per[self.GHOSTS[1]]["in"] == 500
         assert set(globbed) == {day_dir(root, late)}
 
+    def test_a_day_dir_that_failed_to_list_is_searched_again(self, tmp_path, monkeypatch):
+        """A transient listing error (EMFILE) is not a settled miss: the
+        rollout filed under an unchanging old day is found next sync."""
+        from overcode.backends import codex_stats
+
+        old = datetime.now().replace(microsecond=0) - timedelta(days=7)
+        write_rollout(
+            rollout_path(tmp_path / "sessions", self.GHOSTS[1],
+                         ts=old.strftime("%Y-%m-%dT%H-%M-%S"), dt=old),
+            [session_meta_line(self.GHOSTS[1]), turn_context_event(), user_turn_item(),
+             token_count_event(input_tokens=500)])
+        root, _now, _active, session, _globbed = self._fleet(tmp_path, monkeypatch)
+        listed = codex_stats._rollout_files_in
+        failing = {day_dir(root, old)}
+        monkeypatch.setattr(codex_stats, "_rollout_files_in",
+                            lambda d: None if d in failing else listed(d))
+        reader = CodexStatsReader(sessions_dir=root)
+        assert self.GHOSTS[1] not in reader.get_stats(session).per_conversation
+        failing.clear()
+        assert reader.get_stats(session).per_conversation[self.GHOSTS[1]]["in"] == 500
+
+    def test_listing_a_dir_reports_an_error_glob_would_hide(self, tmp_path, monkeypatch):
+        import os
+        from overcode.backends import codex_stats
+
+        def emfile(path):
+            raise OSError(24, "Too many open files")
+
+        monkeypatch.setattr(os, "scandir", emfile)
+        assert codex_stats._rollout_files_in(tmp_path) is None
+
 
 class TestStoredCost:
     def test_no_local_cost_figure(self, reader):

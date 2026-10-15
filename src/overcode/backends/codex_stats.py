@@ -129,11 +129,17 @@ def _dir_signature(day_dir: Path) -> Optional[tuple]:
     return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
-def _rollout_files_in(day_dir: Path) -> List[Path]:
+def _rollout_files_in(day_dir: Path) -> Optional[List[Path]]:
+    """The rollouts filed in ``day_dir``, by name; None when it could not be
+    listed (no such dir, or a transient error such as running out of file
+    descriptors), which ``Path.glob`` would hide as an empty dir."""
     try:
-        return sorted(p for p in day_dir.glob("rollout-*.jsonl") if p.is_file())
+        with os.scandir(day_dir) as entries:
+            return sorted(Path(e.path) for e in entries
+                          if e.name.startswith("rollout-") and e.name.endswith(".jsonl")
+                          and e.is_file())
     except OSError:
-        return []
+        return None
 
 
 def _rollout_started(path: Path) -> Optional[datetime]:
@@ -333,7 +339,7 @@ def _latest_rollout_file(root: Optional[Path] = None) -> Optional[Path]:
     base = root or sessions_root()
     candidates: List[Path] = []
     for day_dir in _day_dirs(base, datetime.now(), span=_DAY_SPAN):
-        candidates.extend(_rollout_files_in(day_dir))
+        candidates.extend(_rollout_files_in(day_dir) or ())
     if not candidates:
         return None
     try:
@@ -409,7 +415,12 @@ class CodexStatsReader:
             sig = sigs[day_dir] = _dir_signature(day_dir)
             if sig is None or (sig is not _UNSETTLED and missed.get(day_dir) == sig):
                 continue
-            for path in _rollout_files_in(day_dir):
+            files = _rollout_files_in(day_dir)
+            if files is None:
+                # Not searched: an error here must not read as a settled miss
+                sigs[day_dir] = _UNSETTLED
+                continue
+            for path in files:
                 if session_id in path.name:
                     self._found[key] = path
                     self._missed.pop(key, None)
@@ -432,7 +443,7 @@ class CodexStatsReader:
         floor = since.replace(microsecond=0)
         matches: List[Path] = []
         for day_dir in _day_dirs(self._root(), since):
-            for path in _rollout_files_in(day_dir):
+            for path in _rollout_files_in(day_dir) or ():
                 started = _rollout_started(path)
                 if started is not None and started < floor:
                     continue
