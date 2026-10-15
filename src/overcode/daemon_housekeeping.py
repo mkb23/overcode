@@ -87,6 +87,9 @@ class Housekeeping:
         self.last_checkpoint: Dict[str, tuple] = {}
         # Whether this session's storage is on the 0.6 layout (layout_migration)
         self.layout_migrated = False
+        # Whether the archive's spend is restated at the current reader
+        # version (spend_recompute)
+        self.spend_restated = False
 
     def due(self, now: datetime) -> bool:
         """Wall-clock replacement for ``loop_count % 60 == 0``.
@@ -283,6 +286,25 @@ class Housekeeping:
             self.log.info(f"Storage layout migration: {moved}")
         except Exception as e:  # housekeeping must never fail the tick
             self.log.warn(f"storage layout not migrated: {e}")
+
+    def restate_archived_spend(self, session_manager) -> None:
+        """Restate archived agents' spend after a reader fix, one batch per pass.
+
+        ``spend_recompute``: bounded per call, idempotent, a marker when
+        done; then never again in this process.
+        """
+        if self.spend_restated:
+            return
+        try:
+            from .spend_recompute import recompute_archived_spend
+
+            counts = recompute_archived_spend(session_manager)
+        except Exception as e:  # housekeeping must never fail the tick
+            self.log.warn(f"archived spend not restated: {e}")
+            return
+        self.spend_restated = bool(counts.get("done"))
+        if counts.get("examined") or counts.get("restated"):
+            self.log.info(f"Archived spend restated: {counts}")
 
     def fill_billing_codes(self, sessions, session_manager) -> list:
         """``sessions`` with a billing code each, giving one to any that has none.

@@ -372,6 +372,28 @@ def test_the_daemon_stats_sync_keeps_a_pre_upgrade_agents_spend(upgraded):
     assert final and final[-1]["cost"] == spent
 
 
+def test_spend_restatement_keeps_agents_with_no_transcripts(upgraded, tmp_path):
+    """The reader-fix pass over the archive (``spend_recompute``): the 0.5.8
+    agents' transcripts are gone, so every record and ledger total stays."""
+    from overcode.history_reader import HistoryFile
+    from overcode.spend_recompute import recompute_archived_spend
+
+    root, out, before = upgraded
+    sm = out["sm"]
+    digest = tree_digest(root / "sessions")
+    totals = sm.ledger.totals()
+    history = tmp_path / "no-claude" / "history.jsonl"
+    history.parent.mkdir()
+    history.write_text("")
+    counts = recompute_archived_spend(sm, history_file=HistoryFile(history),
+                                      projects_path=tmp_path / "no-claude" / "projects")
+    assert counts["done"] == 1 and counts["restated"] == 0 and counts["rows"] == 0
+    after = tree_digest(root / "sessions")
+    assert {k: v for k, v in after.items() if ".spend_rv" not in k} == digest
+    assert sm.ledger.totals() == totals
+    check_archive(sm)
+
+
 def test_ledger_by_month(upgraded):
     """A month's report holds the agents archived that month (backfill rows keep their time)."""
     from datetime import datetime

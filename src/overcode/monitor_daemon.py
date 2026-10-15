@@ -2004,6 +2004,7 @@ class MonitorDaemon:
             housekeeping.prune_finished_jobs()
             housekeeping.tidy_storage(self.session_manager)
             housekeeping.migrate_storage(self.session_manager)
+            housekeeping.restate_archived_spend(self.session_manager)
             ledger = getattr(self.session_manager, "ledger", None)
             views = housekeeping.fill_billing_codes(
                 [self._pending.view(s) for s in sessions], self.session_manager)
