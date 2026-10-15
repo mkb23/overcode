@@ -16,7 +16,8 @@ harmless: readers keep the last row of each agent's segment. Rows::
 ``kind`` is ``checkpoint`` (a running agent, at most every
 ``ledger.checkpoint_minutes``), ``final`` (written with its archive
 record), ``close`` / ``open`` (a rebill: the old code's last row, the new
-code's first) or ``backfill`` (an agent archived before the ledger).
+code's first), ``backfill`` (an agent archived before the ledger) or
+``correction`` (below; it also carries ``closing``, ``scale`` and ``was``).
 ``seg`` numbers an agent's billing segments: 0 at launch, one more per
 rebill. A segment's spend is its last row's cumulative values less its
 ``base_*`` (the cumulative values when the segment began), so spend before
@@ -34,6 +35,26 @@ breakdown (``base_usage``): their segment's spend, or a period's, is the
 tokens it added at the row's prices, never a repricing of tokens spent
 before it. A recorded cost (a backend that reports one) carries no
 ``px`` and is taken as it is.
+
+A **correction** row (``kind: correction``) is written when a reader fix
+changes an agent's spend after the fact (``conversation_spend``: an entry
+read by an older reader version is replaced, which can make the agent's
+cumulative cost go *down*, once). The over-count was spread over the
+agent's whole life, so the fix is too: every segment's cumulative values
+*and* its base are scaled by ``scale`` (new/old per amount), which keeps
+each segment's share proportional and their sum equal to the corrected
+total. One correction row per segment: the open one (``closing`` false; a
+live agent's later checkpoints carry the scaled base, which the record
+keeps as its ``billing_base_*``) and each closed one (``closing`` true;
+it replaces that segment's closed share, as a revised final row does).
+``was`` is the contribution the row corrects, so a closed segment whose
+share the totals have already forgotten (``CLOSED_KEEP_DAYS``) moves its
+code's total by the difference instead of adding it again. A period
+report scales every row written before a correction of its segment by
+the correction's ``scale``, so past periods read corrected too. A
+segment's total can only drop through a correction row: other rows keep
+the "last cumulative row wins" rule, and contributions stay
+non-negative.
 
 ``ledger/totals.json`` folds the rows incrementally: per month, how far
 they were read; the last row of every open segment; per-code totals of
@@ -79,6 +100,14 @@ CLOSED_KEEP_DAYS = 62
 AMOUNTS = ("cost", "tokens", "tok_in", "tok_out", "tok_cache")
 # The kinds of row that end a segment
 CLOSING_KINDS = ("final", "close", "backfill")
+# A reader fix restating a segment's spend (see the module docstring)
+CORRECTION = "correction"
+
+
+def is_closing(row: dict) -> bool:
+    """Whether a row ends its segment: a closing kind, or a correction of a closed one."""
+    kind = row.get("kind")
+    return kind in CLOSING_KINDS or (kind == CORRECTION and bool(row.get("closing")))
 
 
 def _get(record, key, default=None):
@@ -263,8 +292,8 @@ def _supersedes(row: dict, last: Optional[dict]) -> bool:
     """
     if last is None:
         return True
-    row_closing = row.get("kind") in CLOSING_KINDS
-    last_closing = last.get("kind") in CLOSING_KINDS
+    row_closing = is_closing(row)
+    last_closing = is_closing(last)
     if row_closing != last_closing:
         return row_closing
     return int(last.get("seq", 0)) <= int(row.get("seq", 0))
@@ -272,6 +301,96 @@ def _supersedes(row: dict, last: Optional[dict]) -> bool:
 
 def _key(row: dict) -> str:
     return f"{row.get('sid')}/{int(row.get('seg', 0) or 0)}"
+
+
+def _factor(row: dict, corrections: Dict[str, List[Tuple[int, dict]]]) -> Dict[str, float]:
+    """What the corrections written after ``row`` (of its segment) scale it by, per amount."""
+    factor = dict.fromkeys(AMOUNTS, 1.0)
+    seq = int(row.get("seq", 0))
+    for at, scale in corrections.get(_key(row), ()):
+        if at > seq:
+            for name in AMOUNTS:
+                try:
+                    factor[name] *= float(scale.get(name, 1.0))
+                except (TypeError, ValueError):
+                    pass
+    return factor
+
+
+def _scaled(amounts: Dict[str, float], factor: Dict[str, float]) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for name in AMOUNTS:
+        value = amounts.get(name, 0) * factor.get(name, 1.0)
+        out[name] = float(value) if name == "cost" else int(round(value))
+    return out
+
+
+def _ratio(new: float, old: float) -> float:
+    return float(new) / float(old) if old else 1.0
+
+
+def correction_rows(before, after, *, closed: bool, earlier: Optional[Dict[int, dict]] = None,
+                    now: Optional[datetime] = None) -> Tuple[List[dict], Dict[str, object]]:
+    """The ledger rows restating an agent's spend after a reader fix, and its new base.
+
+    ``before`` and ``after`` are the agent's record (a dict or a Session)
+    with the old and the corrected spend; ``closed`` whether its current
+    segment is closed (an archived agent); ``earlier`` the last row of each
+    earlier segment (by ``seg``, from a rebill: ``Ledger.segment_rows``).
+    Every segment is scaled by new/old per amount (see the module
+    docstring). Returns the rows and the record's new
+    ``billing_base_cost`` / ``billing_base_tokens`` / ``billing_base_usage``.
+    """
+    now = now or datetime.now()
+    old, new = spend_of(before), spend_of(after)
+    scale = {name: _ratio(new[name], old[name]) for name in AMOUNTS}
+    old_usage, new_usage = usage_of(before), usage_of(after)
+    usage_scale = {k: _ratio(new_usage[k], old_usage[k]) for k in old_usage}
+    stats = _get(before, "stats") or {}
+    seg = int(_get(before, "billing_seg", 0) or 0)
+    base_cost = float(_get(before, "billing_base_cost", 0.0) or 0.0)
+    base_tokens = int(_get(before, "billing_base_tokens", 0) or 0)
+    base_usage = _get(before, "billing_base_usage")
+    repriced = conversation_spend.legacy_base_cost(stats, seg, base_usage)
+    if repriced is not None:
+        base_cost = repriced
+
+    def scaled_usage(value):
+        if not isinstance(value, dict):
+            return None
+        return {k: int(round(int(value.get(k, 0) or 0) * usage_scale.get(k, 1.0)))
+                for k in ("in", "out", "cw", "cr")}
+
+    base = {"cost": base_cost * scale["cost"],
+            "tokens": int(round(base_tokens * scale["tokens"])),
+            "usage": scaled_usage(base_usage)}
+    was_row = make_row(before, "final" if closed else "checkpoint", now=now)
+    row = make_row(after, CORRECTION, now=now, base=base, seg=seg)
+    row.update(closing=bool(closed), scale=scale, was=contribution(was_row))
+    rows = [row]
+    for prior_seg, prior in sorted((earlier or {}).items()):
+        if int(prior_seg) >= seg or not isinstance(prior, dict):
+            continue
+        fixed = dict(prior)
+        for name in AMOUNTS:
+            value = float(prior.get(name, 0) or 0) * scale[name]
+            fixed[name] = value if name == "cost" else int(round(value))
+        for field, k in (("tok_cw", "cw"), ("tok_cr", "cr")):
+            if field in prior:
+                fixed[field] = int(round(int(prior.get(field) or 0) * usage_scale[k]))
+        prior_base_cost = float(prior.get("base_cost", 0) or 0)
+        if prior.get("px") and isinstance(prior.get("base_usage"), dict):
+            prior_base_cost = price(prior["px"], prior["base_usage"])
+        fixed.update(
+            t=stamp(now), seq=time.time_ns(), kind=CORRECTION, closing=True, px=None,
+            base_cost=prior_base_cost * scale["cost"],
+            base_tokens=int(round(int(prior.get("base_tokens", 0) or 0) * scale["tokens"])),
+            base_usage=scaled_usage(prior.get("base_usage")),
+            scale=scale, was=contribution(prior))
+        rows.append(fixed)
+    new_base = {"billing_base_cost": base["cost"], "billing_base_tokens": base["tokens"],
+                "billing_base_usage": base["usage"]}
+    return rows, new_base
 
 
 class Ledger:
@@ -386,6 +505,25 @@ class Ledger:
         for _, path in self.months():
             yield from self._rows_of(path)[0]
 
+    def segment_rows(self, session_ids: Iterable[str]) -> Dict[str, Dict[int, dict]]:
+        """The last row of each segment of ``session_ids``: ``{sid: {seg: row}}``.
+
+        Reads every month: what correcting a rebilled agent needs, once.
+        """
+        wanted = set(session_ids)
+        found: Dict[str, Dict[int, dict]] = {}
+        if not wanted:
+            return found
+        for row in self.iter_rows():
+            sid = row.get("sid")
+            if sid not in wanted:
+                continue
+            segs = found.setdefault(sid, {})
+            seg = int(row.get("seg", 0) or 0)
+            if _supersedes(row, segs.get(seg)):
+                segs[seg] = row
+        return found
+
     # ── totals ──────────────────────────────────────────────────────────
 
     def _load_totals(self) -> dict:
@@ -406,7 +544,19 @@ class Ledger:
         """Fold one row into the running totals (see the module docstring)."""
         key = _key(row)
         codes, open_, closed = totals["codes"], totals["open"], totals["closed"]
-        closing = row.get("kind") in CLOSING_KINDS
+        closing = is_closing(row)
+        if (closing and row.get("kind") == CORRECTION and key not in closed
+                and key not in open_ and isinstance(row.get("was"), dict)):
+            # A correction of a segment whose closed share has been
+            # forgotten: its code moves by the difference
+            code = row.get("billing_code") or "?"
+            amounts, was = contribution(row), row["was"]
+            entry = codes.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0})
+            for name in AMOUNTS:
+                entry[name] = entry.get(name, 0) + amounts[name] - (was.get(name, 0) or 0)
+            closed[key] = {"code": code, "amounts": amounts, "at": stamp(now),
+                           "seq": int(row.get("seq", 0))}
+            return
         if key in closed:
             if int(row.get("seq", 0)) <= int(closed[key].get("seq", 0)):
                 return  # older than what closed it: already counted
@@ -426,7 +576,7 @@ class Ledger:
         if (last is not None and not closing
                 and int(last.get("seq", 0)) > int(row.get("seq", 0))):
             row = last  # an older row arriving late does not move the segment back
-        if row.get("kind") in CLOSING_KINDS:
+        if is_closing(row):
             open_.pop(key, None)
             code = row.get("billing_code") or "?"
             amounts = contribution(row)
@@ -523,7 +673,14 @@ class Ledger:
         end = stamp(until) if until else "￿"
         before: Dict[str, dict] = {}
         within: Dict[str, dict] = {}
-        for row in self.iter_rows():
+        rows = list(self.iter_rows())
+        # Corrections restate every earlier row of their segment
+        corrections: Dict[str, List[Tuple[int, dict]]] = {}
+        for row in rows:
+            if row.get("kind") == CORRECTION and isinstance(row.get("scale"), dict):
+                corrections.setdefault(_key(row), []).append(
+                    (int(row.get("seq", 0)), row["scale"]))
+        for row in rows:
             t = str(row.get("t", ""))
             if t >= end:
                 continue
@@ -533,25 +690,27 @@ class Ledger:
                 target[key] = row
         report: Dict[str, dict] = {}
         for key, row in within.items():
-            amounts = contribution(row)
+            row_factor = _factor(row, corrections)
+            amounts = _scaled(contribution(row), row_factor)
             prior = before.get(key)
             if prior is not None and not _supersedes(row, prior):
                 continue  # closed before the period: a stale checkpoint after it is no spend
             if prior is not None:
-                earlier = contribution(prior)
+                earlier = _scaled(contribution(prior), _factor(prior, corrections))
                 amounts = {k: max(0, amounts[k] - earlier[k]) for k in AMOUNTS}
                 px, prior_usage = row.get("px"), _usage(prior)
                 if px and prior_usage is not None:
                     # The tokens added in the period at the end row's prices:
                     # a model switch does not reprice earlier periods into it
-                    amounts["cost"] = max(0.0, float(row.get("cost", 0) or 0)
-                                          - price(px, prior_usage))
+                    amounts["cost"] = max(0.0, (float(row.get("cost", 0) or 0)
+                                                - price(px, prior_usage))
+                                          * row_factor["cost"])
             code = row.get("billing_code") or "?"
             entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0, "running": 0})
             for name in AMOUNTS:
                 entry[name] += amounts[name]
             entry["agents"] += 1
-            if row.get("kind") not in CLOSING_KINDS:
+            if not is_closing(row):
                 entry["running"] += 1
         return report
 

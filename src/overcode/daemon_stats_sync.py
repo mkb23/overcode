@@ -7,8 +7,9 @@ provider, effort and persona, the PR number) on the tick's
 keeps the transcript-derived values views render beside the token columns.
 """
 
+from dataclasses import replace
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from .backends import BackendCapability, get_backend, session_backend_name
 from .claude_pid import is_session_id_owned_by_others
@@ -235,8 +236,10 @@ class StatsSync:
                         session.id, agent_persona=detected_agent
                     )
 
+            earlier = getattr(reader, "get_legacy_reads", None)
             self._stage_usage(
                 session, stats, pending, stored_cost=stored_cost,
+                earlier_reads=(lambda: earlier(session)) if earlier is not None else None,
                 interaction_count=stats.interaction_count,
             )
         except Exception as e:
@@ -244,7 +247,8 @@ class StatsSync:
 
     def _stage_usage(
         self, session, stats: AgentSessionStats, pending: PendingUpdates,
-        stored_cost: Optional[float] = None, **extra,
+        stored_cost: Optional[float] = None,
+        earlier_reads: Optional[Callable[[], dict]] = None, **extra,
     ) -> None:
         """Stage tokens, cost and energy from one read of ``stats``.
 
@@ -258,20 +262,15 @@ class StatsSync:
         split its read by conversation (``per_conversation`` None) is one
         pseudo conversation, with ``stored_cost`` as its recorded cost.
         ``extra`` stats fields are staged with them.
+
+        A read by a newer reader version replaces a conversation's entry
+        (``conversation_spend``), which can lower the agent's spend once:
+        that is staged as a ledger correction (``stage_correction``). A
+        record with totals and no entries (from before per-conversation
+        spend) first folds what the older reader read (``earlier_reads``),
+        so that replacement restates exactly it.
         """
-        from .settings import get_user_config, get_model_pricing
-
-        config = get_user_config()
-        provider = stats.provider or session.provider
-        default_model = stats.model or session.model
-
-        def prices(model):
-            mp = get_model_pricing(model, config, provider=provider)
-            return (mp.input, mp.output, mp.cache_write, mp.cache_read)
-
-        def energy(model, tokens):
-            return estimate_energy_joules(
-                model, tokens["in"], tokens["out"], tokens["cw"], tokens["cr"])
+        prices, energy, default_model = spend_pricing(session, stats)
 
         reads = getattr(stats, "per_conversation", None)
         if not isinstance(reads, dict):
@@ -280,8 +279,9 @@ class StatsSync:
                 stats.cache_creation_tokens, stats.cache_read_tokens,
                 model=stats.model, cost=stored_cost)}
         recorded = session.stats
-        entries = spend.merge(
+        entries = spend.merge_restating(
             getattr(recorded, "conversations", None), reads,
+            earlier_reads=earlier_reads,
             prices=prices, energy=energy, default_model=default_model,
             recorded=spend.recorded_totals(recorded),
             owned_ids=_owned_conversations(session),
@@ -295,6 +295,49 @@ class StatsSync:
             last_stats_update=stamp(self.clock.wall()),
         )
         pending.update_stats(session.id, **usage)
+        # Spend only goes down when a newer reader restated it
+        before = spend.recorded_totals(recorded)
+        after = spend.totals(entries)
+        went_down = (after["estimated_cost_usd"] < round(before["cost"], 4) - 1e-9
+                     or after["total_tokens"] < sum(before[k] for k in spend.TOKEN_KEYS))
+        if went_down or spend.replaced(getattr(recorded, "conversations", None), entries):
+            try:
+                self.stage_correction(session, usage, pending)
+            except Exception as e:  # the stats themselves are staged already
+                self.log.warn(f"[{session.name}] spend correction not staged: {e}")
+
+    def stage_correction(self, session, usage: dict, pending: PendingUpdates) -> None:
+        """Stage the ledger correction for a spend a reader fix restated.
+
+        ``session`` holds the spend before, ``usage`` the stats after.
+        Every billing segment is scaled (``ledger.correction_rows``); a
+        rebilled agent's earlier segments are read from the ledger, and its
+        record's segment base is scaled with them. Nothing when no amount
+        moved.
+        """
+        from . import ledger as ledger_mod
+
+        stats_after = replace(session.stats, **{k: v for k, v in usage.items()
+                                                if hasattr(session.stats, k)})
+        after = replace(session, stats=stats_after)
+        if ledger_mod.spend_of(after) == ledger_mod.spend_of(session):
+            return
+        seg = spend.count(getattr(session, "billing_seg", 0))
+        earlier: Dict[int, dict] = {}
+        book = getattr(self.session_manager, "ledger", None)
+        if seg and book is not None:
+            try:
+                earlier = book.segment_rows([session.id]).get(session.id, {})
+            except Exception as e:
+                self.log.warn(f"[{session.name}] ledger not read for a spend correction: {e}")
+        rows, base = ledger_mod.correction_rows(
+            session, after, closed=False, earlier=earlier, now=self.clock.wall())
+        pending.add_ledger_rows(rows)
+        if seg:
+            pending.update_session(session.id, **base)
+        self.log.info(
+            f"[{session.name}] Spend restated by the transcript reader: "
+            f"${ledger_mod.spend_of(session)['cost']:.4f} -> ${ledger_mod.spend_of(after)['cost']:.4f}")
 
     def note_stats_view(self, session, stats: Optional[AgentSessionStats]) -> None:
         """Keep the transcript-derived values views render, from one sync.
@@ -315,6 +358,30 @@ class StatsSync:
             "context_window": number(stats.max_context_tokens, None),
             "file_subagent_count": number(stats.live_subagent_count, 0),
         }
+
+
+def spend_pricing(session: Any, stats: Any = None) -> Tuple[
+        Callable[[Optional[str]], tuple], Callable[[Optional[str], dict], float], Optional[str]]:
+    """``(prices, energy, default model)`` for ``conversation_spend.merge`` of an agent.
+
+    ``prices(model)`` is the per-million price row (input, output, cache
+    write, cache read, 1-hour cache write) at the agent's provider;
+    unknown models fall back to the global config.
+    """
+    from .settings import get_user_config, get_model_pricing
+
+    config = get_user_config()
+    provider = getattr(stats, "provider", None) or getattr(session, "provider", None)
+    default_model = getattr(stats, "model", None) or getattr(session, "model", None)
+
+    def prices(model):
+        return get_model_pricing(model, config, provider=provider).per_million()
+
+    def energy(model, tokens):
+        return estimate_energy_joules(
+            model, tokens["in"], tokens["out"], tokens["cw"], tokens["cr"])
+
+    return prices, energy, default_model
 
 
 def _owned_conversations(session) -> list:

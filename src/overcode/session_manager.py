@@ -359,9 +359,17 @@ class PendingUpdates:
         self.removed: List[str] = []  # ids to drop with no archive record (a failed launch)
         # Filled by commit_pending: the ids it actually moved to the archive
         self.archived: List[str] = []
+        # Ledger rows to write with the commit, before the state file
+        # (a spend ``correction``: ``ledger.correction_rows``)
+        self.ledger_rows: List[dict] = []
 
     def __bool__(self) -> bool:
-        return bool(self.fields or self.stats or self.archive or self.removed)
+        return bool(self.fields or self.stats or self.archive or self.removed
+                    or self.ledger_rows)
+
+    def add_ledger_rows(self, rows: Iterable[dict]) -> None:
+        """Stage ledger rows; ``commit_pending`` appends them write-ahead."""
+        self.ledger_rows.extend(rows)
 
     def remove_session(self, session_id: str) -> None:
         """Stage dropping ``session_id`` with no archive record, and its directory."""
@@ -660,6 +668,11 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         archived: List[dict] = []
         with self._state_transaction() as txn:
             state = txn.state
+            # Write-ahead: a spend correction reaches the ledger before the
+            # record that no longer needs one (a crash repeats it; the rows
+            # are cumulative, so a repeat changes nothing)
+            if pending.ledger_rows:
+                self.ledger.append(pending.ledger_rows)
             # Staged values first, so an entry archived in the same commit
             # takes them (its final ledger row is its last word on spend)
             for session_id, values in pending.fields.items():
@@ -989,6 +1002,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 pending.update_session(key, **changes)
             for key, changes in scratch.stats.items():
                 pending.update_stats(key, **changes)
+            pending.add_ledger_rows(scratch.ledger_rows)
 
     def rebill(self, session_id: str, billing_code: str) -> Optional[str]:
         """Move an agent to another billing code, forward only; returns the old code.
