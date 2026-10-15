@@ -253,7 +253,6 @@ def test_an_old_record_with_only_totals_folds_into_a_legacy_entry(sm):
     sm.update_stats(s.id, estimated_cost_usd=7.0, total_tokens=700, input_tokens=700)
     kept = _sync(sm, s.id, {})  # its transcript is gone
     assert _spent(kept) == (700, 7.0)
-    assert kept.conversations[spend.LEGACY_KEY]["absorbs"] == ["a"]
     sm.update_session(s.id, agent_session_ids=["a", "b"])
     added = _sync(sm, s.id, {"b": conv(100_000)})
     assert _spent(added) == (100_700, pytest.approx(7.0 + _opus(100_000)))
@@ -378,6 +377,20 @@ def test_a_conversation_with_no_spend_yet_is_not_absorbed(sm):
     assert folded.conversations[spend.LEGACY_KEY]["absorbs"] == ["S0"]
     later = _sync(sm, s.id, {"S1": conv(400_000), "S2": conv(300_000)})
     assert _spent(later) == (1_300_000, pytest.approx(_opus(1_300_000)))
+
+
+def test_a_fresh_conversation_before_its_first_prompt_is_not_absorbed(sm):
+    """A 0.5.x agent gets ``restart --fresh`` before the first 0.6 sync: it
+    owns only C, which history has not seen yet, so the read covers
+    nothing. C's first turn is new spend, not the legacy entry's."""
+    s = _agent(sm, ["C"])
+    sm.update_stats(s.id, total_tokens=1_000_000, input_tokens=1_000_000,
+                    estimated_cost_usd=15.0)
+    folded = _sync(sm, s.id, {})
+    assert _spent(folded) == (1_000_000, pytest.approx(15.0))
+    assert folded.conversations[spend.LEGACY_KEY]["absorbs"] == []
+    first = _sync(sm, s.id, {"C": conv(200_000)})
+    assert _spent(first) == (1_200_000, pytest.approx(15.0 + _opus(200_000)))
 
 
 def test_a_steady_record_is_never_folded_again(sm):
