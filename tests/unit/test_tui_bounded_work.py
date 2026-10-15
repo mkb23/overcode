@@ -184,6 +184,36 @@ class TestOneDelta:
             assert work.bar_builds == 1
             assert work.refreshes == {"charlie": 1, "bar": 1}
 
+    async def test_one_delegated_work_delta_repaints_one_row(self, make_tui, frozen_clock,
+                                                             monkeypatch):
+        """The 👥 counts (swarm_rollup) change for one agent: that row's
+        work only; the same counts again are no work at all."""
+        def swarm(running, ok):
+            return {"total": running + ok, "running": running, "waiting": 0, "idle": 0,
+                    "ok": ok, "failed": 0, "workflows": 0, "workflows_running": 0}
+
+        engine = FakeEngine()
+        engine.publish(_snapshot(bravo=dict(swarm_rollup=swarm(3, 0))))
+        app = make_tui(three_agents(), engine=engine, size=(220, 40))
+        async with app.run_test() as pilot:
+            await _settled(pilot)
+            from overcode.tui_widgets.session_summary import SessionSummary
+            lines = {row.session.name: row.render().plain for row in app.query(SessionSummary)}
+            assert "👥  3 ▶3" in lines["bravo"]
+            assert "👥  -" in lines["alpha"]  # the column shows once any agent delegates
+            work = CountedWork(app, monkeypatch)
+            engine.publish(_snapshot(bravo=dict(swarm_rollup=swarm(2, 1))))
+            await pilot.pause()
+            assert work.applies == {"bravo": 1}
+            assert work.repaints == [["bravo"]]
+            assert work.full_builds() == {"bravo": 1}
+            assert work.bar_builds == 0
+            work.reset()
+            for _ in range(5):
+                engine.publish(_snapshot(bravo=dict(swarm_rollup=swarm(2, 1))))
+            await pilot.pause()
+            assert work.total() == NO_WORK
+
     async def test_a_bar_input_rebuilds_the_bar_once_and_no_row(self, app, engine, monkeypatch):
         async with app.run_test() as pilot:
             await _settled(pilot)

@@ -2410,6 +2410,20 @@ class TestListExtended:
         assert "❌ three integration tests still fail on main" in result.output  # in full
         assert "1❌" in result.output  # the parent's rollup
 
+    def test_list_shows_delegated_work_the_daemon_published(self, fleet):
+        """The 👥 cell is the engine's swarm_rollup; an agent without one
+        shows the placeholder."""
+        fleet.add_with_history("lead")
+        fleet.add_with_history("solo")
+        rollup = {"total": 43, "running": 15, "waiting": 1, "idle": 0, "ok": 27,
+                  "failed": 1, "workflows": 1, "workflows_running": 1}
+        fleet.publish(lead=dict(current_status="busy_sleeping", swarm_rollup=rollup),
+                      solo=dict(current_status="running"))
+        result = runner.invoke(app, ["list", "--full"], env={"COLUMNS": "400"})
+        assert result.exit_code == 0, result.output
+        assert "👥 43 ▶15 🟠1 ✅27 ❌1 🧩1" in result.output
+        assert "👥  -" in result.output
+
     def test_list_filters_done_by_default(self, fleet):
         """List without --show-done excludes done agents."""
         fleet.add_with_history("done-only", status="done")

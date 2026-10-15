@@ -100,6 +100,11 @@ billing:
 monitor_daemon:
   interval_unattended_seconds: 10
 
+# Work an agent delegates inside its session (subagents, workflows, teammates)
+# See "Delegated Work" below
+observability:
+  finished_row_seconds: 30        # a finished agent's own row stays this long
+
 # Sister instances for cross-machine monitoring
 # See docs/advanced-features.md for setup guide
 sisters:
@@ -573,6 +578,38 @@ name-keyed files (`hook_state_<name>.json` and the rest) into a bundle a
 batch at a time and writes `sessions/<tmux>/.layout`. An agent launched
 before the upgrade keeps writing its name-keyed files until it is
 relaunched (restart, revive), and they are left in place until then.
+
+## Delegated Work
+
+A Claude agent hands work out inside its own session: subagents (in the
+background unless the call says otherwise), forks, workflows and in-process
+teammates. None of them is an overcode agent, but all of them report
+through the parent's hooks, so the parent's row carries a 👥 cell (DLG):
+
+```
+👥 43 ▶15 🟠1 ✅27 ❌1 🧩1
+```
+
+the agents it delegated (live and finished), then ▶ working, 🟠 waiting
+for approval in the parent's pane, ✅ finished, ❌ failed or stopped, and
+🧩 workflow runs; counts that are zero are left out, and hovering the cell
+says what each stands for. An agent that never delegated shows `👥  -`.
+The monitor daemon computes the counts from the hook events; the TUI and
+`overcode list` only show them. While delegated work is in flight the
+parent is 🟡 ("Waiting on 2 background agents and 1 workflow"); it turns
+🔴 only when nothing is left running. An idle teammate is listening, not
+working, so it does not hold the parent yellow. Delegated agents never
+ring the bell: a subagent's permission prompt shows on the parent (🟠),
+and the parent's own rules decide.
+
+```yaml
+observability:
+  finished_row_seconds: 30   # 0 folds a finished agent into the counts at once
+```
+
+`finished_row_seconds` is how long a finished agent keeps its own row
+under its parent once delegated work can be expanded into rows (0.6.1,
+phase 2); the 👥 counts include it from the moment it finishes.
 
 ## Billing Codes
 

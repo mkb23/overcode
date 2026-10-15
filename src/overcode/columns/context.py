@@ -47,6 +47,7 @@ class FleetFlags:
     any_has_subtree_cost: bool = False  # a parent with subtree cost
     any_has_burn: bool = False  # a non-zero burn rate (#174)
     any_has_task_result: bool = False  # a child with a result (the Result column)
+    any_has_swarm: bool = False  # an agent that delegated work in its session (👥)
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class FleetRow:
     window_burn: Optional[object] = None  # Optional[WindowBurnStats]
     has_status_detail: bool = False
     task_result: Optional[str] = None  # the child's result kind, if any
+    has_swarm: bool = False  # a 👥 rollup published for it
 
 
 def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
@@ -90,6 +92,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
             for r in rows
         ),
         any_has_task_result=any(r.task_result for r in rows),
+        any_has_swarm=any(r.has_swarm for r in rows),
     )
 
 
@@ -160,6 +163,8 @@ class ColumnContext:
     task_result: Optional[str] = None
     task_reason: str = ""
     child_rollup: Optional[dict] = None
+    # Its delegated work (swarm.rollup counts), None if it never delegated
+    swarm_rollup: Optional[dict] = None
 
     # Fleet-wide column gates, the same for every row
     fleet: FleetFlags = field(default_factory=FleetFlags)
@@ -234,6 +239,7 @@ def build_cli_context(
     task_result: Optional[str] = None,
     task_reason: str = "",
     child_rollup: Optional[dict] = None,
+    swarm_rollup: Optional[dict] = None,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed).
 
@@ -301,6 +307,7 @@ def build_cli_context(
         task_result=task_result,
         task_reason=task_reason,
         child_rollup=child_rollup,
+        swarm_rollup=swarm_rollup,
         status_changed_at=status_changed_at,
         max_name_width=max_name_width,
         max_repo_width=max_repo_width,

@@ -93,6 +93,40 @@ def render_child_count(ctx: ColumnContext) -> ColumnOutput:
     return [(text, style)]
 
 
+# The 👥 rollup's segments after the total, in order: (rollup key, glyph);
+# zero ones are left out. Workflow runs (🧩) come last.
+_SWARM_SEGMENTS = (("running", "▶"), ("waiting", "🟠"), ("ok", "✅"), ("failed", "❌"))
+
+# 🧩 is also the unknown-skill emoji, whose emoji-free form is the glyph
+# itself; workflows get their own letters here instead of an EMOJI_ASCII entry
+WORKFLOW_GLYPH, WORKFLOW_ASCII = "🧩", "Wf"
+
+
+def swarm_workflow_glyph(ctx: ColumnContext) -> str:
+    return WORKFLOW_ASCII if ctx.emoji_free else ctx.e(WORKFLOW_GLYPH)
+
+
+def render_swarm(ctx: ColumnContext) -> ColumnOutput:
+    """Work the agent delegated in its session (subagents, workflows,
+    teammates): " 👥 43 ▶15 🟠1 ✅27 ❌1 🧩1", non-zero counts only.
+
+    The engine publishes the counts (swarm_rollup); a row without any shows
+    " 👥  -", the same shape as a one-digit total.
+    """
+    rollup = ctx.swarm_rollup
+    if not rollup:
+        return [(f" {ctx.e('👥')} {'-':>2}", f"dim{ctx.bg}")]
+    text = f" {ctx.e('👥')} {rollup.get('total') or 0:>2}"
+    for key, glyph in _SWARM_SEGMENTS:
+        n = rollup.get(key) or 0
+        if n:
+            text += f" {ctx.e(glyph).rstrip()}{n}"
+    if rollup.get("workflows"):
+        text += f" {swarm_workflow_glyph(ctx)}{rollup['workflows']}"
+    active = rollup.get("running") or rollup.get("waiting")
+    return [(text, f"bold magenta{ctx.bg}" if active else f"magenta{ctx.bg}")]
+
+
 def render_job_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.job_count
     if count == 0:

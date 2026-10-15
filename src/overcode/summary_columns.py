@@ -59,7 +59,7 @@ from .columns.render_context import (
 )
 from .columns.render_performance import (
     render_median_work_time, render_cpu_pct, render_ram, render_subagent_count,
-    render_bash_count, render_child_count, render_job_count, render_work_plain,
+    render_bash_count, render_child_count, render_job_count, render_swarm, render_work_plain,
     render_agents_plain,
 )
 from .columns.render_supervision import (
@@ -105,7 +105,8 @@ __all__ = [
     "render_effort_plain", "render_provider", "render_provider_plain", "BACKEND_BADGES",
     "_backend_badge", "render_backend", "render_backend_plain", "render_median_work_time",
     "render_cpu_pct", "render_ram", "render_subagent_count", "render_bash_count",
-    "render_child_count", "render_job_count", "render_work_plain", "render_agents_plain",
+    "render_child_count", "render_job_count", "render_swarm", "render_work_plain",
+    "render_agents_plain",
     "render_permission_mode", "render_agent_teams", "render_teams_plain",
     "render_allowed_tools", "render_loaded_skills", "render_skills_plain",
     "render_skill_profile", "render_skill_profile_plain", "render_available_skills",

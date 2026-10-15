@@ -13,6 +13,7 @@ from .hover import (
     hover_loaded_skills,
     hover_skill_profile,
     hover_status_detail,
+    hover_swarm,
     hover_task_result,
     hover_wrapper,
 )
@@ -59,6 +60,7 @@ from .render_performance import (
     render_median_work_time,
     render_ram,
     render_subagent_count,
+    render_swarm,
     render_work_plain,
 )
 from .render_supervision import (
@@ -235,6 +237,16 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                               "❌ failure, ⌛ oversight timeout (hover for the full reason)",
                   sort_key=_sort_task_result,
                   hover=hover_task_result),
+    SummaryColumn(id="swarm", group="identity", detail_levels=ALL, render=render_swarm,
+                  label="Delegated",
+                  visible=lambda ctx: ctx.fleet.any_has_swarm,
+                  header="DLG", name="Delegated Work",
+                  description="Work the agent handed out in its own session (subagents, forks, "
+                              "workflow agents, teammates): total, ▶ working, 🟠 needs "
+                              "approval, ✅ finished, ❌ failed, 🧩 workflow runs",
+                  sort_key=lambda ctx: (ctx.swarm_rollup or {}).get("total"),
+                  sort_desc=True,
+                  hover=hover_swarm),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand",
                   description="Fold marker for tree view"),

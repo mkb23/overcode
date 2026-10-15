@@ -702,6 +702,22 @@ def list_agents(
             children.setdefault(sess.parent_session_id, []).append(
                 (status, results[sess.id][0]))
 
+    # Each agent's delegated work (the 👥 column): what the daemon
+    # published, else what this command's own detection read
+    def _swarm_rollup(sess):
+        if use_daemon:
+            ds = daemon_state.get_session_by_name(sess.name)
+            if ds is not None:
+                return ds.swarm_rollup if isinstance(ds.swarm_rollup, dict) else None
+        getter = getattr(detector, "get_swarm_rollup", None)
+        try:
+            rollup = getter(sess.name) if getter is not None else None
+        except Exception:
+            return None
+        return rollup if isinstance(rollup, dict) else None
+
+    swarms = {sess.id: _swarm_rollup(sess) for sess, *_ in session_data}
+
     # Which fleet-gated columns show, by the same rule as the TUI
     fleet = compute_fleet_flags(
         FleetRow(
@@ -709,6 +725,7 @@ def list_agents(
             subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
             has_status_detail=_get_status_detail(sess) is not None,
             task_result=results[sess.id][0],
+            has_swarm=swarms[sess.id] is not None,
         )
         for sess, status, *_ in session_data
     )
@@ -755,6 +772,7 @@ def list_agents(
             task_result=results[sess.id][0],
             task_reason=results[sess.id][1],
             child_rollup=child_rollup(children.get(sess.id, ())),
+            swarm_rollup=swarms[sess.id],
         )
         ctx.status_color = f"bold {status_color}"
         ctx.show_cost = "joules" if joules else ("cost" if cost else "tokens")

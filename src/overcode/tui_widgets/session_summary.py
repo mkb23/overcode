@@ -105,6 +105,7 @@ class SessionSummary(Static, can_focus=True):
     task_result: Optional[str] = None
     task_reason: str = ""
     child_rollup: Optional[dict] = None
+    swarm_rollup: Optional[dict] = None
 
     summary_detail: reactive[str] = reactive("low")  # low, med, full
     summary_content_mode: reactive[str] = reactive("ai_short")  # ai_short, ai_long, orders, annotation (#74)
@@ -135,11 +136,13 @@ class SessionSummary(Static, can_focus=True):
         # Columns every row shows the same value in — hidden (set by TUI)
         self.uniform_columns: dict = {}
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
-        # A child's task outcome and a parent's children by state, as the
-        # engine (or a sister) publishes them (task_result / children_rollup)
+        # A child's task outcome, a parent's children by state and its
+        # delegated work (👥), as the engine (or a sister) publishes them
+        # (task_result / children_rollup / swarm_rollup)
         self.task_result: Optional[str] = None
         self.task_reason: str = ""
         self.child_rollup: Optional[dict] = None
+        self.swarm_rollup: Optional[dict] = None
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[AgentSessionStats] = None  # Token/interaction stats
@@ -368,15 +371,17 @@ class SessionSummary(Static, can_focus=True):
     def _engine_inputs(self) -> tuple:
         return (self.engine, self.detected_status, self.current_activity,
                 self.window_burn, self.is_unvisited_stalled,
-                self.task_result, self.task_reason, self.child_rollup,
+                self.task_result, self.task_reason, self.child_rollup, self.swarm_rollup,
                 tuple(getattr(self, n) for n in tui_engine.PANE_FIELDS))
 
     def _apply_results(self, view: dict) -> None:
-        """The Result column's and the 👶 rollup's values from a published view."""
+        """The Result column's, the 👶 and the 👥 rollups' values from a published view."""
         self.task_result = view.get("task_result") or None
         self.task_reason = view.get("task_reason") or ""
         rollup = view.get("children_rollup")
         self.child_rollup = rollup if isinstance(rollup, dict) else None
+        swarm = view.get("swarm_rollup")
+        self.swarm_rollup = swarm if isinstance(swarm, dict) else None
 
     def apply_pane_content(self, content: str) -> bool:
         """This agent's terminal text (the focused capture, or a sister's poll).
@@ -411,7 +416,7 @@ class SessionSummary(Static, can_focus=True):
         s = self.session
         before = (self.detected_status, self.current_activity, self.claude_stats,
                   self.git_diff_stats, self.git_untracked_count, self.is_unvisited_stalled,
-                  self.task_result, self.task_reason, self.child_rollup)
+                  self.task_result, self.task_reason, self.child_rollup, self.swarm_rollup)
         stats = s.stats
         self.detected_status = self._effective_status(stats.current_state or "running")
         self.current_activity = stats.current_task or ""
@@ -438,7 +443,7 @@ class SessionSummary(Static, can_focus=True):
         return pane_changed or before != (
             self.detected_status, self.current_activity, self.claude_stats,
             self.git_diff_stats, self.git_untracked_count, self.is_unvisited_stalled,
-            self.task_result, self.task_reason, self.child_rollup)
+            self.task_result, self.task_reason, self.child_rollup, self.swarm_rollup)
 
     def rendered_session(self) -> Session:
         """The session as the row draws it: sessions.json with the engine's values."""
@@ -456,6 +461,7 @@ class SessionSummary(Static, can_focus=True):
             window_burn=self.window_burn,
             has_status_detail=bool(self.engine.get("status_detail")),
             task_result=self.task_result,
+            has_swarm=self.swarm_rollup is not None,
         )
 
     def watch_summary_detail(self, summary_detail: str) -> None:
@@ -567,6 +573,7 @@ class SessionSummary(Static, can_focus=True):
             task_result=self.task_result,
             task_reason=self.task_reason,
             child_rollup=self.child_rollup,
+            swarm_rollup=self.swarm_rollup,
             status_changed_at=self._status_changed_at,
             max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),

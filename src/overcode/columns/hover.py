@@ -110,6 +110,31 @@ def hover_child_count(ctx: ColumnContext):
     return _emoji_legend("Children", rows)
 
 
+def hover_swarm(ctx: ColumnContext):
+    """What the 👥 rollup's segments count."""
+    from .render_performance import swarm_workflow_glyph
+    rollup = ctx.swarm_rollup
+    if not rollup:
+        return None
+    total = rollup.get("total") or 0
+    rows = [(ctx.e("👥"), f"{total} agent{'' if total == 1 else 's'} delegated in this session "
+                          "(subagents, forks, workflow agents, teammates)")]
+    for key, glyph, words in (("running", "▶", "working"),
+                              ("waiting", "🟠", "waiting for approval in this pane"),
+                              ("idle", "⚪", "idle teammates, listening"),
+                              ("ok", "✅", "finished"),
+                              ("failed", "❌", "failed or stopped")):
+        if rollup.get(key):
+            rows.append((ctx.e(glyph).rstrip(), f"{rollup[key]} {words}"))
+    runs = rollup.get("workflows") or 0
+    if runs:
+        running = rollup.get("workflows_running") or 0
+        rows.append((swarm_workflow_glyph(ctx),
+                     f"{runs} workflow run{'' if runs == 1 else 's'}"
+                     + (f", {running} running" if running else "")))
+    return _emoji_legend("Delegated work", rows)
+
+
 def hover_status_detail(ctx: ColumnContext):
     detail = ctx.status_detail
     if detail is None or not detail.badges:
