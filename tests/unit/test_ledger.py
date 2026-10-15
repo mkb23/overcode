@@ -195,6 +195,34 @@ class TestRebill:
         assert totals["a"]["cost"] == 3.0 and totals["a"]["tokens"] == 300
         assert totals["client-y"]["cost"] == 2.0 and totals["client-y"]["tokens"] == 200
 
+    def test_a_codeless_child_closes_its_past_under_its_roots_code(self, sm):
+        """A child an older overcode launched has no code; its spend so far is its root's."""
+        root = sm.create_session(name="root", tmux_session="agents", tmux_window="r-1",
+                                 command=[], billing_code="acme")
+        kid = sm.create_session(name="kid", tmux_session="agents", tmux_window="k-1", command=[])
+        with sm._state_transaction() as txn:
+            txn.state[kid.id].pop("billing_code", None)
+            txn.state[kid.id]["parent_session_id"] = root.id
+            txn.dirty = True
+        _spend(sm, kid, 5.0, 1000)
+        assert sm.rebill(kid.id, "other") == "acme"
+        assert [(r["kind"], r["billing_code"]) for r in _rows(sm) if r["sid"] == kid.id] == [
+            ("close", "acme"), ("open", "other")]
+        totals = sm.ledger.totals(save=False)
+        assert "kid" not in totals and totals["acme"]["cost"] == 5.0
+
+    def test_rebilling_a_codeless_child_to_its_roots_code_writes_no_rows(self, sm):
+        root = sm.create_session(name="root", tmux_session="agents", tmux_window="r-1",
+                                 command=[], billing_code="acme")
+        kid = sm.create_session(name="kid", tmux_session="agents", tmux_window="k-1", command=[])
+        with sm._state_transaction() as txn:
+            txn.state[kid.id].pop("billing_code", None)
+            txn.state[kid.id]["parent_session_id"] = root.id
+            txn.dirty = True
+        assert sm.rebill(kid.id, "acme") == "acme"
+        assert [r for r in _rows(sm) if r["sid"] == kid.id] == []
+        assert sm.get_session(kid.id).billing_code == "acme"
+
     @staticmethod
     def _estimate(model, inp, out):
         """The daemon's estimate: every token so far at ``model``'s prices."""

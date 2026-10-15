@@ -1019,8 +1019,14 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             entry = txn.state.get(session_id)
             if entry is None:
                 return None
-            old = billing_code_of(entry)
+            # A child an older overcode launched has no code of its own yet:
+            # its spend so far is its root's, not its name's
+            old = (self._inherited_codes([session_id], txn.state).get(session_id)
+                   or billing_code_of(entry))
             if old == billing_code:
+                if entry.get("billing_code") != billing_code:
+                    entry["billing_code"] = billing_code
+                    txn.dirty = True
                 return old
             from .ledger import spend_of
 
