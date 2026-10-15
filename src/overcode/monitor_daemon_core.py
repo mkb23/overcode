@@ -273,7 +273,7 @@ def should_enforce_oversight_timeout(
     if not deadline:
         return False
     deadline_at = (stamp_epoch(deadline, deadline_at) if deadline_at is not None
-                   else to_epoch(deadline, near=now))
+                   else to_epoch(deadline, near=now, ahead=True))
     if deadline_at is None:
         return False
     # Epoch seconds: an aware deadline against a naive now (or the

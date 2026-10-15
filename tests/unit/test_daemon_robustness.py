@@ -635,6 +635,50 @@ class TestDaylightSavingEnds:
         assert seconds_since(stamp(first), now.timestamp()) == pytest.approx(900)
         assert to_epoch(stamp(first), near=now) == pytest.approx(first.timestamp())
 
+    # A first-pass "since" read more than half an hour later must not be
+    # placed in the second pass, an hour in the future: nearness alone did,
+    # and heartbeats and auto-archive then came an hour late.
+
+    @staticmethod
+    def _first_pass(minute):
+        from datetime import timezone
+        at = datetime(2026, 10, 25, 0, minute, tzinfo=timezone.utc).astimezone()
+        assert at.utcoffset().total_seconds() == 3600  # 01:mm BST, the first pass
+        return at
+
+    def test_a_first_pass_since_never_reads_as_in_the_future(self, london):
+        from datetime import timedelta
+        from overcode.clock import seconds_since, stamp
+
+        sent = self._first_pass(10)  # 01:10 BST
+        for minutes in (20, 31, 40, 59):
+            now = sent + timedelta(minutes=minutes)
+            assert seconds_since(stamp(sent), now.timestamp()) == pytest.approx(minutes * 60)
+
+    def test_a_heartbeat_sent_in_the_first_pass_is_due_on_time(self, london):
+        from datetime import timedelta
+        from overcode.clock import stamp
+        from overcode.monitor_daemon_core import is_heartbeat_due
+
+        sent = self._first_pass(10)
+        assert not is_heartbeat_due(stamp(sent), stamp(sent), 1800, sent + timedelta(minutes=29))
+        assert is_heartbeat_due(stamp(sent), stamp(sent), 1800, sent + timedelta(minutes=31))
+        assert is_heartbeat_due(stamp(sent), stamp(sent), 1800, sent + timedelta(minutes=45))
+
+    def test_a_deadline_set_in_the_first_pass_for_the_second_is_not_early(self, london):
+        from datetime import timedelta
+        from overcode.clock import stamp
+        from overcode.monitor_daemon_core import should_enforce_oversight_timeout
+
+        set_at = self._first_pass(25)  # 01:25 BST
+        deadline = stamp(set_at + timedelta(minutes=40))  # 01:05 GMT, stored as 01:05
+        assert not should_enforce_oversight_timeout(
+            "waiting_oversight", "timeout", deadline, set_at)
+        assert not should_enforce_oversight_timeout(
+            "waiting_oversight", "timeout", deadline, set_at + timedelta(minutes=39))
+        assert should_enforce_oversight_timeout(
+            "waiting_oversight", "timeout", deadline, set_at + timedelta(minutes=41))
+
 
 
 class TestStateFileWrittenOnChange:
