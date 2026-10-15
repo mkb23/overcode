@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote
 
+from ..conversation_spend import usage as conversation_usage
 from ..stats_reader import (
     AgentSessionStats,
     DiscoveredSessionIds,
@@ -394,6 +395,12 @@ class GrokStatsReader:
             # comment: `provider` is overcode's API-transport discriminator,
             # not the model's vendor.
             provider=None,
+            # Only the newest conversation is read; earlier ones keep the
+            # spend on record (conversation_spend)
+            per_conversation={session_id: conversation_usage(
+                scan["input_tokens"], scan["output_tokens"],
+                scan["cache_creation_tokens"], scan["cache_read_tokens"],
+                model=model, cost=scan.get("cost_usd"))},
         )
 
     def get_stored_cost(self, session: Any) -> Optional[float]:

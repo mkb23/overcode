@@ -1646,3 +1646,49 @@ class TestSnapshotFallbackForContextWindows:
     def test_truly_unknown_model_is_still_none(self):
         from overcode.history_reader import model_context_window
         assert model_context_window("acme-internal-model-x1") is None
+
+
+class TestPerConversation:
+    """get_session_stats splits its read by Claude session id (conversation_spend)."""
+
+    def _setup(self, tmp_path):
+        from overcode.history_reader import encode_project_path
+
+        history_file = tmp_path / "history.jsonl"
+        start = datetime(2026, 1, 15, 10, 0, 0)
+        start_ms = int(start.timestamp() * 1000)
+        history_file.write_text("\n".join(json.dumps(e) for e in [
+            {"display": "1", "timestamp": start_ms + 1000, "project": "/test/project", "sessionId": "session-a"},
+            {"display": "2", "timestamp": start_ms + 2000, "project": "/test/project", "sessionId": "session-b"},
+        ]))
+        project_dir = tmp_path / "projects" / encode_project_path("/test/project")
+        project_dir.mkdir(parents=True)
+        for sid, minute, inp, model in (("session-a", 1, 500, "claude-opus-4-1"),
+                                        ("session-b", 2, 100, "claude-haiku-4-5")):
+            (project_dir / f"{sid}.jsonl").write_text(json.dumps({
+                "type": "assistant", "timestamp": f"2026-01-15T10:0{minute}:00.000Z",
+                "message": {"model": model, "usage": {"input_tokens": inp, "output_tokens": 50}},
+            }))
+        session = create_test_session(start_directory="/test/project", start_time=start.isoformat())
+        session.agent_session_ids = ["session-a", "session-b"]
+        return session, history_file, project_dir
+
+    def test_each_transcript_is_its_own_conversation_with_its_model(self, tmp_path):
+        from overcode.history_reader import get_session_stats
+
+        session, history_file, project_dir = self._setup(tmp_path)
+        stats = get_session_stats(session, history_path=history_file,
+                                  projects_path=project_dir.parent)
+        assert stats.per_conversation == {
+            "session-a": {"in": 500, "out": 50, "cw": 0, "cr": 0, "model": "claude-opus-4-1"},
+            "session-b": {"in": 100, "out": 50, "cw": 0, "cr": 0, "model": "claude-haiku-4-5"},
+        }
+
+    def test_a_pruned_transcript_is_left_out_not_read_as_zero(self, tmp_path):
+        from overcode.history_reader import get_session_stats
+
+        session, history_file, project_dir = self._setup(tmp_path)
+        (project_dir / "session-a.jsonl").unlink()  # Claude Code's cleanupPeriodDays
+        stats = get_session_stats(session, history_path=history_file,
+                                  projects_path=project_dir.parent)
+        assert list(stats.per_conversation) == ["session-b"]

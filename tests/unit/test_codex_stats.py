@@ -610,3 +610,21 @@ class TestBackendWiring:
             assert isinstance(reader, CodexStatsReader)
         finally:
             clear_reader_cache()
+
+
+class TestPerConversation:
+    """The read is keyed by the rollout's conversation id (conversation_spend)."""
+
+    def test_the_newest_rollout_is_its_own_conversation(self, tmp_path):
+        root = tmp_path / "sessions"
+        TestLaterConversation()._write_pair(root, LAUNCH, LAUNCH + timedelta(days=2))
+        s = make_session(agent_session_ids=[SID, OTHER_SID], active_agent_session_id=OTHER_SID)
+        stats = CodexStatsReader(sessions_dir=root).get_stats(s)
+        assert list(stats.per_conversation) == [OTHER_SID]
+        assert stats.per_conversation[OTHER_SID]["in"] == 500
+        assert stats.per_conversation[OTHER_SID]["model"] == "gpt-5.6-sol"
+
+    def test_found_by_directory_it_keys_the_same_conversation(self, reader):
+        by_id = reader.get_stats(make_session())
+        by_cwd = reader.get_stats(make_session(agent_session_ids=[], active_agent_session_id=None))
+        assert list(by_id.per_conversation) == list(by_cwd.per_conversation) == [SID]

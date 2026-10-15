@@ -548,3 +548,11 @@ class TestDaemonAgentPersonaSync:
         assert self._persona_calls(daemon) == [
             call("sess-1", agent_persona="build")
         ]
+
+
+def test_the_read_is_split_by_conversation_with_its_recorded_cost(db):
+    stats = Opencode2StatsReader().get_stats(_FakeSession())
+    entry = stats.per_conversation[SID]
+    assert list(stats.per_conversation) == [SID]
+    assert (entry["in"], entry["out"]) == (11261, 23)
+    assert entry["cost"] == pytest.approx(0.0157)

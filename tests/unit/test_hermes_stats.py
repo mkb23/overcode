@@ -299,3 +299,17 @@ class TestWindowUsage:
     def test_no_container_stats(self, db):
         _, path = db
         assert HermesStatsReader(path).get_container_stats(session()) is None
+
+
+class TestPerConversation:
+    def test_each_row_is_a_conversation_and_only_a_priced_one_has_a_cost(self, db):
+        conn, path = db
+        add_session(conn, "20260917_131721_8f80ea", cost=0.0123, cost_status="estimated")
+        add_session(conn, "20260917_133000_child1", parent="20260917_131721_8f80ea",
+                    started=T0 + 900, inp=1000, out=10, cache=0, reasoning=0, prompt_tokens=1500)
+        conn.commit()
+        stats = HermesStatsReader(path).get_stats(session(agent_session_ids=["20260917_131721_8f80ea"]))
+        parent = stats.per_conversation["20260917_131721_8f80ea"]
+        child = stats.per_conversation["20260917_133000_child1"]
+        assert parent["in"] == 12786 and parent["cost"] == pytest.approx(0.0123)
+        assert child["in"] == 1000 and "cost" not in child

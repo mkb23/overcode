@@ -376,3 +376,13 @@ class TestBackendWiring:
             assert isinstance(reader, GrokStatsReader)
         finally:
             clear_reader_cache()
+
+
+class TestPerConversation:
+    def test_the_read_is_keyed_by_session_with_its_recorded_cost(self, reader):
+        stats = reader.get_stats(make_session())
+        entry = stats.per_conversation[SID]
+        assert list(stats.per_conversation) == [SID]
+        assert entry["in"] == stats.input_tokens and entry["out"] == stats.output_tokens
+        assert entry["cost"] == pytest.approx(7.6021216, rel=1e-6)
+        assert entry["model"] == "grok-4.6"

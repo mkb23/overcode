@@ -6,6 +6,7 @@ make the daemon write garbage stats.
 """
 
 import json
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -356,6 +357,37 @@ class TestClaudeStatsReader:
         assert stats.current_context_tokens == 5000
         assert stats.model == "claude-opus-4-6"
         assert stats.provider == "web"
+
+
+class TestContainerPerConversation:
+    def test_a_transcript_that_fails_to_read_is_left_out(self, monkeypatch):
+        """One docker exec failing leaves that conversation's spend as it is."""
+        reader = ClaudeStatsReader()
+        session = _make_session(
+            wrapper="devcontainer.sh",
+            agent_session_ids=["sid-1", "sid-2"],
+            active_agent_session_id="sid-2",
+        )
+
+        def fake_run(cmd, **kwargs):
+            if "sh" not in cmd and cmd[-1].endswith("sid-1.jsonl"):
+                raise subprocess.TimeoutExpired(cmd, 10)
+            result = Mock()
+            result.returncode = 0
+            result.stdout = "/home/node" if "sh" in cmd else "{}"
+            return result
+
+        monkeypatch.setattr("overcode.stats_reader.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            "overcode.history_reader.read_session_stats_from_content",
+            lambda content: ({"input_tokens": 70, "output_tokens": 30,
+                              "cache_creation_tokens": 0, "cache_read_tokens": 0,
+                              "current_context_tokens": 100, "model": "claude-opus-4-6",
+                              "provider": "web"}, []),
+        )
+        stats = reader.get_container_stats(session)
+        assert list(stats.per_conversation) == ["sid-2"]
+        assert stats.per_conversation["sid-2"]["in"] == 70
 
 
 class TestNullStatsReader:

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .. import model_metadata
+from ..conversation_spend import usage as conversation_usage
 from ..stats_reader import (
     AgentSessionStats,
     DiscoveredSessionIds,
@@ -814,6 +815,21 @@ class _OpencodeFamilyReader:
             return []
         return rows
 
+    @staticmethod
+    def _per_conversation(rows: Sequence[sqlite3.Row]) -> Dict[str, Dict[str, Any]]:
+        """Each conversation row's usage and recorded cost (conversation_spend)."""
+        return {
+            row["id"]: conversation_usage(
+                as_int(row["tokens_input"]),
+                as_int(row["tokens_output"]) + as_int(row["tokens_reasoning"]),
+                as_int(row["tokens_cache_write"]),
+                as_int(row["tokens_cache_read"]),
+                model=_parse_model(row["model"]),
+                cost=as_float(row["cost"]),
+            )
+            for row in rows
+        }
+
     def _vouch(self, session: Any) -> Callable[[Sequence[str]], List[str]]:
         """Hook ids the record lacks that are root conversations started
         since this agent launched: the plugin's, not a dead namesake's."""
@@ -1046,6 +1062,7 @@ class OpencodeStatsReader(_OpencodeFamilyReader):
                 # provider, and writing "openai" into it would corrupt the
                 # session record.
                 provider=None,
+                per_conversation=self._per_conversation(rows),
             )
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return None

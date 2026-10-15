@@ -22,10 +22,10 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
-from . import model_metadata
+from . import conversation_spend, model_metadata
 from .stat_gate import FileSignature, is_settled, stat_signature
 from .transcript_index import TranscriptRegistry, empty_stats
 
@@ -459,6 +459,11 @@ class AgentSessionStats:
     # None for backends with no such signal (Claude, grok), which fall
     # through to the static tables.
     reported_context_window: Optional[int] = None
+    # The read split by the agent CLI's own conversation id
+    # (``conversation_spend.usage`` per id): what the daemon keeps spend
+    # per conversation by. None from a reader that cannot split it; its
+    # totals are then one pseudo conversation.
+    per_conversation: Optional[Dict[str, Dict[str, Any]]] = None
 
     @property
     def max_context_tokens(self) -> Optional[int]:
@@ -1253,6 +1258,9 @@ def get_session_stats(
     live_subagent_count = 0  # Subagents with recently-modified files (#256)
     background_task_count = 0  # Count background task files (#177)
     now = time.time()
+    # Spend per conversation: only transcripts that are there (a pruned one
+    # is not read as zero; its spend on record stays)
+    per_conversation: Dict[str, Dict[str, Any]] = {}
 
     for sid in session_ids:
         session_file = get_session_file_path(
@@ -1268,11 +1276,14 @@ def get_session_stats(
                 session_file = get_session_file_path(
                     alt_project, sid, projects_path
                 )
+        transcript_exists = session_file.exists()
         usage, work_times = read_session_file_stats(session_file, since=session_start)
         total_input += usage["input_tokens"]
         total_output += usage["output_tokens"]
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
+        conversation = [usage["input_tokens"], usage["output_tokens"],
+                        usage["cache_creation_tokens"], usage["cache_read_tokens"]]
 
         # Context & model: prefer active session (#116), fall back to MAX across all
         if active_session_id:
@@ -1323,6 +1334,12 @@ def get_session_stats(
             total_output += sub_usage["output_tokens"]
             total_cache_creation += sub_usage["cache_creation_tokens"]
             total_cache_read += sub_usage["cache_read_tokens"]
+            for i, key in enumerate(("input_tokens", "output_tokens",
+                                     "cache_creation_tokens", "cache_read_tokens")):
+                conversation[i] += sub_usage[key]
+        if transcript_exists:
+            per_conversation[sid] = conversation_spend.usage(
+                *conversation, model=usage.get("model"))
 
         # Check for background tasks (run_in_background agents) (#177)
         # These are subagents that were started in background mode
@@ -1352,6 +1369,7 @@ def get_session_stats(
         effort=detected_effort,
         pr_number=detected_pr,
         last_command=last_command,
+        per_conversation=per_conversation,
     )
 
 

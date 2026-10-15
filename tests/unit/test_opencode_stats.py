@@ -558,3 +558,20 @@ class TestContextLimit:
         assert stats.reported_context_window == 424_242
         assert stats.max_context_tokens == 424_242
         assert stats.current_context_tokens == 7120
+
+
+class TestPerConversation:
+    def test_each_owned_row_is_a_conversation_with_its_recorded_cost(self, db):
+        conn = sqlite3.connect(db)
+        insert_session(conn, OTHER_SID, tokens_input=1000, tokens_output=10, cost=0.0,
+                       time_updated=LAUNCH_MS + 9000)
+        conn.commit()
+        conn.close()
+        stats = OpencodeStatsReader(db_path=db).get_stats(
+            make_session(agent_session_ids=[SID, OTHER_SID]))
+        assert stats.per_conversation[SID] == {
+            "in": 7000, "out": 120, "cw": 64, "cr": 512,
+            "model": "openai/gpt-4o-mini", "cost": pytest.approx(0.0025)}
+        # A zero cost is no recorded cost: the daemon prices the tokens
+        assert "cost" not in stats.per_conversation[OTHER_SID]
+        assert stats.per_conversation[OTHER_SID]["in"] == 1000

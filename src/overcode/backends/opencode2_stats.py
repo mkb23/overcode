@@ -468,6 +468,7 @@ class Opencode2StatsReader(_OpencodeFamilyReader):
                 # provider, and writing opencode's provider id into it
                 # would corrupt the session record.
                 provider=None,
+                per_conversation=self._per_conversation(rows),
             )
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return None

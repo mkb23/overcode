@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
+from .conversation_spend import usage as conversation_usage
 from .history_reader import AgentSessionStats
 
 WINDOW_TOKEN_KEYS = (
@@ -304,6 +305,9 @@ class ClaudeStatsReader:
         detected_provider = None
         detected_effort = None
         all_work_times: List[float] = []
+        # Only the transcripts read: one that failed this time is left out,
+        # so its spend on record stays as it is (conversation_spend)
+        per_conversation: Dict[str, Dict[str, Any]] = {}
 
         for sid in (session.agent_session_ids or [active_sid]):
             # Claude encodes /workspace as -workspace inside the container
@@ -324,6 +328,10 @@ class ClaudeStatsReader:
             total_cache_creation += usage["cache_creation_tokens"]
             total_cache_read += usage["cache_read_tokens"]
             all_work_times.extend(work_times)
+            per_conversation[sid] = conversation_usage(
+                usage["input_tokens"], usage["output_tokens"],
+                usage["cache_creation_tokens"], usage["cache_read_tokens"],
+                model=usage["model"])
 
             if sid == active_sid:
                 current_context = usage["current_context_tokens"]
@@ -356,6 +364,7 @@ class ClaudeStatsReader:
             model=detected_model,
             provider=detected_provider,
             effort=detected_effort,
+            per_conversation=per_conversation,
         )
 
 

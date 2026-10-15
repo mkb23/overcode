@@ -50,6 +50,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..conversation_spend import usage as conversation_usage
 from ..stats_reader import (
     AgentSessionStats,
     DiscoveredSessionIds,
@@ -126,6 +127,19 @@ def _rollout_started(path: Path) -> Optional[datetime]:
         return datetime.strptime(stamp, "%Y-%m-%dT%H-%M-%S")
     except ValueError:
         return None
+
+
+def _rollout_conversation_id(path: Path) -> str:
+    """The conversation id a rollout is named for (``rollout-<ts>-<id>.jsonl``).
+
+    From the name alone, so a rollout found by id and the same one found by
+    directory key the same conversation.
+    """
+    name = path.name
+    if name.endswith(".jsonl"):
+        name = name[: -len(".jsonl")]
+    prefix = len("rollout-") + 20  # "<YYYY-MM-DDTHH-MM-SS>-"
+    return name[prefix:] if name.startswith("rollout-") and len(name) > prefix else name
 
 
 def _read_session_meta(path: Path) -> Optional[dict]:
@@ -432,6 +446,12 @@ class CodexStatsReader:
             # not the model's vendor.
             provider=None,
             reported_context_window=scan["model_context_window"],
+            # Only the newest conversation is read; earlier ones keep the
+            # spend on record (conversation_spend)
+            per_conversation={_rollout_conversation_id(path): conversation_usage(
+                scan["input_tokens"], scan["output_tokens"],
+                scan["cache_write_tokens"], scan["cache_read_tokens"],
+                model=scan["model"])},
         )
 
     def get_stored_cost(self, session: Any) -> Optional[float]:

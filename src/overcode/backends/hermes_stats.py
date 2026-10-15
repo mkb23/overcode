@@ -47,6 +47,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..conversation_spend import usage as conversation_usage
 from ..stats_reader import (
     AgentSessionStats,
     DiscoveredSessionIds,
@@ -375,6 +376,24 @@ class HermesStatsReader:
             totals["cache_creation_tokens"] += as_int(row["cache_write_tokens"])
         return totals
 
+    @staticmethod
+    def _per_conversation(rows: Sequence[sqlite3.Row]) -> Dict[str, Dict[str, Any]]:
+        """Each session row's usage, and its cost when Hermes priced it
+        (``get_stored_cost``'s rule), by row id (conversation_spend)."""
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            status = row["cost_status"]
+            priced = status is not None and status != "unknown"
+            out[row["id"]] = conversation_usage(
+                as_int(row["input_tokens"]),
+                as_int(row["output_tokens"]) + as_int(row["reasoning_tokens"]),
+                as_int(row["cache_write_tokens"]),
+                as_int(row["cache_read_tokens"]),
+                model=str(row["model"]) if row["model"] else None,
+                cost=as_float(row["estimated_cost_usd"]) if priced else None,
+            )
+        return out
+
     # -- StatsReader -----------------------------------------------------
 
     def get_stats(
@@ -419,6 +438,7 @@ class HermesStatsReader:
                 # discriminator ("web"/"bedrock"), not Hermes's
                 # billing_provider.
                 provider=None,
+                per_conversation=self._per_conversation(rows),
             )
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return None
