@@ -154,6 +154,52 @@ class TestSisterInAnotherZone:
         assert len(starts) == 1  # else every poll would notify again
 
 
+class TestRemoteVisitsSurviveARestart:
+    """No engine here records a visit to a sister's agent: the TUI keeps
+    it, so a restarted TUI does not bring the 🔔 back."""
+
+    SID = "remote:host:far"
+
+    def _visit(self, app, session):
+        row = SessionSummary(session)
+        app.query = lambda *a, **kw: [row]
+        app._visit(session.id)
+
+    def _waiting(self):
+        since = datetime.now() - timedelta(seconds=40)
+        state = {"current_status": "waiting_user", "status_since": since.isoformat()}
+        return _agent_to_session(_agent("waiting_user", 40, state), "host")
+
+    def test_a_visit_is_still_there_after_a_restart(self, make_tui):
+        session = self._waiting()
+        self._visit(make_tui(sessions=[]), session)
+        again = make_tui(sessions=[])
+        row = SessionSummary(session)
+        row.apply_remote(again._visited_here.get(self.SID))
+        assert not row.is_unvisited_stalled
+
+    def test_local_visits_stay_the_engine_s(self, make_tui):
+        from overcode.session_manager import Session
+
+        app = make_tui(sessions=[])
+        app.engine_link = MagicMock()
+        local = Session(id="local-1", name="near", tmux_session="test", tmux_window=1,
+                        command=["claude"], start_directory="/tmp",
+                        start_time=datetime.now().isoformat())
+        self._visit(app, local)
+        app.engine_link.visit.assert_called_once_with("local-1")
+        assert make_tui(sessions=[])._visited_here == {}
+
+    def test_a_malformed_saved_value_is_ignored(self):
+        from overcode.settings import TUIPreferences
+        from overcode.tui import remote_visits
+
+        prefs = TUIPreferences(remote_visits={self.SID: "soon", "local": 1.0,
+                                              "remote:h:b": 5.0})
+        assert remote_visits(prefs) == {"remote:h:b": 5.0}
+        assert remote_visits(TUIPreferences(remote_visits=[1])) == {}
+
+
 class TestSisterInAnotherTimezone:
     """A sister stamps status_since in its own naive local time; the row
     and the unvisited marker read it on this host's clock."""

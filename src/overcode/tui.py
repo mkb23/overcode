@@ -155,6 +155,19 @@ def session_row_key(sessions) -> tuple:
 BELL_SEEN_AFTER_SECONDS = 5.0
 
 
+REMOTE_VISIT_DAYS = 7  # a sister agent's visit is kept this long
+
+
+def remote_visits(prefs) -> dict:
+    """The persisted visits to sister agents, ignoring anything malformed."""
+    saved = getattr(prefs, "remote_visits", None)
+    if not isinstance(saved, dict):
+        return {}
+    return {sid: float(at) for sid, at in saved.items()
+            if isinstance(sid, str) and sid.startswith("remote:")
+            and isinstance(at, (int, float)) and not isinstance(at, bool)}
+
+
 class SupervisorTUI(
     ActivityMixin,
     ViewControlMixin,
@@ -416,8 +429,10 @@ class SupervisorTUI(
         # engine.sock and renders what it publishes (tui_engine_link). The
         # client is started on mount.
         self.engine_link = EngineLink(self)
-        # Visits this TUI made that the engine may not have published yet
-        self._visited_here: dict[str, float] = {}
+        # Visits this TUI made that the engine may not have published yet,
+        # and visits to sister agents (which no engine here records), kept
+        # in the prefs so a restart does not bring their 🔔 back
+        self._visited_here: dict[str, float] = remote_visits(self._prefs)
         # The focused-pane capture in flight (one at a time, never queued),
         # and the one long-lived thread that does it: the 250 ms tick sets
         # _capture_request and the Event, the thread posts a FocusedCapture
@@ -997,9 +1012,19 @@ class SupervisorTUI(
         widget = next((w for w in self.query(SessionSummary) if w.session.id == session_id), None)
         if widget is not None and not widget.session.is_remote:
             self.engine_link.visit(session_id)
+        elif widget is not None:
+            self._save_remote_visit(session_id)
         if widget is not None and widget.is_unvisited_stalled:
             widget.is_unvisited_stalled = False
             widget.refresh()
+
+    def _save_remote_visit(self, session_id: str) -> None:
+        """Persist a visit to a sister agent; forget ones a week old."""
+        cutoff = time.time() - REMOTE_VISIT_DAYS * 86400
+        self._prefs.remote_visits = {
+            sid: at for sid, at in self._visited_here.items()
+            if sid.startswith("remote:") and (sid == session_id or at > cutoff)}
+        self._save_prefs()
 
     # ── The focused agent's pane: the one capture loop ─────────────────
 

@@ -670,6 +670,10 @@ class TUIPreferences:
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)
     # (Visits to stalled agents are the engine's since 0.6.0: an older file's
     # visited_stalled_agents / visited_stalled_at keys are ignored.)
+    # Visits to sister agents ({remote session id: epoch}): no engine here
+    # records them, so they persist with the TUI and the 🔔 a visit cleared
+    # stays cleared across a restart
+    remote_visits: dict = field(default_factory=dict)
     # Per-level column overrides: {"low": {"uptime": true, ...}, "med": {...}, "high": {...}}
     # Only stores explicit user overrides. Missing = use default from detail_levels.
     column_config: dict = field(default_factory=dict)
