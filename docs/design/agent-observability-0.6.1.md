@@ -182,6 +182,16 @@ Then:
 
 ## 4. TUI: scale by aggregation
 
+### 4.0 Telling the kinds apart (owner question, 2026-10-15)
+
+Once virtual rows exist, a row's kind must read at a glance. A marker
+leads NAME: none for an overcode agent or child (unchanged); 👥 for a
+subagent (read-only, inside its parent's session); 🧩 for a workflow group;
+🌙 for a Claude background session. A KIND column (hidden by default) spells
+it out. Until Phase 2, only overcode agents have rows; subagents and
+workflows are counts in the parent's 👥 DLG cell, and background sessions
+are not shown.
+
 ### 4.1 Rules
 
 - **One line per parent by default.** A parent with virtual work gets a
