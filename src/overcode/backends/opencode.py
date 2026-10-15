@@ -368,13 +368,13 @@ OPENCODE_PATTERNS = opencode_patterns(
     interrupt_prompt_markers=["· interrupted"],
 
     # No analogue: opencode's bottom bar carries tokens/cost, never counts of
-    # background bashes, subagents, monitors, or an auto-accept toggle.
+    # background bashes, subagents, monitors, or a Claude-style ⏵⏵ mode indicator.
     background_bash_count_pattern=NEVER,
     background_bash_marker=NEVER_SUBSTRING,
     single_task_running_marker=NEVER_SUBSTRING,
     subagent_count_pattern=NEVER,
     monitor_count_pattern=NEVER,
-    auto_accept_pattern=NEVER,
+    in_session_mode_pattern=NEVER,
 )
 
 

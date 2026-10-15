@@ -437,13 +437,13 @@ GROK_PATTERNS = StatusPatterns(
 
     # No analogue: grok's footer carries the model/effort/mode pill and a
     # token counter, never counts of background bashes, subagents,
-    # monitors, or an auto-accept toggle.
+    # monitors, or a Claude-style ⏵⏵ mode indicator.
     background_bash_count_pattern=NEVER,
     background_bash_marker=NEVER_SUBSTRING,
     single_task_running_marker=NEVER_SUBSTRING,
     subagent_count_pattern=NEVER,
     monitor_count_pattern=NEVER,
-    auto_accept_pattern=NEVER,
+    in_session_mode_pattern=NEVER,
 )
 
 

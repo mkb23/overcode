@@ -92,7 +92,7 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.background_bash_count = 0
     widget.bash_count_ambiguous = False
     widget.live_subagent_count = 0
-    widget.auto_accept_mode = False
+    widget.in_session_mode = ""
     widget.pr_number = None
     widget.fleet = FleetFlags()
     widget.uniform_columns = {}
@@ -254,9 +254,9 @@ class TestApplyEngine:
     def test_pane_derived_counts_come_from_the_engine(self):
         widget = _make_bare_widget()
         widget.apply_engine(_view(background_bash_count=3, live_subagent_count=2,
-                                  auto_accept_mode=True, bash_count_ambiguous=False))
+                                  in_session_mode="plan", bash_count_ambiguous=False))
         assert (widget.background_bash_count, widget.live_subagent_count,
-                widget.auto_accept_mode) == (3, 2, True)
+                widget.in_session_mode) == (3, 2, "plan")
 
     def test_the_focused_capture_keeps_its_own_pane_counts(self):
         widget = _make_bare_widget(local_pane=True, background_bash_count=1)

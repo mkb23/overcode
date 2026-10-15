@@ -49,7 +49,7 @@ _STATS_FIELDS = (
 
 # The pane-derived counts, as published and as the row widget names them
 PANE_FIELDS = ("background_bash_count", "bash_count_ambiguous", "live_subagent_count",
-               "auto_accept_mode")
+               "in_session_mode")
 
 
 def engine_socket_path(tmux_session: str) -> Path:

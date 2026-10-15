@@ -11,6 +11,7 @@ from .hover import (
     hover_available_skills,
     hover_child_count,
     hover_loaded_skills,
+    hover_permission_mode,
     hover_skill_profile,
     hover_status_detail,
     hover_swarm,
@@ -460,9 +461,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Supervision group
     SummaryColumn(id="permission_mode", group="supervision", detail_levels=ALL, render=render_permission_mode,
                   label="Mode", render_plain=render_mode_plain, header="MOD", name="Permission Mode",
-                  description="Permission mode: normal, auto-accept, permissive or bypass",
-                  sort_key=lambda ctx: ctx.session.permissiveness_mode,
-                  hide_when_uniform=True),
+                  description="Permission mode: 👮 normal, 🏃 permissive, 🔥 bypass; "
+                              "switched in the session: ⚡ accept edits, 🧠 auto mode, 🧭 plan mode",
+                  sort_key=lambda ctx: ctx.effective_permission_mode,
+                  hide_when_uniform=True, hover=hover_permission_mode),
     SummaryColumn(id="agent_teams", group="supervision", detail_levels=ALL, render=render_agent_teams,
                   label="Teams", render_plain=render_teams_plain, header="TM", name="Teams",
                   description="Agent teams enabled",

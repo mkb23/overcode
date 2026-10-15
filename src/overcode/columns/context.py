@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Iterable, List, Optional, Tuple
 
 from ..clock import from_iso
-from ..status_constants import StatusDetail, get_permissiveness_emoji
+from ..status_constants import StatusDetail, effective_permission_mode, get_permissiveness_emoji
 from ..status_patterns import extract_sleep_duration
 from ..tui_helpers import calculate_uptime, get_current_state_times, get_status_symbol
 
@@ -201,9 +201,16 @@ class ColumnContext:
     # Untracked file count (#455). None when unknown (e.g. not a git repo).
     git_untracked_count: Optional[int] = None
 
-    # In-session auto-accept-edits mode detected from pane scrape (#444).
-    # Overlay over normal launch mode; ignored when launch mode is permissive/bypass.
-    auto_accept_mode: bool = False
+    # The in-session mode the status bar shows: "accept_edits", "auto",
+    # "plan" or "" (#444). Overlays the launch mode through
+    # status_constants.effective_permission_mode.
+    in_session_mode: str = ""
+
+    @property
+    def effective_permission_mode(self) -> str:
+        """The MOD column's mode: launch setting overlaid by the in-session one."""
+        from ..status_constants import effective_permission_mode
+        return effective_permission_mode(self.session.permissiveness_mode, self.in_session_mode)
 
     # Window-scoped burn rate for this session (#174). None when the burn
     # column isn't enabled or the session has no recent token activity.
@@ -225,7 +232,7 @@ def build_cli_context(
     session, stats, claude_stats, git_diff_stats,
     status: str, bg_bash_count: int, live_sub_count: int,
     git_untracked_count: Optional[int] = None,
-    auto_accept_mode: bool = False,
+    in_session_mode: str = "",
     fleet: Optional[FleetFlags] = None, child_count: int = 0,
     oversight_deadline: Optional[str] = None,
     pr_number: Optional[int] = None,
@@ -252,10 +259,8 @@ def build_cli_context(
         stats, is_asleep=session.is_asleep
     )
     median_work = claude_stats.median_work_time if claude_stats else 0.0
-    effective_perm = session.permissiveness_mode
-    if auto_accept_mode and effective_perm == "normal":
-        effective_perm = "auto"
-    perm_emoji = get_permissiveness_emoji(effective_perm, emoji_free)
+    perm_emoji = get_permissiveness_emoji(
+        effective_permission_mode(session.permissiveness_mode, in_session_mode), emoji_free)
 
     # Parse state_since for time-in-state
     status_changed_at = None
@@ -278,7 +283,7 @@ def build_cli_context(
         claude_stats=claude_stats,
         git_diff_stats=git_diff_stats,
         git_untracked_count=git_untracked_count,
-        auto_accept_mode=auto_accept_mode,
+        in_session_mode=in_session_mode,
         status_symbol=status_symbol,
         status_color="bold",
         bg="",

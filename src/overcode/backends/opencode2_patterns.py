@@ -180,12 +180,12 @@ OPENCODE2_PATTERNS = opencode_patterns(
 
     # No analogue: v2's bottom bar carries the project directory and
     # context/cost inline (idle_after_response.txt: "10.7K (2%) · $0.01")
-    # — never counts of background bashes, subagents, monitors, or an
-    # auto-accept toggle.
+    # — never counts of background bashes, subagents, monitors, or a
+    # Claude-style ⏵⏵ mode indicator.
     background_bash_count_pattern=NEVER,
     background_bash_marker=NEVER_SUBSTRING,
     single_task_running_marker=NEVER_SUBSTRING,
     subagent_count_pattern=NEVER,
     monitor_count_pattern=NEVER,
-    auto_accept_pattern=NEVER,
+    in_session_mode_pattern=NEVER,
 )

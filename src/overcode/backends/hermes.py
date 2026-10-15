@@ -469,14 +469,14 @@ HERMES_PATTERNS = StatusPatterns(
     interrupt_prompt_markers=["Operation interrupted", "Interrupted during API call"],
 
     # No analogue: Hermes's status bar carries model/context/cost/timers,
-    # never counts of background bashes, subagents, monitors, or an
-    # auto-accept toggle (its "⚙ 1" is the tool-call counter).
+    # never counts of background bashes, subagents, monitors, or a
+    # Claude-style ⏵⏵ mode indicator (its "⚙ 1" is the tool-call counter).
     background_bash_count_pattern=NEVER,
     background_bash_marker=NEVER_SUBSTRING,
     single_task_running_marker=NEVER_SUBSTRING,
     subagent_count_pattern=NEVER,
     monitor_count_pattern=NEVER,
-    auto_accept_pattern=NEVER,
+    in_session_mode_pattern=NEVER,
 )
 
 

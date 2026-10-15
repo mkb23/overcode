@@ -156,6 +156,8 @@ EMOJI_ASCII = {
     "🔥": "B!",
     "🏃": "P>",
     "👮": "N:",
+    "🧠": "A~",  # Claude auto mode (a classifier decides); ⚡ accept edits is ">>"
+    "🧭": "P?",  # plan mode
     # Activity/metrics
     "🔔": "(!)",
     "⏰": "AL",
@@ -269,10 +271,38 @@ PERMISSIVENESS_EMOJIS = {
     "bypass": "🔥",
     "permissive": "🏃",
     "normal": "👮",
-    # Synthetic mode: in-session auto-accept-edits is ON over a "normal" launch
-    # (#444). Detected from pane scrape; never stored on the session.
-    "auto": "⚡",
+    # Synthetic modes: the in-session mode shift+tab switches to, read from
+    # the pane's status bar (status_patterns.extract_in_session_mode, #444).
+    # Never stored on the session; see effective_permission_mode.
+    "accept_edits": "⚡",
+    "auto": "🧠",
+    "plan": "🧭",
 }
+
+# What each mode means: the MOD column's hover.
+PERMISSIVENESS_MEANINGS = {
+    "bypass": "bypass: launched skipping every permission check",
+    "permissive": "permissive: launched not to ask (Claude: don't ask mode)",
+    "normal": "normal: asks before edits and commands",
+    "accept_edits": "accept edits: edits go through, commands still ask",
+    "auto": "auto mode: a classifier decides what to allow",
+    "plan": "plan mode: read-only until the plan is approved",
+}
+
+
+def effective_permission_mode(launch_mode: str, in_session_mode: str = "") -> str:
+    """The mode an agent is in now: its launch setting, overlaid by the
+    in-session mode its status bar shows.
+
+    Plan mode always shows, whatever the launch. Accept edits and auto mode
+    show over a normal launch only; a permissive or bypass launch keeps its
+    own emoji, as #444 chose for accept edits.
+    """
+    if in_session_mode == "plan":
+        return "plan"
+    if in_session_mode in ("accept_edits", "auto") and launch_mode == "normal":
+        return in_session_mode
+    return launch_mode
 
 
 def get_permissiveness_emoji(mode: str, emoji_free: bool = False) -> str:

@@ -1761,3 +1761,66 @@ class TestOversightCountdownAcrossTheAutumnChange:
         [(text, style)] = render_oversight_countdown(ctx)
         assert text.endswith("25m00s")
         assert "yellow" in style
+
+
+class TestInSessionPermissionMode:
+    """The MOD column overlays the status bar's in-session mode (#444)."""
+
+    @pytest.mark.parametrize("launch, in_session, mode", [
+        ("normal", "", "normal"),
+        ("normal", "accept_edits", "accept_edits"),
+        ("normal", "auto", "auto"),
+        ("normal", "plan", "plan"),
+        ("bypass", "accept_edits", "bypass"),
+        ("permissive", "auto", "permissive"),
+        ("bypass", "plan", "plan"),
+    ])
+    def test_effective_mode(self, launch, in_session, mode):
+        from overcode.status_constants import effective_permission_mode
+        assert effective_permission_mode(launch, in_session) == mode
+        session = _make_session(permissiveness_mode=launch)
+        assert _make_ctx(session=session, in_session_mode=in_session).effective_permission_mode == mode
+
+    @pytest.mark.parametrize("in_session, emoji, ascii_code", [
+        ("accept_edits", "⚡", ">>"),
+        ("auto", "🧠", "A~"),
+        ("plan", "🧭", "P?"),
+    ])
+    def test_cell_and_plain_render(self, in_session, emoji, ascii_code):
+        session = _make_session(permissiveness_mode="normal")
+        for emoji_free, glyph in ((False, emoji), (True, ascii_code)):
+            ctx = build_cli_context(session, session.stats, None, None, "running", 0, 0,
+                                    in_session_mode=in_session, emoji_free=emoji_free)
+            assert render_permission_mode(ctx)[0][0] == f" {glyph}"
+            assert render_mode_plain(ctx).startswith(f"{glyph} {in_session}")
+
+    def test_emoji_free_has_no_emoji(self):
+        session = _make_session(permissiveness_mode="normal", enhanced_context_enabled=True)
+        ctx = build_cli_context(session, session.stats, None, None, "running", 0, 0,
+                                in_session_mode="auto", emoji_free=True)
+        text = render_permission_mode(ctx)[0][0] + render_mode_plain(ctx)
+        assert all(ord(ch) < 0x2000 for ch in text), text
+
+    def test_new_emoji_are_emoji_presentation(self):
+        import unicodedata
+        from overcode.status_constants import PERMISSIVENESS_EMOJIS
+        for mode in ("auto", "plan"):
+            glyph = PERMISSIVENESS_EMOJIS[mode]
+            assert len(glyph) == 1 and unicodedata.east_asian_width(glyph) == "W"
+
+    def test_sorts_by_the_mode_shown(self):
+        session = _make_session(permissiveness_mode="normal")
+        ctx = _make_ctx(session=session, in_session_mode="plan")
+        assert COLUMNS_BY_ID["permission_mode"].sort_key(ctx) == "plan"
+
+    def test_hover_names_the_mode_and_the_launch(self):
+        from overcode.columns.hover import hover_permission_mode
+        assert COLUMNS_BY_ID["permission_mode"].hover is hover_permission_mode
+        session = _make_session(permissiveness_mode="normal")
+        tip = hover_permission_mode(_make_ctx(session=session, in_session_mode="auto")).plain
+        assert "🧠" in tip and "auto mode" in tip and "launched normal" in tip
+        tip = hover_permission_mode(_make_ctx(session=session)).plain
+        assert "👮" in tip and "launched" not in tip
+        tip = hover_permission_mode(_make_ctx(session=session, in_session_mode="plan",
+                                              emoji_free=True)).plain
+        assert "P?" in tip and "🧭" not in tip

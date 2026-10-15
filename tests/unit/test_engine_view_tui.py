@@ -104,7 +104,7 @@ class TestRendersWhatTheEnginePublishes:
                        git_diff=[4, 120, 30], git_untracked=2,
                        burn={"1.0": {"input_tokens": 6000, "output_tokens": 1200,
                                      "cost_usd": 3.0, "energy_j": 3600.0}},
-                       background_bash_count=2, auto_accept_mode=True),
+                       background_bash_count=2, in_session_mode="auto"),
         ))
         async with app.run_test(size=(220, 40)) as pilot:
             await _connected(pilot, app)
@@ -114,7 +114,7 @@ class TestRendersWhatTheEnginePublishes:
             assert row.claude_stats.total_tokens == 1500
             assert row.git_diff_stats == (4, 120, 30) and row.git_untracked_count == 2
             assert row.window_burn.cost_per_hour == 3.0
-            assert row.background_bash_count == 2 and row.auto_accept_mode is True
+            assert row.background_bash_count == 2 and row.in_session_mode == "auto"
             assert row.status_detail.badges[0].eta_seconds > 0
             assert row.fleet.any_has_status_detail and row.fleet.any_has_burn
             plain = row.render().plain

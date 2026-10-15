@@ -69,7 +69,7 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     from ..status_patterns import (
         extract_background_bash_count,
         extract_live_subagent_count,
-        extract_auto_accept_mode,
+        extract_in_session_mode,
         get_patterns,
     )
     from ..git_stats import (
@@ -81,7 +81,7 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     patterns = get_patterns(session_backend_name(sess))
     bg_bash_count = extract_background_bash_count(pane_content_raw, patterns) if pane_content_raw else 0
     live_sub_count = extract_live_subagent_count(pane_content_raw, patterns) if pane_content_raw else 0
-    auto_accept = extract_auto_accept_mode(pane_content_raw, patterns) if pane_content_raw else False
+    in_session_mode = extract_in_session_mode(pane_content_raw, patterns) if pane_content_raw else ""
 
     claude_stats = None
     try:
@@ -107,7 +107,7 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
         "git_untracked": git_untracked,
         "bg_bash_count": bg_bash_count,
         "live_sub_count": live_sub_count,
-        "auto_accept": auto_accept,
+        "in_session_mode": in_session_mode,
     }
 
 
@@ -746,10 +746,12 @@ def list_agents(
 
         # Get per-session daemon fields
         oversight_deadline = None
+        in_session_mode = ""
         if use_daemon:
             ds = daemon_state.get_session_by_name(sess.name)
             if ds:
                 oversight_deadline = ds.oversight_deadline
+                in_session_mode = ds.in_session_mode
 
         _, status_color = get_status_symbol(status)
         ctx = build_cli_context(
@@ -757,6 +759,7 @@ def list_agents(
             claude_stats=claude_stats, git_diff_stats=git_diff,
             status=status, bg_bash_count=0, live_sub_count=0,
             git_untracked_count=git_untracked,
+            in_session_mode=in_session_mode,
             fleet=fleet, child_count=child_count,
             status_detail=_augmented_detail(sess, status),
             oversight_deadline=oversight_deadline,
@@ -1406,7 +1409,7 @@ def show(
         git_untracked = stats_data["git_untracked"]
         bg_bash_count = stats_data["bg_bash_count"]
         live_sub_count = stats_data["live_sub_count"]
-        auto_accept = stats_data["auto_accept"]
+        in_session_mode = stats_data["in_session_mode"]
 
         # AI summaries from daemon state
         ai_short = ""
@@ -1425,7 +1428,7 @@ def show(
             bg_bash_count=bg_bash_count,
             live_sub_count=live_sub_count,
             git_untracked_count=git_untracked,
-            auto_accept_mode=auto_accept,
+            in_session_mode=in_session_mode,
         )
 
         print(f"=== {name} ===")

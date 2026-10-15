@@ -938,7 +938,7 @@ class MonitorDaemon:
                 "background_bash_count": extracted.background_bash_count,
                 "bash_count_ambiguous": extracted.bash_count_ambiguous,
                 "live_subagent_count": extracted.live_subagent_count,
-                "auto_accept_mode": extracted.auto_accept_mode,
+                "in_session_mode": extracted.in_session_mode,
             }
         else:
             view = {}

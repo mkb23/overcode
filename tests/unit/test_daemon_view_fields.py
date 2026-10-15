@@ -162,9 +162,19 @@ class TestPaneView:
 
         expected = extract_from_pane(self.PANE)
         state = daemon.state.sessions[0]
-        assert state.auto_accept_mode == expected.auto_accept_mode
+        assert state.in_session_mode == expected.in_session_mode == "accept_edits"
         assert state.background_bash_count == expected.background_bash_count
         assert state.live_subagent_count == expected.live_subagent_count
+
+    def test_a_tick_publishes_auto_mode(self, env):
+        pane = "❯ \n  ⏵⏵ auto mode on (shift+tab to cycle)"
+        daemon, detector, _, clock = _fleet(
+            env, n=1, script=lambda t, s: ("running", "", pane))
+        with clock.installed():
+            run_ticks(daemon, detector, clock, 1)
+        state = daemon.state.sessions[0]
+        assert state.in_session_mode == "auto"
+        assert state.to_dict()["in_session_mode"] == "auto"
 
     def test_unchanged_pane_text_is_parsed_once(self, env):
         daemon, detector, _, clock = _fleet(
@@ -182,7 +192,7 @@ class TestPaneView:
             run_ticks(daemon, detector, clock, 1)
         state = daemon.state.sessions[0]
         assert (state.background_bash_count, state.live_subagent_count,
-                state.auto_accept_mode) == (0, 0, False)
+                state.in_session_mode) == (0, 0, "")
 
     def test_departed_sessions_are_forgotten(self, tmp_path):
         from overcode.monitor_daemon import MonitorDaemon

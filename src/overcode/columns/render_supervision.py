@@ -276,12 +276,10 @@ def render_agent_value(ctx: ColumnContext) -> ColumnOutput:
 
 def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
     from ..status_constants import PERMISSIVENESS_EMOJIS
-    perm = ctx.session.permissiveness_mode
-    if ctx.auto_accept_mode and perm == "normal":
-        perm = "auto"
-    emoji = PERMISSIVENESS_EMOJIS.get(perm, "👮")
+    perm = ctx.effective_permission_mode
+    emoji = ctx.e(PERMISSIVENESS_EMOJIS.get(perm, "👮"))
     mode = f"{emoji} {perm}"
-    ec = "🎣 enabled" if ctx.session.enhanced_context_enabled else "disabled"
+    ec = f"{ctx.e('🎣')} enabled" if ctx.session.enhanced_context_enabled else "disabled"
     return f"{mode}  Enh ctx: {ec}"
 
 

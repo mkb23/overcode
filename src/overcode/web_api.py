@@ -254,8 +254,9 @@ def _build_summary(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
 def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
     """Build status and identity fields for an agent."""
     status_color = get_status_color(s.current_status)
-    from .status_constants import PERMISSIVENESS_EMOJIS
-    perm_emoji = PERMISSIVENESS_EMOJIS.get(s.permissiveness_mode, "👮")
+    from .status_constants import PERMISSIVENESS_EMOJIS, effective_permission_mode
+    perm_emoji = PERMISSIVENESS_EMOJIS.get(
+        effective_permission_mode(s.permissiveness_mode, s.in_session_mode), "👮")
 
     _gdir = effective_git_directory(s)
     git_diff = get_git_diff_stats(_gdir) if _gdir else None

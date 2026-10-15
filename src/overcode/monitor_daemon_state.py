@@ -241,7 +241,7 @@ class SessionDaemonState:
     background_bash_count: int = 0
     bash_count_ambiguous: bool = False
     live_subagent_count: int = 0
-    auto_accept_mode: bool = False
+    in_session_mode: str = ""  # "accept_edits" | "auto" | "plan" | "" (#444)
 
     # Green / non-green / sleep seconds as of time_base_at (epoch), re-based
     # only when the status changes. Views add the time since, in

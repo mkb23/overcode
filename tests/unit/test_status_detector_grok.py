@@ -237,7 +237,9 @@ class TestPatternPredicates:
         ("background_bash_count_re", "3 bashes"),
         ("subagent_count_re", "2 local agents"),
         ("monitor_count_re", "1 monitor"),
-        ("auto_accept_re", "⏵⏵ auto-accept edits on"),
+        ("in_session_mode_re", "⏵⏵ accept edits on"),
+        ("in_session_mode_re", "⏵⏵ auto mode on"),
+        ("in_session_mode_re", "⏸ plan mode on"),
     ])
     def test_claude_only_extractors_never_match(self, field, value):
         assert getattr(GROK_PATTERNS, field).search(value) is None

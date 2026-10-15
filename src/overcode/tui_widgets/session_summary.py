@@ -150,7 +150,7 @@ class SessionSummary(Static, can_focus=True):
         self.git_untracked_count: Optional[int] = None  # Untracked file count (#455)
         self.background_bash_count: int = 0  # Live count from status bar (#177)
         self.bash_count_ambiguous: bool = False  # Count came from lone "(running)" (#259)
-        self.auto_accept_mode: bool = False  # In-session auto-accept-edits (#444)
+        self.in_session_mode: str = ""  # Status bar's in-session mode (#444)
         self.live_subagent_count: int = 0  # Live count from status bar
         self.file_subagent_count: int = 0  # Live count from file mtime (#256)
         self.pr_number: Optional[int] = session.pr_number  # Widget var — sticky, survives session replacement
@@ -480,19 +480,16 @@ class SessionSummary(Static, can_focus=True):
         median_work = self.claude_stats.median_work_time if self.claude_stats else 0.0
 
         # Status styling
-        from ..status_constants import get_permissiveness_emoji
+        from ..status_constants import effective_permission_mode, get_permissiveness_emoji
         ef = self.emoji_free
         is_highlighted = self.has_focus or "selected" in self.classes
         bg = " on #1a3a50" if is_highlighted else " on #0d2137"
         status_symbol, base_color = get_status_symbol(self.detected_status, emoji_free=ef)
         status_color = f"bold {base_color}{bg}"
-        # Auto-accept-edits is a runtime-only mode that overlays "normal" launch
-        # mode (#444). Bypass / permissive launches override it visually because
-        # they're more permissive.
-        effective_mode = s.permissiveness_mode
-        if self.auto_accept_mode and effective_mode == "normal":
-            effective_mode = "auto"
-        perm_emoji = get_permissiveness_emoji(effective_mode, ef)
+        # The status bar's in-session mode (published by the engine) overlays
+        # the launch mode (#444).
+        perm_emoji = get_permissiveness_emoji(
+            effective_permission_mode(s.permissiveness_mode, self.in_session_mode), ef)
 
         # Name width: grows to longest agent name, capped by detail level
         if self.summary_detail == "low":
@@ -537,7 +534,7 @@ class SessionSummary(Static, can_focus=True):
             claude_stats=self.claude_stats,
             git_diff_stats=self.git_diff_stats,
             git_untracked_count=self.git_untracked_count,
-            auto_accept_mode=self.auto_accept_mode,
+            in_session_mode=self.in_session_mode,
             status_symbol=status_symbol,
             status_color=status_color,
             bg=bg,

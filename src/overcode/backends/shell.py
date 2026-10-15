@@ -88,7 +88,7 @@ SHELL_PATTERNS = StatusPatterns(
     single_task_running_marker=NEVER_SUBSTRING,
     subagent_count_pattern=NEVER,
     monitor_count_pattern=NEVER,
-    auto_accept_pattern=NEVER,
+    in_session_mode_pattern=NEVER,
 )
 
 

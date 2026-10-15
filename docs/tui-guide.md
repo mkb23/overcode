@@ -205,6 +205,26 @@ hover it for the full reason (`overcode list` prints it in full after the
 activity). The 👶 column rolls a parent's children up the same way, e.g.
 `👶 5 2▶ 1📭 1✅ 1❌` (only non-zero counts: ▶ still working).
 
+### Mode column
+
+The Mode column (MOD; hidden while every agent shows the same mode) is the
+agent's permission mode. The first three are how it was launched; the
+others are what you switched a Claude agent to with `shift+tab`, read from
+its status bar:
+
+| Mode | Emoji-free | Meaning |
+|------|------------|---------|
+| 👮 | `N:` | Normal: asks before edits and commands |
+| 🏃 | `P>` | Permissive (Claude: don't ask) |
+| 🔥 | `B!` | Bypass: every permission check skipped |
+| ⚡ | `>>` | Accept edits: edits go through, commands still ask |
+| 🧠 | `A~` | Auto mode: a classifier decides what to allow |
+| 🧭 | `P?` | Plan mode: read-only until the plan is approved |
+
+Plan mode shows whatever the launch mode. Accept edits and auto mode show
+over a normal launch; a permissive or bypass agent keeps 🏃 / 🔥. Hover the
+cell for the mode and, when switched, how it was launched.
+
 ### Bell Indicator
 
 A bell icon (🔔) appears on agents that have stalled and haven't been visited yet. Focus the agent to clear the bell. Press `b` to jump directly to agents with bells.

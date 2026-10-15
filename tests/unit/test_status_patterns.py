@@ -4,35 +4,54 @@ Tests for status detection patterns module.
 Tests the centralized pattern definitions and helper functions.
 """
 
+import pytest
 
-from overcode.status_patterns import StatusPatterns, DEFAULT_PATTERNS, get_patterns, matches_any, find_matching_line, line_starts_with_any, is_status_bar_line, is_command_menu_line, count_command_menu_lines, clean_line, extract_active_monitor_count, extract_background_bash_count, extract_live_subagent_count, extract_pr_number, extract_from_pane, PaneExtraction, is_sleep_command, extract_sleep_duration, extract_auto_accept_mode
+from overcode.status_patterns import StatusPatterns, DEFAULT_PATTERNS, get_patterns, matches_any, find_matching_line, line_starts_with_any, is_status_bar_line, is_command_menu_line, count_command_menu_lines, clean_line, extract_active_monitor_count, extract_background_bash_count, extract_live_subagent_count, extract_pr_number, extract_from_pane, PaneExtraction, is_sleep_command, extract_sleep_duration, extract_in_session_mode
 
 
-class TestExtractAutoAcceptMode:
-    """Tests for extract_auto_accept_mode (#444)."""
+class TestExtractInSessionMode:
+    """extract_in_session_mode (#444): the mode shift+tab switches to, from
+    the status bar. Strings are Claude Code 2.1.300's indicators."""
 
-    def test_detects_auto_approve(self):
-        content = "⏵⏵ auto-approve on (shift+tab to cycle) · esc to interrupt"
-        assert extract_auto_accept_mode(content) is True
+    @pytest.mark.parametrize("bar, mode", [
+        ("  ⏵⏵ accept edits on (shift+tab to cycle)", "accept_edits"),
+        ("  ⏵⏵ accept edits on · 2 shells · esc to interrupt", "accept_edits"),
+        ("  ⏵⏵ auto mode on (shift+tab to cycle)", "auto"),
+        ("  ⏵⏵ auto mode on · ← 1 agent", "auto"),
+        ("  ⏸ plan mode on (shift+tab to cycle)", "plan"),
+        ("  ⏸ plan mode on (shift+tab to cycle) · PR #257", "plan"),
+        # Older builds' accept-edits labels
+        ("⏵⏵ auto-accept edits on (shift+tab to cycle)", "accept_edits"),
+        ("⏵⏵ auto-approve on (shift+tab to cycle) · esc to interrupt", "accept_edits"),
+    ])
+    def test_reads_the_mode(self, bar, mode):
+        assert extract_in_session_mode(f"⏺ Done.\n❯ \n{bar}") == mode
 
-    def test_detects_auto_accept(self):
-        content = "⏵⏵ auto-accept edits on (shift+tab to cycle)"
-        assert extract_auto_accept_mode(content) is True
+    @pytest.mark.parametrize("bar", [
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+        "  ⏵⏵ don't ask on (shift+tab to cycle)",
+        "  ? for shortcuts",  # normal: no indicator
+        "",
+    ])
+    def test_launch_modes_and_normal_are_none(self, bar):
+        assert extract_in_session_mode(f"⏺ Done.\n❯ \n{bar}") == ""
 
-    def test_ignores_bypass(self):
-        content = "⏵⏵ bypass permissions on (shift+tab to cycle)"
-        assert extract_auto_accept_mode(content) is False
+    def test_prose_mentioning_a_mode_is_not_the_bar(self):
+        assert extract_in_session_mode("⏺ Switch to auto mode or plan mode with shift+tab") == ""
 
-    def test_ignores_dont_ask(self):
-        content = "⏵⏵ don't ask on (shift+tab to cycle)"
-        assert extract_auto_accept_mode(content) is False
+    def test_the_last_indicator_is_the_live_one(self):
+        pane = "  ⏸ plan mode on (shift+tab to cycle)\n⏺ ok\n  ⏵⏵ bypass permissions on"
+        assert extract_in_session_mode(pane) == ""
+        pane = "  ⏵⏵ accept edits on\n⏺ ok\n  ⏵⏵ auto mode on (shift+tab to cycle)"
+        assert extract_in_session_mode(pane) == "auto"
 
-    def test_ignores_plain_text(self):
-        assert extract_auto_accept_mode("just some output") is False
+    def test_reads_through_ansi(self):
+        pane = "\x1b[38;2;255;193;7m⏵⏵\x1b[39m \x1b[38;2;255;193;7mauto mode on\x1b[39m"
+        assert extract_in_session_mode(pane) == "auto"
 
-    def test_extract_from_pane_threads_auto(self):
-        pane = "⏵⏵ auto-approve on (shift+tab to cycle)"
-        assert extract_from_pane(pane).auto_accept_mode is True
+    def test_extract_from_pane_threads_it(self):
+        assert extract_from_pane("⏸ plan mode on (shift+tab to cycle)").in_session_mode == "plan"
+        assert extract_from_pane("? for shortcuts").in_session_mode == ""
 
 
 class TestStatusPatterns:

@@ -83,6 +83,20 @@ def hover_wrapper(ctx: ColumnContext):
     return _emoji_legend("Wrapper", rows) if rows else None
 
 
+def hover_permission_mode(ctx: ColumnContext):
+    """The MOD emoji's mode, and the launch mode under an in-session one."""
+    from ..status_constants import PERMISSIVENESS_EMOJIS, PERMISSIVENESS_MEANINGS
+    launch = ctx.session.permissiveness_mode
+    mode = ctx.effective_permission_mode
+    rows = [(ctx.e(PERMISSIVENESS_EMOJIS.get(mode, "👮")), PERMISSIVENESS_MEANINGS.get(mode, mode))]
+    footer = ""
+    if mode != launch:
+        rows.append((ctx.e(PERMISSIVENESS_EMOJIS.get(launch, "👮")),
+                     f"launched {PERMISSIVENESS_MEANINGS.get(launch, launch).split(':')[0]}"))
+        footer = "Switched in the session (shift+tab)"
+    return _emoji_legend("Permission mode", rows, footer)
+
+
 def hover_task_result(ctx: ColumnContext):
     """The child's result in full: the kind, then the report's whole reason."""
     from ..status_constants import RESULT_KINDS

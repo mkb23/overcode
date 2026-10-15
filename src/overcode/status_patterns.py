@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 # Values that can never match, for a backend with no analogue of a Claude
-# Code concept (plan-mode approval, subagent/monitor counts, auto-accept bar).
+# Code concept (plan-mode approval, subagent/monitor counts, in-session mode bar).
 # NEVER is a regex; NEVER_SUBSTRING is for substring fields — NUL never
 # appears in captured pane text.
 NEVER = r"(?!)"
@@ -319,8 +319,21 @@ class StatusPatterns:
     # Status-bar extraction — live Monitor-tool streams (#441).
     monitor_count_pattern: str = r'(\d+)\s+monitors?\b'
 
-    # Status-bar extraction — in-session auto-accept-edits mode (#444).
-    auto_accept_pattern: str = r"⏵⏵\s+auto-?(accept|approve)"
+    # Status-bar extraction — the in-session permission mode shift+tab
+    # cycles (#444). Claude Code 2.1.300 renders it as one indicator:
+    # "⏵⏵ accept edits on", "⏵⏵ auto mode on", "⏸ plan mode on",
+    # "⏵⏵ bypass permissions on", "⏵⏵ don't ask on" (older builds said
+    # "auto-accept edits" / "auto-approve"). The named group that matches is
+    # the mode; the unnamed alternatives are modes overcode reads from the
+    # launch setting instead, matched so an older indicator above them in
+    # the scrollback is not taken as the current one.
+    in_session_mode_pattern: str = (
+        r"(?:⏵⏵|⏸)\s+(?:"
+        r"(?P<accept_edits>auto-?(?:accept|approve)|accept\s+edits)"
+        r"|(?P<auto>auto\s+mode)"
+        r"|(?P<plan>plan\s+mode)"
+        r"|bypass\s+permissions|don't\s+ask|manual\s+mode)"
+    )
 
     def __post_init__(self) -> None:
         self._compile()
@@ -333,7 +346,7 @@ class StatusPatterns:
         self.background_bash_count_re = re.compile(self.background_bash_count_pattern)
         self.subagent_count_re = re.compile(self.subagent_count_pattern)
         self.monitor_count_re = re.compile(self.monitor_count_pattern)
-        self.auto_accept_re = re.compile(self.auto_accept_pattern, re.IGNORECASE)
+        self.in_session_mode_re = re.compile(self.in_session_mode_pattern, re.IGNORECASE)
 
     # --- Pattern-driven predicates ----------------------------------------
     # Phase-level variance between backends lives here, so the polling
@@ -919,20 +932,27 @@ def extract_pr_number(content: str, *, clean_content: str = None) -> int | None:
     return None
 
 
-def extract_auto_accept_mode(
+IN_SESSION_MODES = ("accept_edits", "auto", "plan")
+
+
+def extract_in_session_mode(
     content: str, patterns: StatusPatterns = None, *, clean_content: str = None
-) -> bool:
-    """Detect Claude Code's in-session auto-accept-edits mode (#444).
+) -> str:
+    """Which in-session permission mode the status bar shows (#444).
 
-    The mode is toggled with shift+tab and surfaces in the status bar as
-    `⏵⏵ auto-accept edits on (shift+tab to cycle)` (sometimes "auto-approve").
-    There is no file/env/hook signal, so we scrape the rendered pane.
-
-    Returns True when the indicator is present in the visible status bar.
+    Claude Code's shift+tab cycles the live mode and only the rendered
+    status bar shows it (no file, env or hook signal). Returns
+    ``"accept_edits"`` (``⏵⏵ accept edits on``), ``"auto"`` (``⏵⏵ auto mode
+    on``: a classifier decides), ``"plan"`` (``⏸ plan mode on``), or ``""``
+    for none of them (no indicator, or bypass / don't ask, which the launch
+    setting already shows). The last indicator in the pane is the live one.
     """
     patterns = patterns or DEFAULT_PATTERNS
     cleaned = clean_content if clean_content is not None else strip_ansi(content)
-    return bool(patterns.auto_accept_re.search(cleaned))
+    last = None
+    for last in patterns.in_session_mode_re.finditer(cleaned):
+        pass
+    return (last.lastgroup or "") if last is not None else ""
 
 
 def is_sleep_command(text: str) -> bool:
@@ -966,8 +986,9 @@ class PaneExtraction:
     # subagent count should treat this as "possibly subagent" and suppress
     # the bash count accordingly.
     bash_count_ambiguous: bool = False
-    # True when the in-session auto-accept-edits mode is on (#444).
-    auto_accept_mode: bool = False
+    # The in-session permission mode the status bar shows: "accept_edits",
+    # "auto", "plan", or "" for none (#444; extract_in_session_mode).
+    in_session_mode: str = ""
 
 
 def extract_from_pane(content: str, patterns: StatusPatterns = None) -> PaneExtraction:
@@ -996,5 +1017,5 @@ def extract_from_pane(content: str, patterns: StatusPatterns = None) -> PaneExtr
         active_monitor_count=extract_active_monitor_count(content, patterns, clean_content=clean),
         pr_number=extract_pr_number(content, clean_content=clean),
         bash_count_ambiguous=bash_ambiguous,
-        auto_accept_mode=extract_auto_accept_mode(content, patterns, clean_content=clean),
+        in_session_mode=extract_in_session_mode(content, patterns, clean_content=clean),
     )

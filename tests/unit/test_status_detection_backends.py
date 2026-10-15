@@ -140,7 +140,7 @@ class TestAltBackendPolling:
         assert extraction.background_bash_count == 3
         assert extraction.live_subagent_count == 2
         assert extraction.active_monitor_count == 1
-        assert extraction.auto_accept_mode is True
+        assert extraction.in_session_mode == "accept_edits"
 
     def test_claude_patterns_ignore_alt_chrome(self, hooked_backend):
         from overcode.status_patterns import extract_from_pane
@@ -150,7 +150,7 @@ class TestAltBackendPolling:
 
         assert extraction.background_bash_count == 0
         assert extraction.live_subagent_count == 0
-        assert extraction.auto_accept_mode is False
+        assert extraction.in_session_mode == ""
 
 
 class TestResolveSessionDetectionMode:

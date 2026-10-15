@@ -35,7 +35,7 @@ def make_test_patterns() -> StatusPatterns:
         single_task_running_marker="(busy)",
         subagent_count_pattern=r"(\d+)\s+workers?",
         monitor_count_pattern=r"(\d+)\s+watchers?\b",
-        auto_accept_pattern=r"▤\s+auto-run",
+        in_session_mode_pattern=r"▤\s+(?P<accept_edits>auto-run)",
     )
 
 
