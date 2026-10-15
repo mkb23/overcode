@@ -5,7 +5,8 @@ ledger, but a stats reader can legitimately read *less* than before:
 Claude Code prunes old transcripts, codex and grok read only the owned
 conversations still on disk, ``restart --fresh`` replaces the conversations
 the agent owns, and a container read can fail for one file. So the spend is
-kept per conversation (the agent CLI's own conversation id) in
+kept per conversation (the agent CLI's own conversation id; a Claude
+subagent is ``<session id>/<agent file>``, at its own model) in
 ``SessionStats.conversations``::
 
     {conversation_id: {"in", "out", "cw", "cr",   # tokens, as priced

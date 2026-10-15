@@ -1334,9 +1334,14 @@ def get_session_stats(
             total_output += sub_usage["output_tokens"]
             total_cache_creation += sub_usage["cache_creation_tokens"]
             total_cache_read += sub_usage["cache_read_tokens"]
-            for i, key in enumerate(("input_tokens", "output_tokens",
-                                     "cache_creation_tokens", "cache_read_tokens")):
-                conversation[i] += sub_usage[key]
+            # A subagent runs its own model (an Explore on haiku under an
+            # opus parent): its own conversation, priced at that model
+            sub_tokens = [sub_usage[key] for key in (
+                "input_tokens", "output_tokens",
+                "cache_creation_tokens", "cache_read_tokens")]
+            if any(sub_tokens):
+                per_conversation[f"{sid}/{subagent_file.stem}"] = conversation_spend.usage(
+                    *sub_tokens, model=sub_usage.get("model") or usage.get("model"))
         if transcript_exists:
             per_conversation[sid] = conversation_spend.usage(
                 *conversation, model=usage.get("model"))

@@ -1684,6 +1684,27 @@ class TestPerConversation:
             "session-b": {"in": 100, "out": 50, "cw": 0, "cr": 0, "model": "claude-haiku-4-5"},
         }
 
+    def test_a_subagent_is_its_own_conversation_at_its_own_model(self, tmp_path):
+        """An Explore on haiku under an opus parent was added to the parent
+        and priced at opus."""
+        from overcode.history_reader import get_session_stats
+
+        session, history_file, project_dir = self._setup(tmp_path)
+        subagents = project_dir / "session-a" / "subagents"
+        subagents.mkdir(parents=True)
+        (subagents / "agent-x1.jsonl").write_text(json.dumps({
+            "type": "assistant", "timestamp": "2026-01-15T10:01:30.000Z",
+            "message": {"model": "claude-haiku-4-5",
+                        "usage": {"input_tokens": 7000, "output_tokens": 70}},
+        }))
+        stats = get_session_stats(session, history_path=history_file,
+                                  projects_path=project_dir.parent)
+        assert stats.per_conversation["session-a"] == {
+            "in": 500, "out": 50, "cw": 0, "cr": 0, "model": "claude-opus-4-1"}
+        assert stats.per_conversation["session-a/agent-x1"] == {
+            "in": 7000, "out": 70, "cw": 0, "cr": 0, "model": "claude-haiku-4-5"}
+        assert stats.input_tokens == 500 + 100 + 7000
+
     def test_a_pruned_transcript_is_left_out_not_read_as_zero(self, tmp_path):
         from overcode.history_reader import get_session_stats
 
