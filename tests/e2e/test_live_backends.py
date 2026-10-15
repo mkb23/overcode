@@ -551,7 +551,13 @@ class TestLiveBackend:
 
         # 2. That first turn: telemetry must write hook state and settle.
         self._wait_hook_event("Stop", after=t0)
+        # The pane can still animate for a moment after the Stop (opencode
+        # finishes its title call); give the status a few seconds to settle
+        deadline = time.monotonic() + 15
         status, activity = self._status()
+        while status != "waiting_user" and time.monotonic() < deadline:
+            time.sleep(1)
+            status, activity = self._status()
         assert status == "waiting_user", (status, activity)
         assert self._wait_daemon_status("waiting_user") == "waiting_user"
 
