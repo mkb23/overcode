@@ -262,6 +262,44 @@ class TestShutdown:
         # Revived, the mark goes: a later death is archived as usual.
         assert not any(s.kept_for_revive for s in sm.list_sessions())
 
+    def test_kept_idle_child_is_not_settled_back_and_archived(self, fleet, tmp_path):
+        """An idle child shutdown keeps stays kept, through reconcile and the archive.
+
+        Its hook state still says Stop with no report (forced shutdown, or
+        no SessionEnd). Settling it back to waiting_oversight made the
+        daemon treat its gone window as a finished child's and archive it,
+        so revive --all lost it.
+        """
+        from datetime import datetime, timedelta
+        from overcode.daemon_cadence import Cadence
+        from overcode.daemon_housekeeping import Housekeeping
+        from overcode.session_manager import PendingUpdates
+
+        launcher, _, sm = fleet
+        child = sm.get_session_by_name("child")
+        _run_shutdown(fleet, FakeOps(["agents"]))
+        assert sm.get_session(child.id).kept_for_revive
+
+        def stopped(tmux_session, name, session_id=None):
+            return session_id == child.id
+
+        with patch("overcode.child_lifecycle.hook_stopped", side_effect=stopped):
+            launcher.reconcile_lifecycle()
+        kept = sm.get_session(child.id)
+        assert kept.status == "terminated" and kept.kept_for_revive
+
+        hk = Housekeeping("agents", tmux=MagicMock(), history_path=tmp_path / "h.csv",
+                          log=MagicMock(), housekeeping=Cadence(120),
+                          rotation=Cadence(3600), model_metadata=Cadence(3600))
+        t0 = datetime.now()
+        for now in (t0, t0 + timedelta(hours=2)):
+            pending = PendingUpdates()
+            hk.archive_terminated_sessions(sm.list_sessions(), now, pending,
+                                           window_gone=frozenset({child.id}))
+            sm.commit_pending(pending)
+        assert sm.get_session(child.id) is not None, "kept child archived"
+        assert sorted(r.name for r in revive_all(launcher)) == ["child", "grandchild", "parent"]
+
     def test_finished_child_is_not_kept_and_is_archived(self, fleet, tmp_path):
         """A done child shutdown stops is archived after the grace, not kept for good.
 

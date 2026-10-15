@@ -193,7 +193,7 @@ class Housekeeping:
         for session in all_sessions:
             if session.status != STATUS_TERMINATED and session.id not in window_gone:
                 continue
-            if session.kept_for_revive and session.id not in window_gone:
+            if session.kept_for_revive:
                 continue  # stopped by `overcode shutdown`, kept for `revive --all`
             seen.add(session.id)
             since = self.terminated_since.setdefault(session.id, now)

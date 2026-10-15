@@ -88,8 +88,15 @@ def settled_child_status(session, stopped: Optional[bool] = None) -> Optional[st
     rule does not settle from, or one already in the status it would get.
     ``stopped`` is whether its Stop hook fired, when the caller has read
     that already (the daemon, through its detector); read here otherwise.
+
+    A record ``overcode shutdown`` kept for ``revive --all``
+    (``kept_for_revive``) is left terminated: its hook state may still say
+    Stop, and settling it back to waiting_oversight would have the daemon
+    take its gone window for a finished child's and archive it.
     """
     if session.parent_session_id is None or session.status not in SETTLEABLE_STATUSES:
+        return None
+    if getattr(session, "kept_for_revive", False):
         return None
     if stopped is None:
         stopped = hook_stopped(session.tmux_session, session.name, session.id)
