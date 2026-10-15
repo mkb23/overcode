@@ -365,7 +365,7 @@ class CodexBackend(AgentBackendBase):
         from ..config import get_backend_telemetry_enabled
         if get_backend_telemetry_enabled(self.name):
             overcode_bin = _resolve_overcode_bin()
-            hook_array = _codex_hook_toml_array(f"{overcode_bin} hook-handler --backend {self.name}")
+            hook_array = _codex_hook_toml_array(f"{overcode_bin} hook-handler")
             for hook_event in self.hook_events:
                 cmd.extend(["-c", f"hooks.{hook_event}={hook_array}"])
             cmd.append("--dangerously-bypass-hook-trust")

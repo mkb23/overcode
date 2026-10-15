@@ -38,20 +38,25 @@ def _resolve_overcode_bin() -> str:
 
 
 def _build_launch_settings(
-    overcode_bin: str, include_punchy_perms: bool = False, backend: str = "claude-code",
+    overcode_bin: str, include_punchy_perms: bool = False,
 ) -> dict:
     """Build the --settings JSON for overcode-launched agents.
 
     Includes all overcode hooks (with absolute-path commands) and
     permissions so agents don't depend on user-level settings.json
     containing these entries.
+
+    The command is a bare ``hook-handler``, the one shape every released
+    overcode runs: Claude's payload is the default dialect, so it needs no
+    ``--backend``, and an agent outlives the overcode that launched it (a
+    downgrade, where an unknown option would exit 2: Claude's blocking code).
     """
     from ..hook_handler import (
         CLAUDE_NOTIFICATION_MATCHER, CLAUDE_SESSION_START_MATCHER, OVERCODE_HOOKS,
     )
     from ..cli.perms import OVERCODE_SAFE_PERMS, OVERCODE_PUNCHY_PERMS
 
-    command = [{"type": "command", "command": f"{overcode_bin} hook-handler --backend {backend}"}]
+    command = [{"type": "command", "command": f"{overcode_bin} hook-handler"}]
     # Build hooks dict: event -> [matcher group]
     hooks: dict[str, list] = {}
     for event, _bare_command in OVERCODE_HOOKS:
@@ -172,7 +177,7 @@ class ClaudeCodeBackend(AgentBackendBase):
         # agents don't depend on user-level settings.json (#435).
         overcode_bin = _resolve_overcode_bin()
         settings = _build_launch_settings(
-            overcode_bin, include_punchy_perms=spec.include_punchy_perms, backend=self.name,
+            overcode_bin, include_punchy_perms=spec.include_punchy_perms,
         )
         # Skill profile (#499): personal skills outside the profile are hidden
         # for this session only; the profile's own skills load as a plugin.

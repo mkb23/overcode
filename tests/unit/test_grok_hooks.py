@@ -66,7 +66,7 @@ class TestHooksFileContent:
         content = build_hooks_file_content()
         cmd = content["hooks"]["Stop"][0]["hooks"][0]["command"]
         assert 'OVERCODE_SESSION_NAME' in cmd
-        assert "hook-handler --backend grok'" in cmd
+        assert "hook-handler'" in cmd
 
     def test_no_blocking_stop_gate_timeout(self):
         # Grok defaults Stop/StopFailure/StopCancelled gates to 600s; the

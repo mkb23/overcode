@@ -167,9 +167,9 @@ class TestDelivery:
     def test_hook_command_from_env(self, monkeypatch):
         monkeypatch.setenv("OVERCODE_HOOK_COMMAND", "/usr/bin/python3 -m overcode.cli")
         assert plugin._hook_command() == [
-            "/usr/bin/python3", "-m", "overcode.cli", "hook-handler", "--backend", "hermes"]
+            "/usr/bin/python3", "-m", "overcode.cli", "hook-handler"]
         monkeypatch.delenv("OVERCODE_HOOK_COMMAND")
-        assert plugin._hook_command() == ["overcode", "hook-handler", "--backend", "hermes"]
+        assert plugin._hook_command() == ["overcode", "hook-handler"]
 
     def test_pre_llm_call_returns_handler_stdout_as_context(self, monkeypatch):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "hm")
@@ -181,7 +181,7 @@ class TestDelivery:
         assert out == {"context": "Current time: 13:17"}
         sent = json.loads(run.call_args.kwargs["input"])
         assert sent["hook_event_name"] == "UserPromptSubmit" and sent["session_id"] == SID
-        assert run.call_args.args[0] == ["overcode", "hook-handler", "--backend", "hermes"]
+        assert run.call_args.args[0] == ["overcode", "hook-handler"]
 
     def test_other_events_return_nothing(self, monkeypatch):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "hm")

@@ -1,6 +1,6 @@
 """Unified hook handler for every backend's hook events.
 
-A single command (`overcode hook-handler --backend <name>`) handles all hook
+A single command (`overcode hook-handler`) handles all hook
 events. It reads stdin JSON from the agent CLI, translates it into Claude
 Code's vocabulary (``hook_dialects``), writes state files for hook-based
 status detection, and outputs enhanced context for UserPromptSubmit events.
@@ -932,9 +932,9 @@ def handle_hook_event(backend: str | None = None) -> None:
     from stdin, writes a state file for status detection, and for
     UserPromptSubmit events also outputs time-context to stdout.
 
-    ``backend`` (``hook-handler --backend <name>``) picks the payload's
-    dialect (``hook_dialects.for_backend``); without it the dialect is
-    guessed, for hook commands registered by an older overcode.
+    ``backend`` (``hook-handler --backend <name>``, which no command
+    registers any more) picks the payload's dialect; without it
+    ``hook_dialects.for_backend`` tells it from the payload.
 
     Silent exit (code 0) if env vars missing or stdin is empty/invalid.
     """

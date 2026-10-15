@@ -235,9 +235,9 @@ class AgentBackendBase:
     prompt_as_argument: bool = False
     type_multiline_text: bool = False
 
-    # The hook events the backend registers ``overcode hook-handler
-    # --backend <name>`` for, where overcode chooses them per event (codex's
-    # -c overrides, grok's hooks file). Empty when the CLI's own plugin or
+    # The hook events the backend registers ``overcode hook-handler`` for,
+    # where overcode chooses them per event (codex's -c overrides, grok's
+    # hooks file). Empty when the CLI's own plugin or
     # settings decide (Claude Code's are OVERCODE_HOOKS in hook_handler).
     hook_events: Sequence[str] = ()
 

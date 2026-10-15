@@ -907,6 +907,16 @@ class TestDialectNormalization:
             backend = get_backend(name)
             assert hook_dialects.for_backend(name, {}) is backend.hook_dialect, name
 
+    def test_unnamed_payload_resolves_each_backends_own_dialect(self):
+        # Registered commands carry no --backend, so the payload's shape
+        # alone must pick the dialect the name would have
+        from overcode.backends import get_backend, list_backends
+        for name in list_backends():
+            backend = get_backend(name)
+            payload = ({"hookEventName": "stop"} if backend.hook_dialect is hook_dialects.GROK
+                       else {"hook_event_name": "Stop"})
+            assert hook_dialects.for_backend(None, payload) is backend.hook_dialect, name
+
     def test_camel_case_dialect_is_translated(self):
         payload = {
             "hookEventName": "user_prompt_submit",
@@ -1566,3 +1576,51 @@ class TestUnmappedEvents:
     def test_unmapped_first_event_writes_no_snapshot(self, tmp_path, monkeypatch):
         self._send(tmp_path, monkeypatch, {"hook_event_name": "Mystery"})
         assert not (tmp_path / "agents" / "hook_state_test-agent.json").exists()
+
+
+class TestRegisteredHookCommandsSurviveADowngrade:
+    """A running agent's hook command outlives the overcode that registered
+    it. Every released overcode (0.5.x included) runs only a bare
+    ``hook-handler``; any option makes 0.5.8's typer exit 2, which Claude
+    Code and codex read as "block": prompts erased, tool calls refused."""
+
+    BIN = "/opt/oc/bin/overcode"
+
+    def _assert_bare(self, command: str):
+        assert command.rstrip("'").endswith(f"{self.BIN} hook-handler"), command
+
+    def test_claude_settings_hooks(self):
+        from overcode.backends.claude_code import _build_launch_settings
+        hooks = _build_launch_settings(self.BIN)["hooks"]
+        commands = [h["command"] for groups in hooks.values()
+                    for group in groups for h in group["hooks"]]
+        assert commands
+        for command in commands:
+            self._assert_bare(command)
+
+    def test_codex_c_overrides(self):
+        from overcode.backends import get_backend
+        from overcode.backends.base import LaunchSpec
+        with patch("overcode.backends.codex._resolve_overcode_bin", return_value=self.BIN), \
+                patch("overcode.config.get_backend_telemetry_enabled", return_value=True):
+            cmd = get_backend("codex").build_command(LaunchSpec())
+        values = [cmd[i + 1] for i, arg in enumerate(cmd)
+                  if arg == "-c" and cmd[i + 1].startswith("hooks.")]
+        assert values
+        for value in values:
+            assert f'command="{self.BIN} hook-handler"' in value, value
+
+    def test_grok_hooks_file(self):
+        from overcode.backends.grok import build_hooks_file_content
+        with patch("overcode.backends.grok._resolve_overcode_bin", return_value=self.BIN):
+            content = build_hooks_file_content()
+        commands = [h["command"] for entries in content["hooks"].values()
+                    for entry in entries for h in entry["hooks"]]
+        assert commands
+        for command in commands:
+            self._assert_bare(command)
+
+    def test_hermes_plugin(self, monkeypatch):
+        from overcode import hermes_plugin
+        monkeypatch.setenv("OVERCODE_HOOK_COMMAND", self.BIN)
+        assert hermes_plugin._hook_command() == [self.BIN, "hook-handler"]

@@ -193,7 +193,7 @@ def hooks_file_path() -> Path:
 def _hook_command() -> str:
     """The inert-outside-overcode shell command every registration runs."""
     overcode_bin = _resolve_overcode_bin()
-    return f"sh -c '{_INERTNESS_GUARD}; exec {overcode_bin} hook-handler --backend grok'"
+    return f"sh -c '{_INERTNESS_GUARD}; exec {overcode_bin} hook-handler'"
 
 
 def _hook_entry(matcher: Optional[str] = None) -> dict:

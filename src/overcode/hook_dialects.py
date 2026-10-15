@@ -5,8 +5,15 @@ the agent's hook state in Claude Code's vocabulary: snake_case keys
 (``hook_event_name``, ``session_id``, ``tool_name``, ...) and PascalCase
 event names. A backend whose CLI speaks something else owns a
 ``HookDialect`` that translates its payload into that shape
-(``AgentBackend.hook_dialect`` / ``normalize_hook_payload``), and its
-registered hook command names it: ``overcode hook-handler --backend <name>``.
+(``AgentBackend.hook_dialect`` / ``normalize_hook_payload``), and
+``for_backend`` tells it from the payload itself.
+
+Registered hook commands are a bare ``overcode hook-handler``, never
+``--backend <name>``: a running agent outlives the overcode that launched
+it, and an overcode that predates the option (0.5.x after a downgrade)
+rejects it with exit 2, which Claude Code and codex treat as "block": every
+prompt and tool call refused. The handler still accepts ``--backend`` from
+commands registered while it was emitted.
 
 The hook path runs on every tool call of every agent, so this module is
 stdlib-only and the handler resolves a dialect here by backend name
@@ -207,10 +214,10 @@ _BY_BACKEND: dict[str, HookDialect] = {"grok": GROK}
 def for_backend(backend: str | None, data: dict) -> HookDialect:
     """The dialect of a payload sent by ``backend``'s hook command.
 
-    A hook command registered before the command carried ``--backend``
-    (an agent launched by an older overcode) sends no name: grok's
+    Registered commands send no name (see the module docstring): grok's
     camelCase ``hookEventName`` key gives it away, anything else is
-    Claude-shaped.
+    Claude-shaped. A name, from a command registered while ``--backend``
+    was emitted, still wins.
     """
     if backend:
         return _BY_BACKEND.get(backend, CLAUDE)
