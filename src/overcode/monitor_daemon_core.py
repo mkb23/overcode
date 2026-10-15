@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 
-from .clock import parse_time, to_epoch
+from .clock import parse_time, stamp_epoch
 from .status_constants import STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
 
 # An agent not observed for longer than this was not being watched: the
@@ -249,6 +249,7 @@ def should_enforce_oversight_timeout(
     policy: Optional[str],
     deadline: Optional[str],
     now: datetime,
+    deadline_at: Optional[float] = None,
 ) -> bool:
     """Check whether an oversight timeout should be enforced.
 
@@ -259,6 +260,8 @@ def should_enforce_oversight_timeout(
         policy: Oversight policy (e.g., "wait", "timeout")
         deadline: ISO timestamp of the oversight deadline
         now: Current datetime
+        deadline_at: The deadline in epoch seconds, as the daemon stored
+            it beside ``deadline``: places it in the repeated autumn hour
 
     Returns:
         True if the oversight timeout has expired
@@ -269,7 +272,7 @@ def should_enforce_oversight_timeout(
         return False
     if not deadline:
         return False
-    deadline_at = to_epoch(deadline)
+    deadline_at = stamp_epoch(deadline, deadline_at)
     if deadline_at is None:
         return False
     # Epoch seconds: an aware deadline against a naive now (or the

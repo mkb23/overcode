@@ -271,6 +271,9 @@ class MonitorDaemonState:
     loop_count: int = 0
     current_interval: int = field(default_factory=lambda: DAEMON.interval_fast)
     last_loop_time: Optional[str] = None  # ISO timestamp
+    # last_loop_time in epoch seconds: places the naive stamp in the
+    # repeated autumn hour (clock.stamp_epoch); older files lack it
+    last_loop_at: Optional[float] = None
     # Tick timing. ``tick_started_at`` is when the tick that produced this
     # state began; ``last_tick_duration_seconds`` is the wall time of the
     # previous complete tick. The loop is tick-then-sleep, so consecutive
@@ -356,7 +359,7 @@ class MonitorDaemonState:
     # They are liveness, not news: views learn the engine is alive from its
     # pings, so pushing these would turn every quiet tick into a delta.
     ENGINE_TICK_FIELDS = frozenset({
-        "loop_count", "last_loop_time", "tick_started_at", "last_tick_duration_seconds",
+        "loop_count", "last_loop_time", "last_loop_at", "tick_started_at", "last_tick_duration_seconds",
         # sums of the per-agent accumulators below
         "total_green_time", "total_non_green_time", "total_sleep_time",
     })
@@ -515,11 +518,12 @@ class MonitorDaemonState:
         Returns:
             True if state is older than (expected gap + buffer_seconds)
         """
-        from .clock import to_epoch
+        from .clock import stamp_epoch
 
         # Epoch seconds: the stamp is naive local (aware in a file a
-        # pre-release 0.6.0 wrote), ``now`` the caller's wall clock
-        last_at = to_epoch(self.last_loop_time)
+        # pre-release 0.6.0 wrote), placed by last_loop_at in the repeated
+        # autumn hour; ``now`` the caller's wall clock
+        last_at = stamp_epoch(self.last_loop_time, self.last_loop_at)
         if last_at is None:
             return True
         age = (time.time() if now is None else now) - last_at

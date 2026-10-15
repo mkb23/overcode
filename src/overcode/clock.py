@@ -87,6 +87,31 @@ def stamp(value: datetime) -> str:
     return local_naive(value).isoformat()
 
 
+def stamp_epoch(text: TimeValue, at: TimeValue) -> Optional[float]:
+    """Epoch seconds of stamp ``text``, placed by ``at`` (its epoch) when they agree.
+
+    A naive stamp cannot say which pass of the repeated autumn hour it
+    means, and ``to_epoch`` takes the first. Where a reading acts on the
+    time (the engine's liveness, an oversight deadline) the writer stores
+    the epoch beside the stamp; it is used only when it is one of the
+    stamp's readings, so a stamp rewritten without it (an older overcode,
+    a hand edit) is read on its own.
+    """
+    fallback = to_epoch(text)
+    if fallback is None or isinstance(at, bool) or not isinstance(at, (int, float)):
+        return fallback
+    if isinstance(text, str):
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return fallback
+        if parsed.tzinfo is None:
+            readings = (parsed.replace(fold=0).timestamp(), parsed.replace(fold=1).timestamp())
+            if any(abs(float(at) - r) < 1.0 for r in readings):
+                return float(at)
+    return fallback
+
+
 def seconds_since(value: TimeValue, now: Optional[float] = None) -> Optional[float]:
     """Seconds from a stored or in-memory time to ``now`` (epoch; default the wall clock).
 

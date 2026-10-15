@@ -514,6 +514,73 @@ class TestDaylightSavingEnds:
         now = datetime.fromtimestamp(last.timestamp() + 600)  # 01:05 GMT
         assert is_heartbeat_due(last.isoformat(), None, 300, now)
 
+    # Persisted stamps are naive local ISO (clock.stamp), which cannot say
+    # which pass of the repeated hour they mean: read alone, they take the
+    # first. The daemon writes the epoch beside the two whose reading acts.
+
+    def _daemon(self, tmp_path, now):
+        from overcode.monitor_daemon import MonitorDaemon
+        from overcode.monitor_daemon_state import MonitorDaemonState
+        from tests.daemon_tick_harness import FrozenClock
+
+        presence = MagicMock(available=False)
+        presence.get_current_state.return_value = (1, 0.0, None)
+        daemon = MonitorDaemon.for_test(tmp_path, log=MagicMock(), presence=presence,
+                                        clock=FrozenClock(now))
+        daemon.state = MonitorDaemonState()
+        daemon._engine = MagicMock()
+        return daemon
+
+    def test_a_live_engine_in_the_second_pass_is_not_stale(self, london, tmp_path):
+        from datetime import timezone
+
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        now = datetime(2026, 10, 25, 1, 30, tzinfo=timezone.utc).astimezone()  # 01:30 GMT
+        daemon = self._daemon(tmp_path, now)
+        daemon._publish_state([])
+        daemon._flush_pending_writes()
+        state = MonitorDaemonState.load(tmp_path / "monitor_daemon_state.json")
+        assert state is not None and state.last_loop_time == "2026-10-25T01:30:00"
+        assert not state.is_stale(now=now.timestamp() + 5)
+
+    def test_an_oversight_deadline_in_the_second_pass_does_not_fire_early(self, london, tmp_path):
+        from datetime import timezone
+
+        from overcode.monitor_daemon_core import should_enforce_oversight_timeout
+
+        now = datetime(2026, 10, 25, 0, 20, tzinfo=timezone.utc).astimezone()  # 01:20 BST
+        daemon = self._daemon(tmp_path, now)
+        sm = daemon.session_manager
+        child = sm.create_session("child", "agents", "child-0001", ["claude"],
+                                  start_directory=str(tmp_path))
+        sm.update_session(child.id, oversight_policy="timeout", oversight_timeout_seconds=3600.0)
+        with patch.object(daemon, "_hook_stopped", return_value=True):
+            daemon._stage_oversight_deadline(sm.get_session(child.id))
+        daemon._flush_pending_writes()
+        child = sm.get_session(child.id)
+        assert child.oversight_deadline == "2026-10-25T01:20:00"  # 01:20 GMT, the second pass
+
+        def fires(after):
+            return should_enforce_oversight_timeout(
+                "waiting_oversight", "timeout", child.oversight_deadline,
+                now + timedelta(seconds=after), deadline_at=child.oversight_deadline_at)
+
+        assert not fires(60)
+        assert not fires(3599)
+        assert fires(3600)
+
+    def test_an_epoch_that_does_not_match_its_stamp_is_ignored(self, london):
+        from overcode.clock import stamp_epoch
+
+        first = datetime(2026, 10, 25, 1, 20)  # fold 0: BST
+        assert stamp_epoch("2026-10-25T01:20:00", first.timestamp() + 3600) == first.timestamp() + 3600
+        # A stamp rewritten by something that left the old epoch behind
+        assert stamp_epoch("2026-10-25T01:40:00", first.timestamp() + 3600) == \
+            datetime(2026, 10, 25, 1, 40).timestamp()
+        assert stamp_epoch("2026-10-25T01:20:00", None) == first.timestamp()
+        assert stamp_epoch(None, first.timestamp()) is None
+
 
 
 class TestStateFileWrittenOnChange:

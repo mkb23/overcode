@@ -984,6 +984,7 @@ class MonitorDaemon:
                 getattr(session, 'oversight_policy', 'wait'),
                 getattr(session, 'oversight_deadline', None),
                 now,
+                deadline_at=getattr(session, 'oversight_deadline_at', None),
             ):
                 continue
             self._pending.update_session(
@@ -1002,6 +1003,7 @@ class MonitorDaemon:
         presence_state, presence_idle, _ = self.presence.get_current_state()
 
         self.state.last_loop_time = stamp(now)
+        self.state.last_loop_at = now.timestamp()
         self.state.last_tick_duration_seconds = round(self._last_tick_duration_seconds, 3)
         self.state.slow_tick_seconds = (
             round(self.state.last_tick_duration_seconds, 1)
@@ -1487,7 +1489,8 @@ class MonitorDaemon:
             return
         from datetime import timedelta
         deadline = self.clock.wall() + timedelta(seconds=timeout)
-        self._pending.update_session(session.id, oversight_deadline=stamp(deadline))
+        self._pending.update_session(session.id, oversight_deadline=stamp(deadline),
+                                     oversight_deadline_at=deadline.timestamp())
         self.log.info(f"[{session.name}] oversight timeout in {timeout:.0f}s")
 
     def _refund_done_children(self, child_ids: list) -> None:
@@ -1637,7 +1640,8 @@ class MonitorDaemon:
             if session.status == STATUS_WAITING_OVERSIGHT:
                 if is_green_status(effective_status):
                     if session.oversight_deadline:
-                        pending.update_session(session.id, oversight_deadline=None)
+                        pending.update_session(session.id, oversight_deadline=None,
+                                               oversight_deadline_at=None)
                 else:
                     self._stage_oversight_deadline(session)
                 session = pending.view(snapshot)

@@ -225,6 +225,9 @@ class Session:
     oversight_policy: str = "wait"  # wait | fail | timeout
     oversight_timeout_seconds: float = 0.0  # 0 = indefinite
     oversight_deadline: Optional[str] = None  # ISO timestamp, set on entering waiting_oversight
+    # oversight_deadline in epoch seconds: places the naive stamp in the
+    # repeated autumn hour (clock.stamp_epoch); None when unset or older
+    oversight_deadline_at: Optional[float] = None
     report_status: Optional[str] = None  # "success" | "failure"
     report_reason: str = ""
 
