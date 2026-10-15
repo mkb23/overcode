@@ -98,3 +98,57 @@ class TestOlderSisterStalls:
             _agent("waiting_user", 5, self._state("waiting_user", since)), "host")
         app._apply_remote(row)  # same stretch, polled again
         app._notifier.queue.assert_called_once_with("far", "x")
+
+
+class TestSisterInAnotherZone:
+    """A sister's ``status_since`` is naive local time in *its* zone: read
+    as this host's, a sister ahead put its agent's state hours in the
+    future (negative time in state, unvisited for hours after a visit)."""
+
+    @staticmethod
+    def _sister_since(hours_ahead, seconds_ago):
+        from datetime import timezone
+        zone = timezone(timedelta(hours=hours_ahead))
+        return (datetime.now(zone) - timedelta(seconds=seconds_ago)).replace(tzinfo=None)
+
+    @pytest.mark.parametrize("hours_ahead", [9, -7, 5.75])
+    def test_time_in_state_is_the_sister_s(self, hours_ahead):
+        since = self._sister_since(hours_ahead, 120)
+        state = {"current_status": "waiting_user", "status_since": since.isoformat()}
+        row = SessionSummary(_agent_to_session(_agent("running", 3 * 3600), "host"))
+        row.session = _agent_to_session(_agent("waiting_user", 120, state), "host")
+        row.apply_remote()
+        assert 110 < _seconds_in_state(row) < 180
+
+    @pytest.mark.parametrize("status", ["waiting_user", "done"])
+    def test_status_since_is_placed_in_this_host_s_zone(self, status):
+        import time
+        since = self._sister_since(9, 120)
+        state = {"current_status": status, "status_since": since.isoformat(),
+                 "input_needed_since": None}
+        session = _agent_to_session(_agent(status, 120, state), "host")
+        moved = datetime.fromisoformat(session.remote_daemon_state["status_since"])
+        assert moved.timestamp() == pytest.approx(time.time() - 120, abs=5)
+
+    def test_a_visit_clears_the_unvisited_marker(self):
+        import time
+        since = self._sister_since(9, 120)
+        state = {"current_status": "waiting_user", "status_since": since.isoformat()}
+        session = _agent_to_session(_agent("waiting_user", 120, state), "host")
+        assert session.remote_daemon_state["input_needed_since"] == pytest.approx(
+            time.time() - 120, abs=5)
+        row = SessionSummary(session)
+        row.apply_remote()
+        assert row.is_unvisited_stalled
+        row.apply_remote(visited_here=time.time())
+        assert not row.is_unvisited_stalled
+
+    def test_the_stretch_start_holds_still_between_polls(self):
+        since = self._sister_since(9, 120).isoformat()
+        starts = {
+            _agent_to_session(_agent("waiting_user", raw, {
+                "current_status": "waiting_user", "status_since": since}), "host"
+            ).remote_daemon_state["input_needed_since"]
+            for raw in (119.0, 120.0, 121.5)
+        }
+        assert len(starts) == 1  # else every poll would notify again

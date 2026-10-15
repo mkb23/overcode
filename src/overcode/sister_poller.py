@@ -8,13 +8,14 @@ objects that can be merged into the local TUI's session list.
 
 import json
 import socket
+import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from .clock import from_iso
+from .clock import stamp
 from .config import get_hostname, get_sisters_config
 from .session_manager import Session, SessionStats
 
@@ -326,8 +327,42 @@ def _agent_to_session(
     )
 
 
-def _remote_daemon_state(agent: dict) -> Optional[dict]:
-    """The sister's forwarded daemon state, in the 0.6 shape.
+# Zone offsets are whole quarter hours (UTC+5:45 is the oddest in use)
+_ZONE_OFFSET_STEP = 900.0
+
+
+def _sister_epoch(since: object, seconds_in_state: object, now: float) -> Optional[float]:
+    """Epoch seconds of a sister's ``status_since``, or None.
+
+    The sister writes it as naive local time in its own zone (``clock.stamp``),
+    which this host cannot read as its own local time: a sister eight hours
+    ahead would put the agent's state eight hours in the future. The same
+    poll's ``time_in_state_raw`` (the sister's now minus that stamp) gives
+    the sister's wall clock now, and so its zone offset, to the nearest
+    quarter hour. An aware stamp (a pre-release 0.6.0 sister) carries its own.
+    """
+    if not isinstance(since, str) or not since:
+        return None
+    try:
+        parsed = datetime.fromisoformat(since)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.timestamp()
+    if isinstance(seconds_in_state, bool) or not isinstance(seconds_in_state, (int, float)):
+        return None
+    wall = parsed.replace(tzinfo=timezone.utc).timestamp()
+    offset = round((wall + seconds_in_state - now) / _ZONE_OFFSET_STEP) * _ZONE_OFFSET_STEP
+    return wall - offset
+
+
+def _remote_daemon_state(agent: dict, now: Optional[float] = None) -> Optional[dict]:
+    """The sister's forwarded daemon state, in the 0.6 shape and this host's time.
+
+    ``status_since`` is rewritten as this host's local time (``_sister_epoch``),
+    so the row's time in state and anything else reading it agree with
+    the sister whatever its zone; dropped when it cannot be placed (the
+    poll's ``time_in_state_raw`` still gives the row its time in state).
 
     A pre-0.6 sister publishes no ``input_needed_since`` (the start of the
     stretch its agent has needed input for), which the unvisited marker and
@@ -335,15 +370,21 @@ def _remote_daemon_state(agent: dict) -> Optional[dict]:
     agent is ``waiting_user`` (0.5.8's notion of a stall) stands in for it.
     """
     state = agent.get("daemon_state")
-    if not isinstance(state, dict) or "input_needed_since" in state:
+    if not isinstance(state, dict):
         return state
+    state = dict(state)
     since = None
-    if state.get("current_status") == "waiting_user" and state.get("status_since"):
-        try:
-            since = from_iso(state["status_since"]).timestamp()
-        except (TypeError, ValueError):
-            since = None
-    return {**state, "input_needed_since": since}
+    if state.get("status_since"):
+        since = _sister_epoch(state["status_since"], agent.get("time_in_state_raw"),
+                              time.time() if now is None else now)
+        if since is None:
+            del state["status_since"]
+        else:
+            state["status_since"] = stamp(datetime.fromtimestamp(since))
+    if "input_needed_since" not in state:
+        state["input_needed_since"] = (
+            since if state.get("current_status") == "waiting_user" else None)
+    return state
 
 
 def _remote_backend_name(agent: dict) -> str:
