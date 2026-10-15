@@ -12,6 +12,13 @@ This directory contains technical design documents, architecture analysis, and i
 - **Audience:** Contributors, architects, anyone considering remote agent monitoring integration
 - **Key Finding:** ACP covers ~25-30% of overcode features; recommend hybrid model (sister protocol for control, ACP for observability)
 
+### Agent Observability for 0.6.1 (proposal)
+- **File:** `agent-observability-0.6.1.md` (captures in `spike-agent-types/captures/`)
+- **Status:** Proposal / Not implemented
+- **Date:** October 2026
+- **Summary:** Spike on Claude Code 2.1.300: what subagents (fg/bg/fork), workflows, teammates, background sessions and other sessions expose, verified with real runs. Proposes virtual rows under a parent and adopted background-session rows, a 👥 rollup and expandable workflow/phase groups for swarms, density timeline rows, and a spend fix: dedupe by message.id, include workflow transcripts.
+- **Audience:** Contributors
+
 ### Background Shell Classification (proposal)
 - **File:** `background-shell-classification.md`
 - **Status:** Proposal / Not implemented

@@ -1,0 +1,402 @@
+# Agent observability for 0.6.1: every kind of delegated work
+
+Status: proposal, from a spike on Claude Code **2.1.300** (2026-10-15).
+Raw captures: `docs/design/spike-agent-types/captures/` (index at the end).
+
+Today overcode is good at observing the agents it launches itself. Claude
+Code now hands work to several other kinds of agent: subagents (foreground,
+background, forks), workflows, teammates, background sessions and cloud
+sessions. This doc covers what each kind exposes, as verified by running it,
+and proposes how overcode should show it. The goal is that a swarm of 40
+agents reads as one line, not 40.
+
+---
+
+## 1. What the spike found
+
+Every claim below comes from a real run. Each run used haiku, a temp git
+repo, a private tmux socket (`tmux -L spike-*`) and a logging hook injected
+with `--settings`, and an env with overcode's variables stripped. A finding
+marked **(new)** is not in the hook docs, or contradicts what overcode
+assumes today.
+
+### 1.1 Facts that change the design
+
+| # | Finding | Evidence |
+|---|---|---|
+| F1 | **(new) The Agent tool runs in the background by default.** The schema says "Agents run in the background by default". `run_in_background: false` is the opt-in to block. A plain `Agent(...)` call returns `status: async_launched` at once. | `01-default-agent-call`, `00-tool-schemas.md.txt` |
+| F2 | **(new) `Stop` and `SubagentStop` carry `background_tasks`**: `[{id, type: subagent\|shell\|workflow\|teammate, status, description, agent_type\|name\|command}]`, plus `session_crons`. This is an authoritative list of the parent's in-flight work, taken at every turn end. | all runs, `hooks.jsonl` |
+| F3 | `SubagentStart` has only `session_id` (the parent's), `transcript_path` (the parent's), `agent_id` and `agent_type`. It has no description, name, tool_use_id or workflow id. Those live in `<sid>/subagents/agent-<id>.meta.json` and in the spawning tool's `PostToolUse.tool_response`. | `02`, `05` |
+| F4 | A subagent's own tool hooks (`PreToolUse`, `PostToolUse`, `PermissionRequest`, …) arrive in the **parent's** `session_id` with `agent_id` and `agent_type` set. `SubagentStop` adds `agent_transcript_path` and `last_assistant_message`. | `02`, `03` |
+| F5 | **(new) The parent transcript contains none of the subagent's messages.** The subagent's result reaches the parent as a `<task-notification>` user turn carrying `<status>`, `<result>` and `<usage><subagent_tokens>…`. The `cost-state` record, written when the session ends, does include subagents. | `01` |
+| F6 | **(new, bug) Today's spend sums over-count.** The transcript writes one line per content block, and every line repeats the whole message's `usage`. `history_reader` adds every line, so it over-counts 1.3–2.0×. Deduplicating by `message.id` (keeping the last line) over the parent plus `subagents/**/agent-*.jsonl` matched Claude's own `cost-state` **exactly** in all 6 print-mode runs. Interactive runs also matched exactly on cache tokens. The few uncached input/output tokens still missing there are side calls that are never written to the transcript, such as session naming. | `spend-reconciliation.txt` |
+| F7 | **(bug) Workflow agents are not counted at all.** Their transcripts live in `subagents/workflows/<runId>/agent-<id>.jsonl`, and overcode's glob is `subagents/agent-*.jsonl`, which is not recursive. | `05`, `06` |
+| F8 | **(bug) Forks double-count.** A fork transcript opens with a `fork-context-ref {parentSessionId, parentLastUuid, contextLength}` line, then a copy of the parent's last assistant message, with the same `message.id` and the same usage. Deduplicating across files (F6) fixes this. | `04` |
+| F9 | Forks are gated: without `CLAUDE_CODE_FORK_SUBAGENT=1`, `subagent_type: "fork"` fails with "Agent type 'fork' not found". With it, `agent_type: "fork"`, meta `isFork: true` and `model: inherit`, and the fork is always a background call. | `04` |
+| F10 | **(new) Workflows only report live progress in the journal.** `subagents/workflows/<runId>/journal.jsonl` gets `started {agentId,label,phase}` and `result {agentId,result}` as they happen. `workflows/<runId>.json`, which has per-agent `state`, `tokens`, `durationMs` and `phaseTitle`, is written **only when the run completes**. Hooks report each agent only as `agent_type: "workflow-subagent"`, with no run id. The run id comes from the Workflow `PostToolUse` (`taskId`, `runId`, `workflowName`, `transcriptDir`, `scriptPath`) or from the transcript's directory path. | `06/live-file-watch.jsonl` |
+| F11 | **(contradicts docs) Agent teams are not what the docs say.** With `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` there is no `TeamCreate`, `TeamDelete` or team task-list tool, and the Agent tool's `team_name` is "deprecated and ignored". Each session instead gets an implicit team `session-<8 hex>` at `~/.claude/teams/session-<8>/config.json` plus `inboxes/*.json`, deleted when the lead exits. `Agent(name: "alice")` spawns a teammate. `TaskCreated` and `TaskCompleted` never fired. | `07`, `08`, `09` |
+| F12 | In-process teammates have `agent_id` `a<name>-<hex>` and **`agent_type` = the teammate's name**. `TeammateIdle {teammate_name, team_name}` fires when one goes idle. In `background_tasks` a teammate has `type: teammate` and stays `running` while idle. `SubagentStart` fires **again** when a message wakes it. | `08` |
+| F13 | **(new) tmux teammates are separate Claude processes.** Each runs in a split pane (`tmux_pane_id: %1`, `agent_id: name@session-<8>`) with its own top-level transcript tagged `teamName` and `agentName`. **It does not inherit hooks passed with `--settings`**: none of its events reached the logger. | `09` |
+| F14 | Background sessions (`claude --bg`) refuse an untrusted directory. They are registered in **`~/.claude/jobs/<short>/state.json`**, with `state` (`working`, `blocked` or `done`), a one-line `detail`, `tempo`, `inFlight`, `tokens`, `output.result`, `needs` (the pending question, when blocked), `children` (e.g. `{kind: pr, href}`), `respawnFlags` and `linkScanPath` (the transcript). `timeline.jsonl` beside it records each state change. Hooks passed with `--settings` survive, because they are kept in `respawnFlags`. | `10` |
+| F15 | `claude agents --json` takes about **0.12 s** per call. It lists interactive sessions (`pid`, `status: busy\|idle`) and background ones (`id`, `state`, `status`). After `claude stop` a session leaves the default list and appears only under `--all`, as `done`. `claude rm` deletes `jobs/<id>`. `claude logs` returns the raw terminal byte stream (ANSI), which has no structure to parse. | `10` |
+| F16 | **(new) `~/.claude/sessions/<pid>.json` is a live registry of every interactive Claude** on the machine. Each entry has `status` (`idle`, `busy`, `waiting` or `shell`; `waiting` was seen during an AskUserQuestion), `tmux: "<session>:@<window>.%<pane>"`, `messagingSocketPath`, `name` and `sessionId`. Status changes land in under a second, and reading it costs one file read. | `11` |
+| F17 | `SendMessage` to a background agent is queued and delivered "at its next tool round" as a `queued_command` attachment with `origin.kind: coordinator`. If the agent has already finished, the message resumes it, so one task id can notify more than once. | `03` |
+| F18 | **(gap in overcode) The `bg_task` obligation never arms for default-async agents or workflows.** The rule requires `tool_input.run_in_background` to be truthy, and the Workflow tool has no such parameter. 👥 still works, because it comes from `SubagentStart`. | `hook_handler.py:63-82` |
+
+The cloud kinds (`Agent isolation: "remote"`, `claude --cloud`) were not
+exercised. They leave nothing on local disk to observe beyond the spawning
+tool call.
+
+### 1.2 What overcode already has
+
+- Hooks: `SubagentStart` and `SubagentStop` keep a `subagents` map in
+  `hook_state.json`. A subagent's events never become the parent's turn,
+  but its permission prompt is lifted onto the parent (🟠 with
+  `permission_agent_id`). A one-hour staleness timer covers a lost Stop.
+- Status: a parent whose turn is over while subagents are live goes 🟡 with
+  the 👥 badge ("Waiting on N background agents"). Background shells and
+  tasks give 🔌.
+- Spend: `history_reader` globs `<sid>/subagents/agent-*.jsonl`, skips the
+  isMeta compaction copies, adds each subagent's tokens into the parent, and
+  prices each at its own model. This carries the F6, F7 and F8 bugs.
+- Tree: `parent_name`, `children_count`, `subtree_cost_usd` and
+  `children_rollup` (the 👶 column, `👶 5 2▶ 1📭 1✅ 1❌`). Tree sort and
+  `X` collapse apply to overcode's own children only.
+- Not used anywhere: `claude agents`, `~/.claude/jobs`,
+  `~/.claude/sessions`, `TeammateIdle`, `background_tasks`, workflow
+  journals.
+
+---
+
+## 2. Taxonomy
+
+| Kind | Started by | Who can steer it | Survives parent? | Backends | How overcode observes it (source, latency) | What overcode can do |
+|---|---|---|---|---|---|---|
+| **Subagent, foreground** | `Agent(run_in_background:false)` | parent model only; the parent is blocked meanwhile | no | Claude (opencode and codex have their own task tools, out of scope) | hooks with `agent_id` (≤0.5 s, existing wake path); `subagents/agent-<id>.jsonl` + `.meta.json` (5 s stats cadence) | read only; interrupting the parent stops it |
+| **Subagent, background** (the default) | `Agent(...)` | parent model: `SendMessage(to=agentId)`, `TaskStop`; user: the ↓ manage view in the parent pane | no: dies with the session (verified for shells; assumed for agents) | Claude | as above, plus `background_tasks` on each Stop (reconciliation) and the `<task-notification>` status/result in the parent transcript | read only; can type a request into the parent ("stop agent X") |
+| **Fork** | `Agent(subagent_type:"fork")`, needs `CLAUDE_CODE_FORK_SUBAGENT=1` | as background | no | Claude | as background; meta `isFork`; transcript opens with `fork-context-ref` | read only |
+| **Named agent / in-process teammate** | `Agent(name:"x")` (a teammate when AGENT_TEAMS=1) | parent and other teammates via `SendMessage(to:"x")`, shutdown_request; `TaskStop` by name | no | Claude | hooks (`agent_type` = name), `TeammateIdle`; `~/.claude/teams/session-<8>/` while the lead lives | read only |
+| **tmux teammate** | AGENT_TEAMS=1 + `--teammate-mode tmux` | lead via SendMessage; user in its pane | unknown (not tested) | Claude | **not** via `--settings` hooks; its own transcript (`teamName`/`agentName`), `sessions/<pid>.json` (pane, status ≤1 s), team config | its pane is a real tmux pane, so overcode could focus or send-keys to it (not proposed for 0.6.1) |
+| **Workflow** | `Workflow(script\|name)`, always background | parent: `TaskStop(taskId)`, resume with `resumeFromRunId` | no | Claude | Workflow PostToolUse (`runId`, `transcriptDir`); `journal.jsonl` (live, per agent with label and phase); hooks per agent; `workflows/<runId>.json` at the end | read only |
+| **Background session** | `claude --bg`, or dispatched from `claude agents` | user: `claude attach/stop/rm`; any local session via `SendMessage` | **yes** (Claude's own daemon supervises it) | Claude | `~/.claude/jobs/<id>/state.json` + `timeline.jsonl` (file stat, ≤2 s); `claude agents --json` (0.12 s, for reconciliation only); its transcript (`linkScanPath`); hooks only if they were in its launch flags | **attach** (`claude attach <id>` in a new tmux window), **stop**, **rm**; send with `SendMessage` from an agent (no CLI send) |
+| **Cloud session** | `claude --cloud`, `Agent(isolation:"remote")` | claude.ai; `--teleport` | yes | Claude (remote) | nothing local except the spawning tool call | open its URL; out of scope |
+| **Foreign interactive session** | a user's `claude` outside overcode | the user | n/a | Claude | `~/.claude/sessions/<pid>.json` (status ≤1 s, tmux pane), its transcript | read only; jump to its pane if it is in our tmux |
+| **overcode agent / child** | `overcode launch`, `n`, children | overcode, parent agent, user | configurable | Claude, opencode, codex, grok, hermes… | the full engine | everything (send, kill, restart, …) |
+
+---
+
+## 3. Data model
+
+### 3.1 Two new row classes
+
+1. **Virtual rows**: read-only rows under an overcode agent. They cover
+   subagents, forks, teammates, and workflow groups with their agents. They
+   are never sent keys, never killed by `x`, never ring the bell, and are
+   never counted as fleet agents in totals.
+2. **Adopted rows**: Claude background sessions, plus optionally foreign
+   interactive sessions, shown as fleet rows with a 🛰 marker. They support
+   only actions Claude itself provides (attach, stop, rm).
+
+### 3.2 Identity keys
+
+| Row | Key | Stable across |
+|---|---|---|
+| subagent / fork | `<overcode_id>/sa/<agent_id>` | the parent's life; resumes keep `agent_id` |
+| teammate | `<overcode_id>/tm/<name>` (agent_id `a<name>-<hex>` as alias) | wakes (SubagentStart repeats) |
+| workflow group | `<overcode_id>/wf/<runId>` | resume (`resumeFromRunId` creates a new runId; link it with `resumed_from`) |
+| workflow agent | `<overcode_id>/wf/<runId>/<agent_id>` | the run |
+| background session | `claude-bg/<sessionId>` (display: `daemonShort`) | stop/attach/resume |
+| foreign session | `claude-pid/<sessionId>` | the process |
+
+The parent link comes from the hook's `session_id`, which overcode already
+maps to an agent (`OVERCODE_SESSION_ID` and `hook_state`). A workflow agent
+is linked to its group through the path of its `.meta.json`
+(`subagents/workflows/<runId>/…`). That file appears by the time of the
+first `PreToolUse`, so the first `SubagentStart` can sit in an "unassigned"
+bucket for under a second.
+
+### 3.3 Lifecycle
+
+```
+SubagentStart ─▶ live ─(tool hooks refresh last_seen)─▶ SubagentStop ─▶ done
+                   │                                          │
+                   └── PermissionRequest(agent_id) ─▶ 🟠 ────┘
+done ─(SendMessage resumes it: SubagentStart again)─▶ live
+Stop.background_tasks lacks an id that we hold as live ─▶ done (reconciled; replaces the 1 h timer)
+parent SessionEnd ─▶ every live virtual row → done(killed)
+```
+
+Retention: a finished virtual row stays visible (dimmed) until the parent's
+next `UserPromptSubmit` that comes from the user, not a task-notification,
+or for 10 minutes, whichever is later. After that it folds into its group's
+✅/❌ counts. History stays in `agents/<id>/subagents.jsonl`, which the
+engine appends on each transition.
+
+### 3.4 Lights and the Result column
+
+The six lights keep their meanings. Virtual rows take theirs from the same
+rule table, fed by hooks scoped to the agent.
+
+| Kind | 🟢 | 🟡 | 🟠 | 🔴 | ⚪ + Result | ❔ |
+|---|---|---|---|---|---|---|
+| subagent / fork | live, tool hook within the green window | live, its own bg shell/agent pending (`parent_task_id`) | its PermissionRequest is pending | never (it cannot wait for the user) | SubagentStop: ✅ completed; ❌ failed/killed (task-notification `<status>`); 📭 stopped by parent SessionEnd | started, no tool hook yet |
+| teammate | working | — | permission | — | `TeammateIdle` → ⚪ "idle, listening" (no Result until shut down) | — |
+| workflow group | any agent 🟢 | all live agents 🟡 | any 🟠 | — | run done: ✅ / ❌ (status from wf json) | — |
+| background session | `state: working` | `tempo` waiting on inFlight work | — | `state: blocked`, activity = `needs` | `done` → ✅ with `output.result` as the result text | unreadable state file |
+| foreign session | `busy` | — | `waiting` (permission or question; one value covers both) | `idle` (attended at a prompt) | — | `shell` (meaning unverified) |
+
+Bell: **never** for virtual rows. A subagent's permission prompt already
+shows on the parent (🟠, existing behaviour), and the parent's episode
+rules decide the bell. Adopted background sessions ring at most once per
+`blocked` episode, opt-in per row (`B`-style toggle, see §8 Q4).
+
+### 3.5 Spend attribution
+
+Fix the reader first (phase 0):
+
+1. Deduplicate assistant usage by `message.id`, keeping the last line, across
+   the parent file and **`subagents/**/agent-*.jsonl`** (recursive). That
+   fixes F6, F7 and F8 in one change, and matches `cost-state` exactly.
+2. Attribute each `message.id` to the file it first appears in, so a fork's
+   copied prefix stays with the parent.
+
+Then:
+
+- **Parent row cost = own + all virtual descendants**, as today, but
+  correct. The cost cell can split it on demand: `$4.20 (👥 $3.10)`.
+- **Group and virtual rows show their own share.** It is never added to
+  anything again, because the parent total already includes it. Adding up
+  rows on screen would double count, so the fleet total is computed from
+  fleet rows only, never from virtual rows.
+- `subtree_cost_usd` (overcode children) is unchanged. Subagents are inside
+  each node's own cost.
+- Adopted background sessions are separate conversations with separate
+  transcripts. They count in the fleet total once, under their own row.
+  tmux teammates count the same way (their own transcript), with a
+  team-to-lead link for display only.
+- During a workflow run, live per-agent tokens come from the deduplicated
+  transcript sums (5 s / 60 s cadence). The wf json's `tokens` only cross-check
+  them once the run has ended.
+
+---
+
+## 4. TUI: scale by aggregation
+
+### 4.1 Rules
+
+- **One line per parent by default.** A parent with virtual work gets a
+  rollup cell, a generalised 👶, in the status-detail column. Nothing else
+  changes in its row.
+- **Groups before agents.** When expanded, virtual work shows as groups,
+  never as a flat list:
+  1. one group row per workflow run
+  2. one group row per team
+  3. one group row for loose subagents ("agents")
+  An agent row appears only inside an expanded group.
+- **Auto-collapse above N.** A group with more than `N=8` members opens
+  collapsed even when its parent is expanded, and shows its top 3 "needs
+  you" members (🟠 first, then 🟢 by age) and then "+k more".
+- **Phase is a first-class grouping** for workflows. An expanded workflow
+  shows phase rows ("Verify 18/30"), and each phase opens on its own.
+- Done members fold into counts. Expanding a group shows live members,
+  then a single `✅ 25 done · ❌ 1` line, which opens the finished ones on
+  demand.
+
+### 4.2 Mockups
+
+Collapsed (the default). This is today's row plus the rollup cell:
+
+```
+🟡 review-060     opus  Waiting on 2 background agents   👥 43 ▶15 ✅27 ❌1  🧩1   $4.20
+🟢 fix-flaky      opus  Running tests                    👥  2 ▶2                  $0.85
+🛰 ⚪ bg:a3f9c1e2  haiku done · "ran migration; PR #512"   ✅                         $0.31
+```
+
+Expanded with `→` on review-060:
+
+```
+🟡 review-060     opus  Waiting on 2 background agents   👥 43 ▶15 ✅27 ❌1         $4.20
+ ├ 🧩 review-060 ▸ 40 agents  phase Verify 18/30   12🟢 3🟡 25✅      ($3.95)
+ │   ├ ✔ Find      10/10                                    ✅10
+ │   ├ ▶ Verify    18/30   🟠 verify-api-auth  needs approval      ← top "needs you"
+ │   │                      🟢 verify-cache-ttl  Read cache.py 12s
+ │   │                      🟢 verify-retry      Bash pytest 40s   +13 more
+ │   └ · Report     0/1
+ └ 👥 agents ▸ 3   🟢 Explore "map engine"  ✅ 2 done          ($0.15)
+```
+
+Expanded agent (`→` on a member). Read-only detail comes from the
+transcript; there is no pane preview, because a virtual agent has no pane:
+
+```
+   🟢 verify-cache-ttl   haiku · workflow-subagent · phase Verify · 1m12s · 14.2k tok
+      last: Read src/overcode/cache.py   ·   result: (running)
+```
+
+### 4.3 The rollup cell (generalised 👶)
+
+The cell is `👥 <total> ▶<working> <🟠n> ✅<ok> ❌<fail>`, with zero counts
+left out, as in 👶. A trailing `🧩k` gives the number of workflow runs. 👶
+keeps meaning overcode children, and 👥 now means "all virtual work". Both
+come from the same `rollup()` helper in `child_lifecycle.py`, generalised to
+take `(light, result)` pairs. The engine computes and publishes it, and the
+TUI only renders it. For the fleet header, aggregate the lights of fleet
+rows only.
+
+### 4.4 Keys
+
+`X` already toggles a parent's children in tree mode. The proposal is to
+extend it to virtual groups, so it works in every sort mode. The new actions
+below each need a palette entry (AGENTS.md); the keys are free in the
+`default` preset, but the presets still need checking:
+
+| Key | Action | Notes |
+|---|---|---|
+| `→` / `←` | expand / collapse the focused row (parent → groups → phases → agents) | tree convention; free today |
+| `X` | collapse or expand everything under the focused parent | existing; now includes virtual groups |
+| `v` | cycle swarm detail: `off` (rollup only) → `groups` → `needs-you` (expand only groups with 🟠, or with 🔴 for adopted rows) | per-session preference |
+| `b` | jump to attention | existing; now also lands on a 🟠 virtual member and focuses its parent's pane |
+| `enter` on a virtual row | focus the parent's pane | a virtual row has no pane of its own |
+| `enter` on 🛰 bg row | open `claude attach <id>` in a new tmux window of the overcode session | through `app.split`, not ad hoc |
+| `x` on 🛰 bg row | confirm, then `claude stop <id>` | `rm` only from the palette |
+
+---
+
+## 5. Timeline: aggregated rows for swarms
+
+Today the timeline draws one row per agent from `agent_status_history.csv`.
+For swarms it draws one **density row per group**:
+
+```
+review-060      ▁▂▅▇█▇▆▆▇█▇▅▃▂▁·····   (height = live members, colour = worst light)
+ └ 🧩 Find      ▂▅█▇▃▁
+   🧩 Verify          ▃▆█▇▇█▇▅▃▂
+fix-flaky       ████████▆▆▆▆█████
+```
+
+- **Encoding:** the glyph height (`▁▂▃▄▅▆▇█`) shows how many members are live
+  in that bucket, scaled to the group's peak. The colour shows the worst
+  light in the bucket, in the order 🟠 > 🟢 > 🟡. A bucket with any ❌
+  finish gets a red underline. The parent's own row is unchanged.
+- **Drill-down:** expanding a group in the list expands it in the timeline
+  too, with the same fold state. A member row is the existing per-agent
+  bar, capped at 20 members plus a "+k" line.
+- **Data:** the engine already writes history on change. It also records
+  group bucket counts per 30 s timeline cadence:
+  `agents/<id>/swarm_history.csv` with `ts, group_key, n_green, n_yellow,
+  n_orange, n_done, n_failed`. It writes one line per change, not per tick,
+  so a quiet swarm writes nothing. Member intervals come from
+  `subagents.jsonl`.
+- **Episodes:** virtual rows get no episodes and no bell (§3.4). The
+  parent's episode is unchanged, so a subagent's permission prompt still
+  opens the parent's 🟠 episode, as today.
+
+---
+
+## 6. Engine implications
+
+### 6.1 Sources and cost
+
+| Source | What | Cadence | Cost at scale |
+|---|---|---|---|
+| hook events (existing wake path) | start/stop, tool activity, permission, teammate idle, `background_tasks` | ≤0.5 s attended | none extra: same `hook_state.json` stat. The `subagents` map grows; cap the serialised map at the live set plus the last 200 done, with the rest in `subagents.jsonl`. |
+| `<sid>/subagents/**/*.meta.json` | description, label, phase, isFork, name, toolUseId | on SubagentStart (one read) | 1 read per agent |
+| `subagents/workflows/<runId>/journal.jsonl` | live workflow membership and per-agent result | stat each live run on the wake loop; tail on change | 1 stat per live workflow |
+| `workflows/<runId>.json` | final per-agent tokens and state, run status | once, when it appears | — |
+| transcripts (deduped) | tokens and cost per virtual row | existing stats cadence (5 s / 60 s), **live rows only**; done rows frozen | the incremental tail reader already exists |
+| `~/.claude/jobs/*/state.json` | background sessions | stat the dir every 2 s; read changed files | ~1 stat per job |
+| `~/.claude/sessions/*.json` | foreign interactive sessions, panes | stat every 2 s (opt-in) | ~1 stat per session |
+| `claude agents --json` | reconciliation only (startup, then every 60 s at most) | — | 0.12 s per call; never on the hot path |
+
+Polling `claude agents --json` would cost a process spawn per poll. The
+jobs and sessions files hold the same data, and checking them costs a few
+`stat` calls. Hooks give ≤0.5 s for in-session work. So the CLI is only a
+cross-check, never the source.
+
+### 6.2 Publishing without no-op deltas
+
+- `AgentView` gains a `swarm` field: `{rollup: {...}, groups: [{key, kind,
+  title, phase, counts, cost_usd, started_at}]}`. It holds absolute times
+  and counts only (no countdowns), so it changes only on transitions.
+- Member rows are **not** in the default snapshot. A view subscribes to
+  `swarm:<agent_id>` when the user expands a parent. The engine then sends
+  that parent's members as `delta.virtual {key: partial}`, using the same
+  set/unset/removed shape and the same property test. A collapsed swarm of
+  400 agents costs one rollup delta per transition.
+- Rate-limit: a workflow whose agents finish in a burst still sends one
+  delta per engine tick, because counts are coalesced per tick.
+- Adopted 🛰 rows are ordinary `AgentView`s with `kind: claude_bg`, so the
+  existing delta path covers them.
+
+### 6.3 Freshness contract additions (for `test_engine_contract.py`)
+
+| Output | Attended | Unattended |
+|---|---|---|
+| Virtual row light (hook-driven) | ≤ 0.5 s | ≤ 2 s |
+| Workflow phase and progress | ≤ 1 s (journal stat) | ≤ 2 s |
+| Background session state | ≤ 2 s | ≤ 10 s |
+| Virtual row tokens and cost | 5 s | 60 s |
+
+---
+
+## 7. Phased plan for 0.6.1
+
+| Phase | Slice | Why first |
+|---|---|---|
+| **0. Correct spend** (smallest, ships alone) | dedup by `message.id` across parent + recursive `subagents/**`; tests built from the capture skeletons; reconcile against `cost-state` in a test fixture | Today's numbers are wrong: over-counted by up to 2×, workflows missing, forks double-counted. Every later phase builds on spend. |
+| **1. Rollup cell** | hook handler records `background_tasks`, meta lookups and workflow run ids; engine publishes `swarm.rollup`; 👥 cell `👥 43 ▶15 🟠1 ✅27 ❌1 🧩1`; reconcile live subagents from `background_tasks` (drop the 1 h timer); arm `bg_task` for default-async Agent and Workflow (F18) | The smallest useful view: one line per parent stays honest about what it is waiting on. No new rows. |
+| **2. Expandable groups** | `→`/`←`, workflow group and phase rows, top-3 "needs you", read-only member detail, `swarm:<id>` subscription | Gives drill-down without flooding the list. |
+| **3. Background sessions as 🛰 rows** | jobs-dir watcher, state mapping, attach/stop/rm through `app.split` | Different source, independent of 1–2. |
+| **4. Swarm timeline** | `swarm_history.csv`, density rows, linked fold state | Needs phase 1's counts history. |
+| later | foreign sessions from `sessions/*.json`; tmux teammates (no hooks: transcript plus registry); cloud | Smaller audience, and less certain data. |
+
+---
+
+## 8. Open questions for the owner
+
+1. **Adopt background sessions by default, or opt-in?** They belong to the
+   user's whole machine, not to this overcode session. One option is to
+   show only those whose `cwd` is under a repo the fleet uses.
+2. **Foreign interactive sessions:** show them at all? `sessions/*.json`
+   makes it cheap, but it widens overcode from "my fleet" to "every Claude
+   on this Mac".
+3. **Retention of finished virtual rows:** until the parent's next user
+   prompt, or a fixed time? (§3.3 proposes whichever is later of the two,
+   with a 10-minute floor.)
+4. **Bell for a blocked background session:** off, opt-in per row, or on?
+5. **Teams:** in 2.1.300 they are named agents under an implicit
+   `session-<8>` team, and `team_name` is ignored. Should overcode treat
+   "team" as just a group kind (as proposed), or wait for the feature to
+   settle?
+6. **Cost display:** should the parent cell show `own + 👥` split all the
+   time, or only in the `$` detail mode?
+7. **Phase 0 changes historical numbers.** Spend already stored for past
+   sessions was over-counted. Recompute on upgrade, or leave history and
+   fix going forward? This is permanent retention, per the billing
+   decisions.
+8. **Should overcode inject hooks for its own Claude children through a
+   settings file rather than `--settings`?** F13 shows that tmux teammates
+   and anything else that re-spawns `claude` without our flags go dark
+   under `--settings`.
+
+---
+
+## Appendix: capture index
+
+`docs/design/spike-agent-types/captures/`, scrubbed (paths become `~`,
+`$SPIKE` and `<proj>`; no emails, org ids or message content; transcripts
+reduced to record skeletons):
+
+| Dir | What |
+|---|---|
+| `00-tool-schemas.md.txt` | model-reported input schemas: Agent, SendMessage, TaskStop, ListAgents, Workflow |
+| `01-default-agent-call` | an `Agent` call without flags runs async (F1) |
+| `02-foreground-subagent` | `run_in_background:false`: SubagentStop comes before the parent's PostToolUse; tool_response carries usage and toolStats |
+| `03-background-subagent-with-SendMessage` | bg agent + SendMessage delivery, nested bg shell with `parent_task_id`, `background_tasks` |
+| `04-fork` | fork with `CLAUDE_CODE_FORK_SUBAGENT=1`; `fork-context-ref` |
+| `05-workflow-small`, `06-workflow-slow-live-watch` | workflow files, journal, wf json; a 0.5 s file watch showing what is live and what is end-only |
+| `07`–`09` | teams: print mode (no tools), in-process teammates (TeammateIdle), tmux teammate (own process, no hooks) |
+| `10-background-session` | `--bg` hooks, `agents --json` running, done, stopped and `--all`; jobs `state.json`; `logs` excerpt; stop/rm |
+| `11-interactive-session-registry` | `~/.claude/sessions/<pid>.json` status transitions idle→busy→waiting→busy→idle |
+| `spend-reconciliation.txt` | naive vs dedup vs `cost-state` for 9 runs |
+| `_harness/` | the logger, runners and inspectors used (the hook logger is `hooklog.py`) |
