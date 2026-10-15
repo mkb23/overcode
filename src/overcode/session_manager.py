@@ -43,6 +43,12 @@ class SessionStats:
     cache_read_tokens: int = 0
     current_context_tokens: int = 0  # Current context window usage
     last_stats_update: Optional[str] = None  # ISO timestamp of last stats sync
+    # Spend the stats reader no longer counts (an earlier conversation after
+    # codex/grok /new or a restart --fresh, or pruned transcripts), added to
+    # each read so the totals above stay cumulative (``StatsSync``)
+    carried_spend: Dict[str, float] = field(default_factory=dict)
+    # The newest agent conversation id at the last stats sync
+    stats_conversation: Optional[str] = None
 
     # State tracking
     current_state: str = "running"  # running, waiting_user, waiting_approval, waiting_heartbeat
@@ -330,10 +336,13 @@ def lowers_spend(stats: "SessionStats", staged: Mapping[str, object]) -> bool:
     """Whether ``staged`` stats would lose spend already on record.
 
     Token counts and cost are cumulative, so a read that lowers a token
-    count, or zeroes a cost on record, comes from transcripts that are
-    gone (pruned after Claude's cleanupPeriodDays, or a pre-upgrade record
-    kept elsewhere), not from less work. A cost that drops while the
-    tokens hold (a pricing-table fix) is a real change and passes.
+    count, or zeroes a cost on record, no longer counts spend that was
+    made (a codex/grok /new or a restart --fresh started a new
+    conversation, transcripts were pruned after Claude's
+    cleanupPeriodDays, or a pre-upgrade record's are elsewhere), not less
+    work; ``StatsSync`` then carries the spend on record. A cost that
+    drops while the tokens hold (a pricing-table fix) is a real change
+    and passes.
     """
     def number(source, key):
         value = source.get(key) if isinstance(source, Mapping) else getattr(source, key, None)

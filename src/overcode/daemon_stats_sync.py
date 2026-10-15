@@ -271,33 +271,55 @@ class StatsSync:
             cost_estimate = stored_cost
 
         now = self.clock.wall()
-        total_tokens = calculate_total_tokens(
-            stats.input_tokens,
-            stats.output_tokens,
-            stats.cache_creation_tokens,
-            stats.cache_read_tokens,
-        )
-        usage = dict(
-            extra,
-            total_tokens=total_tokens,
+        read = dict(
+            total_tokens=calculate_total_tokens(
+                stats.input_tokens,
+                stats.output_tokens,
+                stats.cache_creation_tokens,
+                stats.cache_read_tokens,
+            ),
             input_tokens=stats.input_tokens,
             output_tokens=stats.output_tokens,
             cache_creation_tokens=stats.cache_creation_tokens,
             cache_read_tokens=stats.cache_read_tokens,
-            estimated_cost_usd=round(cost_estimate, 4),
-            estimated_energy_j=round(estimate_energy_joules(
+            estimated_cost_usd=cost_estimate,
+            estimated_energy_j=estimate_energy_joules(
                 model, stats.input_tokens, stats.output_tokens,
                 stats.cache_creation_tokens, stats.cache_read_tokens,
-            ), 1),
+            ),
+        )
+        recorded = session.stats
+        ids = getattr(session, "agent_session_ids", None)
+        conversation = ids[-1] if isinstance(ids, (list, tuple)) and ids else None
+        on_file = getattr(recorded, "carried_spend", None)
+        carried = {key: _number(value) for key, value in
+                   (on_file if isinstance(on_file, dict) else {}).items() if key in read}
+        totals = _add_spend(read, carried)
+        if lowers_spend(recorded, totals):
+            # The reader no longer counts spend that is on record: codex and
+            # grok read only the newest conversation (after /new), a restart
+            # --fresh replaces the conversations, or transcripts were pruned
+            # (or a pre-upgrade record's are elsewhere). The rest of the read
+            # (context, interactions) is current; the spend on record is
+            # carried so the totals stay cumulative. A new conversation's
+            # read is all new spend; under the same one, the read already
+            # counts its part of the record.
+            previous = getattr(recorded, "stats_conversation", None)
+            new_conversation = previous is not None and conversation != previous
+            carried = {}
+            for key, value in read.items():
+                on_record = _number(getattr(recorded, key, 0))
+                carried[key] = on_record if new_conversation else max(0, on_record - value)
+            totals = _add_spend(read, carried)
+            self.log.debug(f"{session.name}: stats read lower than on record, spend carried")
+        usage = dict(
+            extra,
+            **_rounded_spend(totals),
             current_context_tokens=stats.current_context_tokens,
             last_stats_update=stamp(now),
+            carried_spend=_rounded_spend(carried),
+            stats_conversation=conversation,
         )
-        if lowers_spend(session.stats, usage):
-            # Transcripts on record are gone (pruned, or a pre-upgrade
-            # record): the reader's lower totals must not replace the
-            # spend, or the next ledger row records the loss
-            self.log.debug(f"{session.name}: stats read lower than on record, kept")
-            return
         pending.update_stats(session.id, **usage)
 
     def note_stats_view(self, session, stats: Optional[AgentSessionStats]) -> None:
@@ -319,3 +341,24 @@ class StatsSync:
             "context_window": number(stats.max_context_tokens, None),
             "file_subagent_count": number(stats.live_subagent_count, 0),
         }
+
+
+def _number(value) -> float:
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def _add_spend(read: Dict[str, float], carried: Dict[str, float]) -> Dict[str, float]:
+    return {key: value + carried.get(key, 0) for key, value in read.items()}
+
+
+def _rounded_spend(spend: Dict[str, float]) -> Dict[str, float]:
+    """Token counts as ints, cost to 4 places and energy to 1, as persisted."""
+    out: Dict[str, float] = {}
+    for key, value in spend.items():
+        if key == "estimated_cost_usd":
+            out[key] = round(value, 4)
+        elif key == "estimated_energy_j":
+            out[key] = round(value, 1)
+        else:
+            out[key] = int(value)
+    return out
