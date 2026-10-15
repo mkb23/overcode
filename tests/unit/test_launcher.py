@@ -489,6 +489,33 @@ class TestLauncherSendToSession:
         pasted.assert_not_called()
         assert typed.call_args[0][2] == "line1\nline2"
 
+    def test_a_single_line_tab_is_not_typed_as_the_tab_key(self, tmp_path):
+        mock_tmux = MockTmux()
+        launcher = AgentLauncher(
+            "agents", TmuxManager("agents", tmux=mock_tmux),
+            SessionManager(state_dir=tmp_path, skip_git_detection=True))
+        launcher.launch(name="test-agent")
+        assert launcher.send_to_session("test-agent", "col1\tcol2")
+        assert mock_tmux.sent_keys[-1][2:] == ("col1    col2", True)
+
+    @pytest.mark.parametrize("backend, typed", [
+        ("claude-code", True), ("opencode", False)])
+    def test_lone_cr_line_ends_are_line_breaks_not_return(self, tmp_path, backend, typed):
+        """A CR typed is Return: the message was submitted at the first CR
+        and the rest arrived as a second message."""
+        mock_tmux = MockTmux()
+        launcher = AgentLauncher(
+            "agents", TmuxManager("agents", tmux=mock_tmux),
+            SessionManager(state_dir=tmp_path, skip_git_detection=True))
+        launcher.launch(name="test-agent", backend=backend)
+        initial_keys = len(mock_tmux.sent_keys)
+        with patch("overcode.agent_io.type_text_to_tmux_window", return_value=True) as t, \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as p:
+            assert launcher.send_to_session("test-agent", "first\rsecond")
+        used = t if typed else p
+        assert used.call_args[0][2] == "first\nsecond"
+        assert len(mock_tmux.sent_keys) == initial_keys
+
     def test_send_single_line_uses_send_keys(self, tmp_path):
         """Single-line text still uses send_keys path"""
         mock_tmux = MockTmux()

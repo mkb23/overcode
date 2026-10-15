@@ -273,6 +273,9 @@ class AgentIOMixin:
 
         # Check if it's a special key
         text_lower = text.lower().strip()
+        # Typed, a CR is Return and would submit part of the message: a
+        # lone CR line end is a line break like CRLF and LF
+        lines = text.replace('\r\n', '\n').replace('\r', '\n')
         success = False
         if text_lower in gesture_keys:
             backend = self.backend_for(session)
@@ -294,24 +297,25 @@ class AgentIOMixin:
             else:
                 # Send special key without Enter
                 success = self.tmux.send_keys(session.tmux_window, key, enter=False)
-        elif '\n' in text and self.backend_for(session).type_multiline_text:
+        elif '\n' in lines and self.backend_for(session).type_multiline_text:
             # Claude: a long paste reaches the model as <pasted_content>,
             # not to be obeyed; typed, it is the user's message
             success = type_text_to_tmux_window(
-                self.tmux.session_name, session.tmux_window, text,
+                self.tmux.session_name, session.tmux_window, lines,
                 send_enter=enter,
             )
-        elif '\n' in text:
+        elif '\n' in lines:
             # Multi-line text: use load-buffer/paste-buffer so newlines are
             # pasted as a single block instead of being interpreted as Enter
             # keypresses by tmux send-keys (#376)
             success = send_text_to_tmux_window(
-                self.tmux.session_name, session.tmux_window, text,
+                self.tmux.session_name, session.tmux_window, lines,
                 send_enter=enter,
             )
         else:
-            # Single-line regular text
-            success = self.tmux.send_keys(session.tmux_window, text, enter=enter)
+            # Single-line regular text. Typed, a tab is the Tab key
+            success = self.tmux.send_keys(
+                session.tmux_window, lines.expandtabs(4), enter=enter)
 
         # Update last activity on success (steers_count is tracked via supervisor log parsing)
         if success:
