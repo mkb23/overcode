@@ -46,8 +46,15 @@ def _iso_z(dt_local: datetime) -> str:
     return utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc.microsecond // 1000:03d}Z"
 
 
-def _assistant(ts: datetime, inp=100, out=20, cc=0, cr=1000, model="claude-opus-4-6", mid="msg_01",
+_MESSAGE_IDS = iter(range(1, 10**9))
+
+
+def _assistant(ts: datetime, inp=100, out=20, cc=0, cr=1000, model="claude-opus-4-6", mid=None,
                effort=None):
+    """One assistant line; a fresh message id unless ``mid`` names one
+    (a ``msg_bdrk_`` prefix alone gets a fresh number after it)."""
+    if mid is None or mid.endswith("_"):
+        mid = f"{mid or 'msg_'}{next(_MESSAGE_IDS):06d}"
     extra = {"effort": effort} if effort is not None else {}
     return json.dumps(
         {
@@ -102,7 +109,7 @@ def _turns(start: datetime, n: int, seed: int = 1, step=timedelta(seconds=37)):
         lines.append(_tool_result(t))
         t += step
         lines.append(
-            _assistant(t, inp=rng.randint(1, 500), cc=rng.randint(0, 2000), mid="msg_bdrk_1")
+            _assistant(t, inp=rng.randint(1, 500), cc=rng.randint(0, 2000), mid="msg_bdrk_")
         )
         t += step
         if i % 5 == 4:

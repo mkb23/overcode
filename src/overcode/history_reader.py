@@ -16,7 +16,9 @@ Each assistant message in session files has usage data:
 }
 """
 
+import bisect
 import json
+import os
 import re
 import threading
 import time
@@ -27,7 +29,16 @@ from dataclasses import dataclass
 
 from . import conversation_spend, model_metadata
 from .stat_gate import FileSignature, is_settled, stat_signature
-from .transcript_index import TranscriptRegistry, empty_stats
+from .transcript_index import (
+    COPY_WINDOW_SECONDS,
+    TranscriptRegistry,
+    cache_write_1h,
+    datetime_key,
+    empty_stats,
+    empty_window,
+    key_before,
+    parse_message_time,
+)
 
 if TYPE_CHECKING:
     from .session_manager import Session
@@ -949,6 +960,13 @@ def _parse_session_lines(
     Core parsing logic shared by read_session_file_stats (file-based)
     and read_session_stats_from_content (string-based, for containers).
 
+    Claude Code writes one line per content block of an assistant message,
+    each repeating the whole message's usage: a message is counted once,
+    by ``message.id``, at its last line's usage and its first line's time
+    (``transcript_index``). A line without an id or a parseable timestamp
+    counts on its own. ``cache_creation_1h_tokens`` is the 1-hour TTL part
+    of the cache writes (``usage.cache_creation``).
+
     Args:
         lines: Iterable of JSONL line strings
         since: Only count data from messages after this time
@@ -961,12 +979,17 @@ def _parse_session_lines(
         "output_tokens": 0,
         "cache_creation_tokens": 0,
         "cache_read_tokens": 0,
+        "cache_creation_1h_tokens": 0,
         "current_context_tokens": 0,
         "model": None,
         "provider": None,
         "effort": None,
         "pr_number": None,
     }
+    token_keys = ("input_tokens", "output_tokens", "cache_creation_tokens",
+                  "cache_read_tokens", "cache_creation_1h_tokens")
+    # message id -> (its first line's time, its last line's usage)
+    messages: Dict[str, Tuple[datetime, Tuple[int, ...]]] = {}
 
     user_prompt_times: List[datetime] = []
 
@@ -979,58 +1002,60 @@ def _parse_session_lines(
             msg_type = data.get("type")
 
             if msg_type == "assistant":
-                # Check timestamp if filtering by time
-                if since:
-                    ts_str = data.get("timestamp")
-                    if ts_str:
-                        try:
-                            msg_time = datetime.fromisoformat(
-                                ts_str.replace("Z", "+00:00")
-                            ).astimezone().replace(tzinfo=None)
-                            if msg_time < since:
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-
                 message = data.get("message", {})
                 usage = message.get("usage", {})
-                if usage:
-                    input_tokens = usage.get("input_tokens", 0)
-                    output_tokens = usage.get("output_tokens", 0)
-                    cache_read = usage.get("cache_read_input_tokens", 0)
-                    cache_creation = usage.get(
-                        "cache_creation_input_tokens", 0
-                    )
-                    totals["input_tokens"] += input_tokens
-                    totals["output_tokens"] += output_tokens
-                    totals["cache_creation_tokens"] += cache_creation
-                    totals["cache_read_tokens"] += cache_read
-                    # Every one of these three is prompt the model actually
-                    # processed this turn, so all three count toward context
-                    # occupancy. Omitting cache_creation under-reports badly
-                    # rather than slightly: on a turn that *writes* the cache
-                    # (the first turn after /clear, or after a cache expiry)
-                    # the whole prompt lands in cache_creation and
-                    # input_tokens is a literal handful — a 48K-token context
-                    # reported as 2 tokens, rendering "0%" in a column whose
-                    # entire job is to warn before the window fills.
-                    context_size = input_tokens + cache_read + cache_creation
-                    if context_size > 0:
-                        totals["current_context_tokens"] = context_size
-                    # Only track model/provider from messages with actual API
-                    # usage (skips synthetic error messages with zero tokens).
-                    if input_tokens + output_tokens + cache_creation + cache_read > 0:
-                        model = message.get("model")
-                        if model:
-                            totals["model"] = model
-                        detected = provider_from_message_id(message.get("id"))
-                        if detected:
-                            totals["provider"] = detected
-                        # Reasoning effort in force for this turn (#497) —
-                        # a top-level field on the assistant record.
-                        effort = data.get("effort")
-                        if effort and isinstance(effort, str):
-                            totals["effort"] = effort
+                if not usage:
+                    continue
+                input_tokens = usage.get("input_tokens", 0)
+                output_tokens = usage.get("output_tokens", 0)
+                cache_read = usage.get("cache_read_input_tokens", 0)
+                cache_creation = usage.get(
+                    "cache_creation_input_tokens", 0
+                )
+                line_usage = (input_tokens, output_tokens, cache_creation, cache_read,
+                              cache_write_1h(usage, cache_creation))
+                msg_time = parse_message_time(data.get("timestamp"))
+                msg_id = message.get("id")
+                previous = (0, 0, 0, 0, 0)
+                if msg_time is not None and isinstance(msg_id, str) and msg_id:
+                    if msg_id in messages:
+                        first_time, previous = messages[msg_id]
+                    else:
+                        first_time = msg_time
+                    messages[msg_id] = (first_time, line_usage)
+                    msg_time = first_time
+                # Filter by the message's time, when it has one
+                if since and msg_time is not None and msg_time < since:
+                    continue
+
+                for key, now, before in zip(token_keys, line_usage, previous):
+                    totals[key] += now - before
+                # Every one of these three is prompt the model actually
+                # processed this turn, so all three count toward context
+                # occupancy. Omitting cache_creation under-reports badly
+                # rather than slightly: on a turn that *writes* the cache
+                # (the first turn after /clear, or after a cache expiry)
+                # the whole prompt lands in cache_creation and
+                # input_tokens is a literal handful — a 48K-token context
+                # reported as 2 tokens, rendering "0%" in a column whose
+                # entire job is to warn before the window fills.
+                context_size = input_tokens + cache_read + cache_creation
+                if context_size > 0:
+                    totals["current_context_tokens"] = context_size
+                # Only track model/provider from messages with actual API
+                # usage (skips synthetic error messages with zero tokens).
+                if input_tokens + output_tokens + cache_creation + cache_read > 0:
+                    model = message.get("model")
+                    if model:
+                        totals["model"] = model
+                    detected = provider_from_message_id(message.get("id"))
+                    if detected:
+                        totals["provider"] = detected
+                    # Reasoning effort in force for this turn (#497) —
+                    # a top-level field on the assistant record.
+                    effort = data.get("effort")
+                    if effort and isinstance(effort, str):
+                        totals["effort"] = effort
 
             elif msg_type == "user":
                 # Check if this is an actual user prompt (not a tool result)
@@ -1153,13 +1178,7 @@ def read_session_stats_from_content(
         (token_usage_dict, work_times_list)
     """
     if not content or not content.strip():
-        defaults = {
-            "input_tokens": 0, "output_tokens": 0,
-            "cache_creation_tokens": 0, "cache_read_tokens": 0,
-            "current_context_tokens": 0, "model": None, "provider": None,
-            "effort": None, "pr_number": None,
-        }
-        return defaults, []
+        return empty_stats()
 
     return _parse_session_lines(content.splitlines(), since=since)
 
@@ -1182,11 +1201,164 @@ def read_token_usage_from_session_file(
     return totals
 
 
+# The version of what this reader reports per conversation
+# (``conversation_spend``): 2 counts each message once by ``message.id``
+# across the conversation and all its subagents (workflow agents included)
+# and splits 1-hour cache writes out. An entry read by an older version is
+# replaced by the next read of its transcript, not max'd with it.
+CLAUDE_READER_VERSION = 2
+
+# How deep under ``<session>/subagents/`` agent transcripts are looked for
+# (workflow agents sit at ``subagents/workflows/<run id>/agent-*.jsonl``)
+SUBAGENT_DEPTH = 3
+
+
+def _cached_subdirs(directory: Path) -> List[Path]:
+    """The subdirectories of ``directory``, reused while it is unchanged (see ``_cached_glob``)."""
+    try:
+        sig = FileSignature.of(directory.stat())
+    except OSError:
+        return []
+    key = (str(directory), "/")
+    with _dir_cache_lock:
+        hit = _dir_listing_cache.get(key)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+    try:
+        with os.scandir(directory) as entries:
+            listing = sorted(Path(e.path) for e in entries if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
+    if is_settled(sig):
+        with _dir_cache_lock:
+            if len(_dir_listing_cache) >= _DIR_CACHE_MAX:
+                _dir_listing_cache.clear()
+            _dir_listing_cache[key] = (sig, listing)
+    return listing
+
+
+def subagent_files(subagents_dir: Path, depth: int = SUBAGENT_DEPTH) -> List[Path]:
+    """Every subagent transcript under ``subagents_dir``, recursively, sorted.
+
+    ``agent-*.jsonl`` at the top (subagents, forks, compaction calls) and in
+    subdirectories (``workflows/<run id>/``). The compaction and
+    side-question copies of the parent's messages (``_is_duplicate_subagent``)
+    are left out. Listings are cached per directory, so an unchanged tree
+    costs one stat per directory.
+    """
+    found = [f for f in _cached_glob(subagents_dir, "agent-*.jsonl")
+             if not _is_duplicate_subagent(f)]
+    if depth > 0:
+        for sub in _cached_subdirs(subagents_dir):
+            found.extend(subagent_files(sub, depth - 1))
+    return sorted(found)
+
+
+def subagent_key(session_id: str, subagents_dir: Path, path: Path) -> str:
+    """A subagent's conversation key: ``<session id>/agent-x`` (``.../workflows/<run>/agent-x``)."""
+    try:
+        rel = path.relative_to(subagents_dir).with_suffix("")
+        return f"{session_id}/{rel.as_posix()}"
+    except ValueError:
+        return f"{session_id}/{path.stem}"
+
+
+def _tree_copies(files: List[Path], transcripts: TranscriptRegistry, wanted=None,
+                 refreshed: bool = False) -> Dict[int, List[Tuple[int, Tuple[int, ...]]]]:
+    """The messages each file (by position) holds that another file of the tree also holds.
+
+    ``files`` is a conversation (first) and its subagents. A file that
+    copies messages copies them at its start (a fork opens with its
+    parent's last message: same ``message.id``, timestamp and usage), so
+    only each subagent's first messages (``TranscriptIndex.head``) are
+    looked for, in the files whose time span covers them
+    (``TranscriptIndex.holds``). A message is kept by the file it first
+    appeared in: the conversation, else the file that does not hold it at
+    its start, else the earlier file. ``wanted(key)`` limits which heads
+    are looked for (the window skips messages before it); ``refreshed``
+    says every file was just read. Returns ``{position: [(key, usage),
+    ...]}`` to take off those files.
+    """
+    if len(files) < 2:
+        return {}
+    raw = [[]] + [transcripts.head(path, refresh=not refreshed) for path in files[1:]]
+    pairs = sorted((key, h, i) for i, head in enumerate(raw) for h, key, _ in head
+                   if wanted is None or wanted(key))
+    if not pairs:
+        return {}
+    pair_keys = [key for key, _, _ in pairs]
+    starts = [{h for h, _, _ in head} for head in raw]
+    if not refreshed:
+        transcripts.head(files[0])  # brings the conversation's index up to date
+    holders: Dict[int, List[int]] = {}  # hash -> positions of the files holding it
+    for j, path in enumerate(files):
+        index = transcripts.get(path)
+        span = index.span()
+        if span is None:
+            continue
+        # A copy is dated at or after its original, which is in the file's span
+        lo = bisect.bisect_left(pair_keys, span[0])
+        hi = bisect.bisect_right(pair_keys, key_before(span[1], -COPY_WINDOW_SECONDS))
+        asked = [(h, key) for key, h, i in pairs[lo:hi] if i != j]
+        if not asked:
+            continue
+        for h in index.holds(asked, refresh=False):
+            holders.setdefault(h, []).append(j)
+    copies: Dict[int, List[Tuple[int, Tuple[int, ...]]]] = {}
+    for i in range(1, len(files)):
+        for h, key, usage in raw[i]:
+            if wanted is not None and not wanted(key):
+                continue
+            for j in holders.get(h, ()):
+                if j != i and (j == 0 or h not in starts[j] or j < i):
+                    copies.setdefault(i, []).append((key, usage))
+                    break
+    return copies
+
+
+_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_tokens",
+               "cache_read_tokens", "cache_creation_1h_tokens")
+
+
+def _take_off(totals: dict, usage: Tuple[int, ...]) -> None:
+    for name, value in zip(_USAGE_KEYS, usage):
+        totals[name] = max(0, totals.get(name, 0) - value)
+
+
+def read_tree_stats(
+    files: List[Path],
+    since: Optional[datetime] = None,
+    transcripts: Optional[TranscriptRegistry] = None,
+) -> List[Tuple[dict, List[float]]]:
+    """``read_session_file_stats`` of each of a conversation's files, each message once.
+
+    ``files`` is the conversation's transcript then its subagents'
+    (``subagent_files``); a message one file copied from another counts
+    in the file it first appeared in (``_tree_copies``). Within a file
+    each message counts once already (``transcript_index``).
+    """
+    registry = transcripts if transcripts is not None else _transcripts
+    if since is not None and getattr(since, "tzinfo", None) is not None:
+        return [_read_session_file_stats_full(path, since) for path in files]
+    results = [registry.stats(path, since) for path in files]
+    copies = _tree_copies(files, registry, refreshed=True)
+    if copies:
+        since_key = None if since is None else datetime_key(since)
+        for i, messages in copies.items():
+            totals = dict(results[i][0])
+            for key, usage in messages:
+                if since_key is None or key >= since_key:
+                    _take_off(totals, usage)
+            results[i] = (totals, results[i][1])
+    return results
+
+
 def get_session_stats(
     session: "Session",
     history_path: Path = CLAUDE_HISTORY_PATH,
     projects_path: Path = CLAUDE_PROJECTS_PATH,
     history_file: Optional["HistoryFile"] = None,
+    transcripts: Optional[TranscriptRegistry] = None,
 ) -> Optional[AgentSessionStats]:
     """Get comprehensive stats for an overcode session.
 
@@ -1200,11 +1372,17 @@ def get_session_stats(
     Context window uses active_agent_session_id after /clear (#116),
     falling back to MAX across all matched sessions.
 
+    Each conversation is read with all its subagents (``subagents/**``,
+    workflow agents included), each message once (``read_tree_stats``),
+    and reported per conversation at ``CLAUDE_READER_VERSION``.
+
     Args:
         session: The overcode Session
         history_path: Path to history.jsonl
         projects_path: Path to Claude projects directory
         history_file: Optional HistoryFile for cached access (avoids re-parsing)
+        transcripts: the transcript indexes to read through (default: the
+            module's; a one-off pass over old records passes its own)
 
     Returns:
         AgentSessionStats if session has start_directory, None otherwise
@@ -1262,6 +1440,13 @@ def get_session_stats(
     # is not read as zero; its spend on record stays)
     per_conversation: Dict[str, Dict[str, Any]] = {}
 
+    def conversation_usage(read: dict, model: Optional[str]) -> Dict[str, Any]:
+        return conversation_spend.usage(
+            read["input_tokens"], read["output_tokens"],
+            read["cache_creation_tokens"], read["cache_read_tokens"],
+            model=model, cache_creation_1h_tokens=read.get("cache_creation_1h_tokens", 0),
+            rv=CLAUDE_READER_VERSION)
+
     for sid in session_ids:
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
@@ -1277,13 +1462,21 @@ def get_session_stats(
                     alt_project, sid, projects_path
                 )
         transcript_exists = session_file.exists()
-        usage, work_times = read_session_file_stats(session_file, since=session_start)
+
+        # Subagents in {sessionId}/subagents/ (recursively: workflow agents
+        # sit in workflows/<run id>/), beside the actual project path where
+        # the session file was found.
+        actual_project = sid_to_project.get(sid, session.start_directory)
+        encoded = encode_project_path(actual_project)
+        subagents_dir = projects_path / encoded / sid / "subagents"
+        subs = subagent_files(subagents_dir)
+        reads = read_tree_stats([session_file, *subs], since=session_start,
+                                transcripts=transcripts)
+        usage, work_times = reads[0]
         total_input += usage["input_tokens"]
         total_output += usage["output_tokens"]
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
-        conversation = [usage["input_tokens"], usage["output_tokens"],
-                        usage["cache_creation_tokens"], usage["cache_read_tokens"]]
 
         # Context & model: prefer active session (#116), fall back to MAX across all
         if active_session_id:
@@ -1312,39 +1505,24 @@ def get_session_stats(
         # Collect work times from this session file
         all_work_times.extend(work_times)
 
-        # Check for subagent files in {sessionId}/subagents/
-        # Use the actual project path where the session file was found.
-        actual_project = sid_to_project.get(sid, session.start_directory)
-        encoded = encode_project_path(actual_project)
-        subagents_dir = projects_path / encoded / sid / "subagents"
-        for subagent_file in _cached_glob(subagents_dir, "agent-*.jsonl"):
-            # Skip duplicate conversation logs from compaction/side-question
-            # subagents. Claude Code writes these with isMeta=True and they
-            # contain copies of messages already in the parent session file.
-            # See docs/claude-session-files.md for details.
-            if _is_duplicate_subagent(subagent_file):
-                continue
+        for subagent_file, (sub_usage, _) in zip(subs, reads[1:]):
             subagent_count += 1
-            if now - subagent_file.stat().st_mtime < 30:
-                live_subagent_count += 1
-            sub_usage, _ = read_session_file_stats(
-                subagent_file, since=session_start
-            )
+            try:
+                if now - subagent_file.stat().st_mtime < 30:
+                    live_subagent_count += 1
+            except OSError:
+                pass
             total_input += sub_usage["input_tokens"]
             total_output += sub_usage["output_tokens"]
             total_cache_creation += sub_usage["cache_creation_tokens"]
             total_cache_read += sub_usage["cache_read_tokens"]
             # A subagent runs its own model (an Explore on haiku under an
             # opus parent): its own conversation, priced at that model
-            sub_tokens = [sub_usage[key] for key in (
-                "input_tokens", "output_tokens",
-                "cache_creation_tokens", "cache_read_tokens")]
-            if any(sub_tokens):
-                per_conversation[f"{sid}/{subagent_file.stem}"] = conversation_spend.usage(
-                    *sub_tokens, model=sub_usage.get("model") or usage.get("model"))
+            if any(sub_usage[key] for key in _USAGE_KEYS[:4]):
+                per_conversation[subagent_key(sid, subagents_dir, subagent_file)] = (
+                    conversation_usage(sub_usage, sub_usage.get("model") or usage.get("model")))
         if transcript_exists:
-            per_conversation[sid] = conversation_spend.usage(
-                *conversation, model=usage.get("model"))
+            per_conversation[sid] = conversation_usage(usage, usage.get("model"))
 
         # Check for background tasks (run_in_background agents) (#177)
         # These are subagents that were started in background mode
@@ -1378,6 +1556,100 @@ def get_session_stats(
     )
 
 
+def _version1_file_usage(path: Path, since: Optional[datetime]) -> Optional[dict]:
+    """What reader version 1 read from one transcript: every assistant line added up.
+
+    Version 1 added each line's usage, so a message written as several
+    content blocks counted several times. Kept only to restate records
+    from before per-conversation spend (``legacy_session_reads``). None
+    when the file cannot be read.
+    """
+    totals = {"in": 0, "out": 0, "cw": 0, "cr": 0}
+    model = None
+    try:
+        with open(path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if data.get("type") != "assistant":
+                        continue
+                    if since is not None:
+                        msg_time = parse_message_time(data.get("timestamp"))
+                        if msg_time is not None and msg_time < since:
+                            continue
+                    message = data.get("message") or {}
+                    usage = message.get("usage") or {}
+                    counts = [usage.get("input_tokens", 0), usage.get("output_tokens", 0),
+                              usage.get("cache_creation_input_tokens", 0),
+                              usage.get("cache_read_input_tokens", 0)]
+                    if not all(isinstance(c, int) for c in counts):
+                        continue
+                    for key, value in zip(("in", "out", "cw", "cr"), counts):
+                        totals[key] += value
+                    if sum(counts) > 0 and message.get("model"):
+                        model = message.get("model")
+                except (ValueError, AttributeError, TypeError):
+                    continue
+    except OSError:
+        return None
+    return {**totals, "model": model}
+
+
+def legacy_session_reads(
+    session: "Session",
+    history_path: Path = CLAUDE_HISTORY_PATH,
+    projects_path: Optional[Path] = None,
+    history_file: Optional["HistoryFile"] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """What reader version 1 read per conversation, for the transcripts still there.
+
+    The conversation and its top-level ``subagents/agent-*.jsonl`` (the
+    compaction copies left out; version 1 did not look deeper), every line
+    added up. A record from before per-conversation spend holds those
+    figures in its totals: folding them into entries first lets a newer
+    read replace exactly them (``spend_recompute``).
+    """
+    if projects_path is None:
+        projects_path = CLAUDE_PROJECTS_PATH
+    if not session.start_directory:
+        return {}
+    try:
+        start_local = datetime.fromisoformat(session.start_time)
+        since = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return {}
+    hf = history_file or (
+        _default_history if history_path == CLAUDE_HISTORY_PATH else HistoryFile(history_path))
+    interactions = hf.get_interactions_for_session(session)
+    sid_to_project: Dict[str, str] = {}
+    for e in interactions:
+        if e.session_id and e.project:
+            sid_to_project[e.session_id] = e.project
+    reads: Dict[str, Dict[str, Any]] = {}
+    for sid in {e.session_id for e in interactions if e.session_id}:
+        session_file = get_session_file_path(session.start_directory, sid, projects_path)
+        if not session_file.exists() and sid_to_project.get(sid):
+            session_file = get_session_file_path(sid_to_project[sid], sid, projects_path)
+        parent = _version1_file_usage(session_file, since) if session_file.exists() else None
+        encoded = encode_project_path(sid_to_project.get(sid, session.start_directory))
+        subagents_dir = projects_path / encoded / sid / "subagents"
+        for sub_file in _cached_glob(subagents_dir, "agent-*.jsonl"):
+            if _is_duplicate_subagent(sub_file):
+                continue
+            sub = _version1_file_usage(sub_file, since)
+            if sub and any(sub[k] for k in ("in", "out", "cw", "cr")):
+                reads[f"{sid}/{sub_file.stem}"] = conversation_spend.usage(
+                    sub["in"], sub["out"], sub["cw"], sub["cr"],
+                    model=sub["model"] or (parent or {}).get("model"))
+        if parent is not None:
+            reads[sid] = conversation_spend.usage(
+                parent["in"], parent["out"], parent["cw"], parent["cr"], model=parent["model"])
+    return reads
+
+
 def read_window_token_usage(
     session_file: Path,
     since: datetime,
@@ -1409,15 +1681,16 @@ def _read_window_token_usage_full(
     session_file: Path,
     since: datetime,
 ) -> dict:
-    """Full single-pass window sum — the reference for the index."""
-    totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_creation_tokens": 0,
-        "cache_read_tokens": 0,
-    }
+    """Full single-pass window sum — the reference for the index.
+
+    A message counts once (by ``message.id``: its last line's usage, its
+    first line's time), as in ``_parse_session_lines``.
+    """
+    totals = empty_window()
     if not session_file.exists():
         return totals
+    keys = tuple(totals)
+    messages: Dict[str, Tuple[datetime, Tuple[int, ...]]] = {}
 
     try:
         with open(session_file, 'r') as f:
@@ -1429,23 +1702,25 @@ def _read_window_token_usage_full(
                     data = json.loads(line)
                     if data.get("type") != "assistant":
                         continue
-                    ts_str = data.get("timestamp")
-                    if not ts_str:
+                    msg_time = parse_message_time(data.get("timestamp"))
+                    if msg_time is None:
                         continue
-                    msg_time = datetime.fromisoformat(
-                        ts_str.replace("Z", "+00:00")
-                    ).astimezone().replace(tzinfo=None)
+                    message = data.get("message", {})
+                    usage = message.get("usage") or {}
+                    cache_creation = usage.get("cache_creation_input_tokens", 0)
+                    line_usage = (usage.get("input_tokens", 0), usage.get("output_tokens", 0),
+                                  cache_creation, usage.get("cache_read_input_tokens", 0),
+                                  cache_write_1h(usage, cache_creation))
+                    previous = (0, 0, 0, 0, 0)
+                    msg_id = message.get("id")
+                    if isinstance(msg_id, str) and msg_id:
+                        if msg_id in messages:
+                            msg_time, previous = messages[msg_id]
+                        messages[msg_id] = (msg_time, line_usage)
                     if msg_time < since:
                         continue
-                    usage = data.get("message", {}).get("usage") or {}
-                    totals["input_tokens"] += usage.get("input_tokens", 0)
-                    totals["output_tokens"] += usage.get("output_tokens", 0)
-                    totals["cache_read_tokens"] += usage.get(
-                        "cache_read_input_tokens", 0
-                    )
-                    totals["cache_creation_tokens"] += usage.get(
-                        "cache_creation_input_tokens", 0
-                    )
+                    for key, now, before in zip(keys, line_usage, previous):
+                        totals[key] += now - before
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                     continue
     except IOError:
@@ -1473,10 +1748,12 @@ def get_session_window_token_usage(
     relative to its mtimes could still be skipped wrongly. Every other
     file is answered by its incremental index (read_window_token_usage).
     Subagent listings and the duplicate-subagent check are cached, so an
-    unchanged tree costs one stat per directory and file.
+    unchanged tree costs one stat per directory and file. Each message
+    counts once, as in ``get_session_stats`` (``_tree_copies``).
 
     Returns dict with input_tokens, output_tokens, cache_creation_tokens,
-    cache_read_tokens — totals over messages timestamped at or after ``since``.
+    cache_read_tokens and cache_creation_1h_tokens (the 1-hour TTL part of
+    the cache writes) — totals over messages timestamped at or after ``since``.
     """
     # Resolve the projects path at call time so monkeypatching
     # CLAUDE_PROJECTS_PATH (in tests) takes effect without each caller
@@ -1484,12 +1761,7 @@ def get_session_window_token_usage(
     if projects_path is None:
         projects_path = CLAUDE_PROJECTS_PATH
 
-    totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_creation_tokens": 0,
-        "cache_read_tokens": 0,
-    }
+    totals = empty_window()
     if not session.start_directory:
         return totals
 
@@ -1498,6 +1770,8 @@ def get_session_window_token_usage(
         return totals
 
     mtime_floor = _window_mtime_floor(since)
+    aware = getattr(since, "tzinfo", None) is not None
+    since_key = None if aware else datetime_key(since)
     for sid in sids:
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
@@ -1506,27 +1780,37 @@ def get_session_window_token_usage(
             st = session_file.stat()
         except OSError:
             continue
+        reads: List[dict] = []
         if st.st_mtime >= mtime_floor:
-            u = read_window_token_usage(session_file, since)
-            for k in totals:
-                totals[k] += u[k]
+            reads.append(read_window_token_usage(session_file, since))
+        else:
+            reads.append(empty_window())
 
-        # Include subagent files (parallel workflows), skipping duplicate
-        # compaction/side-question logs that copy parent messages.
+        # Include subagent files (parallel workflows, workflow agents),
+        # skipping duplicate compaction/side-question logs that copy
+        # parent messages.
         encoded = encode_project_path(session.start_directory)
         subagents_dir = projects_path / encoded / sid / "subagents"
-        for sub_file in _cached_glob(subagents_dir, "agent-*.jsonl"):
-            if _is_duplicate_subagent(sub_file):
-                continue
+        files = [session_file]
+        for sub_file in subagent_files(subagents_dir):
             try:
                 st = sub_file.stat()
             except OSError:
                 continue  # vanished since the listing: reads as zeros anyway
             if st.st_mtime < mtime_floor:
                 continue
-            u = read_window_token_usage(sub_file, since)
+            files.append(sub_file)
+            reads.append(read_window_token_usage(sub_file, since))
+
+        # A message a subagent copied (a fork's first) counts once
+        if since_key is not None and len(files) > 1:
+            copies = _tree_copies(files, _transcripts, wanted=lambda key: key >= since_key)
+            for i, messages in copies.items():
+                for _key, usage in messages:
+                    _take_off(reads[i], usage)
+        for u in reads:
             for k in totals:
-                totals[k] += u[k]
+                totals[k] += u.get(k, 0)
 
     return totals
 

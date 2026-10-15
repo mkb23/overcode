@@ -12,13 +12,36 @@ from typing import Optional
 from . import model_metadata
 
 
+# A 1-hour TTL cache write costs this many times the input price (Anthropic
+# prompt caching: 5-minute writes are 1.25x, 1-hour writes 2x). Claude
+# Code writes its prompt cache with the 1-hour TTL.
+CACHE_WRITE_1H_INPUT_MULTIPLE = 2.0
+
+
 @dataclass
 class ModelPricing:
-    """Per-million-token pricing for a model."""
+    """Per-million-token pricing for a model.
+
+    ``cache_write`` is the 5-minute TTL cache write; ``cache_write_1h``
+    the 1-hour one, ``CACHE_WRITE_1H_INPUT_MULTIPLE`` times the input
+    price unless set (``cache_write_1h_price``).
+    """
     input: float
     output: float
     cache_write: float = 0.0
     cache_read: float = 0.0
+    cache_write_1h: Optional[float] = None
+
+    @property
+    def cache_write_1h_price(self) -> float:
+        if self.cache_write_1h is not None:
+            return float(self.cache_write_1h)
+        return float(self.input) * CACHE_WRITE_1H_INPUT_MULTIPLE
+
+    def per_million(self) -> tuple:
+        """(input, output, cache write, cache read, 1-hour cache write): a price row."""
+        return (self.input, self.output, self.cache_write, self.cache_read,
+                self.cache_write_1h_price)
 
 
 # Built-in pricing for known model families.
@@ -147,6 +170,12 @@ def is_priced(model: str) -> bool:
     if any(key in model_lower for key in MODEL_PRICING):
         return True
     return snapshot_pricing(model) is not None
+
+
+def cost_of_1h_writes(cache_creation_1h_tokens: int, pricing: ModelPricing) -> float:
+    """What 1-hour cache writes cost beyond the 5-minute price they were counted at."""
+    extra = pricing.cache_write_1h_price - float(pricing.cache_write)
+    return max(0, int(cache_creation_1h_tokens or 0)) / 1_000_000 * extra
 
 
 def calculate_cost_estimate(

@@ -1,0 +1,206 @@
+{
+ "01-default-agent-call": {
+  "f885c53e-528c-4c1d-b4ef-25fa37635879": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 28248,
+     "cacheReadInputTokens": 56939,
+     "costUSD": 0.00531709,
+     "inputTokens": 10,
+     "outputTokens": 341
+    }
+   },
+   "sessionId": "f885c53e-528c-4c1d-b4ef-25fa37635879",
+   "totalCostUSD": 0.00531709,
+   "type": "cost-state"
+  }
+ },
+ "02-foreground-subagent": {
+  "26e63624-b436-4c93-89e3-d6309967a834": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 30299,
+     "cacheReadInputTokens": 50175,
+     "costUSD": 0.005394324999999999,
+     "inputTokens": 8,
+     "outputTokens": 284
+    }
+   },
+   "sessionId": "26e63624-b436-4c93-89e3-d6309967a834",
+   "totalCostUSD": 0.005394324999999999,
+   "type": "cost-state"
+  }
+ },
+ "03-background-subagent-with-SendMessage": {
+  "639573ba-1f23-464c-81a9-4854833300f1": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 27123,
+     "cacheReadInputTokens": 125312,
+     "costUSD": 0.006753145,
+     "inputTokens": 16,
+     "outputTokens": 1751
+    }
+   },
+   "sessionId": "639573ba-1f23-464c-81a9-4854833300f1",
+   "totalCostUSD": 0.006753145,
+   "type": "cost-state"
+  }
+ },
+ "04-fork": {
+  "4a179f66-13f6-48d9-b295-ffd253f1b709": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 12867,
+     "cacheReadInputTokens": 32655,
+     "costUSD": 0.00316985,
+     "inputTokens": 4,
+     "outputTokens": 539
+    }
+   },
+   "sessionId": "4a179f66-13f6-48d9-b295-ffd253f1b709",
+   "totalCostUSD": 0.00316985,
+   "type": "cost-state"
+  },
+  "ee4f2e68-8c20-40a0-bb7d-3b7a47b70f08": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 26999,
+     "cacheReadInputTokens": 89469,
+     "costUSD": 0.0064261150000000005,
+     "inputTokens": 14,
+     "outputTokens": 560
+    }
+   },
+   "sessionId": "ee4f2e68-8c20-40a0-bb7d-3b7a47b70f08",
+   "totalCostUSD": 0.0064261150000000005,
+   "type": "cost-state"
+  }
+ },
+ "05-workflow-small": {
+  "f2e4e7d6-9467-4411-b749-c838d9497172": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 47030,
+     "cacheReadInputTokens": 99269,
+     "costUSD": 0.00844914,
+     "inputTokens": 16,
+     "outputTokens": 601
+    }
+   },
+   "sessionId": "f2e4e7d6-9467-4411-b749-c838d9497172",
+   "totalCostUSD": 0.00844914,
+   "type": "cost-state"
+  }
+ },
+ "06-workflow-slow-live-watch": {
+  "8e8e6344-3a6e-41fa-b105-48f622b02c67": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 51532,
+     "cacheReadInputTokens": 122758,
+     "costUSD": 0.009345255,
+     "inputTokens": 22,
+     "outputTokens": 1060
+    }
+   },
+   "sessionId": "8e8e6344-3a6e-41fa-b105-48f622b02c67",
+   "totalCostUSD": 0.009345255,
+   "type": "cost-state"
+  }
+ },
+ "07-team-print-mode": {
+  "28217765-c6fc-4d54-9aae-6ecbfc63728d": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 63350,
+     "cacheReadInputTokens": 177353,
+     "costUSD": 0.01281123,
+     "inputTokens": 18,
+     "outputTokens": 2067
+    }
+   },
+   "sessionId": "28217765-c6fc-4d54-9aae-6ecbfc63728d",
+   "totalCostUSD": 0.01281123,
+   "type": "cost-state"
+  }
+ },
+ "08-team-in-process": {
+  "bc0ccc1e-f5d9-4330-b922-702f00f95c48": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 111912,
+     "cacheReadInputTokens": 711442,
+     "costUSD": 0.026462145000000003,
+     "inputTokens": 1359,
+     "outputTokens": 4357
+    }
+   },
+   "sessionId": "bc0ccc1e-f5d9-4330-b922-702f00f95c48",
+   "totalCostUSD": 0.026462145000000003,
+   "type": "cost-state"
+  }
+ },
+ "09-team-tmux-teammate": {
+  "13e5bccd-e603-4a34-b3e1-e333941eb92a": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 18087,
+     "cacheReadInputTokens": 195446,
+     "costUSD": 0.0062870600000000006,
+     "inputTokens": 1257,
+     "outputTokens": 1179
+    }
+   },
+   "sessionId": "13e5bccd-e603-4a34-b3e1-e333941eb92a",
+   "totalCostUSD": 0.0062870600000000006,
+   "type": "cost-state"
+  },
+  "23aae024-f22d-47e9-85db-25947339c429": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 41967,
+     "cacheReadInputTokens": 110577,
+     "costUSD": 0.00989917,
+     "inputTokens": 10,
+     "outputTokens": 798
+    }
+   },
+   "sessionId": "23aae024-f22d-47e9-85db-25947339c429",
+   "totalCostUSD": 0.00989917,
+   "type": "cost-state"
+  }
+ },
+ "10-background-session": {
+  "b32fbee4-2c5e-435f-a55e-a2a6da6185ba": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 16409,
+     "cacheReadInputTokens": 64445,
+     "costUSD": 0.00401515,
+     "inputTokens": 4,
+     "outputTokens": 177
+    }
+   },
+   "sessionId": "b32fbee4-2c5e-435f-a55e-a2a6da6185ba",
+   "totalCostUSD": 0.00401515,
+   "type": "cost-state"
+  }
+ },
+ "11-interactive-session-registry": {
+  "3e6a6fd1-ca05-4dbe-b6c9-5dfb7bc3cd0b": {
+   "modelUsage": {
+    "claude-haiku-5-5": {
+     "cacheCreationInputTokens": 44356,
+     "cacheReadInputTokens": 94272,
+     "costUSD": 0.008008545,
+     "inputTokens": 1257,
+     "outputTokens": 515
+    }
+   },
+   "sessionId": "3e6a6fd1-ca05-4dbe-b6c9-5dfb7bc3cd0b",
+   "totalCostUSD": 0.008008545,
+   "type": "cost-state"
+  }
+ }
+}

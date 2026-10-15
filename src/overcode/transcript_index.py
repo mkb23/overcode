@@ -20,13 +20,34 @@ One :class:`TranscriptIndex` per transcript path keeps:
   user-prompt time and the work-time list) — exactly what
   ``_parse_session_lines`` accumulates, kept incrementally;
 * for window queries, one entry per assistant message that carries a
-  timestamp: its local-naive timestamp as a sortable integer key and the
-  four usage counters, in ``array('q')`` (40 bytes per message) kept in
+  timestamp: its local-naive timestamp as a sortable integer key, the
+  five usage counters and the message id's hash, in ``array('q')`` (56
+  bytes per message) kept in
   key order, so :meth:`TranscriptIndex.window_usage` is a bisect plus a
   C-level sum over the messages inside the window and is exact at any
   window boundary. A message timestamped earlier than its predecessor
   (local-naive time runs backwards across an autumn DST change) is
   inserted at its sorted position; the window sum is order-independent.
+
+Claude Code writes one line per content block of an assistant message,
+and every line repeats the whole message's ``usage`` (a later line may
+carry a larger ``output_tokens`` while the message streams). A message is
+counted once: by ``message.id``, the last line's usage, dated by the first
+line's timestamp (the ``since`` filter and the window both use that one).
+A line is deduplicated only when it has a message id and a parseable
+timestamp; any other line counts on its own, as before. The full parsers
+keep every id they meet; the index remembers the last ``RECENT_IDS``
+distinct ids, which covers the content blocks of one message (they are
+written together). It also keeps the first ``HEAD_IDS`` messages of the
+file and a 64-bit hash per message, so a reader of several files (a
+conversation and its subagents, ``history_reader``) can find a message one
+file copied from another (a fork starts with a copy of its parent's last
+message, with the same id and timestamp) and count it once: the original
+is looked up by bisecting to the copy's time (``TranscriptIndex.holds``).
+
+``cache_creation`` splits a message's cache writes by TTL; the 1-hour
+writes (``ephemeral_1h_input_tokens``, billed at twice the input price)
+are kept beside the total as ``cache_creation_1h_tokens``.
 
 A transcript's last line may be incomplete while Claude Code is still
 writing it, and a file may legitimately end without a newline. Complete
@@ -57,8 +78,8 @@ import os
 import threading
 from array import array
 from collections import OrderedDict
-from datetime import datetime
-from typing import Callable, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from .stat_gate import FileSignature, is_settled
 
@@ -79,13 +100,35 @@ TAIL_BYTES = 64
 MAX_STATES_PER_INDEX = 4
 
 # Registry bounds: distinct transcripts kept, and per-message entries kept
-# across all of them (~40 bytes each; two million is ~80 MB, roughly 4 GB
-# of transcript). Past either, the least recently queried index is dropped
-# and costs one full parse if it is asked for again.
+# across all of them (~56 bytes each: a key, five counters and an id hash;
+# 1.4 million is ~80 MB, roughly 3 GB of transcript). Past either, the
+# least recently queried index is dropped and costs one full parse if it
+# is asked for again. Each index also keeps at most RECENT_IDS ids and
+# HEAD_IDS head messages.
 MAX_INDEXES = 4096
-MAX_RECORDS = 2_000_000
+MAX_RECORDS = 1_400_000
 
-_TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")
+_TOKEN_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "cache_creation_1h_tokens",
+)
+_N = len(_TOKEN_KEYS)
+
+# Distinct message ids remembered per file to fold the later lines of a
+# message into its first (the content blocks of one message are written
+# together, so a few suffice; a line whose id has dropped out counts as a
+# new message).
+RECENT_IDS = 32
+# Messages at the start of a file kept for cross-file dedup: a file that
+# copies another's messages (a fork) copies them first.
+HEAD_IDS = 8
+# How long before a copied line its original message may have started: a
+# copy keeps the original line's timestamp, and a message's lines are
+# written within its own streaming time (``TranscriptIndex.holds``).
+COPY_WINDOW_SECONDS = 3600
 
 _provider_from_message_id: Optional[Callable[[Optional[str]], Optional[str]]] = None
 
@@ -111,6 +154,7 @@ def empty_stats() -> Tuple[dict, List[float]]:
         "output_tokens": 0,
         "cache_creation_tokens": 0,
         "cache_read_tokens": 0,
+        "cache_creation_1h_tokens": 0,
         "current_context_tokens": 0,
         "model": None,
         "provider": None,
@@ -141,6 +185,25 @@ def datetime_key(dt: datetime) -> int:
     ) * 1_000_000 + dt.microsecond
 
 
+def key_datetime(key: int) -> datetime:
+    """The naive datetime a ``datetime_key`` was made from."""
+    rest, microsecond = divmod(key, 1_000_000)
+    rest, second = divmod(rest, 60)
+    rest, minute = divmod(rest, 60)
+    rest, hour = divmod(rest, 24)
+    rest, day = divmod(rest, 32)
+    year, month = divmod(rest, 13)
+    return datetime(year, month, day, hour, minute, second, microsecond)
+
+
+def key_before(key: int, seconds: float) -> int:
+    """The key ``seconds`` earlier than ``key`` (keys are not linear across months)."""
+    try:
+        return datetime_key(key_datetime(key) - timedelta(seconds=seconds))
+    except (ValueError, OverflowError):
+        return 0
+
+
 def parse_message_time(ts_str) -> Optional[datetime]:
     """A transcript timestamp as a local-naive datetime, or None when unparseable.
 
@@ -158,16 +221,38 @@ def parse_message_time(ts_str) -> Optional[datetime]:
 
 
 # A parsed line, as far as the readers care:
-#   ("a", key_or_None, input, output, cache_creation, cache_read, model, provider,
-#    effort)
-#       an assistant message with a usage block; key is the timestamp key or
-#       None when the timestamp is missing or unparseable
+#   ("a", key_or_None, input, output, cache_creation, cache_read, cache_creation_1h,
+#    model, provider, effort, message_id_or_None)
+#       an assistant message line with a usage block; key is the timestamp
+#       key or None when the timestamp is missing or unparseable
 #   ("u", key, datetime)
 #       a user prompt (not a tool result) with a parseable timestamp
 #   ("p", pr_number)
 #       a pr-link record: the PR Claude Code linked the session to (#489)
 # Anything else parses to None.
 _Event = tuple
+
+
+def cache_write_1h(usage: dict, cache_creation: int) -> int:
+    """The 1-hour TTL part of a message's cache writes (0 when not split).
+
+    Claude Code reports ``usage.cache_creation = {"ephemeral_1h_input_tokens",
+    "ephemeral_5m_input_tokens"}`` beside the total; without it every write
+    is taken at the 5-minute rate. Never more than the total.
+    """
+    split = usage.get("cache_creation")
+    if not isinstance(split, dict):
+        return 0
+    one_hour = split.get("ephemeral_1h_input_tokens", 0)
+    if not isinstance(one_hour, int) or isinstance(one_hour, bool) or one_hour <= 0:
+        return 0
+    return min(one_hour, max(0, cache_creation))
+
+
+def message_hash(msg_id: str) -> int:
+    """A message id as a non-zero 64-bit integer (0 marks "no id")."""
+    h = hash(msg_id)
+    return h if h != 0 else 1
 
 
 def parse_line(
@@ -217,7 +302,9 @@ def parse_line(
             except (ValueError, TypeError, OverflowError, OSError):
                 pass
         msg_id = message.get("id")
-        provider = provider_of(msg_id) if isinstance(msg_id, str) else None
+        if not isinstance(msg_id, str) or not msg_id:
+            msg_id = None
+        provider = provider_of(msg_id) if msg_id is not None else None
         effort = data.get("effort")
         return (
             "a",
@@ -226,9 +313,11 @@ def parse_line(
             output_tokens,
             cache_creation,
             cache_read,
+            cache_write_1h(usage, cache_creation),
             message.get("model"),
             provider,
             effort if isinstance(effort, str) else None,
+            msg_id,
         )
     if msg_type == "user":
         message = data.get("message", {})
@@ -272,6 +361,34 @@ class _StatsState:
         self.last_prompt: Optional[datetime] = None
 
 
+def fold_assistant(
+    totals: dict, since_key: Optional[int], message_key: Optional[int], delta, event: _Event
+) -> None:
+    """Apply one assistant line to ``_parse_session_lines`` accumulators.
+
+    ``message_key`` is the timestamp key of the message's first line (the
+    line's own for a line that is not deduplicated) and ``delta`` what the
+    line adds to the message's usage (all of it for a first line). The
+    message is skipped when a ``since`` is set, its key parsed, and it is
+    earlier. Context and model come from the line itself.
+    """
+    if since_key is not None and message_key is not None and message_key < since_key:
+        return
+    for name, value in zip(_TOKEN_KEYS, delta):
+        totals[name] += value
+    input_tokens, output_tokens, cache_creation, cache_read = event[2:6]
+    context_size = input_tokens + cache_read + cache_creation
+    if context_size > 0:
+        totals["current_context_tokens"] = context_size
+    if input_tokens + output_tokens + cache_creation + cache_read > 0:
+        if event[7]:
+            totals["model"] = event[7]
+        if event[8]:
+            totals["provider"] = event[8]
+        if event[9]:
+            totals["effort"] = event[9]
+
+
 def fold_event(
     totals: dict,
     work_times: List[float],
@@ -279,33 +396,13 @@ def fold_event(
     since_key: Optional[int],
     event: _Event,
 ) -> Optional[datetime]:
-    """Apply one event to ``_parse_session_lines`` accumulators; returns the new last prompt.
+    """Apply one user or pr-link event to the accumulators; returns the new last prompt.
 
-    Mirrors the full parser line for line: an assistant message is skipped
-    only when a ``since`` is set, its timestamp parsed, and it is earlier;
-    a user prompt is skipped when earlier than ``since``; consecutive
-    prompt times yield a work time when positive.
+    (Assistant lines go through ``fold_assistant``, which needs to know
+    the message they belong to.) A user prompt is skipped when earlier
+    than ``since``; consecutive prompt times yield a work time when
+    positive.
     """
-    if event[0] == "a":
-        key = event[1]
-        if since_key is not None and key is not None and key < since_key:
-            return last_prompt
-        input_tokens, output_tokens, cache_creation, cache_read = event[2:6]
-        totals["input_tokens"] += input_tokens
-        totals["output_tokens"] += output_tokens
-        totals["cache_creation_tokens"] += cache_creation
-        totals["cache_read_tokens"] += cache_read
-        context_size = input_tokens + cache_read + cache_creation
-        if context_size > 0:
-            totals["current_context_tokens"] = context_size
-        if input_tokens + output_tokens + cache_creation + cache_read > 0:
-            if event[6]:
-                totals["model"] = event[6]
-            if event[7]:
-                totals["provider"] = event[7]
-            if event[8]:
-                totals["effort"] = event[8]
-        return last_prompt
     if event[0] == "p":
         totals["pr_number"] = event[1]
         return last_prompt
@@ -317,6 +414,10 @@ def fold_event(
         if duration > 0:
             work_times.append(duration)
     return prompt_time
+
+
+def _line_usage(event: _Event) -> Tuple[int, ...]:
+    return event[2:7]
 
 
 class TranscriptIndex:
@@ -342,7 +443,13 @@ class TranscriptIndex:
         self._pending: Optional[_Event] = None
         self._keys = array("q")
         self._values = [array("q") for _ in _TOKEN_KEYS]
-        self._grand = [0, 0, 0, 0]
+        self._ids = array("q")
+        self._grand = [0] * _N
+        # Recently seen message ids (hash -> None), newest last
+        self._recent: "OrderedDict[int, None]" = OrderedDict()
+        # The file's first HEAD_IDS messages: [hash, key, usage list]
+        self._head: List[list] = []
+        self._head_at: Dict[int, int] = {}
         for state in self._states.values():
             state.reset()
 
@@ -438,31 +545,93 @@ class TranscriptIndex:
         tail = b"".join(parts)
         self._pending = parse_line(tail.decode("utf-8", "replace"), provider_of) if tail else None
 
+    def _find(self, h: int) -> int:
+        """Position of the record with message hash ``h`` (one in ``_recent``), or -1."""
+        ids = self._ids
+        i = len(ids) - 1
+        stop = max(-1, i - 64)
+        while i > stop:
+            if ids[i] == h:
+                return i
+            i -= 1
+        try:
+            return ids.index(h)
+        except ValueError:
+            return -1
+
+    def _match(self, event: _Event) -> Tuple[int, int]:
+        """(hash, position of its message's record or -1) for a dedupable line; (0, -1) else."""
+        if event[1] is None or event[10] is None:
+            return 0, -1
+        h = message_hash(event[10])
+        if h in self._recent:
+            return h, self._find(h)
+        return h, -1
+
+    def _commit_assistant(self, event: _Event):
+        """Fold an assistant line into the records; returns (message key, delta)."""
+        key = event[1]
+        usage = _line_usage(event)
+        if key is None:
+            return None, usage
+        keys, values, ids, grand = self._keys, self._values, self._ids, self._grand
+        h, pos = self._match(event)
+        if pos >= 0:
+            # A later line of a message already recorded: its usage replaces
+            delta = tuple(usage[i] - values[i][pos] for i in range(_N))
+            for i in range(_N):
+                values[i][pos] = usage[i]
+                grand[i] += delta[i]
+            self._recent.move_to_end(h)
+            at = self._head_at.get(h)
+            if at is not None:
+                self._head[at][2] = list(usage)
+            return keys[pos], delta
+        if not keys or key >= keys[-1]:
+            keys.append(key)
+            for i in range(_N):
+                values[i].append(usage[i])
+            ids.append(h)
+        else:
+            pos = bisect.bisect_right(keys, key)
+            keys.insert(pos, key)
+            for i in range(_N):
+                values[i].insert(pos, usage[i])
+            ids.insert(pos, h)
+        for i in range(_N):
+            grand[i] += usage[i]
+        if h:
+            self._recent[h] = None
+            if len(self._recent) > RECENT_IDS:
+                self._recent.popitem(last=False)
+            if len(self._head) < HEAD_IDS and h not in self._head_at:
+                self._head_at[h] = len(self._head)
+                self._head.append([h, key, list(usage)])
+        return key, usage
+
+    def _tentative(self, event: _Event):
+        """(message key, delta) the uncommitted tail line would fold, without folding it."""
+        usage = _line_usage(event)
+        if event[1] is None:
+            return None, usage
+        _, pos = self._match(event)
+        if pos >= 0:
+            return self._keys[pos], tuple(usage[i] - self._values[i][pos] for i in range(_N))
+        return event[1], usage
+
     def _commit_block(self, block: bytes, provider_of) -> None:
         """Fold a block of whole lines (ending in a newline) into the index."""
         states = list(self._states.values())
-        keys = self._keys
-        values = self._values
-        grand = self._grand
         parse = parse_line
         for text in block.decode("utf-8", "replace").split("\n"):
             event = parse(text, provider_of)
             if event is None:
                 continue
             if event[0] == "a":
-                key = event[1]
-                if key is not None:
-                    if not keys or key >= keys[-1]:
-                        keys.append(key)
-                        for i in range(4):
-                            values[i].append(event[2 + i])
-                    else:
-                        pos = bisect.bisect_right(keys, key)
-                        keys.insert(pos, key)
-                        for i in range(4):
-                            values[i].insert(pos, event[2 + i])
-                    for i in range(4):
-                        grand[i] += event[2 + i]
+                message_key, delta = self._commit_assistant(event)
+                for state in states:
+                    fold_assistant(state.totals, state.since_key, message_key, delta, event)
+                continue
             for state in states:
                 state.last_prompt = fold_event(
                     state.totals, state.work_times, state.last_prompt, state.since_key, event
@@ -483,8 +652,13 @@ class TranscriptIndex:
                 return empty_stats()
             totals = dict(state.totals)
             work_times = list(state.work_times)
-            if self._pending is not None:
-                fold_event(totals, work_times, state.last_prompt, state.since_key, self._pending)
+            pending = self._pending
+            if pending is not None:
+                if pending[0] == "a":
+                    message_key, delta = self._tentative(pending)
+                    fold_assistant(totals, state.since_key, message_key, delta, pending)
+                else:
+                    fold_event(totals, work_times, state.last_prompt, state.since_key, pending)
             return totals, work_times
 
     def window_usage(self, since: datetime) -> dict:
@@ -496,10 +670,10 @@ class TranscriptIndex:
             totals = self._sum_from(since_key)
             pending = self._pending
             if pending is not None and pending[0] == "a":
-                key = pending[1]
-                if key is not None and key >= since_key:
-                    for i in range(4):
-                        totals[i] += pending[2 + i]
+                message_key, delta = self._tentative(pending)
+                if message_key is not None and message_key >= since_key:
+                    for i in range(_N):
+                        totals[i] += delta[i]
             return dict(zip(_TOKEN_KEYS, totals))
 
     def _sum_from(self, since_key: int) -> List[int]:
@@ -508,6 +682,49 @@ class TranscriptIndex:
         if idx == 0:
             return list(self._grand)
         return [sum(v[idx:]) for v in self._values]
+
+    def head(self, refresh: bool = True) -> List[Tuple[int, int, Tuple[int, ...]]]:
+        """The file's first ``HEAD_IDS`` messages: (id hash, key, usage), in file order.
+
+        Committed lines only. A file that copied another's messages (a
+        fork's copy of its parent's last message) has them here.
+        ``refresh`` False answers from what was last read.
+        """
+        with self._lock:
+            if refresh and not self._refresh():
+                return []
+            if self._missing:
+                return []
+            return [(h, key, tuple(usage)) for h, key, usage in self._head]
+
+    def span(self) -> Optional[Tuple[int, int]]:
+        """(first, last) message key recorded, or None (no refresh)."""
+        with self._lock:
+            if self._missing or not self._keys:
+                return None
+            return self._keys[0], self._keys[-1]
+
+    def holds(self, messages: Sequence[Tuple[int, int]], refresh: bool = True) -> Set[int]:
+        """Those of ``messages`` (id hash, key of a copy) this file holds the original of.
+
+        A copy keeps its original line's timestamp, so the original's
+        record (dated by its first line) is at most ``COPY_WINDOW_SECONDS``
+        before it: two bisects and a scan of the records in between, per
+        message. Nothing is kept between calls.
+        """
+        with self._lock:
+            if refresh and not self._refresh():
+                return set()
+            if self._missing:
+                return set()
+            keys, ids = self._keys, self._ids
+            found: Set[int] = set()
+            for h, key in messages:
+                lo = bisect.bisect_left(keys, key_before(key, COPY_WINDOW_SECONDS))
+                hi = bisect.bisect_right(keys, key)
+                if hi > lo and h in ids[lo:hi]:
+                    found.add(h)
+            return found
 
 
 class TranscriptRegistry:
@@ -553,6 +770,12 @@ class TranscriptRegistry:
     def window_usage(self, path, since: datetime) -> dict:
         index = self.get(path)
         result = index.window_usage(since)
+        self._account(index)
+        return result
+
+    def head(self, path, refresh: bool = True) -> List[Tuple[int, int, Tuple[int, ...]]]:
+        index = self.get(path)
+        result = index.head(refresh)
         self._account(index)
         return result
 

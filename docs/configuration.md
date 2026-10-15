@@ -38,8 +38,9 @@ hostname: "mac-studio"
 pricing:
   input: 3.0           # $/million tokens for input
   output: 15.0         # $/million tokens for output
-  cache_write: 3.75    # $/million tokens for cache writes
+  cache_write: 3.75    # $/million tokens for cache writes (5-minute TTL)
   cache_read: 0.30     # $/million tokens for cache reads
+  # cache_write_1h: 6.0  # 1-hour TTL cache writes; default twice the input price
 
 # Negotiated Bedrock discount off list prices (see Pricing Configuration below)
 bedrock:
@@ -593,6 +594,15 @@ agent's spend so far and starts a new segment under the new one. Children
 launched afterwards take the new code; children already running keep
 theirs.
 
+An agent's spend can go *down* once, when a fix to a transcript reader
+restates it (0.6.1: Claude spend was over-counted by up to 2x, see
+[Claude Session Files](claude-session-files.md)). The ledger then gets a
+`correction` row for each of the agent's billing segments, scaling each
+segment's spend by the same ratio, so the per-code totals drop by the
+over-count and a rebilled agent's spend stays split as before. Archived
+agents are restated too, once, while their transcripts are still on disk;
+agents whose transcripts are gone keep their figures.
+
 In the TUI, the new-agent dialog's Billing row and the "Billing code…"
 palette command (which rebills, exactly as `overcode rebill` does) cycle
 with `Space` through the agent's own name and a shortlist from config.yaml;
@@ -740,6 +750,12 @@ model_pricing:
     cache_write: 12.5
     cache_read: 1.0
 ```
+
+Claude Code writes its prompt cache with the 1-hour TTL, which Anthropic
+bills at twice the input price (5-minute writes are 1.25x). The transcript
+splits each message's cache writes by TTL, and the 1-hour part is priced at
+`cache_write_1h`: twice `input` unless set, in `pricing:` or per model in
+`model_pricing:`. The Bedrock discount scales it too.
 
 Model names are matched as substrings, **longest key first**, so `"sonnet"` matches `"claude-sonnet-4-6"` and a more specific key like `"opus-4-1"` wins over `"opus"`. User overrides in `model_pricing:` take precedence over the built-in table.
 

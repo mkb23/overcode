@@ -255,6 +255,12 @@ class ClaudeStatsReader:
             self._discovery_memo[session.id] = (key, result)
         return DiscoveredSessionIds(ids=list(discovered), latest=latest_id)
 
+    def get_legacy_reads(self, session: Any) -> Dict[str, Dict[str, Any]]:
+        """What reader version 1 read per conversation (``history_reader.legacy_session_reads``)."""
+        from .history_reader import legacy_session_reads
+
+        return legacy_session_reads(session)
+
     def get_window_token_usage(
         self, session: Any, since: datetime
     ) -> Dict[str, int]:
@@ -272,7 +278,7 @@ class ClaudeStatsReader:
         Returns None when the container can't be read or has no tokens yet,
         so the caller falls back to the normal host path.
         """
-        from .history_reader import read_session_stats_from_content
+        from .history_reader import CLAUDE_READER_VERSION, read_session_stats_from_content
 
         if not session.wrapper:
             return None
@@ -331,7 +337,9 @@ class ClaudeStatsReader:
             per_conversation[sid] = conversation_usage(
                 usage["input_tokens"], usage["output_tokens"],
                 usage["cache_creation_tokens"], usage["cache_read_tokens"],
-                model=usage["model"])
+                model=usage["model"],
+                cache_creation_1h_tokens=usage.get("cache_creation_1h_tokens", 0),
+                rv=CLAUDE_READER_VERSION)
 
             if sid == active_sid:
                 current_context = usage["current_context_tokens"]

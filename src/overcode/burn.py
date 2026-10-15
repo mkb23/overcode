@@ -73,7 +73,7 @@ def compute_window_burn(
     """
     from .stats_reader import stats_reader_for_session
     from .energy import estimate_energy_joules
-    from .pricing import calculate_cost_estimate
+    from .pricing import calculate_cost_estimate, cost_of_1h_writes
     from .settings import get_user_config, get_model_pricing
 
     stats = WindowBurnStats(window_hours=hours)
@@ -114,7 +114,7 @@ def compute_window_burn(
             price_output=mp.output,
             price_cache_write=mp.cache_write,
             price_cache_read=mp.cache_read,
-        )
+        ) + cost_of_1h_writes(u.get("cache_creation_1h_tokens", 0), mp)
 
         stats.input_tokens += u["input_tokens"]
         stats.output_tokens += u["output_tokens"]

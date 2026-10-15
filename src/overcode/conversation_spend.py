@@ -10,7 +10,8 @@ subagent is ``<session id>/<agent file>``, at its own model) in
 ``SessionStats.conversations``::
 
     {conversation_id: {"in", "out", "cw", "cr",   # tokens, as priced
-                       "cost", "energy", "model", "recorded"?, "charged"?}}
+                       "cw1h"?,                   # the 1-hour part of "cw"
+                       "cost", "energy", "model", "rv"?, "recorded"?, "charged"?}}
 
 Each sync (``merge``) updates only the conversations the read covers, each
 token count taking the larger of what is on record and what was read, so
@@ -51,6 +52,25 @@ price a pre-upgrade rebill's base the way the folded cost was priced
 Readers that cannot split their totals by conversation report them under
 ``TOTAL_KEY``: a monotonic max of the totals.
 
+A reader can say which version of itself made a read (``rv``, kept on the
+entry). When a reader is fixed so that it reads *less* than before (the
+Claude reader once added every line of a multi-block message, missed
+workflow agents and counted a fork's copy of its parent's last message
+twice), the max above would keep the wrong figure for ever. So an entry
+read by an older version is **replaced** by the next read of a newer one,
+not max'd with it: its tokens become the read's, and its cost (and energy)
+is scaled by what the new tokens are worth against the old at the
+conversation's prices, so the past is not repriced at a different model.
+A charged entry keeps its charge. Entries the new reader does not read
+(a pruned transcript) keep their figures. The agent's total can go *down*
+once at such a replacement; the daemon writes a ledger ``correction`` for
+it (``ledger.correction_rows``).
+
+Cache writes are priced by TTL when a reader splits them: ``cw`` is every
+cache write and ``cw1h`` the part written with the 1-hour TTL, priced at
+the fifth price of a price row (``price``; twice the input price unless
+configured), the rest at the 5-minute cache-write price.
+
 Nothing here imports the rest of overcode: readers build usages with
 ``usage`` and the daemon passes the pricing in.
 """
@@ -66,6 +86,9 @@ STATS_FIELDS = {
     "cr": "cache_read_tokens",
 }
 SPEND_KEYS = TOKEN_KEYS + ("cost", "energy")
+# The 1-hour TTL part of ``cw`` (a breakdown, not summed into the totals)
+CW1H = "cw1h"
+USAGE_KEYS = TOKEN_KEYS + (CW1H,)
 # The pseudo conversation a pre-per-conversation record's totals fold into
 LEGACY_KEY = "_legacy"
 # The pseudo conversation of a reader that reports only totals
@@ -79,16 +102,24 @@ EnergyFn = Callable[[Optional[str], Mapping[str, int]], float]
 
 def usage(input_tokens: Any = 0, output_tokens: Any = 0, cache_creation_tokens: Any = 0,
           cache_read_tokens: Any = 0, *, model: Optional[str] = None,
-          cost: Optional[float] = None) -> Dict[str, Any]:
+          cost: Optional[float] = None, cache_creation_1h_tokens: Any = 0,
+          rv: Optional[int] = None) -> Dict[str, Any]:
     """One conversation's read, as a reader reports it.
 
     ``cost`` is the backend's own recorded charge, when it keeps one and it
     is non-zero; otherwise the daemon prices the tokens.
+    ``cache_creation_1h_tokens`` is the part of the cache writes made with
+    the 1-hour TTL; ``rv`` the reader's version (see the module docstring).
     """
     out: Dict[str, Any] = {
         "in": _int(input_tokens), "out": _int(output_tokens),
         "cw": _int(cache_creation_tokens), "cr": _int(cache_read_tokens),
     }
+    one_hour = min(_int(cache_creation_1h_tokens), out["cw"])
+    if one_hour:
+        out[CW1H] = one_hour
+    if isinstance(rv, int) and not isinstance(rv, bool) and rv > 0:
+        out["rv"] = rv
     if model:
         out["model"] = model
     if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost > 0:
@@ -97,8 +128,21 @@ def usage(input_tokens: Any = 0, output_tokens: Any = 0, cache_creation_tokens: 
 
 
 def price(px: Sequence[float], tokens: Mapping[str, Any]) -> float:
-    """What ``tokens`` cost at per-million prices ``px``."""
-    return sum(float(p) * _int(tokens.get(k, 0)) for p, k in zip(px, TOKEN_KEYS)) / 1_000_000
+    """What ``tokens`` cost at per-million prices ``px``.
+
+    ``px`` is (input, output, cache write, cache read) and optionally a
+    fifth, the 1-hour cache write: then the ``cw1h`` part of ``cw`` is
+    priced at it and the rest at the cache-write price. A four-price row
+    prices every cache write at the cache-write price.
+    """
+    px = list(px)
+    cw = _int(tokens.get("cw", 0))
+    one_hour = min(cw, _int(tokens.get(CW1H, 0))) if len(px) > 4 else 0
+    total = (float(px[0]) * _int(tokens.get("in", 0)) + float(px[1]) * _int(tokens.get("out", 0))
+             + float(px[2]) * (cw - one_hour) + float(px[3]) * _int(tokens.get("cr", 0)))
+    if one_hour:
+        total += float(px[4]) * one_hour
+    return total / 1_000_000
 
 
 def totals(entries: Mapping[str, Any]) -> Dict[str, float]:
@@ -159,12 +203,25 @@ def merge(
         previous = out.get(cid)
         entry = dict(previous) if previous is not None else _empty()
         before = {k: _num(entry.get(k, 0)) for k in SPEND_KEYS}
-        delta = {k: max(0, _int(read.get(k, 0)) - _int(entry.get(k, 0))) for k in TOKEN_KEYS}
-        grew = any(delta.values())
+        read_rv = _int(read.get("rv", 0))
+        if previous is not None and read_rv > _int(entry.get("rv", 0)):
+            # Read by a newer reader than the entry: replaced, not max'd
+            _replace(entry, read, model, prices, energy)
+            entry["rv"] = read_rv
+            delta = dict.fromkeys(USAGE_KEYS, 0)
+        else:
+            delta = {k: max(0, _int(read.get(k, 0)) - _int(entry.get(k, 0)))
+                     for k in USAGE_KEYS}
+            if read_rv:
+                entry["rv"] = max(read_rv, _int(entry.get("rv", 0)))
+        grew = any(delta[k] for k in TOKEN_KEYS)
         for k in TOKEN_KEYS:
             entry[k] = _int(entry.get(k, 0)) + delta[k]
+        if delta[CW1H] or CW1H in entry:
+            entry[CW1H] = min(entry["cw"], _int(entry.get(CW1H, 0)) + delta[CW1H])
         if grew:
-            entry["energy"] = round(_num(entry.get("energy", 0)) + energy(model, delta), 3)
+            entry["energy"] = round(_num(entry.get("energy", 0))
+                                    + energy(model, {k: delta[k] for k in TOKEN_KEYS}), 3)
         charged = read.get("cost")
         if isinstance(charged, (int, float)) and charged > 0:
             charged = float(charged)
@@ -194,6 +251,80 @@ def merge(
         legacy["absorbs"] = [i for i in absorbs if i not in settled]
     if fold:
         out[LEGACY_KEY] = _fold(recorded, out, reads, owned_ids, prices, default_model, seg)
+    return out
+
+
+def merge_restating(
+    entries: Optional[Mapping[str, Any]],
+    reads: Mapping[str, Mapping[str, Any]],
+    *,
+    earlier_reads: Optional[Callable[[], Mapping[str, Mapping[str, Any]]]] = None,
+    recorded: Optional[Mapping[str, float]] = None,
+    **kwargs: Any,
+) -> Dict[str, Dict[str, Any]]:
+    """``merge``, first folding an older reader's reads into a record with no entries.
+
+    A record from before per-conversation spend has totals only: folded
+    against a newer reader's (lower) read, its over-count would stay in
+    the legacy entry for ever. ``earlier_reads()`` is what the older
+    reader read of the transcripts still there; folded first (as entries
+    with no ``rv``), the newer read then replaces exactly those. Called
+    only when the record has no entries, totals, and the read carries a
+    reader version.
+    """
+    if (earlier_reads is not None and not has_entries({"conversations": entries})
+            and recorded is not None and any(v > 0 for v in recorded.values())
+            and any(isinstance(r, Mapping) and _int(r.get("rv", 0)) for r in reads.values())):
+        old = earlier_reads()
+        if old:
+            entries = merge(entries, old, recorded=recorded, **kwargs)
+            recorded = None  # folded: what the totals hold beyond is in the legacy entry
+    return merge(entries, reads, recorded=recorded, **kwargs)
+
+
+def _replace(entry: Dict[str, Any], read: Mapping[str, Any], model: Optional[str],
+             prices: PriceFn, energy: EnergyFn) -> None:
+    """Replace an entry's tokens by a newer reader's read (module docstring).
+
+    The accrued cost (and energy) is scaled by what the read's tokens are
+    worth against the entry's at the conversation's prices, so a
+    conversation that ran on several models keeps their mix. A charged
+    entry (``recorded``) keeps its charge.
+    """
+    old = {k: _int(entry.get(k, 0)) for k in USAGE_KEYS}
+    new = {k: _int(read.get(k, 0)) for k in USAGE_KEYS}
+    new[CW1H] = min(new[CW1H], new["cw"])
+    px = _prices_or_none(prices, model)
+    if not entry.get("recorded") and px is not None:
+        worth_old, worth_new = price(px, old), price(px, new)
+        cost = _num(entry.get("cost", 0))
+        entry["cost"] = round(cost * worth_new / worth_old if worth_old > 0 and cost > 0
+                              else worth_new, 8)
+    try:
+        joules_old = float(energy(model, {k: old[k] for k in TOKEN_KEYS}))
+        joules_new = float(energy(model, {k: new[k] for k in TOKEN_KEYS}))
+    except Exception:
+        joules_old = joules_new = 0.0
+    spent = _num(entry.get("energy", 0))
+    entry["energy"] = round(spent * joules_new / joules_old if joules_old > 0 and spent > 0
+                            else joules_new, 3)
+    for k in TOKEN_KEYS:
+        entry[k] = new[k]
+    if new[CW1H]:
+        entry[CW1H] = new[CW1H]
+    else:
+        entry.pop(CW1H, None)
+
+
+def replaced(before: Optional[Mapping[str, Any]], after: Mapping[str, Any]) -> List[str]:
+    """The conversations whose entry a newer reader replaced between ``before`` and ``after``."""
+    old = before if isinstance(before, Mapping) else {}
+    out = []
+    for cid, entry in after.items():
+        prev = old.get(cid)
+        if (isinstance(entry, Mapping) and isinstance(prev, Mapping)
+                and _int(entry.get("rv", 0)) > _int(prev.get("rv", 0))):
+            out.append(cid)
     return out
 
 
@@ -406,7 +537,7 @@ def legacy_base_cost(stats: Any, seg: int, base_usage: Any) -> Optional[float]:
     if not isinstance(legacy, Mapping) or not seg or not isinstance(base_usage, Mapping):
         return None
     px = legacy.get("px")
-    if not isinstance(px, list) or len(px) != 4 or _int(legacy.get("seg")) != int(seg):
+    if not isinstance(px, list) or len(px) not in (4, 5) or _int(legacy.get("seg")) != int(seg):
         return None
     return price(px, base_usage)
 
@@ -419,6 +550,8 @@ def has_entries(stats: Any) -> bool:
 
 
 __all__: List[str] = [
-    "LEGACY_KEY", "TOTAL_KEY", "TOKEN_KEYS", "STATS_FIELDS", "has_entries",
-    "legacy_base_cost", "merge", "price", "recorded_totals", "totals", "usage",
+    "CW1H", "LEGACY_KEY", "TOTAL_KEY", "TOKEN_KEYS", "STATS_FIELDS", "USAGE_KEYS",
+    "has_entries", "legacy_base_cost", "merge", "merge_restating", "price", "recorded_totals",
+    "replaced",
+    "totals", "usage",
 ]

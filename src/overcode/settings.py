@@ -136,6 +136,8 @@ def _apply_discount(pricing: ModelPricing, fraction: float) -> ModelPricing:
         output=pricing.output * keep,
         cache_write=pricing.cache_write * keep,
         cache_read=pricing.cache_read * keep,
+        cache_write_1h=(None if pricing.cache_write_1h is None
+                        else pricing.cache_write_1h * keep),
     )
 
 
@@ -186,7 +188,15 @@ def _get_list_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing
         output=fallback.price_output,
         cache_write=fallback.price_cache_write,
         cache_read=fallback.price_cache_read,
+        cache_write_1h=fallback.price_cache_write_1h,
     )
+
+
+def _optional_price(value) -> "float | None":
+    """A configured price, or None when unset or not a non-negative number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value)
 
 
 def _default_energy_config():
@@ -205,6 +215,8 @@ class UserConfig:
     price_input: float = 3.0        # $/MTok for input tokens
     price_output: float = 15.0      # $/MTok for output tokens
     price_cache_write: float = 3.75  # $/MTok for cache creation
+    # $/MTok for 1-hour TTL cache writes; None: twice the input price
+    price_cache_write_1h: Optional[float] = None
     price_cache_read: float = 0.30   # $/MTok for cache reads
 
     # Per-model pricing overrides (loaded from config.yaml model_pricing section)
@@ -269,6 +281,7 @@ class UserConfig:
                         output=vals.get("output", 15.0),
                         cache_write=vals.get("cache_write", 3.75),
                         cache_read=vals.get("cache_read", 0.30),
+                        cache_write_1h=_optional_price(vals.get("cache_write_1h")),
                     )
 
         # Parse bedrock discount (flat + optional per-model overrides)
@@ -338,6 +351,7 @@ class UserConfig:
             price_input=pricing.get("input", 3.0),
             price_output=pricing.get("output", 15.0),
             price_cache_write=pricing.get("cache_write", 3.75),
+            price_cache_write_1h=_optional_price(pricing.get("cache_write_1h")),
             price_cache_read=pricing.get("cache_read", 0.30),
             model_pricing=model_pricing_parsed,
             bedrock_discount=bedrock_discount,
