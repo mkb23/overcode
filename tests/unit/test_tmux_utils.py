@@ -644,6 +644,31 @@ class TestSendKeysToPane:
             send_keys_to_pane(Pane(timeline), "hello", enter=True)
         assert timeline == []
 
+    @pytest.mark.parametrize("text, sent", [
+        ("set x = 1;", "set x = 1\\;"),
+        (";", "\\;"),
+        ("a\\;", "a\\\\;"),          # a\; must not turn into a;
+        ("a;b", "a;b"),               # only a trailing ; is a separator
+    ])
+    def test_a_trailing_semicolon_is_escaped_so_tmux_keeps_it(self, text, sent):
+        """tmux took a final ";" as a command separator and dropped it."""
+        from overcode.tmux_utils import send_keys_to_pane
+
+        timeline = []
+        with patch("overcode.tmux_utils.time.sleep"):
+            send_keys_to_pane(_RecordingPane(timeline), text, enter=False)
+        assert timeline[0] == ("cmd", ("send-keys", "--", sent))
+
+    def test_a_long_line_keeps_a_semicolon_at_a_piece_boundary(self):
+        from overcode.tmux_utils import TYPE_CHUNK_BYTES, send_keys_to_pane
+
+        text = "a" * (TYPE_CHUNK_BYTES - 1) + ";" + "b" * 100
+        timeline = []
+        with patch("overcode.tmux_utils.time.sleep"):
+            send_keys_to_pane(_RecordingPane(timeline), text, enter=False)
+        pieces = [e[1][3] for e in timeline if e[0] == "cmd"]
+        assert pieces == ["a" * (TYPE_CHUNK_BYTES - 1) + "\\;", "b" * 100]
+
     def test_a_refused_piece_fails_the_send_before_enter(self):
         from libtmux.exc import LibTmuxException
         from overcode.tmux_utils import send_keys_to_pane
@@ -690,6 +715,20 @@ class TestTypeTextToTmuxWindow:
         assert "".join(typed) == ("Fix this:\\" + "x" * 20000 + "é" * 9000 + "\\"
                                   + "y" * 65536)
         assert [s for s in sends if s[:2] != ["-l", "--"]] == [["Enter"]] * 3
+
+    def test_a_line_ending_in_a_semicolon_keeps_it(self):
+        """tmux took a final ";" as a command separator and dropped it."""
+        with patch("overcode.tmux_utils.subprocess.run") as run, \
+                patch("overcode.tmux_utils.time.sleep"):
+            run.return_value = MagicMock(returncode=0, stdout="0")
+            assert type_text_to_tmux_window("agents", 1, "line one;\nint x = 1;")
+        sends = [c.args[0][c.args[0].index("send-keys") + 3:]
+                 for c in run.call_args_list if "send-keys" in c.args[0]]
+        assert sends == [
+            ["-l", "--", "line one;\\"], ["Enter"],
+            ["-l", "--", "int x = 1\\;"],
+            ["Enter"],
+        ]
 
     def test_carriage_returns_and_tabs_are_not_typed_as_keys(self):
         """Typed, CR is Return (submits mid-message) and a tab is Tab."""

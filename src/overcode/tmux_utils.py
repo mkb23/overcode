@@ -278,7 +278,7 @@ def _send_text_to_pane(pane, text: str, literal: bool = False) -> None:
         literal = True
     flags = ('-l', '--') if literal else ('--',)
     for piece in pieces:
-        result = pane.cmd('send-keys', *flags, piece)
+        result = pane.cmd('send-keys', *flags, tmux_arg(piece))
         if getattr(result, 'stderr', None):
             raise LibTmuxException(f"send-keys refused: {result.stderr}")
 
@@ -536,6 +536,18 @@ def send_text_to_tmux_window(
     return True
 
 
+def tmux_arg(arg: str) -> str:
+    """``arg`` escaped so tmux passes it on as given.
+
+    tmux takes a command-line argument ending in ";" as a command
+    separator and drops that ";" ("x\\;" is how to say "x;"), so a sent
+    message or typed piece ending in ";" lost it.
+    """
+    if arg.endswith(';'):
+        return arg[:-1] + '\\;'
+    return arg
+
+
 # Largest text typed by one `send-keys -l`: tmux rejects a command over its
 # message limit (16342 ASCII bytes accepted, tmux 3.7c), with room to spare
 TYPE_CHUNK_BYTES = 8192
@@ -586,7 +598,8 @@ def type_text_to_tmux_window(
             # tmux refuses a command over ~16 KB ("command too long"), so
             # a long line goes as several send-keys
             for chunk in _split_utf8(typed, TYPE_CHUNK_BYTES):
-                subprocess.run(tmux_cmd + ['send-keys', '-t', target, '-l', '--', chunk],
+                subprocess.run(tmux_cmd + ['send-keys', '-t', target, '-l', '--',
+                                          tmux_arg(chunk)],
                                timeout=5, check=True)
             if i < len(lines) - 1:
                 subprocess.run(tmux_cmd + ['send-keys', '-t', target, 'Enter'],
