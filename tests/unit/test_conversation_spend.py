@@ -294,6 +294,24 @@ def test_a_pre_release_record_with_carried_spend_loads_and_folds(sm):
     assert _spent(later) == (2_100_000, 13.0)
 
 
+def test_the_upgrade_fold_never_reprices_the_past(sm):
+    """A 0.5.x agent ran on opus, then /model haiku and /clear: the old
+    estimate priced all 2M tokens at haiku ($2). Read per conversation at
+    their own models they come to $16; the fold keeps $2."""
+    s = _agent(sm, ["old", "act"], model=HAIKU, billing_code="client-a")
+    sm.update_stats(s.id, estimated_cost_usd=2.0, total_tokens=2_000_000,
+                    input_tokens=2_000_000)
+    sm.rebill(s.id, "client-b")  # before the upgrade: base $2
+    folded = _sync(sm, s.id, {"old": conv(1_000_000, model=OPUS),
+                              "act": conv(1_000_000, model=HAIKU)}, model=HAIKU)
+    assert _spent(folded) == (2_000_000, pytest.approx(2.0))
+    row = make_row(sm.get_session(s.id), "checkpoint")
+    assert contribution(row)["cost"] == pytest.approx(0, abs=1e-4)
+    grew = _sync(sm, s.id, {"old": conv(1_000_000, model=OPUS),
+                            "act": conv(2_000_000, model=HAIKU)}, model=HAIKU)
+    assert _spent(grew) == (3_000_000, pytest.approx(2.0 + _haiku(1_000_000)))
+
+
 def test_malformed_conversations_in_a_state_file_load_as_none(sm):
     assert SessionStats.from_dict({"conversations": ["x"], "total_tokens": 5}).conversations == {}
     s = _agent(sm, ["a"])

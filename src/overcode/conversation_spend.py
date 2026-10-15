@@ -33,7 +33,9 @@ into a ``_legacy`` entry: what the totals hold beyond the conversations
 that read covers. The owned conversations that read did not cover are
 ``absorbs``: their spend is inside the legacy entry, so if one is read
 again later its first read is taken out of the legacy entry, not counted
-twice. When the legacy cost was an estimate at one price row, that row
+twice. The fold keeps the record's cost: when the read, each conversation
+priced at its own model, comes to more than the record's one-model
+estimate, the read entries are scaled down to it. When the legacy cost was an estimate at one price row, that row
 (``px``) and the billing segment it was folded in (``seg``) are kept, so
 the ledger can price a pre-upgrade rebill's base the way the folded cost
 was priced (``ledger.make_row``).
@@ -93,12 +95,7 @@ def price(px: Sequence[float], tokens: Mapping[str, Any]) -> float:
 
 def totals(entries: Mapping[str, Any]) -> Dict[str, float]:
     """The agent's spend: every entry summed, as ``SessionStats`` fields."""
-    sums = dict.fromkeys(SPEND_KEYS, 0.0)
-    for entry in (entries or {}).values():
-        if not isinstance(entry, Mapping):
-            continue
-        for key in SPEND_KEYS:
-            sums[key] += _num(entry.get(key, 0))
+    sums = _sums(entries or {})
     out: Dict[str, float] = {STATS_FIELDS[k]: int(sums[k]) for k in TOKEN_KEYS}
     out["total_tokens"] = sum(int(sums[k]) for k in TOKEN_KEYS)
     out["estimated_cost_usd"] = round(sums["cost"], 4)
@@ -181,16 +178,25 @@ def merge(
     return out
 
 
-def _fold(recorded: Mapping[str, float], read_entries: Mapping[str, Mapping[str, Any]],
+def _fold(recorded: Mapping[str, float], out: Dict[str, Dict[str, Any]],
           reads: Mapping[str, Any], owned_ids: Iterable[str], prices: PriceFn,
           model: Optional[str], seg: int) -> Dict[str, Any]:
-    """The legacy entry of a record's totals beyond what this read covers."""
-    covered = totals(read_entries)
+    """The legacy entry of a record's totals beyond what this read covers.
+
+    The read prices each conversation at its own model, the record priced
+    every token at one: when the read's cost (or energy) is above the
+    record's, the read entries are scaled down to it, so the fold never
+    reprices the past and the agent's total stays what the ledger holds.
+    """
+    covered = _sums(out)
     legacy: Dict[str, Any] = {}
     for k in TOKEN_KEYS:
-        legacy[k] = max(0, int(recorded[k]) - int(covered[STATS_FIELDS[k]]))
-    legacy["cost"] = round(max(0.0, recorded["cost"] - covered["estimated_cost_usd"]), 8)
-    legacy["energy"] = round(max(0.0, recorded["energy"] - covered["estimated_energy_j"]), 3)
+        legacy[k] = max(0, int(recorded[k]) - int(covered[k]))
+    for k, places in (("cost", 8), ("energy", 3)):
+        over = covered[k] - recorded[k]
+        if over > 0:
+            _shrink(out, reads, k, over, places)
+        legacy[k] = round(max(0.0, -over), places)
     legacy["absorbs"] = [cid for cid in dict.fromkeys(owned_ids)
                          if isinstance(cid, str) and cid and cid not in reads]
     try:
@@ -204,6 +210,28 @@ def _fold(recorded: Mapping[str, float], read_entries: Mapping[str, Mapping[str,
         legacy["px"] = px
         legacy["seg"] = int(seg or 0)
     return legacy
+
+
+def _sums(entries: Mapping[str, Any]) -> Dict[str, float]:
+    """Every entry summed by ``SPEND_KEYS``, unrounded."""
+    sums = dict.fromkeys(SPEND_KEYS, 0.0)
+    for entry in entries.values():
+        if isinstance(entry, Mapping):
+            for key in SPEND_KEYS:
+                sums[key] += _num(entry.get(key, 0))
+    return sums
+
+
+def _shrink(out: Dict[str, Dict[str, Any]], reads: Mapping[str, Any], key: str,
+            over: float, places: int) -> None:
+    """Take ``over`` of ``key`` off the entries this read covers, in proportion."""
+    read = [out[cid] for cid in reads if cid in out and cid != LEGACY_KEY]
+    have = sum(_num(entry.get(key, 0)) for entry in read)
+    if have <= 0:
+        return
+    keep = max(0.0, have - over) / have
+    for entry in read:
+        entry[key] = round(_num(entry.get(key, 0)) * keep, places)
 
 
 def _settle(legacy: Dict[str, Any], entry: Mapping[str, Any], cid: str) -> None:
