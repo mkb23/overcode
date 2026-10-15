@@ -1,0 +1,30 @@
+{
+  "tier": "container-real",
+  "result": "passed",
+  "commit": "51a9df3e6613c61f16e91f0cfb83bc036677a24f",
+  "src_dirty": false,
+  "ran_at": "2026-10-15T10:35:23+00:00",
+  "duration_s": 175,
+  "exit_code": 0,
+  "counts": {
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0
+  },
+  "missing_required": [],
+  "tests": {
+    "tests.container.real_llm.test_real_smoke::test_real_agent_completes_file_task": "passed",
+    "tests.container.real_llm.test_real_smoke::test_real_agent_status_and_tokens_tracked": "passed",
+    "tests.container.real_llm.test_real_smoke::test_real_send_drives_followup_work": "passed"
+  },
+  "env": {},
+  "versions": {
+    "python": "3.12.9",
+    "platform": "Darwin 25.5.0 arm64",
+    "claude": "2.1.300 (Claude Code)",
+    "codex": "codex-cli 0.156.1",
+    "opencode": "1.18.29",
+    "hermes": "Hermes Agent v0.21.3 (2026.9.14) \u00b7 upstream 98f758ae",
+    "grok": "grok 1.0.34 (3736acbc8658) [stable]"
+  }
+}
