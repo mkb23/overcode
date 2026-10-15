@@ -69,7 +69,20 @@ def test_a_second_claude_in_the_repo_is_not_adopted(spec, live_env):
                  "--directory", str(workdir), "--model", AGENT_MODEL,
                  "--prompt", "Reply with the single word pong and nothing else.")
     assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
-    wait("the agent's first Stop", lambda: hook_state().get("event") == "Stop")
+    def stopped():
+        # The current state can already have moved on (Claude's idle
+        # notification follows a Stop); the event log keeps the Stop
+        if hook_state().get("event") == "Stop":
+            return True
+        try:
+            from tests.agent_file_lookup import agent_state_file
+
+            log = agent_state_file(state_dir, session, NAME, "hook_events").read_text()
+        except OSError:
+            return False
+        return '"event": "Stop"' in log or '"event":"Stop"' in log
+
+    wait("the agent's first Stop", stopped)
     own_id = hook_state()["agent_session_id"]
     wait("the agent's model to sync", lambda: AGENT_MODEL in (record().get("model") or ""),
          timeout=90)
