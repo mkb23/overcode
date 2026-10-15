@@ -31,18 +31,28 @@ OTHER_SID = "01a0439d-63b8-71d0-bf11-38fb10d0f552"
 
 def token_count_event(
     input_tokens=7000, cached=512, cache_write=64, output=100, reasoning=20,
-    total=7120, context_window=272000, last_total=None,
+    total=None, context_window=272000, last_total=None,
 ):
+    """A token_count as codex writes it, from the overcode buckets.
+
+    ``input_tokens`` is the uncached input and ``output`` the non-reasoning
+    output: codex's own ``input_tokens`` includes the cached and cache-write
+    tokens and its ``output_tokens`` includes reasoning.
+    """
+    raw_input = input_tokens + cached + cache_write
+    raw_output = output + reasoning
+    if total is None:
+        total = raw_input + raw_output
     return {
         "type": "event_msg",
         "payload": {
             "type": "token_count",
             "info": {
                 "total_token_usage": {
-                    "input_tokens": input_tokens,
+                    "input_tokens": raw_input,
                     "cached_input_tokens": cached,
                     "cache_write_input_tokens": cache_write,
-                    "output_tokens": output,
+                    "output_tokens": raw_output,
                     "reasoning_output_tokens": reasoning,
                     "total_tokens": total,
                 },
@@ -172,12 +182,11 @@ class TestGetStats:
     def test_reads_tokens_from_the_latest_token_count_event(self, reader):
         stats = reader.get_stats(make_session())
         assert stats.input_tokens == 7000
-        # reasoning has no bucket of its own, so it folds into output rather
-        # than vanishing from the totals (matches the opencode convention).
+        # codex's output_tokens already includes reasoning
         assert stats.output_tokens == 120
         assert stats.cache_read_tokens == 512
         assert stats.cache_creation_tokens == 64
-        assert stats.current_context_tokens == 7120
+        assert stats.current_context_tokens == 7000 + 512 + 64 + 120
 
     def test_model_from_turn_context(self, reader):
         assert reader.get_stats(make_session()).model == "gpt-5.6-sol"
@@ -623,6 +632,32 @@ class TestPerConversation:
         assert list(stats.per_conversation) == [OTHER_SID]
         assert stats.per_conversation[OTHER_SID]["in"] == 500
         assert stats.per_conversation[OTHER_SID]["model"] == "gpt-5.6-sol"
+
+    def test_cached_input_and_reasoning_are_counted_once(self, tmp_path):
+        """A real token_count: input includes the cached and cache-write
+        tokens, output includes reasoning (total = input + output). Read as
+        separate buckets, every cached token was priced twice."""
+        from overcode import conversation_spend as spend
+
+        root = tmp_path / "sessions"
+        event = token_count_event()
+        event["payload"]["info"]["total_token_usage"] = {
+            "input_tokens": 62828, "cached_input_tokens": 46895,
+            "cache_write_input_tokens": 15879, "output_tokens": 175,
+            "reasoning_output_tokens": 56, "total_tokens": 63003,
+        }
+        write_rollout(rollout_path(root, SID),
+                      [session_meta_line(), turn_context_event(), user_turn_item(), event])
+        stats = CodexStatsReader(sessions_dir=root).get_stats(make_session())
+        read = stats.per_conversation[SID]
+        assert (read["in"], read["cw"], read["cr"], read["out"]) == (54, 15879, 46895, 175)
+        entries = spend.merge({}, stats.per_conversation,
+                              prices=lambda m: (4.0, 20.0, 0.0, 0.4),
+                              energy=lambda m, t: 0.0)
+        totals = spend.totals(entries)
+        assert totals["total_tokens"] == 63003
+        assert totals["estimated_cost_usd"] == pytest.approx(
+            (54 * 4.0 + 175 * 20.0 + 46895 * 0.4) / 1e6, abs=1e-4)
 
     def test_found_by_directory_it_keys_the_same_conversation(self, reader):
         by_id = reader.get_stats(make_session())

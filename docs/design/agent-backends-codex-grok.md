@@ -376,8 +376,10 @@ hooks injection fails entirely, combined with pane polling.
 - Files: `~/.codex/sessions/YYYY/MM/DD/rollout-<ISO-ts>-<uuid>.jsonl`.
 - Line 1: `{"type":"session_meta","payload":{"id","cwd","cli_version","originator","model_provider",…}}`.
 - Token events: `{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens","total_tokens"},"last_token_usage":{…},"model_context_window":…},"rate_limits":{…"plan_type":…}}}`.
-- Mapping: input → `input_tokens`; output → `output_tokens` (+
-  `reasoning_output_tokens`, matching the opencode convention); cache read →
+- Mapping: input → `input_tokens` less `cached_input_tokens` and
+  `cache_write_input_tokens` (OpenAI's input includes both); output →
+  `output_tokens` (already includes `reasoning_output_tokens`;
+  `total_tokens == input_tokens + output_tokens`); cache read →
   `cached_input_tokens`; cache write → `cache_write_input_tokens`; context →
   latest `last_token_usage.total_tokens` vs `model_context_window` (shipped correction: the plan said `total_token_usage`, but that cumulative figure re-counts resent context each turn and overstated a two-turn session ~2x vs codex's own /status; live-verified Aug 28);
   interactions → count of user `response_item` messages excluding

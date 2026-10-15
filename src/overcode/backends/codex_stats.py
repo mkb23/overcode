@@ -14,6 +14,8 @@ Everything else this reader cares about is one of three ``type``s:
         cache_write_input_tokens, output_tokens, reasoning_output_tokens,
         total_tokens (+ model_context_window). This is a *running total*
         snapshot, not a delta, so the reader keeps only the newest one seen.
+        input_tokens includes the cached and cache-write tokens and
+        output_tokens includes reasoning (total = input + output).
     turn_context
         payload.model (also duplicated at
         payload.collaboration_mode.settings.model) — the "current model"
@@ -199,15 +201,17 @@ def _apply_rollout_entry(out: Dict[str, Any], entry: Any) -> None:
         info = payload.get("info")
         usage = info.get("total_token_usage") if isinstance(info, dict) else None
         if isinstance(usage, dict):
-            out["input_tokens"] = as_int(usage.get("input_tokens"))
-            # codex bills reasoning as output and reports it separately
-            # (matching the opencode convention this reader follows
-            # elsewhere) — folded into output rather than dropped.
-            out["output_tokens"] = as_int(usage.get("output_tokens")) + as_int(
-                usage.get("reasoning_output_tokens")
-            )
-            out["cache_read_tokens"] = as_int(usage.get("cached_input_tokens"))
-            out["cache_write_tokens"] = as_int(usage.get("cache_write_input_tokens"))
+            # OpenAI usage: input_tokens already includes the cached and
+            # cache-write tokens, and output_tokens already includes
+            # reasoning (total_tokens == input_tokens + output_tokens). The
+            # buckets here are disjoint, as priced, so the cached part comes
+            # out of input and reasoning is not added again.
+            cached = as_int(usage.get("cached_input_tokens"))
+            written = as_int(usage.get("cache_write_input_tokens"))
+            out["input_tokens"] = max(0, as_int(usage.get("input_tokens")) - cached - written)
+            out["output_tokens"] = as_int(usage.get("output_tokens"))
+            out["cache_read_tokens"] = cached
+            out["cache_write_tokens"] = written
         # Context occupancy comes from last_token_usage (the latest
         # request: its input already contains the whole conversation,
         # plus its output), NOT total_token_usage — the cumulative

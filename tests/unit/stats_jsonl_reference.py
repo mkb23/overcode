@@ -73,15 +73,13 @@ def scan_rollout(path: Path) -> Dict[str, Any]:
             info = payload.get("info")
             usage = info.get("total_token_usage") if isinstance(info, dict) else None
             if isinstance(usage, dict):
-                out["input_tokens"] = _as_int(usage.get("input_tokens"))
-                # codex bills reasoning as output and reports it separately
-                # (matching the opencode convention this reader follows
-                # elsewhere) — folded into output rather than dropped.
-                out["output_tokens"] = _as_int(usage.get("output_tokens")) + _as_int(
-                    usage.get("reasoning_output_tokens")
-                )
-                out["cache_read_tokens"] = _as_int(usage.get("cached_input_tokens"))
-                out["cache_write_tokens"] = _as_int(usage.get("cache_write_input_tokens"))
+                cached = _as_int(usage.get("cached_input_tokens"))
+                written = _as_int(usage.get("cache_write_input_tokens"))
+                out["input_tokens"] = max(
+                    0, _as_int(usage.get("input_tokens")) - cached - written)
+                out["output_tokens"] = _as_int(usage.get("output_tokens"))
+                out["cache_read_tokens"] = cached
+                out["cache_write_tokens"] = written
             # Context occupancy comes from last_token_usage (the latest
             # request: its input already contains the whole conversation,
             # plus its output), NOT total_token_usage — the cumulative

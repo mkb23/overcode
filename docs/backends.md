@@ -832,8 +832,8 @@ since the last call, so a quiet agent costs one `stat` (#524; see
 
 | overcode column | codex source |
 |---|---|
-| input tokens | latest `event_msg` (`payload.type=="token_count"`) `info.total_token_usage.input_tokens` |
-| output tokens | same event's `output_tokens` + `reasoning_output_tokens` |
+| input tokens | latest `event_msg` (`payload.type=="token_count"`) `info.total_token_usage.input_tokens` minus `cached_input_tokens` and `cache_write_input_tokens` (OpenAI's input count includes them; `total_tokens == input_tokens + output_tokens`) |
+| output tokens | same event's `output_tokens` (already includes `reasoning_output_tokens`) |
 | cache write / read | same event's `cache_write_input_tokens` / `cached_input_tokens` |
 | context | same event's `last_token_usage.total_tokens` — the latest request's input (which already carries the whole conversation) plus its output. The cumulative `total_token_usage` re-counts the resent context every turn, so it overstates occupancy (a two-turn session read ~2x codex's own `/status` figure); it feeds only the Σ token columns |
 | model | latest `turn_context.payload.model` (one line per turn) |
