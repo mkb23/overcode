@@ -39,7 +39,7 @@ from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
 from .launch_settings import LaunchArgs, resolve_launch_settings
-from .ledger import billing_code_of
+from .ledger import billing_code_of, billing_lookup, inherited_billing_code
 from .dependency_check import require_tmux, require_agent_cli
 from .exceptions import (
     AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
@@ -195,6 +195,23 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
     # Maximum nesting depth for agent hierarchy (#244)
     MAX_HIERARCHY_DEPTH = 5
+
+    def _parent_billing_code(self, parent: Session) -> str:
+        """The code a child of ``parent`` bills to: the parent's, else its root's.
+
+        A parent an older overcode launched has no code until a daemon
+        housekeeping pass gives it its root's; a child launched before then
+        must take that code too, not the parent's name, or its spend is
+        split from the rest of its tree for good (codes are sticky).
+        """
+        if parent.billing_code or not parent.parent_session_id:
+            return billing_code_of(parent)
+        try:
+            lookup = billing_lookup(self.sessions.list_sessions(),
+                                    self.sessions.iter_archived_records(newest_first=True))
+        except Exception:  # unreadable archive: the parent's name, as before
+            return billing_code_of(parent)
+        return inherited_billing_code(parent, lookup)
 
     def backend_for(self, session: Session) -> AgentBackend:
         """Resolve the agent backend that owns a session's CLI grammar."""
@@ -403,7 +420,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         # Billing code: a child is always billed to its parent's code, even
         # with --no-inherit; its own is ignored
         if parent_session is not None:
-            inherited = billing_code_of(parent_session)
+            inherited = self._parent_billing_code(parent_session)
             if billing_code and billing_code != inherited:
                 print(f"Warning: --billing-code {billing_code} ignored: a child is billed "
                       f"to its parent's code ({inherited})", file=sys.stderr)
@@ -694,7 +711,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             model=source_session.model, provider=source_session.provider,
             wrapper=source_session.wrapper, backend=agent_backend.name,
             skill_profile=getattr(source_session, "skill_profile", None),
-            billing_code=billing_code_of(source_session),
+            billing_code=self._parent_billing_code(source_session),
         )
 
         session = self.sessions.create_session(**metadata)

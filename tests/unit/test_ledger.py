@@ -80,6 +80,37 @@ class TestBillingCodes:
         assert "--billing-code mine ignored" in capsys.readouterr().err
         assert parent.parent_session_id is None
 
+    @staticmethod
+    def _codeless_child(sm, parent, name="orch-helper", cost=0.0):
+        """A child an older overcode launched: a parent, no billing code yet."""
+        child = sm.create_session(name=name, tmux_session="agents", tmux_window=f"{name}-1",
+                                  command=[])
+        with sm._locked_state() as state:
+            state[child.id]["parent_session_id"] = parent.id
+            state[child.id].pop("billing_code", None)
+            state[child.id]["stats"]["estimated_cost_usd"] = cost
+        return child
+
+    def test_a_codeless_child_killed_before_housekeeping_bills_its_root(self, sm):
+        root = sm.create_session(name="orch", tmux_session="agents", tmux_window="orch-1",
+                                 command=[], billing_code="ACME")
+        child = self._codeless_child(sm, root, cost=2.0)
+        grandchild = self._codeless_child(sm, child, name="orch-helper-2", cost=1.0)
+        sm.delete_session(grandchild.id)  # `overcode kill`: walks up through a codeless parent
+        sm.delete_sessions([child.id])    # `overcode cleanup`
+        finals = {r["sid"]: r["billing_code"] for r in _rows(sm) if r["kind"] == "final"}
+        assert finals == {child.id: "ACME", grandchild.id: "ACME"}
+        assert sm.find_archived(child.id).billing_code == "ACME"
+        assert sm.ledger.totals()["ACME"]["cost"] == 3.0
+        assert "orch-helper" not in sm.ledger.totals()
+
+    def test_a_child_of_a_codeless_parent_takes_the_roots_code(self, launcher, sm):
+        root = launcher.launch(name="orch", billing_code="ACME")
+        self._codeless_child(sm, root)
+        with patch.dict(os.environ, {"OVERCODE_SESSION_NAME": "orch-helper"}):
+            child = launcher.launch(name="kid")
+        assert sm.get_session(child.id).billing_code == "ACME"
+
     def test_a_record_from_before_codes_reads_as_its_name(self):
         assert billing_code_of({"name": "old"}) == "old"
         assert billing_code_of(SimpleNamespace(billing_code=None, name="old")) == "old"

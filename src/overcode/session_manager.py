@@ -695,11 +695,14 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                     if key not in stats or stats[key] != value:
                         stats[key] = value
                         txn.dirty = True
+            codes = self._inherited_codes(pending.archive, state)
             for session_id in pending.archive:
                 entry = state.pop(session_id, None)
                 if entry is None:
                     continue  # already gone (cleanup, or another daemon's archive pass)
                 record = entry.copy()
+                if session_id in codes:
+                    record['billing_code'] = codes[session_id]
                 record['end_time'] = datetime.now().isoformat()
                 record['status'] = 'archived'
                 if session_id in pointers:
@@ -725,6 +728,30 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             if isinstance(tmux_session, str) and tmux_session:
                 remove_agent_dir(tmux_session, session_id)
         return written
+
+    def _inherited_codes(self, session_ids: Iterable[str], state: dict) -> Dict[str, str]:
+        """``{id: code}`` for those of ``session_ids`` that are children with no billing code.
+
+        A child an older overcode launched has a parent but no code until a
+        daemon housekeeping pass gives it one; archived before that, its
+        final ledger row and archive record must still bill its root's code
+        (``inherited_billing_code``), not its own name. The archive is read
+        only when such a record is found. (A codeless root bills to its
+        name, which ``make_row`` already gives it.)
+        """
+        from .ledger import billing_lookup, inherited_billing_code
+
+        missing = [sid for sid in session_ids
+                   if isinstance(state.get(sid), dict) and not state[sid].get('billing_code')
+                   and state[sid].get('parent_session_id')]
+        if not missing:
+            return {}
+        try:
+            lookup = billing_lookup(state.values(), self.iter_archived_records(newest_first=True))
+        except Exception as e:  # the live records still give most codes
+            logger.warning("archived billing codes not read: %s", e)
+            lookup = billing_lookup(state.values())
+        return {sid: inherited_billing_code(state[sid], lookup) for sid in missing}
 
     def _pack_for_archive(self, session_ids: Iterable[str]) -> Dict[str, dict]:
         """Pack each staged agent's directory into its day bundle: {id: pointer}.
