@@ -9,7 +9,7 @@ kept per conversation (the agent CLI's own conversation id) in
 ``SessionStats.conversations``::
 
     {conversation_id: {"in", "out", "cw", "cr",   # tokens, as priced
-                       "cost", "energy", "model", "recorded"?}}
+                       "cost", "energy", "model", "recorded"?, "charged"?}}
 
 Each sync (``merge``) updates only the conversations the read covers, each
 token count taking the larger of what is on record and what was read, so
@@ -22,8 +22,10 @@ model that conversation was read at, so a later ``/model`` switch prices
 only the tokens spent after it and never reprices the past (nor moves
 spend from before a rebill onto the new billing code). A backend that
 records its own charge (opencode, hermes, grok) gives a ``cost`` per
-conversation; that figure is taken as it is (never lowered) and marked
-``recorded``.
+conversation; the entry is then marked ``recorded`` and its cost grows by
+what the charge grows (``charged`` is the last charge taken). A charge that
+first appears after the tokens were estimated replaces the estimate only
+when larger: the cost is never lowered.
 
 A record from before this model (an upgrade, or a pre-release build that
 carried spend) has totals and no entries. Its first sync folds the totals
@@ -155,10 +157,18 @@ def merge(
             entry["energy"] = round(_num(entry.get("energy", 0)) + energy(model, delta), 3)
         charged = read.get("cost")
         if isinstance(charged, (int, float)) and charged > 0:
+            charged = float(charged)
             if entry.get("recorded"):
-                entry["cost"] = max(_num(entry.get("cost", 0)), float(charged))
+                # The charge's growth since the last one taken accrues
+                seen = _num(entry.get("charged", entry.get("cost", 0)))
+                if charged > seen:
+                    entry["cost"] = round(_num(entry.get("cost", 0)) + charged - seen, 8)
+                    entry["charged"] = charged
             else:
-                entry["cost"], entry["recorded"] = float(charged), True
+                # The first charge covers the tokens already estimated:
+                # it replaces the estimate only when larger, never lowers it
+                entry["cost"] = round(max(_num(entry.get("cost", 0)), charged), 8)
+                entry["charged"], entry["recorded"] = charged, True
         elif grew and not entry.get("recorded"):
             entry["cost"] = round(_num(entry.get("cost", 0)) + price(prices(model), delta), 8)
         if isinstance(model, str) and model:

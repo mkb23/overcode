@@ -348,13 +348,40 @@ def test_merge_never_lowers_a_field_and_prices_only_what_was_added():
 
 
 def test_merge_takes_a_recorded_cost_as_it_is_and_never_lowers_it():
-    est = _merge({}, {"a": spend.usage(10)})
-    rec = _merge(est, {"a": spend.usage(10, cost=3.0)})
+    rec = _merge({}, {"a": spend.usage(10, cost=3.0)})
     assert rec["a"]["cost"] == 3.0 and rec["a"]["recorded"]
     low = _merge(rec, {"a": spend.usage(12, cost=2.0)})
     assert low["a"]["cost"] == 3.0
     zero = _merge(low, {"a": spend.usage(14)})  # no figure this time
     assert zero["a"]["cost"] == 3.0
+    up = _merge(zero, {"a": spend.usage(16, cost=3.5)})
+    assert up["a"]["cost"] == 3.5
+
+
+def test_a_charge_that_appears_after_an_estimate_never_lowers_the_cost():
+    """An unpriced conversation (subscription, hermes cost_status unknown)
+    accrued $15 of estimate; a $1 charge then appears. The cost stays $15
+    and grows by what the charge grows."""
+    est = _merge({}, {"a": spend.usage(15)})
+    assert est["a"]["cost"] == 15
+    rec = _merge(est, {"a": spend.usage(16, cost=1.0)})
+    assert rec["a"]["cost"] == 15 and rec["a"]["recorded"]
+    on = _merge(rec, {"a": spend.usage(17, cost=1.5)})
+    assert on["a"]["cost"] == 15.5
+    larger = _merge(est, {"a": spend.usage(16, cost=20.0)})
+    assert larger["a"]["cost"] == 20.0
+
+
+def test_a_late_charge_after_a_rebill_keeps_the_ledger_and_total_together(sm):
+    s = _agent(sm, ["a"], billing_code="client-a")
+    _sync(sm, s.id, {"a": conv(1_000_000)})
+    sm.rebill(s.id, "client-b")
+    after = _sync(sm, s.id, {"a": conv(1_100_000, cost=1.0)})
+    assert after.estimated_cost_usd == pytest.approx(_opus(1_000_000))
+    later = _sync(sm, s.id, {"a": conv(1_200_000, cost=2.0)})
+    assert later.estimated_cost_usd == pytest.approx(_opus(1_000_000) + 1.0)
+    row = make_row(sm.get_session(s.id), "checkpoint")
+    assert contribution(row)["cost"] == pytest.approx(1.0, abs=1e-4)
 
 
 def test_merge_leaves_a_reserved_key_alone():
