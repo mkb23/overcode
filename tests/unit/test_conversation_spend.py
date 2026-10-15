@@ -511,3 +511,56 @@ def test_a_late_charge_after_a_rebill_keeps_the_ledger_and_total_together(sm):
 def test_merge_leaves_a_reserved_key_alone():
     out = _merge({}, {spend.LEGACY_KEY: spend.usage(10)})
     assert out == {}
+
+
+GROK_ROW = (2.0, 6.0, 0.0, 0.5)  # a table row: the backend may bill cache reads otherwise
+
+
+def _fold_then(first, records, again, *, energy=lambda m, t: 0.0):
+    """Fold ``records`` (the 0.5.x totals) with ``first`` read, then read ``again``."""
+    kw = dict(prices=lambda m: GROK_ROW, energy=energy, owned_ids=["A", "B"],
+              default_model="grok-4.6")
+    folded = spend.merge(None, first, recorded=records, **kw)
+    return spend.merge(folded, again, recorded=spend.recorded_totals(spend.totals(folded)), **kw)
+
+
+def _record(tokens, cost, energy=0.0):
+    return {**{k: float(v) for k, v in zip(spend.TOKEN_KEYS, tokens)},
+            "cost": cost, "energy": energy}
+
+
+@pytest.mark.parametrize("a_tokens, a_cost, back, back_cost", [
+    # cache reads billed at $0.20/M, not the row's $0.50; then 50k output
+    ((10_000, 5_000, 0, 1_000_000), 0.25, (10_000, 55_000, 0, 1_000_000), 0.55),
+    # 50k output; then resumed with 1M cache reads
+    ((0, 50_000, 0, 0), 0.30, (0, 50_000, 0, 1_000_000), 0.50),
+])
+def test_a_charged_conversation_back_grown_keeps_the_backend_charge(a_tokens, a_cost,
+                                                                    back, back_cost):
+    """A charged conversation the fold absorbed comes back grown: the total
+    is the backend's charges, however its rates differ from the table's."""
+    b = spend.usage(1_000, 1_000, model="grok-4.6", cost=0.008)
+    records = _record([a + extra for a, extra in zip(a_tokens, (1_000, 1_000, 0, 0))],
+                      a_cost + 0.008)
+    after = _fold_then({"B": b}, records,
+                       {"A": spend.usage(*back, model="grok-4.6", cost=back_cost), "B": b})
+    assert spend.totals(after)["estimated_cost_usd"] == pytest.approx(back_cost + 0.008)
+    assert after["A"]["cost"] == pytest.approx(back_cost)
+    assert after[spend.LEGACY_KEY]["cost"] == 0
+
+
+def test_a_missed_conversation_back_grown_moves_energy_by_joules():
+    """The legacy entry holds A (1M input) and a pruned P (1M output: no
+    joules here, but $6 at the row). A comes back grown by 1M cache reads,
+    which add no energy: the total energy stays where it was."""
+    def joules(model, tokens):
+        return float(tokens.get("in", 0))
+
+    b = spend.usage(1, model="grok-4.6")
+    records = _record((1_000_001, 1_000_000, 0, 0), 8.0 + 2e-6, 1_000_001)
+    after = _fold_then({"B": b}, records,
+                       {"A": spend.usage(1_000_000, 0, 0, 1_000_000, model="grok-4.6"),
+                        "B": b}, energy=joules)
+    assert spend.totals(after)["estimated_energy_j"] == pytest.approx(1_000_001)
+    assert after[spend.LEGACY_KEY]["energy"] == pytest.approx(0)
+    assert spend.totals(after)["estimated_cost_usd"] == pytest.approx(8.5, abs=1e-4)

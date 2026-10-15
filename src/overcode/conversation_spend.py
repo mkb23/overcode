@@ -185,7 +185,8 @@ def merge(
             entry["model"] = model
         out[cid] = entry
         if legacy is not None and _absorbed(cid, absorbs):
-            _settle(legacy, entry, before, _prices_or_none(prices, model))
+            _settle(legacy, entry, before, _prices_or_none(prices, model),
+                    _joules(energy, model))
             settled.append(cid)
     if settled:
         # A parent is dropped only after the whole read: its subagents,
@@ -292,42 +293,72 @@ def _shrink(out: Dict[str, Dict[str, Any]], reads: Mapping[str, Any], key: str,
 
 
 def _settle(legacy: Dict[str, Any], entry: Dict[str, Any], before: Mapping[str, float],
-            px: Optional[Sequence[float]]) -> None:
+            px: Optional[Sequence[float]],
+            joules: Optional[Callable[[Mapping[str, int]], float]]) -> None:
     """A conversation folded into the legacy entry is read again: what that
     read added to its entry moves out of the legacy entry instead of being
     counted twice.
 
     The tokens the legacy entry holds of what the read added move out of
     it, and the cost (and energy) move *with those tokens*: their share of
-    the legacy entry's cost, by value at the conversation's prices. The
-    conversation's entry takes that share for them, not its own price of
-    them, so a conversation that comes back unchanged leaves the total
-    where it was even when the fold priced the legacy entry lower (it
-    keeps the record's one-model estimate, ``_fold``). What the read added
-    beyond the legacy tokens is new spend, at the conversation's price.
+    the legacy entry's cost, by value at the conversation's prices (energy
+    by joules at its model). An estimated entry takes that share for them,
+    not its own price of them, so a conversation that comes back unchanged
+    leaves the total where it was even when the fold priced the legacy
+    entry lower (it keeps the record's one-model estimate, ``_fold``).
+    What the read added beyond the legacy tokens is new spend, at the
+    conversation's price.
+
+    A charged entry's cost is the backend's own charge, which already
+    includes what it charged before the fold: the price table cannot say
+    which part of its growth that was (the backend's real rates differ
+    from it), so the entry keeps the charge and the legacy entry gives up
+    the share it holds of it, never more than the charge grew.
     """
     added = {k: _int(entry.get(k, 0)) - _int(before.get(k, 0)) for k in TOKEN_KEYS}
     held = {k: _int(legacy.get(k, 0)) for k in TOKEN_KEYS}
     taken = {k: max(0, min(held[k], added[k])) for k in TOKEN_KEYS}
-    priced = bool(px) and price(px, added) > 0 and price(px, held) > 0
-    w_added, w_held, w_taken = (price(px, t) if priced else float(sum(t.values()))
-                                for t in (added, held, taken))
-    for k, places in (("cost", 8), ("energy", 3)):
+    charged = bool(entry.get("recorded"))
+    for k, places, value in (("cost", 8, (lambda t: price(px, t)) if px else None),
+                             ("energy", 3, joules)):
+        w_added, w_held, w_taken = _weights(value, (added, held, taken))
         have = _num(legacy.get(k, 0))
         grew = _num(entry.get(k, 0)) - _num(before.get(k, 0))
-        if w_added > 0:
-            # The part of the growth that is the legacy tokens, replaced by
-            # the legacy entry's own share of them
-            covered = grew * w_taken / w_added
-            share = have * w_taken / w_held if w_held > 0 else 0.0
-        else:
+        if w_added <= 0:
             # Nothing but a charge grew: it is what the legacy entry held
             covered = share = max(0.0, min(have, grew))
+        else:
+            share = have * w_taken / w_held if w_held > 0 else 0.0
+            if k == "cost" and charged:
+                covered = share = min(share, max(0.0, grew))
+            else:
+                # The part of the growth that is the legacy tokens, replaced
+                # by the legacy entry's own share of them
+                covered = grew * w_taken / w_added
         share = max(0.0, min(have, share))
         entry[k] = round(max(0.0, _num(entry.get(k, 0)) - covered + share), places)
         legacy[k] = round(have - share, places)
     for k in TOKEN_KEYS:
         legacy[k] = held[k] - taken[k]
+
+
+def _weights(value: Optional[Callable[[Mapping[str, int]], float]],
+             usages: Sequence[Mapping[str, int]]) -> List[float]:
+    """Each usage's weight by ``value``; by token count when there is no
+    value or it is zero for what was added or held."""
+    if value is not None:
+        try:
+            weights = [float(value(u)) for u in usages]
+        except Exception:
+            weights = []
+        if len(weights) == len(usages) and weights[0] > 0 and weights[1] > 0:
+            return weights
+    return [float(sum(u.values())) for u in usages]
+
+
+def _joules(energy: EnergyFn, model: Optional[str]
+            ) -> Callable[[Mapping[str, int]], float]:
+    return lambda tokens: energy(model, tokens)
 
 
 def _prices_or_none(prices: PriceFn, model: Optional[str]) -> Optional[List[float]]:
