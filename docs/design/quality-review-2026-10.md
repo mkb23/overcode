@@ -348,3 +348,28 @@ holds a synthetic year (60,000 agents) to the live fleet's size on the
 hot paths. Still undecided: a max-age cap for children left waiting for
 oversight with their window open.
 
+
+### Release review and convergence (2026-10-14/15)
+
+A review of the whole release diff (`main...release/0.6.0`, ten risk
+areas, every finding checked by two independent verifiers) found 57 real
+defects: one high (a Claude launch prompt after a variadic flag such as
+`--allowed-tools` was swallowed; the prompt now follows `--`), the rest
+medium and low, clustered in the newest code and at boundaries (other
+CLIs' parsers, older overcode versions, crashes mid-write, DST, sleep,
+slow tmux). All were fixed with a regression test each (deeca9e).
+
+Convergence rounds on the fixes found 14, 10, 7, 10 and then 0. Spend
+accounting kept producing fix-on-fix bugs, so it was redesigned: spend is
+kept per conversation and only grows (`conversation_spend.py`), and three
+focused reviews of that found 10, 5 and 3 (the last all in the one-time
+upgrade fold or the codex miss cache). One of them predates 0.6: codex
+input already includes cached tokens, so 0.5.x overstated codex cost.
+
+Decisions taken in the review: persisted timestamps stay naive local
+(0.5.8 reads them; the repeated autumn hour is an accepted limitation),
+hooks are registered as a bare `hook-handler` (safe across a downgrade),
+`kill` exits 1 when the agent is missing, an unreadable `config.yaml` is
+set aside rather than overwritten, fish before 3.4 cannot take a launch
+prompt. A synthetic 0.5.8 tree (`tests/fixtures/upgrade_058`) now proves
+an upgrade loses nothing and keeps no secret.
