@@ -1260,6 +1260,8 @@ class MonitorDaemon:
         now = aware(now)
         tick_t0 = self.clock.monotonic()
         self.state.tick_started_at = stamp(now)
+        # Observing from the first tick, with or without agents (#507)
+        self.recorder_store.begin(now.timestamp())
         try:
             self._tick_phases(now)
         finally:

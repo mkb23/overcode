@@ -178,6 +178,27 @@ class TestAStallRingsOnceThroughTheTick:
             run_ticks(daemon, detector, clock, int(EPISODE_MERGE_SECONDS / 2.0) + 2)
         assert daemon._engine.bells == [(new.id, RED)]
 
+    def test_the_first_agent_into_an_empty_engine_rings(self, env, counted):
+        """The engine started with no agents: its start, not the first
+        agent's first tick, is when it began observing, so the first agent
+        launched into it, red from first sight, rings too."""
+        from datetime import timedelta
+
+        from overcode.episodes import EPISODE_MERGE_SECONDS
+
+        def script(tick, s):
+            return ("waiting_user", "Waiting", "")
+
+        daemon, detector, _, clock = _fleet(env, script, n=0)
+        with clock.installed():
+            run_ticks(daemon, detector, clock, 3)  # running, nothing to record
+            sm = daemon.session_manager
+            new = sm.create_session("late", "agents", "late-0001", ["claude"],
+                                    start_directory=str(env / "work"))
+            sm.update_session(new.id, start_time=(clock.now - timedelta(seconds=1)).isoformat())
+            run_ticks(daemon, detector, clock, int(EPISODE_MERGE_SECONDS / 2.0) + 2)
+        assert daemon._engine.bells == [(new.id, RED)]
+
     def test_a_brief_stall_merges_and_never_rings(self, env, counted):
         def script(tick, s):
             if s.name == "agent-00" and 3 <= tick < 6:  # 6 s of red, well inside G

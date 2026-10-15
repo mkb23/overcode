@@ -53,13 +53,24 @@ class RecorderStore:
         self.dirty = False
         # monotonic time of the last engine_state.json write
         self.saved_at = 0.0
-        # When this engine first recorded a colour: an agent started after
-        # it is new, and its first input-needed stretch may ring
+        # When this engine began observing (its first tick, agents or
+        # not; see begin): an agent started after it is new, and its first
+        # input-needed stretch may ring
         self.observing_since: Optional[float] = None
 
     @property
     def path(self) -> Path:
         return self.directory / "engine_state.json"
+
+    def begin(self, ts: float) -> None:
+        """Mark the engine observing from ``ts`` (epoch); the first call wins.
+
+        Called at every tick, so the mark is the engine's first tick even
+        when its tmux session had no agents then: an agent launched later
+        is new (``_started_since``), the first one included.
+        """
+        if self.observing_since is None:
+            self.observing_since = ts
 
     def record(self, session, state: SessionDaemonState, effective_status: str,
                now: datetime, *, detector, engine=None) -> None:
@@ -79,8 +90,7 @@ class RecorderStore:
         # Lifecycle states (and not knowing) hold the record where it was
         colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN) \
             else (detail.color if detail else None)
-        if self.observing_since is None:
-            self.observing_since = ts
+        self.begin(ts)
         recorder = self.recorders.get(session.id)
         if recorder is None:
             recorder = self.recorders[session.id] = EpisodeRecorder(
