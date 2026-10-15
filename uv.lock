@@ -292,7 +292,7 @@ wheels = [
 
 [[package]]
 name = "overcode"
-version = "0.5.8"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "libtmux" },
@@ -324,7 +324,7 @@ presence = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
-    { name = "libtmux", specifier = ">=0.37.0" },
+    { name = "libtmux", specifier = ">=0.37.0,<0.63" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pillow", marker = "extra == 'dev'", specifier = ">=10.0.0" },
     { name = "pyarrow", marker = "extra == 'export'", specifier = ">=14.0.0" },
