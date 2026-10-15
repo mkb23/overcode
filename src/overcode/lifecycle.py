@@ -706,8 +706,22 @@ def _stop_agents(ts, launcher, ops: SystemOps, *, force, dry_run, timeout, add,
     ``overcode shutdown``) can't be exited mid-run: its record is marked
     and its window goes with its tmux session, killed last.
     """
+    from .protocols import TmuxTimeoutError
+
     sessions = [s for s in launcher.sessions.list_sessions() if s.tmux_session == ts]
-    existing = window_lookup(launcher._list_tmux_windows_cheap())
+    try:
+        existing = window_lookup(launcher._list_tmux_windows_cheap())
+    except TmuxTimeoutError:
+        # Can't tell which windows are up, so none gets a graceful exit:
+        # every record is kept, and the windows end with the tmux session,
+        # killed below with the rest of the shutdown.
+        if not dry_run:
+            for s in sessions:
+                if s.status != STATUS_TERMINATED:
+                    _keep_for_revive(launcher, s)
+        add("agents", f"agents [{ts}]", "deferred",
+            "tmux not responding; records kept, windows end with the tmux session")
+        return
     alive = [s for s in sessions if window_in_lookup(s.tmux_window, existing)]
     for s in [s for s in alive if own_window and s.tmux_window == own_window]:
         alive.remove(s)

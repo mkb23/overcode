@@ -993,6 +993,7 @@ def rename(
     """
     from ..exceptions import AgentBusyError, InvalidSessionNameError
     from ..launcher import AgentLauncher
+    from ..protocols import TmuxTimeoutError
 
     launcher = AgentLauncher(session)
     sess = find_agent(launcher.sessions, name)
@@ -1021,6 +1022,10 @@ def rename(
         raise typer.Exit(code=1)
     except ValueError as exc:
         rprint(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1)
+    except TmuxTimeoutError:
+        rprint(f"[red]Error: cannot rename '{name}': tmux is not responding; "
+               f"try again in a moment[/red]")
         raise typer.Exit(code=1)
 
     if not renamed:

@@ -2598,6 +2598,18 @@ class TestRenameCommand:
         assert "Renamed agent" not in out
         assert calls["force"] is False
 
+    def test_tmux_not_answering_is_a_clean_error(self, monkeypatch):
+        """A slow tmux raises TmuxTimeoutError: an error line, not a traceback."""
+        from overcode.protocols import TmuxTimeoutError
+
+        self._stub_launcher(
+            monkeypatch, sess=self._sess(), rename_result=TmuxTimeoutError("slow"),
+        )
+        result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert "not responding" in " ".join(strip_ansi(result.output).split())
+
     def test_force_is_passed_through(self, monkeypatch):
         calls = self._stub_launcher(monkeypatch, sess=self._sess())
         result = runner.invoke(app, ["rename", "ghost", "auth-refactor", "--force"])

@@ -768,9 +768,14 @@ class SessionActionsMixin:
         """Revive every agent whose tmux window is gone (#481), parents first."""
         from ..launcher import AgentLauncher
         from ..lifecycle import find_dead_agents
+        from ..protocols import TmuxTimeoutError
 
         launcher = AgentLauncher(self.tmux_session, session_manager=self.session_manager)
-        dead = find_dead_agents(launcher)
+        try:
+            dead = find_dead_agents(launcher)
+        except TmuxTimeoutError:
+            self.notify("tmux is not responding; try again in a moment", severity="error")
+            return
         if not dead:
             self._pending_confirmations.pop("revive_all", None)
             self.notify("No dead agents to revive", severity="information")

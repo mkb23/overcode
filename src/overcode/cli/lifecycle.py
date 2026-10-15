@@ -85,15 +85,25 @@ def revive(
             tmux_sessions = known_tmux_sessions(SessionManager()) or [session]
         else:
             tmux_sessions = [session]
+        from ..protocols import TmuxTimeoutError
+
         results = []
+        unreachable = 0  # tmux sessions whose windows could not be listed
         for ts in tmux_sessions:
             launcher = AgentLauncher(ts)
-            results += revive_all(launcher, fresh=fresh, dry_run=dry_run,
-                                  on_result=lambda r: rprint(_revive_line(r)))
+            try:
+                results += revive_all(launcher, fresh=fresh, dry_run=dry_run,
+                                      on_result=lambda r: rprint(_revive_line(r)))
+            except TmuxTimeoutError:
+                unreachable += 1
+                rprint(f"  [red]failed[/red]   agents [{ts}] (tmux is not responding; "
+                       f"try again in a moment)")
         if not results:
+            if unreachable:
+                raise typer.Exit(1)
             rprint("[dim]No dead agents to revive.[/dim]")
             return
-        failures = sum(1 for r in results if r.ok is False)
+        failures = sum(1 for r in results if r.ok is False) + unreachable
         if dry_run:
             rprint(f"[dim]{len(results)} agent(s) would be revived. Run without --dry-run to revive.[/dim]")
             return

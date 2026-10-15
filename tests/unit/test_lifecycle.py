@@ -296,6 +296,20 @@ class TestShutdown:
         assert sm.get_session(grandchild.id) is None
         assert {s.name for s in sm.list_sessions()} == {"parent", "child"}
 
+    def test_tmux_not_answering_keeps_records_and_carries_on(self, fleet):
+        """Windows can't be listed: records kept, the rest of shutdown still runs."""
+        launcher, mock_tmux, sm = fleet
+        mock_tmux.unresponsive = True
+        ops = FakeOps(["agents", "jobs"], running={"monitor_daemon.pid": 12})
+        report, _ = _run_shutdown(fleet, ops)
+
+        assert report.count("agents", "deferred") == 1
+        sessions = sm.list_sessions()
+        assert len(sessions) == 3
+        assert all(s.status == "terminated" and s.kept_for_revive for s in sessions)
+        assert "monitor_daemon.pid" in ops.stopped
+        assert ops.killed_sessions == ["jobs", "agents"]
+
     def test_keep_jobs_with_all_in_a_pre_06_state_tree(self, fleet, tmp_path, monkeypatch):
         """<state>/jobs and <state>/sessions are not tmux sessions; jobs stay up."""
         monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
@@ -488,6 +502,20 @@ class TestCli:
         assert "Revived 2 of 2" in result.output
         ensure.assert_called_once_with("agents")
 
+    def test_revive_all_when_tmux_does_not_answer(self):
+        """A slow tmux: an error line per tmux session, exit 1, no traceback."""
+        from overcode.cli import app
+        from overcode.protocols import TmuxTimeoutError
+        with patch("overcode.launcher.AgentLauncher"), \
+             patch("overcode.lifecycle.revive_all", side_effect=TmuxTimeoutError("slow")), \
+             patch("overcode.lifecycle.ensure_monitor_daemon") as ensure:
+            result = runner.invoke(app, ["revive", "--all"])
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert "not responding" in result.output
+        assert "No dead agents" not in result.output
+        ensure.assert_not_called()
+
     def test_shutdown_dry_run(self):
         from overcode.cli import app
         with patch("overcode.lifecycle.shutdown", return_value=ShutdownReport()) as sd:
@@ -572,6 +600,17 @@ class TestTuiActions:
             SessionActionsMixin.action_revive_dead_agents(app)
         app._confirm_double_press.assert_not_called()
         assert "No dead agents" in app.notify.call_args.args[0]
+
+    def test_revive_when_tmux_does_not_answer(self):
+        from overcode.protocols import TmuxTimeoutError
+        from overcode.tui_actions.session import SessionActionsMixin
+        app = self._app()
+        with patch("overcode.launcher.AgentLauncher"), \
+             patch("overcode.lifecycle.find_dead_agents",
+                   side_effect=TmuxTimeoutError("slow")):
+            SessionActionsMixin.action_revive_dead_agents(app)
+        app._confirm_double_press.assert_not_called()
+        assert "not responding" in app.notify.call_args.args[0]
 
     def test_revive_asks_for_confirmation(self):
         from overcode.tui_actions.session import SessionActionsMixin
