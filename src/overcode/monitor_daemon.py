@@ -1999,9 +1999,10 @@ class MonitorDaemon:
             housekeeping.tidy_storage(self.session_manager)
             housekeeping.migrate_storage(self.session_manager)
             ledger = getattr(self.session_manager, "ledger", None)
+            views = housekeeping.fill_billing_codes(
+                [self._pending.view(s) for s in sessions], self.session_manager)
             if ledger is not None:
-                housekeeping.checkpoint_spend(
-                    [self._pending.view(s) for s in sessions], ledger, now)
+                housekeeping.checkpoint_spend(views, ledger, now)
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

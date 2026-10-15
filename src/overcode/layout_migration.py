@@ -16,7 +16,11 @@ from the monitor daemon (at start, then with the hourly storage tidy):
    own, else its parent's up to the root, else its name), again whenever
    an older overcode's archive file is taken in;
 3. live records with no billing code get their parent's code, up to the
-   root, else their name (sticky from now on);
+   root, else their name (sticky from now on). This one runs on every
+   call, done or not, and the daemon repeats it each housekeeping pass
+   (``Housekeeping.fill_billing_codes``): an older overcode still running
+   (or a downgrade) can launch a child after the migration, and nothing
+   else would ever give it its parent's code;
 4. name-keyed files left in the session directory are packed into today's
    bundle (one member per name, ``"legacy": true``) and removed — except
    those of a live agent launched before the upgrade (no ``agents/<id>/``,
@@ -24,7 +28,7 @@ from the monitor daemon (at start, then with the hourly storage tidy):
    relaunched.
 
 When nothing is left to move, ``sessions/<tmux>/.layout`` says ``2`` and
-the next call costs one read. Every step is idempotent: a crash part-way
+the next call costs two reads (the marker, the live records). Every step is idempotent: a crash part-way
 repeats a batch (a duplicate bundle member), never loses a file.
 """
 
@@ -156,12 +160,16 @@ def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAM
     if (layout_version(tmux_session) == LAYOUT_VERSION
             and session_manager.ledger.backfilled()):
         counts["done"] = 1
+        try:
+            counts["coded"] = len(fill_billing_codes(session_manager))
+        except Exception as e:
+            logger.warning("billing codes not filled: %s", e)
         return counts
     now = now or datetime.now()
     try:
         session_manager._migrate_legacy_archive()
         counts["backfilled"] = session_manager.ledger.backfill_from_archive(session_manager)
-        counts["coded"] = _fill_billing_codes(session_manager)
+        counts["coded"] = len(fill_billing_codes(session_manager))
     except Exception as e:
         logger.warning("storage migration (archive, ledger) failed: %s", e)
         return counts
@@ -203,25 +211,33 @@ def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAM
     return counts
 
 
-def _fill_billing_codes(session_manager) -> int:
+def fill_billing_codes(session_manager, sessions=None) -> Dict[str, str]:
     """Give each live record with no billing code one (one write, if any).
 
     Its parent's code, walking up to the root through live and archived
-    records (children always bill to the parent), else its name.
+    records (children always bill to the parent), else its name. Returns
+    the codes of those found with none, by session id (one a stale
+    ``sessions`` lacks but the file has is returned, not rewritten).
+    ``sessions`` (the live records, when the caller has them) spares a
+    read when none is missing.
     """
     from .ledger import billing_lookup, inherited_billing_code
 
-    missing = [s.id for s in session_manager.list_sessions() if not s.billing_code]
+    if sessions is None:
+        sessions = session_manager.list_sessions()
+    missing = [s.id for s in sessions if not s.billing_code]
     if not missing:
-        return 0
+        return {}
     archived = billing_lookup(session_manager.iter_archived_records(newest_first=True))
-    filled = 0
+    filled: Dict[str, str] = {}
     with session_manager._state_transaction() as txn:
         lookup = {**archived, **billing_lookup(txn.state.values())}
         for session_id in missing:
             entry = txn.state.get(session_id)
-            if entry is not None and not entry.get("billing_code") and entry.get("name"):
+            if entry is None or not entry.get("name"):
+                continue
+            if not entry.get("billing_code"):
                 entry["billing_code"] = inherited_billing_code(entry, lookup)
-                filled += 1
-        txn.dirty = filled > 0
+                txn.dirty = True
+            filled[session_id] = entry["billing_code"]
     return filled

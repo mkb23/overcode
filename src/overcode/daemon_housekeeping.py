@@ -8,6 +8,7 @@ may fail a tick.
 """
 
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, TYPE_CHECKING
@@ -282,6 +283,31 @@ class Housekeeping:
             self.log.info(f"Storage layout migration: {moved}")
         except Exception as e:  # housekeeping must never fail the tick
             self.log.warn(f"storage layout not migrated: {e}")
+
+    def fill_billing_codes(self, sessions, session_manager) -> list:
+        """``sessions`` with a billing code each, giving one to any that has none.
+
+        A record with none was written by an older overcode (a downgrade,
+        or one still running after the upgrade, launching a child): it gets
+        its parent's code, up to the root, else its name, as the storage
+        migration gives them (``layout_migration.fill_billing_codes``).
+        Checked every pass, after the migration too, since nothing else
+        would; costs nothing when every record has one. The returned list
+        carries the new codes, so this pass's checkpoints bill them.
+        """
+        if all(s.billing_code for s in sessions):
+            return list(sessions)
+        try:
+            from .layout_migration import fill_billing_codes
+
+            filled = fill_billing_codes(session_manager, sessions)
+        except Exception as e:  # housekeeping must never fail the tick
+            self.log.warn(f"billing codes not filled: {e}")
+            return list(sessions)
+        if filled:
+            self.log.info(f"Billing codes given to {len(filled)} agent(s) an older overcode launched")
+        return [replace(s, billing_code=filled[s.id]) if s.id in filled else s
+                for s in sessions]
 
     def prune_finished_jobs(self) -> None:
         """Drop finished jobs past their retention, at most hourly."""

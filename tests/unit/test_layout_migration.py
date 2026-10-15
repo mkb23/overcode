@@ -185,6 +185,65 @@ class TestReupgrade:
         assert sm.ledger.backfill_from_archive(sm) == 0
 
 
+def _old_child(sm, parent_id, sid="kid1", name="kid"):
+    """A child an older overcode launched after the migration: no billing fields."""
+    with sm._state_transaction() as txn:
+        entry = dict(txn.state[parent_id], id=sid, name=name,
+                     parent_session_id=parent_id, tmux_window=f"{name}-1")
+        for key in [k for k in entry if k.startswith("billing_")]:
+            entry.pop(key)
+        txn.state[sid] = entry
+        txn.dirty = True
+
+
+def _housekeeping():
+    return Housekeeping("agents", tmux=MagicMock(), history_path=None, log=MagicMock(),
+                        housekeeping=MagicMock(), rotation=MagicMock(),
+                        model_metadata=MagicMock())
+
+
+class TestChildLaunchedByAnOlderOvercode:
+    """0.5.8 (a downgrade, or one still running) launches a child after the migration."""
+
+    def _parent(self, sm):
+        return sm.create_session(name="parent", tmux_session="agents",
+                                 tmux_window="parent-1", command=["claude"],
+                                 billing_code="ACME")
+
+    def test_the_next_migration_call_gives_it_the_parent_code(self, sm):
+        parent = self._parent(sm)
+        assert migrate_layout("agents", sm)["done"] == 1
+        _old_child(sm, parent.id)
+        counts = migrate_layout("agents", sm)
+        assert (counts["done"], counts["coded"]) == (1, 1)
+        assert sm.get_session("kid1").billing_code == "ACME"
+        assert migrate_layout("agents", sm)["coded"] == 0
+
+    def test_the_daemon_gives_it_the_parent_code_after_it_migrated(self, sm):
+        from overcode.ledger import billing_code_of
+
+        parent = self._parent(sm)
+        hk = _housekeeping()
+        hk.migrate_storage(sm)
+        assert hk.layout_migrated
+        _old_child(sm, parent.id)
+        sessions = sm.list_sessions()
+        views = hk.fill_billing_codes(sessions, sm)
+        assert {s.id: billing_code_of(s) for s in views} == {parent.id: "ACME", "kid1": "ACME"}
+        assert sm.get_session("kid1").billing_code == "ACME"
+        # The snapshot is not touched; a stale one gets the code on disk
+        assert [s.billing_code for s in sessions if s.id == "kid1"] == [None]
+        again = {s.id: s.billing_code for s in hk.fill_billing_codes(sessions, sm)}
+        assert again["kid1"] == "ACME"
+
+    def test_nothing_missing_reads_nothing(self, sm):
+        self._parent(sm)
+        sessions = sm.list_sessions()
+        sm.list_sessions = MagicMock(side_effect=AssertionError("read"))
+        sm._state_transaction = MagicMock(side_effect=AssertionError("write"))
+        assert _housekeeping().fill_billing_codes(sessions, sm) == sessions
+
+
 class TestDaemonRunsIt:
     def test_each_pass_until_done_then_never(self, sm):
         _leftovers("old")
