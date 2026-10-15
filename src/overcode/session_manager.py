@@ -43,12 +43,10 @@ class SessionStats:
     cache_read_tokens: int = 0
     current_context_tokens: int = 0  # Current context window usage
     last_stats_update: Optional[str] = None  # ISO timestamp of last stats sync
-    # Spend the stats reader no longer counts (an earlier conversation after
-    # codex/grok /new or a restart --fresh, or pruned transcripts), added to
-    # each read so the totals above stay cumulative (``StatsSync``)
-    carried_spend: Dict[str, float] = field(default_factory=dict)
-    # The newest agent conversation id at the last stats sync
-    stats_conversation: Optional[str] = None
+    # Spend per agent conversation, which the totals above sum
+    # (``conversation_spend``): kept per conversation so a read that no
+    # longer covers one (pruned, or not the newest) keeps its spend
+    conversations: Dict[str, dict] = field(default_factory=dict)
 
     # State tracking
     current_state: str = "running"  # running, waiting_user, waiting_approval, waiting_heartbeat
@@ -68,6 +66,8 @@ class SessionStats:
         valid_fields = {f.name for f in fields(cls)}
         # Filter to only known fields to avoid TypeError on unknown keys
         filtered = {k: v for k, v in data.items() if k in valid_fields}
+        if not isinstance(filtered.get("conversations", {}), dict):
+            del filtered["conversations"]
         try:
             return cls(**filtered)
         except TypeError:
@@ -332,33 +332,6 @@ _STATS_FIELD_NAMES = frozenset(f.name for f in fields(SessionStats))
 # What ``SessionManager._state_transaction`` yields: the parsed state and
 # whether it must be written back.
 _StateTxn = Transaction
-
-
-_CUMULATIVE_TOKENS = ("total_tokens", "input_tokens", "output_tokens")
-
-
-def lowers_spend(stats: "SessionStats", staged: Mapping[str, object]) -> bool:
-    """Whether ``staged`` stats would lose spend already on record.
-
-    Token counts and cost are cumulative, so a read that lowers a token
-    count, or zeroes a cost on record, no longer counts spend that was
-    made (a codex/grok /new or a restart --fresh started a new
-    conversation, transcripts were pruned after Claude's
-    cleanupPeriodDays, or a pre-upgrade record's are elsewhere), not less
-    work; ``StatsSync`` then carries the spend on record. A cost that
-    drops while the tokens hold (a pricing-table fix) is a real change
-    and passes.
-    """
-    def number(source, key):
-        value = source.get(key) if isinstance(source, Mapping) else getattr(source, key, None)
-        return value if isinstance(value, (int, float)) else None
-
-    for key in _CUMULATIVE_TOKENS:
-        new, old = number(staged, key), number(stats, key)
-        if new is not None and old is not None and new < old:
-            return True
-    new, old = number(staged, "estimated_cost_usd"), number(stats, "estimated_cost_usd")
-    return new is not None and old is not None and new <= 0 < old
 
 
 class PendingUpdates:
@@ -1010,8 +983,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             except Exception as e:
                 logger.warning("final stats of %s not refreshed: %s", session_id, e)
                 continue
-            # ``sync_agent_stats`` stages nothing that lowers the spend on
-            # record (``lowers_spend``), so a gone transcript keeps it
+            # The same per-conversation merge as the daemon's sync
+            # (``conversation_spend``): a gone transcript keeps its spend
             for key, changes in scratch.fields.items():
                 pending.update_session(key, **changes)
             for key, changes in scratch.stats.items():

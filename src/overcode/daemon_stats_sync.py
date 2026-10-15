@@ -14,9 +14,8 @@ from .backends import BackendCapability, get_backend, session_backend_name
 from .claude_pid import is_session_id_owned_by_others
 from .clock import SYSTEM_CLOCK, Clock, stamp
 from .energy import estimate_energy_joules
-from .monitor_daemon_core import calculate_total_tokens
-from .pricing import calculate_cost_estimate
-from .session_manager import PendingUpdates, lowers_spend
+from . import conversation_spend as spend
+from .session_manager import PendingUpdates
 from .stats_reader import AgentSessionStats, stats_reader_for_session
 
 
@@ -207,9 +206,11 @@ class StatsSync:
             # Some backends record what the provider actually charged (opencode
             # keeps a per-session `cost`). That beats a pricing-table estimate,
             # so it wins when present; a zero/absent figure falls back to it.
+            # A reader that splits by conversation reports it per conversation.
             stored_cost = None
             stored_cost_reader = getattr(reader, "get_stored_cost", None)
-            if stored_cost_reader is not None:
+            if stored_cost_reader is not None and not isinstance(
+                    getattr(stats, "per_conversation", None), dict):
                 stored_cost = stored_cost_reader(session)
 
             # The stats object's fallback recovers the persona the agent is
@@ -247,78 +248,51 @@ class StatsSync:
     ) -> None:
         """Stage tokens, cost and energy from one read of ``stats``.
 
-        The cost is estimated with per-model pricing for the transcript's
-        model and provider (else the session's; unknown models fall back to
-        the global config), unless the backend recorded a non-zero
-        ``stored_cost``. ``extra`` stats fields are staged with them.
+        The spend is kept per conversation (``conversation_spend``): the
+        conversations the read covers are updated, never lowered, and the
+        totals are their sum, so a conversation the reader no longer
+        covers keeps its spend and a briefly low read changes nothing. New
+        tokens are priced at the model the conversation was read at (else
+        the session's; unknown models fall back to the global config),
+        unless the backend recorded a non-zero cost. A reader that does not
+        split its read by conversation (``per_conversation`` None) is one
+        pseudo conversation, with ``stored_cost`` as its recorded cost.
+        ``extra`` stats fields are staged with them.
         """
         from .settings import get_user_config, get_model_pricing
 
-        model = stats.model or session.model
         config = get_user_config()
-        mp = get_model_pricing(model, config, provider=stats.provider or session.provider)
-        cost_estimate = calculate_cost_estimate(
-            stats.input_tokens,
-            stats.output_tokens,
-            stats.cache_creation_tokens,
-            stats.cache_read_tokens,
-            price_input=mp.input,
-            price_output=mp.output,
-            price_cache_write=mp.cache_write,
-            price_cache_read=mp.cache_read,
-        )
-        if stored_cost:
-            cost_estimate = stored_cost
+        provider = stats.provider or session.provider
+        default_model = stats.model or session.model
 
-        now = self.clock.wall()
-        read = dict(
-            total_tokens=calculate_total_tokens(
-                stats.input_tokens,
-                stats.output_tokens,
-                stats.cache_creation_tokens,
-                stats.cache_read_tokens,
-            ),
-            input_tokens=stats.input_tokens,
-            output_tokens=stats.output_tokens,
-            cache_creation_tokens=stats.cache_creation_tokens,
-            cache_read_tokens=stats.cache_read_tokens,
-            estimated_cost_usd=cost_estimate,
-            estimated_energy_j=estimate_energy_joules(
-                model, stats.input_tokens, stats.output_tokens,
+        def prices(model):
+            mp = get_model_pricing(model, config, provider=provider)
+            return (mp.input, mp.output, mp.cache_write, mp.cache_read)
+
+        def energy(model, tokens):
+            return estimate_energy_joules(
+                model, tokens["in"], tokens["out"], tokens["cw"], tokens["cr"])
+
+        reads = getattr(stats, "per_conversation", None)
+        if not isinstance(reads, dict):
+            reads = {spend.TOTAL_KEY: spend.usage(
+                stats.input_tokens, stats.output_tokens,
                 stats.cache_creation_tokens, stats.cache_read_tokens,
-            ),
-        )
+                model=stats.model, cost=stored_cost)}
         recorded = session.stats
-        ids = getattr(session, "agent_session_ids", None)
-        conversation = ids[-1] if isinstance(ids, (list, tuple)) and ids else None
-        on_file = getattr(recorded, "carried_spend", None)
-        carried = {key: _number(value) for key, value in
-                   (on_file if isinstance(on_file, dict) else {}).items() if key in read}
-        totals = _add_spend(read, carried)
-        if lowers_spend(recorded, totals):
-            # The reader no longer counts spend that is on record: codex and
-            # grok read only the newest conversation (after /new), a restart
-            # --fresh replaces the conversations, or transcripts were pruned
-            # (or a pre-upgrade record's are elsewhere). The rest of the read
-            # (context, interactions) is current; the spend on record is
-            # carried so the totals stay cumulative. A new conversation's
-            # read is all new spend; under the same one, the read already
-            # counts its part of the record.
-            previous = getattr(recorded, "stats_conversation", None)
-            new_conversation = previous is not None and conversation != previous
-            carried = {}
-            for key, value in read.items():
-                on_record = _number(getattr(recorded, key, 0))
-                carried[key] = on_record if new_conversation else max(0, on_record - value)
-            totals = _add_spend(read, carried)
-            self.log.debug(f"{session.name}: stats read lower than on record, spend carried")
+        entries = spend.merge(
+            getattr(recorded, "conversations", None), reads,
+            prices=prices, energy=energy, default_model=default_model,
+            recorded=spend.recorded_totals(recorded),
+            owned_ids=_owned_conversations(session),
+            seg=spend.count(getattr(session, "billing_seg", 0)),
+        )
         usage = dict(
             extra,
-            **_rounded_spend(totals),
+            **spend.totals(entries),
+            conversations=entries,
             current_context_tokens=stats.current_context_tokens,
-            last_stats_update=stamp(now),
-            carried_spend=_rounded_spend(carried),
-            stats_conversation=conversation,
+            last_stats_update=stamp(self.clock.wall()),
         )
         pending.update_stats(session.id, **usage)
 
@@ -343,22 +317,12 @@ class StatsSync:
         }
 
 
-def _number(value) -> float:
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
-
-
-def _add_spend(read: Dict[str, float], carried: Dict[str, float]) -> Dict[str, float]:
-    return {key: value + carried.get(key, 0) for key, value in read.items()}
-
-
-def _rounded_spend(spend: Dict[str, float]) -> Dict[str, float]:
-    """Token counts as ints, cost to 4 places and energy to 1, as persisted."""
-    out: Dict[str, float] = {}
-    for key, value in spend.items():
-        if key == "estimated_cost_usd":
-            out[key] = round(value, 4)
-        elif key == "estimated_energy_j":
-            out[key] = round(value, 1)
-        else:
-            out[key] = int(value)
-    return out
+def _owned_conversations(session) -> list:
+    """The agent conversation ids the record holds, the active one last."""
+    held = getattr(session, "agent_session_ids", None)
+    ids = [sid for sid in (held if isinstance(held, (list, tuple)) else ())
+           if isinstance(sid, str) and sid]
+    active = getattr(session, "active_agent_session_id", None)
+    if isinstance(active, str) and active and active not in ids:
+        ids.append(active)
+    return ids

@@ -22,14 +22,18 @@ rebill. A segment's spend is its last row's cumulative values less its
 ``base_*`` (the cumulative values when the segment began), so spend before
 a rebill stays on the old code.
 
-An estimated cost is every token so far at the agent's *current* model's
-prices, so a ``/model`` switch reprices the past. A row whose cost is that
-estimate carries the prices (``px``, per million input, output, cache
-write, cache read tokens) and its token breakdown, and a rebill keeps the
-segment's base breakdown (``base_usage``): a segment's spend, or a
-period's, is then the tokens it added at the row's prices, never a
-repricing of tokens spent before it. A recorded cost (a backend that
-reports one) carries no ``px`` and is taken as it is.
+An agent's cost is kept per conversation and accrues: tokens are priced
+when they are read, at the model they were spent on
+(``conversation_spend``), so a ``/model`` switch never reprices the past
+and a segment's spend is its last cost less its base cost. Such a row
+carries no prices (``px`` None). Rows and records from before that
+(every token so far at the agent's *current* model's prices) carry the
+prices (``px``, per million input, output, cache write, cache read tokens)
+when the cost is that estimate, and a rebill keeps the segment's base
+breakdown (``base_usage``): their segment's spend, or a period's, is the
+tokens it added at the row's prices, never a repricing of tokens spent
+before it. A recorded cost (a backend that reports one) carries no
+``px`` and is taken as it is.
 
 ``ledger/totals.json`` folds the rows incrementally: per month, how far
 they were read; the last row of every open segment; per-code totals of
@@ -54,7 +58,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
-from . import paths
+from . import conversation_spend, paths
 from .clock import stamp
 from .month_files import (GZIP_SUFFIX, PLAIN_SUFFIX, fold_into_gzip, month_files,
                           read_gzip, writable_month)
@@ -196,11 +200,20 @@ def make_row(record, kind: str, *, now: Optional[datetime] = None,
     now = now or datetime.now()
     spend = spend_of(record)
     usage = usage_of(record)
+    stats = _get(record, "stats") or {}
     if base is None:
         base = {"cost": _get(record, "billing_base_cost", 0.0) or 0.0,
                 "tokens": _get(record, "billing_base_tokens", 0) or 0,
                 "usage": _get(record, "billing_base_usage")}
+        repriced = conversation_spend.legacy_base_cost(
+            stats, int(_get(record, "billing_seg", 0) or 0), base["usage"])
+        if repriced is not None:
+            base["cost"] = repriced
     base_usage = base.get("usage")
+    # Spend kept per conversation accrues (never repriced), so the
+    # segment's spend is the cost less its base, as it is: no prices
+    px = (None if conversation_spend.has_entries(stats)
+          else estimate_prices(record, usage, spend["cost"]))
     return {
         "t": t or stamp(now),
         "seq": time.time_ns(),
@@ -213,7 +226,7 @@ def make_row(record, kind: str, *, now: Optional[datetime] = None,
         **spend,
         "tok_cw": usage["cw"],
         "tok_cr": usage["cr"],
-        "px": estimate_prices(record, usage, spend["cost"]),
+        "px": px,
         "base_cost": float(base.get("cost", 0.0) or 0.0),
         "base_tokens": int(base.get("tokens", 0) or 0),
         "base_usage": dict(base_usage) if isinstance(base_usage, dict) else None,
