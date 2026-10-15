@@ -611,13 +611,19 @@ def shutdown(
                          dry_run=dry_run, timeout=timeout, add=add,
                          own_window=own_window if ts in own_sessions else None)
 
-    # 3. Jobs.
+    # 3. Jobs. Run from inside the jobs session, killing it here would end
+    # this process before the daemons stop: phase 5 kills it last instead.
+    jobs_deferred = False
     if not services_only:
         echo("Jobs")
         if keep_jobs:
             add("jobs", f"tmux session '{JOBS_TMUX_SESSION}'", "skipped", "--keep-jobs")
         elif JOBS_TMUX_SESSION not in live_tmux:
             add("jobs", f"tmux session '{JOBS_TMUX_SESSION}'", "not-running")
+        elif JOBS_TMUX_SESSION in own_sessions:
+            jobs_deferred = True
+            add("jobs", f"tmux session '{JOBS_TMUX_SESSION}'", "deferred",
+                "this terminal; killed last")
         elif dry_run:
             add("jobs", f"tmux session '{JOBS_TMUX_SESSION}'", verb)
         elif ops.kill_tmux_session(JOBS_TMUX_SESSION):
@@ -658,6 +664,8 @@ def shutdown(
                         if s.startswith(LINKED_SESSION_PREFIX + "-") and s not in targets]
             targets += [CONTROLLER_TMUX_SESSION, SPLIT_TMUX_SESSION]
         targets += list(scope)
+        if jobs_deferred and JOBS_TMUX_SESSION not in targets:
+            targets.append(JOBS_TMUX_SESSION)
         targets = ([t for t in targets if t not in own_sessions]
                    + [t for t in targets if t in own_sessions])
         for name in targets:

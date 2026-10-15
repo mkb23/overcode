@@ -421,6 +421,18 @@ class TestShutdown:
         assert ops.killed_sessions[-1] == "agents"
         assert set(ops.killed_sessions) == {"agents", "jobs", "oc-view-agents", "overcode"}
 
+    def test_shutdown_run_from_jobs_session_kills_it_last(self, fleet):
+        ops = FakeOps(["agents", "jobs"], own_session="jobs",
+                      running={"monitor_daemon.pid": 12})
+        report, lines = _run_shutdown(fleet, ops)
+        assert ops.killed_sessions == ["agents", "jobs"]
+        assert any(s.phase == "jobs" and s.outcome == "deferred" for s in report.steps)
+        # the daemons stop before this process's session goes
+        assert lines.index("Daemons") < next(
+            i for i, line in enumerate(lines)
+            if "'jobs'" in line and line.split()[0] == "killed")
+        assert "monitor_daemon.pid" in ops.stopped
+
     def test_linked_own_session_deferred_with_its_group(self, fleet):
         ops = FakeOps(["agents", "jobs", "oc-view-agents", "overcode"], own_session="oc-view-agents")
         _run_shutdown(fleet, ops)
