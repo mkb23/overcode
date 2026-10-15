@@ -2,8 +2,8 @@
 
 An agent's tokens, cost and energy are cumulative and feed the billing
 ledger, but a stats reader can legitimately read *less* than before:
-Claude Code prunes old transcripts, codex and grok read only the newest
-conversation after ``/new``, ``restart --fresh`` replaces the conversations
+Claude Code prunes old transcripts, codex and grok read only the owned
+conversations still on disk, ``restart --fresh`` replaces the conversations
 the agent owns, and a container read can fail for one file. So the spend is
 kept per conversation (the agent CLI's own conversation id) in
 ``SessionStats.conversations``::

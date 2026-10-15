@@ -450,13 +450,40 @@ class CodexStatsReader:
             # not the model's vendor.
             provider=None,
             reported_context_window=scan["model_context_window"],
-            # Only the newest conversation is read; earlier ones keep the
-            # spend on record (conversation_spend)
-            per_conversation={_rollout_conversation_id(path): conversation_usage(
-                scan["input_tokens"], scan["output_tokens"],
-                scan["cache_write_tokens"], scan["cache_read_tokens"],
-                model=scan["model"])},
+            per_conversation=self._per_conversation(session, path, scan),
         )
+
+    def _per_conversation(self, session: Any, path: Path,
+                          scan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """Every owned conversation with a rollout on disk, the newest last.
+
+        The columns follow the newest rollout, but spend is kept per
+        conversation: an older one the agent resumes must be read as it
+        grows, and the upgrade fold must see each one's own spend instead
+        of folding it into one legacy figure (``conversation_spend``).
+        Each rollout is folded incrementally, so a quiet one costs a stat.
+        """
+        def usage_of(scanned: Dict[str, Any]) -> Dict[str, Any]:
+            return conversation_usage(
+                scanned["input_tokens"], scanned["output_tokens"],
+                scanned["cache_write_tokens"], scanned["cache_read_tokens"],
+                model=scanned["model"])
+
+        newest = _rollout_conversation_id(path)
+        out: Dict[str, Dict[str, Any]] = {}
+        launch_dt = launch_datetime(session)
+        for session_id in owned_ids(session):
+            if session_id == newest or session_id in out:
+                continue
+            other = self._find_by_session_id(session_id, launch_dt)
+            if other is None or other == path:
+                continue
+            read = _scan_rollout(other)
+            if read["input_tokens"] or read["output_tokens"] or read["cache_read_tokens"]:
+                out[_rollout_conversation_id(other)] = usage_of(read)
+        out.pop(newest, None)
+        out[newest] = usage_of(scan)
+        return out
 
     def get_stored_cost(self, session: Any) -> Optional[float]:
         # codex is subscription/API billed with no local per-turn charge

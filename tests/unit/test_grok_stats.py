@@ -386,3 +386,18 @@ class TestPerConversation:
         assert entry["in"] == stats.input_tokens and entry["out"] == stats.output_tokens
         assert entry["cost"] == pytest.approx(7.6021216, rel=1e-6)
         assert entry["model"] == "grok-4.6"
+
+    def test_every_owned_conversation_on_disk_is_read_newest_last(self, sessions_dir):
+        """After /new the older conversation is still read, so resuming it
+        counts its growth and an upgrade fold sees its own spend."""
+        older = sessions_dir / encode_cwd(PROJECT_DIR) / OTHER_SID
+        write_jsonl(older / "updates.jsonl", [
+            turn_completed(input_tokens=1000, output_tokens=10, cost_ticks=10**9)])
+        write_summary(older / "summary.json", model="grok-4.5")
+        stats = GrokStatsReader(sessions_dir=sessions_dir).get_stats(
+            make_session(agent_session_ids=[OTHER_SID, SID]))
+        assert list(stats.per_conversation) == [OTHER_SID, SID]
+        assert stats.per_conversation[OTHER_SID]["in"] == 1000
+        assert stats.per_conversation[OTHER_SID]["cost"] == pytest.approx(1.0)
+        assert stats.per_conversation[OTHER_SID]["model"] == "grok-4.5"
+        assert stats.input_tokens == stats.per_conversation[SID]["in"]

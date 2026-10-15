@@ -395,13 +395,38 @@ class GrokStatsReader:
             # comment: `provider` is overcode's API-transport discriminator,
             # not the model's vendor.
             provider=None,
-            # Only the newest conversation is read; earlier ones keep the
-            # spend on record (conversation_spend)
-            per_conversation={session_id: conversation_usage(
-                scan["input_tokens"], scan["output_tokens"],
-                scan["cache_creation_tokens"], scan["cache_read_tokens"],
-                model=model, cost=scan.get("cost_usd"))},
+            per_conversation=self._per_conversation(session, session_path, scan, model),
         )
+
+    def _per_conversation(self, session: Any, newest_path: Path, scan: Dict[str, Any],
+                          model: Optional[str]) -> Dict[str, Dict[str, Any]]:
+        """Every owned conversation with a session dir, the newest last.
+
+        The columns follow the newest conversation, but spend is kept per
+        conversation: an older one the agent resumes must be read as it
+        grows, and the upgrade fold must see each one's own spend instead
+        of folding it into one legacy figure (``conversation_spend``).
+        ``updates.jsonl`` is folded incrementally, so a quiet one costs a stat.
+        """
+        def usage_of(scanned: Dict[str, Any], at: Optional[str]) -> Dict[str, Any]:
+            return conversation_usage(
+                scanned["input_tokens"], scanned["output_tokens"],
+                scanned["cache_creation_tokens"], scanned["cache_read_tokens"],
+                model=at, cost=scanned.get("cost_usd"))
+
+        newest = newest_path.name
+        out: Dict[str, Dict[str, Any]] = {}
+        for session_id in owned_ids(session):
+            if session_id == newest or session_id in out:
+                continue
+            other = self._dir_for(session, session_id)
+            if other is None:
+                continue
+            read = _scan_updates(other / "updates.jsonl")
+            if read["input_tokens"] or read["output_tokens"] or read["cache_read_tokens"]:
+                out[session_id] = usage_of(read, _read_model_and_effort(other)[0])
+        out[newest] = usage_of(scan, model)
+        return out
 
     def get_stored_cost(self, session: Any) -> Optional[float]:
         """grok's own ``costUsdTicks`` total for this agent, or None.

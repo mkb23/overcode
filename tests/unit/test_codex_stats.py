@@ -624,14 +624,42 @@ class TestBackendWiring:
 class TestPerConversation:
     """The read is keyed by the rollout's conversation id (conversation_spend)."""
 
-    def test_the_newest_rollout_is_its_own_conversation(self, tmp_path):
+    def test_each_owned_rollout_is_its_own_conversation(self, tmp_path):
         root = tmp_path / "sessions"
         TestLaterConversation()._write_pair(root, LAUNCH, LAUNCH + timedelta(days=2))
         s = make_session(agent_session_ids=[SID, OTHER_SID], active_agent_session_id=OTHER_SID)
         stats = CodexStatsReader(sessions_dir=root).get_stats(s)
-        assert list(stats.per_conversation) == [OTHER_SID]
+        assert list(stats.per_conversation) == [SID, OTHER_SID]  # newest last
         assert stats.per_conversation[OTHER_SID]["in"] == 500
+        assert stats.per_conversation[SID]["in"] == 90000
         assert stats.per_conversation[OTHER_SID]["model"] == "gpt-5.6-sol"
+        assert stats.input_tokens == 500  # the columns follow the newest
+
+    def test_a_resumed_older_conversation_is_counted_after_an_upgrade(self, tmp_path):
+        """Rollouts A, B, C (1000 tokens each, 3000 on record) at upgrade.
+        Reading only C folded A and B into one legacy figure, and A's
+        growth after the fold was later taken out of B's share."""
+        from overcode import conversation_spend as spend
+
+        root = tmp_path / "sessions"
+        ids = [SID[:-1] + str(n) for n in (1, 2, 3)]
+        for n, sid in enumerate(ids):
+            write_rollout(rollout_path(root, sid, ts=f"2026-08-20T12-0{n}-00"), [
+                session_meta_line(sid), turn_context_event(), user_turn_item(),
+                token_count_event(input_tokens=1000, cached=0, cache_write=0,
+                                  output=0, reasoning=0)])
+        s = make_session(agent_session_ids=ids, active_agent_session_id=ids[-1])
+        reader = CodexStatsReader(sessions_dir=root)
+        recorded = {"in": 3000.0, "out": 0.0, "cw": 0.0, "cr": 0.0, "cost": 0.0, "energy": 0.0}
+        kw = dict(prices=lambda m: (0, 0, 0, 0), energy=lambda m, t: 0.0)
+        entries = spend.merge({}, reader.get_stats(s).per_conversation,
+                              recorded=recorded, owned_ids=ids, **kw)
+        assert spend.totals(entries)["input_tokens"] == 3000
+        with rollout_path(root, ids[0], ts="2026-08-20T12-00-00").open("a") as handle:
+            handle.write(json.dumps(token_count_event(
+                input_tokens=1500, cached=0, cache_write=0, output=0, reasoning=0)) + "\n")
+        entries = spend.merge(entries, reader.get_stats(s).per_conversation, **kw)
+        assert spend.totals(entries)["input_tokens"] == 3500
 
     def test_cached_input_and_reasoning_are_counted_once(self, tmp_path):
         """A real token_count: input includes the cached and cache-write
