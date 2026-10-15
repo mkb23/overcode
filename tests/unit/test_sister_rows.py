@@ -152,3 +152,50 @@ class TestSisterInAnotherZone:
             for raw in (119.0, 120.0, 121.5)
         }
         assert len(starts) == 1  # else every poll would notify again
+
+
+class TestSisterInAnotherTimezone:
+    """A sister stamps status_since in its own naive local time; the row
+    and the unvisited marker read it on this host's clock."""
+
+    # The sister's local clock against ours: ahead (London viewed from New
+    # York), behind, and a half-hour zone
+    ZONES = [5 * 3600, -8 * 3600, int(5.5 * 3600)]
+
+    def _sister_stamp(self, zone, seconds_ago):
+        return (datetime.now() + timedelta(seconds=zone - seconds_ago)).isoformat()
+
+    @pytest.mark.parametrize("zone", ZONES)
+    def test_time_in_state_from_an_older_sister(self, zone):
+        state = {"current_status": "running", "status_since": self._sister_stamp(zone, 600)}
+        row = SessionSummary(_agent_to_session(_agent("running", 600, state), "host"))
+        row.apply_remote()
+        assert 590 < _seconds_in_state(row) < 660
+
+    @pytest.mark.parametrize("zone", ZONES)
+    def test_time_in_state_of_a_0_6_sister_s_lifecycle_state(self, zone):
+        state = {"current_status": "asleep", "status_since": self._sister_stamp(zone, 600),
+                 "input_needed_since": None}
+        row = SessionSummary(_agent_to_session(_agent("asleep", 600, state), "host"))
+        row.apply_remote()
+        assert 590 < _seconds_in_state(row) < 660
+
+    @pytest.mark.parametrize("zone", ZONES)
+    def test_a_visit_clears_and_a_later_stall_marks(self, zone):
+        state = {"current_status": "waiting_user", "status_since": self._sister_stamp(zone, 40)}
+        session = _agent_to_session(_agent("waiting_user", 40, state), "host")
+        assert session.remote_daemon_state["input_needed_since"] == pytest.approx(
+            datetime.now().timestamp() - 40, abs=5)
+        row = SessionSummary(session)
+        row.apply_remote(visited_here=datetime.now().timestamp() - 60)
+        assert row.is_unvisited_stalled  # stalled after the last visit
+        row.apply_remote(visited_here=datetime.now().timestamp())
+        assert not row.is_unvisited_stalled
+
+    def test_the_shift_holds_still_across_polls(self):
+        since = self._sister_stamp(5 * 3600, 40)
+        state = {"current_status": "waiting_user", "status_since": since}
+        first = _agent_to_session(_agent("waiting_user", 40.0, state), "host")
+        again = _agent_to_session(_agent("waiting_user", 41.3, state), "host")
+        assert (first.remote_daemon_state["input_needed_since"]
+                == again.remote_daemon_state["input_needed_since"])
