@@ -165,42 +165,42 @@ class AgentIOMixin:
         startup_delay: float = 3.0,
         backend: Optional[AgentBackend] = None,
     ) -> bool:
-        """Send a prompt to an agent session via tmux load-buffer/paste-buffer.
+        """Send a prompt to an agent once its input line is up.
 
-        Polls for the agent's input prompt before sending. Falls back to
-        startup_delay if the prompt is not detected within 30 seconds.
+        Pasted with tmux load-buffer/paste-buffer, or typed for a backend
+        that sets ``type_multiline_text`` (Claude hands a long paste to the
+        model as <pasted_content>, not to be obeyed). Polls for the agent's
+        input prompt before sending. Falls back to startup_delay if the
+        prompt is not detected within 30 seconds.
         """
+        backend = backend or get_backend()
+
+        def send(delay: float) -> bool:
+            if backend.type_multiline_text:
+                if delay > 0:
+                    time.sleep(delay)
+                return type_text_to_tmux_window(
+                    self.tmux.session_name, window_name, prompt, send_enter=True)
+            return send_text_to_tmux_window(
+                self.tmux.session_name, window_name, prompt,
+                send_enter=True, startup_delay=delay,
+            )
+
         if self._wait_for_prompt(window_name, backend=backend):
             # Prompt detected — send immediately, no delay needed
-            sent = send_text_to_tmux_window(
-                self.tmux.session_name,
-                window_name,
-                prompt,
-                send_enter=True,
-                startup_delay=0,
-            )
+            sent = send(0)
             # codex 0.156 draws its input line a few seconds before it reads
             # input after the trust dialog, and drops a paste in between:
             # such a backend has the prompt looked for on screen, and sent
             # again only when no sign of it shows
-            backend = backend or get_backend()
             if sent and prompt.strip() and backend.confirm_prompt_delivery:
                 for _ in range(3):
                     if self._prompt_landed(window_name, prompt, timeout=3.0):
                         break
-                    sent = send_text_to_tmux_window(
-                        self.tmux.session_name, window_name, prompt,
-                        send_enter=True, startup_delay=0,
-                    )
+                    sent = send(0)
             return sent
         # Fallback: prompt not detected, use original delay
-        return send_text_to_tmux_window(
-            self.tmux.session_name,
-            window_name,
-            prompt,
-            send_enter=True,
-            startup_delay=startup_delay,
-        )
+        return send(startup_delay)
 
     def send_to_session(self, name: str, text: str, enter: bool = True) -> bool:
         """Send text/keys to a session by name.

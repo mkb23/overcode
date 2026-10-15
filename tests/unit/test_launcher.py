@@ -893,11 +893,43 @@ class TestSendPromptToWindow:
         launcher, window = self._codex_launcher(tmp_path)
         with patch.object(launcher, "_wait_for_prompt", return_value=True), \
                 patch.object(launcher, "_pane_shows") as shows, \
-                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
+                patch("overcode.agent_io.type_text_to_tmux_window", return_value=True) as send:
             launcher._send_prompt_to_window(
                 window, "Reply pong", backend=get_backend("claude-code"))
         shows.assert_not_called()
         assert send.call_count == 1
+
+    @pytest.mark.parametrize("found", [True, False], ids=["prompt-seen", "fallback"])
+    def test_claude_first_prompt_is_typed_not_pasted(self, tmp_path, found):
+        """A launch prompt too big for the command line is sent once Claude
+        is up: pasted, Claude hands it to the model as <pasted_content>
+        and the agent does not act on it; typed, it is the user's message."""
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        prompt = "Build the thing\n" + "spec line\n" * 8000
+        with patch.object(launcher, "_wait_for_prompt", return_value=found), \
+                patch("time.sleep"), \
+                patch("overcode.agent_io.type_text_to_tmux_window", return_value=True) as typed, \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as pasted:
+            assert launcher._send_prompt_to_window(
+                window, prompt, backend=get_backend("claude-code"))
+        pasted.assert_not_called()
+        typed.assert_called_once_with("agents", window, prompt, send_enter=True)
+
+    def test_an_oversized_claude_launch_prompt_is_typed(self, tmp_path):
+        """End to end through launch: over PROMPT_ARG_MAX_BYTES the prompt
+        cannot ride on the command line, and must still not be pasted."""
+        from overcode.launcher import PROMPT_ARG_MAX_BYTES
+
+        launcher, _ = self._codex_launcher(tmp_path)
+        prompt = "x" * (PROMPT_ARG_MAX_BYTES + 10) + "\nthen stop"
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch("overcode.agent_io.type_text_to_tmux_window", return_value=True) as typed, \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as pasted:
+            launcher.launch(name="big", initial_prompt=prompt, backend="claude-code")
+        pasted.assert_not_called()
+        assert typed.call_args.args[2] == prompt
 
     def test_handles_single_line_prompt(self, tmp_path):
         """Single line prompts work correctly"""
@@ -924,6 +956,7 @@ class TestSendPromptToWindow:
 
     def test_falls_back_to_delay_when_prompt_not_detected(self, tmp_path):
         """Uses startup_delay fallback when _wait_for_prompt times out"""
+        from overcode.backends import get_backend
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -932,7 +965,9 @@ class TestSendPromptToWindow:
 
         with patch.object(launcher, "_wait_for_prompt", return_value=False):
             with patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as mock_send:
-                result = launcher._send_prompt_to_window(session.tmux_window, "hello", startup_delay=5.0)
+                result = launcher._send_prompt_to_window(
+                    session.tmux_window, "hello", startup_delay=5.0,
+                    backend=get_backend("opencode"))
 
         assert result is True
         # Should have been called with the fallback startup_delay
@@ -942,6 +977,7 @@ class TestSendPromptToWindow:
 
     def test_skips_delay_when_prompt_detected(self, tmp_path):
         """Sends immediately with no delay when _wait_for_prompt succeeds"""
+        from overcode.backends import get_backend
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -950,7 +986,9 @@ class TestSendPromptToWindow:
 
         with patch.object(launcher, "_wait_for_prompt", return_value=True):
             with patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as mock_send:
-                result = launcher._send_prompt_to_window(session.tmux_window, "hello", startup_delay=5.0)
+                result = launcher._send_prompt_to_window(
+                    session.tmux_window, "hello", startup_delay=5.0,
+                    backend=get_backend("opencode"))
 
         assert result is True
         # Should have been called with startup_delay=0 since prompt was detected

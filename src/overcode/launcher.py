@@ -569,9 +569,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                              prompt: Optional[str]) -> Optional[str]:
         """Write the first prompt for a backend that takes it as an argument.
 
-        None (paste it once the agent is up) for other backends, the mock
-        harness, and a prompt too big for one argument (Linux caps one at
-        128 KiB, MAX_ARG_STRLEN: exec would fail and claude never start).
+        None (send it once the agent is up: typed for Claude, which does
+        not obey a long paste) for other backends, the mock harness, and a
+        prompt too big for one argument (Linux caps one at 128 KiB,
+        MAX_ARG_STRLEN: exec would fail and claude never start).
         The launch line puts `--` before it, so a prompt starting with "-"
         is still the prompt, not an option.
         """
