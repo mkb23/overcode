@@ -1,10 +1,10 @@
 {
   "tier": "real-claude",
   "result": "passed",
-  "commit": "f83bb1fe0d78123877731f1b0cb27d7a64e1cc69",
+  "commit": "6e491e24da3111bc21586dd52d32129e76e712dc",
   "src_dirty": false,
-  "ran_at": "2026-10-15T10:45:44+00:00",
-  "duration_s": 251,
+  "ran_at": "2026-10-15T11:56:04+00:00",
+  "duration_s": 234,
   "exit_code": 0,
   "counts": {
     "passed": 5,
