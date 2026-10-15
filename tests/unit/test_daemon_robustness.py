@@ -97,6 +97,9 @@ class TestBoundedTmux:
         assert tmux.list_panes("agents") is None
         fake_tmux.hang.unlink()
         tmux._unresponsive_until = 0.0  # the hold has passed
+        # Room for a loaded machine to start the fake: this read is about
+        # the hold, not the bound
+        tmux._command_timeout = 10.0
         assert tmux.has_session("agents") is True
 
     def test_timed_and_untimed_commands_parse_output_alike(self, fake_tmux):
