@@ -352,32 +352,25 @@ cross-check, never the source.
 
 ---
 
-## 8. Open questions for the owner
+## 8. Decisions (owner, 2026-10-15)
 
-1. **Adopt background sessions by default, or opt-in?** They belong to the
-   user's whole machine, not to this overcode session. One option is to
-   show only those whose `cwd` is under a repo the fleet uses.
-2. **Foreign interactive sessions:** show them at all? `sessions/*.json`
-   makes it cheap, but it widens overcode from "my fleet" to "every Claude
-   on this Mac".
-3. **Retention of finished virtual rows:** until the parent's next user
-   prompt, or a fixed time? (§3.3 proposes whichever is later of the two,
-   with a 10-minute floor.)
-4. **Bell for a blocked background session:** off, opt-in per row, or on?
-5. **Teams:** in 2.1.300 they are named agents under an implicit
-   `session-<8>` team, and `team_name` is ignored. Should overcode treat
-   "team" as just a group kind (as proposed), or wait for the feature to
-   settle?
-6. **Cost display:** should the parent cell show `own + 👥` split all the
-   time, or only in the `$` detail mode?
-7. **Phase 0 changes historical numbers.** Spend already stored for past
-   sessions was over-counted. Recompute on upgrade, or leave history and
-   fix going forward? This is permanent retention, per the billing
-   decisions.
-8. **Should overcode inject hooks for its own Claude children through a
-   settings file rather than `--settings`?** F13 shows that tmux teammates
-   and anything else that re-spawns `claude` without our flags go dark
-   under `--settings`.
+1. **Background sessions:** shown only when their `cwd` is under a repo
+   the fleet uses.
+2. **Interactive Claude sessions overcode did not launch:** not shown;
+   opt-in only.
+3. **Finished virtual rows:** kept for a configurable time, default 30 s
+   (`observability.finished_row_seconds`), then folded into the parent's
+   rollup.
+4. **A blocked background session rings the bell.**
+5. **Teams** are just another group kind.
+6. **Cost:** the parent's own spend and its subagents' are shown
+   separately in the hover text.
+7. **Phase 0 recomputes history** for live agents and for archived agents
+   whose transcripts still exist; the rest keeps its figures.
+8. **Hooks through a settings file** (so re-spawned `claude` processes stay
+   visible): later, not in the first slices.
+
+Phase 0 stays on release/0.6.1; it is not cherry-picked to main.
 
 ---
 
