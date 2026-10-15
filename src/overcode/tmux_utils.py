@@ -510,6 +510,28 @@ def send_text_to_tmux_window(
     return True
 
 
+# Largest text typed by one `send-keys -l`: tmux rejects a command over its
+# message limit (16342 ASCII bytes accepted, tmux 3.7c), with room to spare
+TYPE_CHUNK_BYTES = 8192
+
+
+def _split_utf8(text: str, max_bytes: int) -> List[str]:
+    """Split text into pieces of at most max_bytes UTF-8 bytes, never
+    inside a character. Empty text gives no pieces."""
+    chunks: List[str] = []
+    start = 0
+    size = 0
+    for i, ch in enumerate(text):
+        n = len(ch.encode('utf-8', 'surrogatepass'))
+        if size + n > max_bytes and i > start:
+            chunks.append(text[start:i])
+            start, size = i, 0
+        size += n
+    if start < len(text):
+        chunks.append(text[start:])
+    return chunks
+
+
 def type_text_to_tmux_window(
     tmux_session: str,
     window: str,
@@ -534,9 +556,11 @@ def type_text_to_tmux_window(
     lines = [line.expandtabs(4) for line in text.split('\n')]
     try:
         for i, line in enumerate(lines):
-            keys = ['-l', '--', line + '\\'] if i < len(lines) - 1 else ['-l', '--', line]
-            if keys[-1]:
-                subprocess.run(tmux_cmd + ['send-keys', '-t', target] + keys,
+            typed = line + '\\' if i < len(lines) - 1 else line
+            # tmux refuses a command over ~16 KB ("command too long"), so
+            # a long line goes as several send-keys
+            for chunk in _split_utf8(typed, TYPE_CHUNK_BYTES):
+                subprocess.run(tmux_cmd + ['send-keys', '-t', target, '-l', '--', chunk],
                                timeout=5, check=True)
             if i < len(lines) - 1:
                 subprocess.run(tmux_cmd + ['send-keys', '-t', target, 'Enter'],

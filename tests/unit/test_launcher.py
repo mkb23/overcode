@@ -932,6 +932,18 @@ class TestSendPromptToWindow:
         pasted.assert_not_called()
         assert typed.call_args.args[2] == prompt
 
+    def test_a_launch_prompt_that_did_not_arrive_is_reported(self, tmp_path, capsys):
+        """Launch printed only "Launched" while the agent sat idle with a
+        half-typed prompt."""
+        from overcode.launcher import PROMPT_ARG_MAX_BYTES
+
+        launcher, _ = self._codex_launcher(tmp_path)
+        prompt = "x" * (PROMPT_ARG_MAX_BYTES + 10)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch("overcode.agent_io.type_text_to_tmux_window", return_value=False):
+            launcher.launch(name="big", initial_prompt=prompt, backend="claude-code")
+        assert "first prompt did not reach" in capsys.readouterr().out
+
     def test_handles_single_line_prompt(self, tmp_path):
         """Single line prompts work correctly"""
         mock_tmux = MockTmux()

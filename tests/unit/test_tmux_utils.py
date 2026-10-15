@@ -603,6 +603,24 @@ class TestTypeTextToTmuxWindow:
             ["Enter"],                             # submit
         ]
 
+    def test_a_long_line_is_typed_in_pieces_tmux_accepts(self):
+        """tmux refuses one command over ~16 KB ("command too long"): a
+        pasted log or minified JSON line left the prompt half-typed."""
+        from overcode.tmux_utils import TYPE_CHUNK_BYTES
+
+        text = "Fix this:\n" + "x" * 20000 + "é" * 9000 + "\n" + "y" * 65536
+        with patch("overcode.tmux_utils.subprocess.run") as run, \
+                patch("overcode.tmux_utils.time.sleep"):
+            run.return_value = MagicMock(returncode=0, stdout="0")
+            assert type_text_to_tmux_window("agents", 1, text)
+        sends = [c.args[0][c.args[0].index("send-keys") + 3:]
+                 for c in run.call_args_list if "send-keys" in c.args[0]]
+        typed = [s[2] for s in sends if s[:2] == ["-l", "--"]]
+        assert all(len(t.encode()) <= TYPE_CHUNK_BYTES for t in typed)
+        assert "".join(typed) == ("Fix this:\\" + "x" * 20000 + "é" * 9000 + "\\"
+                                  + "y" * 65536)
+        assert [s for s in sends if s[:2] != ["-l", "--"]] == [["Enter"]] * 3
+
     def test_carriage_returns_and_tabs_are_not_typed_as_keys(self):
         """Typed, CR is Return (submits mid-message) and a tab is Tab."""
         with patch("overcode.tmux_utils.subprocess.run") as run, \

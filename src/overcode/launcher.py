@@ -580,7 +580,9 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         if prompt_file:
             self._wait_for_prompt(window_name, backend=backend)
         elif prompt:
-            self._send_prompt_to_window(window_name, prompt, backend=backend)
+            if not self._send_prompt_to_window(window_name, prompt, backend=backend):
+                print(f"⚠ The first prompt did not reach window {window_name}: "
+                      "check the agent and send it again")
 
     def _initial_prompt_file(self, backend: AgentBackend, session: Session,
                              prompt: Optional[str]) -> Optional[str]:
