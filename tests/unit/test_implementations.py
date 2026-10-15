@@ -232,12 +232,13 @@ class TestRealTmux:
                 mock_server.sessions.get.return_value = mock_session
                 mock_server_class.return_value = mock_server
 
+                mock_pane.cmd.return_value.stderr = []
                 tmux = RealTmux()
                 result = tmux.send_keys("test_session", "win1", "echo hello", enter=True)
 
                 assert result is True
                 # Should send text without enter first
-                mock_pane.send_keys.assert_any_call("echo hello", enter=False)
+                mock_pane.cmd.assert_any_call("send-keys", "--", "echo hello")
                 # Then send enter separately
                 mock_pane.send_keys.assert_any_call('', enter=True)
 
@@ -254,11 +255,13 @@ class TestRealTmux:
                 mock_server.sessions.get.return_value = mock_session
                 mock_server_class.return_value = mock_server
 
+                mock_pane.cmd.return_value.stderr = []
                 tmux = RealTmux()
                 result = tmux.send_keys("test_session", "win1", "text", enter=False)
 
                 assert result is True
-                mock_pane.send_keys.assert_called_once_with("text", enter=False)
+                mock_pane.cmd.assert_called_once_with("send-keys", "--", "text")
+                mock_pane.send_keys.assert_not_called()
 
     def test_send_keys_empty_text_with_enter(self):
         """Should send just enter when text is empty."""
