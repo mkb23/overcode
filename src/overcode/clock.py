@@ -16,7 +16,11 @@ files and subtracts their stamps from a naive ``datetime.now()``, which
 raises on an aware value. Every reader here takes both:
 
 - ``to_epoch`` / ``parse_time`` for comparisons: epoch seconds, or an
-  aware datetime, never a naive/aware subtraction (which raises);
+  aware datetime, never a naive/aware subtraction (which raises). A naive
+  stamp written in the repeated autumn hour does not say which of the two
+  passes it was; given ``near`` (the reader's now), the readers take the
+  pass nearer to it, so a deadline or a "since" written a minute ago does
+  not read as an hour older (``resolve_fold``);
 - ``from_iso`` for code that keeps naive local datetimes in memory (the
   views' renderers, the history rows): a drop-in for
   ``datetime.fromisoformat`` that converts an aware value to local time
@@ -70,6 +74,42 @@ def aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.astimezone()
 
 
+def _as_epoch(value: Union[datetime, int, float]) -> float:
+    if isinstance(value, datetime):
+        return value.timestamp()
+    return float(value)
+
+
+def resolve_fold(value: datetime, near: Union[datetime, int, float, None]) -> datetime:
+    """A naive local ``value`` with ``fold`` set to the pass nearer ``near``.
+
+    A naive time in the hour repeated when the clocks go back names two
+    instants an hour apart; ``fold=0`` (what ``fromisoformat`` gives) is the
+    first. Stored stamps are naive (``stamp``) and lie near the time they
+    are read at (a "since" just passed, a deadline just ahead), so the
+    instant nearer the reader's ``near`` is the one meant. Any other value
+    (aware, unambiguous, already ``fold=1``, ``near`` None) is returned
+    unchanged.
+    """
+    if near is None or value.tzinfo is not None or value.fold:
+        return value
+    try:
+        first = value.replace(fold=0)
+        second = value.replace(fold=1)
+        at_first, at_second = first.timestamp(), second.timestamp()
+        if at_first == at_second:
+            return value
+        # Both passes must show this wall time (a time skipped when the
+        # clocks go forward is not ambiguous, just never written)
+        if (datetime.fromtimestamp(at_first) != first
+                or datetime.fromtimestamp(at_second) != second):
+            return value
+        target = _as_epoch(near)
+    except (ValueError, TypeError, OverflowError, OSError):
+        return value
+    return first if abs(at_first - target) <= abs(at_second - target) else second
+
+
 def local_naive(value: datetime) -> datetime:
     """``value`` as a naive local time (an aware one converted first)."""
     if value.tzinfo is None:
@@ -119,10 +159,11 @@ def seconds_since(value: TimeValue, now: Optional[float] = None) -> Optional[flo
     (``fold`` included), never by naive wall-clock subtraction. None when
     ``value`` is unknown or unreadable.
     """
-    then = to_epoch(value)
+    now_at = time.time() if now is None else now
+    then = to_epoch(value, near=now_at)
     if then is None:
         return None
-    return (time.time() if now is None else now) - then
+    return now_at - then
 
 
 def from_iso(text: str) -> datetime:
@@ -134,37 +175,44 @@ def from_iso(text: str) -> datetime:
     return local_naive(datetime.fromisoformat(text))
 
 
-def parse_time(value: TimeValue) -> Optional[datetime]:
+def parse_time(
+    value: TimeValue, near: Union[datetime, int, float, None] = None,
+) -> Optional[datetime]:
     """An aware datetime from a stored timestamp, or None.
 
     Takes an ISO string (naive: local time), a datetime, or epoch seconds.
+    ``near`` (the reader's now) places a naive time in the repeated autumn
+    hour (``resolve_fold``).
     """
     if value is None or value == "":
         return None
     try:
         if isinstance(value, datetime):
-            return aware(value)
+            return aware(resolve_fold(value, near))
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return datetime.fromtimestamp(value).astimezone()
         if isinstance(value, str):
-            return aware(datetime.fromisoformat(value))
+            return aware(resolve_fold(datetime.fromisoformat(value), near))
     except (ValueError, TypeError, OverflowError, OSError):
         return None
     return None
 
 
-def to_epoch(value: TimeValue) -> Optional[float]:
+def to_epoch(
+    value: TimeValue, near: Union[datetime, int, float, None] = None,
+) -> Optional[float]:
     """Epoch seconds from a stored timestamp, or None.
 
     A naive value is local time (``timestamp()`` places it, honouring
-    ``fold`` in the repeated hour); an aware one carries its offset.
+    ``fold`` in the repeated hour, which ``near`` resolves for a stamp
+    read from a file: ``resolve_fold``); an aware one carries its offset.
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     if isinstance(value, datetime):
         try:
-            return value.timestamp()
+            return resolve_fold(value, near).timestamp()
         except (ValueError, OverflowError, OSError):
             return None
-    parsed = parse_time(value)
+    parsed = parse_time(value, near)
     return parsed.timestamp() if parsed is not None else None

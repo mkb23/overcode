@@ -581,6 +581,57 @@ class TestDaylightSavingEnds:
         assert stamp_epoch("2026-10-25T01:20:00", None) == first.timestamp()
         assert stamp_epoch(None, first.timestamp()) is None
 
+    # Stamps are written naive (clock.stamp), which drops ``fold``: one
+    # written in the second (GMT) 01:xx must not read as the first (BST)
+    # pass, an hour earlier, against the daemon's aware now.
+
+    @staticmethod
+    def _second_pass_now():
+        from datetime import timezone
+        now = datetime(2026, 10, 25, 1, 10, tzinfo=timezone.utc).astimezone()
+        assert now.utcoffset().total_seconds() == 0  # 01:10 GMT, the repeat
+        return now
+
+    def test_an_oversight_deadline_set_in_the_repeated_hour_is_not_already_past(self, london):
+        from datetime import timedelta
+        from overcode.clock import stamp
+        from overcode.monitor_daemon_core import should_enforce_oversight_timeout
+
+        now = self._second_pass_now()
+        deadline = stamp(now + timedelta(minutes=5))
+        assert not should_enforce_oversight_timeout("waiting_oversight", "timeout", deadline, now)
+        later = now + timedelta(minutes=6)
+        assert should_enforce_oversight_timeout("waiting_oversight", "timeout", deadline, later)
+
+    def test_a_heartbeat_sent_in_the_repeated_hour_is_not_due_again_at_once(self, london):
+        from datetime import timedelta
+        from overcode.clock import stamp
+        from overcode.monitor_daemon_core import is_heartbeat_due
+
+        now = self._second_pass_now()
+        sent = stamp(now)
+        assert not is_heartbeat_due(sent, None, 1800, now + timedelta(seconds=10))
+        assert is_heartbeat_due(sent, None, 1800, now + timedelta(minutes=31))
+
+    def test_an_agent_done_in_the_repeated_hour_is_not_archived_at_once(self, london):
+        from datetime import timedelta
+        from overcode.clock import stamp
+        from overcode.monitor_daemon_core import should_auto_archive
+
+        now = self._second_pass_now()
+        assert not should_auto_archive("done", stamp(now), now)
+        assert should_auto_archive("done", stamp(now), now + timedelta(hours=1, seconds=1))
+
+    def test_a_stamp_from_the_first_pass_still_reads_as_the_first_pass(self, london):
+        from datetime import timedelta, timezone
+        from overcode.clock import seconds_since, stamp, to_epoch
+
+        first = datetime(2026, 10, 25, 0, 50, tzinfo=timezone.utc).astimezone()  # 01:50 BST
+        assert first.utcoffset().total_seconds() == 3600
+        now = first + timedelta(minutes=15)  # 01:05 GMT
+        assert seconds_since(stamp(first), now.timestamp()) == pytest.approx(900)
+        assert to_epoch(stamp(first), near=now) == pytest.approx(first.timestamp())
+
 
 
 class TestStateFileWrittenOnChange:

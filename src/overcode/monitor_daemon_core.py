@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 
-from .clock import parse_time, stamp_epoch
+from .clock import parse_time, stamp_epoch, to_epoch
 from .status_constants import STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
 
 # An agent not observed for longer than this was not being watched: the
@@ -222,7 +222,7 @@ def should_auto_archive(
         return False
     if not state_since:
         return False
-    done_since = parse_time(state_since)
+    done_since = parse_time(state_since, near=now)
     if done_since is None:
         return False
     return elapsed_seconds(done_since, now) >= timeout_seconds
@@ -272,7 +272,8 @@ def should_enforce_oversight_timeout(
         return False
     if not deadline:
         return False
-    deadline_at = stamp_epoch(deadline, deadline_at)
+    deadline_at = (stamp_epoch(deadline, deadline_at) if deadline_at is not None
+                   else to_epoch(deadline, near=now))
     if deadline_at is None:
         return False
     # Epoch seconds: an aware deadline against a naive now (or the
@@ -335,15 +336,17 @@ def is_heartbeat_due(
     Returns:
         True if a heartbeat is due
     """
-    last_hb = parse_datetime_safe(last_heartbeat_time)
+    last_hb = parse_datetime_safe(last_heartbeat_time, near=now)
     if last_hb is None:
-        last_hb = parse_datetime_safe(session_start_time)
+        last_hb = parse_datetime_safe(session_start_time, near=now)
     if last_hb is None:
         return False
     return elapsed_seconds(last_hb, now) >= frequency_seconds
 
 
-def parse_datetime_safe(value: Optional[str]) -> Optional[datetime]:
+def parse_datetime_safe(
+    value: Optional[str], near: Optional[datetime] = None,
+) -> Optional[datetime]:
     """Safely parse a stored ISO timestamp as an aware datetime.
 
     Pure function - no side effects, fully testable. A naive value (written
@@ -355,4 +358,4 @@ def parse_datetime_safe(value: Optional[str]) -> Optional[datetime]:
     Returns:
         Parsed aware datetime, or None if parsing fails
     """
-    return parse_time(value) if isinstance(value, str) else None
+    return parse_time(value, near) if isinstance(value, str) else None

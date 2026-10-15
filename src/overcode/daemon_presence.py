@@ -65,7 +65,7 @@ class PresenceComponent:
             heartbeat_path = get_tui_heartbeat_path(self._tmux_session)
             if not heartbeat_path.exists():
                 return False
-            written_at = to_epoch(heartbeat_path.read_text().strip())
+            written_at = to_epoch(heartbeat_path.read_text().strip(), near=time.time())
             if written_at is None:
                 return False
             # Epoch seconds: the stamp may be naive (local) or aware

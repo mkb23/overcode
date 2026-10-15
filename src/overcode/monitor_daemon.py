@@ -638,9 +638,9 @@ class MonitorDaemon:
         # Calculate next heartbeat due time (#171)
         next_heartbeat_due = None
         if session.heartbeat_enabled and not session.heartbeat_paused:
-            last_hb = parse_datetime_safe(session.last_heartbeat_time)
+            last_hb = parse_datetime_safe(session.last_heartbeat_time, near=now)
             if last_hb is None:
-                last_hb = parse_datetime_safe(session.start_time)
+                last_hb = parse_datetime_safe(session.start_time, near=now)
             if last_hb:
                 from datetime import timedelta
                 next_due = last_hb + timedelta(seconds=session.heartbeat_frequency_seconds)
@@ -829,10 +829,10 @@ class MonitorDaemon:
         if last_time is None:
             # First observation after daemon (re)start - use last_time_accumulation
             # to avoid re-adding time that was already accumulated before restart
-            last_time = parse_datetime_safe(current_stats.last_time_accumulation)
+            last_time = parse_datetime_safe(current_stats.last_time_accumulation, near=now)
             if last_time is None:
                 # Fallback for sessions without last_time_accumulation
-                last_time = parse_datetime_safe(current_stats.state_since)
+                last_time = parse_datetime_safe(current_stats.state_since, near=now)
             if last_time is None:
                 last_time = now
             self.last_state_times[session_id] = last_time
@@ -854,7 +854,7 @@ class MonitorDaemon:
             return
 
         # Get session start time for capping
-        session_start = parse_datetime_safe(session.start_time)
+        session_start = parse_datetime_safe(session.start_time, near=now)
 
         # Use pure function for time accumulation (with sleep time tracking #141)
         prev_status = self.previous_states.get(session_id, status)

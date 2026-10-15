@@ -119,7 +119,8 @@ def status_row_due(
     if last_pair != (status, activity[:100] if activity else ""):
         return True
     # Epoch seconds: either side may be naive (local) or aware
-    return to_epoch(now) - to_epoch(last_written) >= keepalive_seconds
+    now_at = to_epoch(now)
+    return now_at - to_epoch(last_written, near=now_at) >= keepalive_seconds
 
 
 Row = Tuple[datetime, str, str, str, str, str]

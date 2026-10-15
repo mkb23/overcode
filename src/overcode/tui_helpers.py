@@ -251,7 +251,7 @@ def get_current_state_times(stats, now: Optional[datetime] = None, is_asleep: bo
         try:
             # Epoch seconds: the anchor may be naive (sessions.json) or
             # aware (the engine's time base, tui_engine._iso), ``now`` either
-            current_elapsed = now.timestamp() - to_epoch(time_anchor)
+            current_elapsed = now.timestamp() - to_epoch(time_anchor, near=now)
 
             # Only add positive elapsed time
             if current_elapsed > 0:

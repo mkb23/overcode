@@ -518,15 +518,19 @@ class MonitorDaemonState:
         Returns:
             True if state is older than (expected gap + buffer_seconds)
         """
-        from .clock import stamp_epoch
+        from .clock import stamp_epoch, to_epoch
 
         # Epoch seconds: the stamp is naive local (aware in a file a
         # pre-release 0.6.0 wrote), placed by last_loop_at in the repeated
-        # autumn hour; ``now`` the caller's wall clock
-        last_at = stamp_epoch(self.last_loop_time, self.last_loop_at)
+        # autumn hour, else read as the pass nearest ``now`` (the caller's
+        # wall clock)
+        now_at = time.time() if now is None else now
+        last_at = (stamp_epoch(self.last_loop_time, self.last_loop_at)
+                   if self.last_loop_at is not None
+                   else to_epoch(self.last_loop_time, near=now_at))
         if last_at is None:
             return True
-        age = (time.time() if now is None else now) - last_at
+        age = now_at - last_at
         return age > self.expected_publish_gap() + buffer_seconds
 
 
