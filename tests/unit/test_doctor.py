@@ -415,9 +415,19 @@ class TestGatherDataFindings:
         now = datetime(2026, 4, 20, 12, 0, 0)
         # 6 hours ago — well past default 4h threshold
         last = (now - timedelta(hours=6)).isoformat()
-        sess = _make_session(status="running", stats=SessionStats(last_activity=last))
+        sess = _make_session(status="running",
+                             stats=SessionStats(last_activity=last, current_state="running"))
         findings = gather_data_findings(sess, now=now)
         assert FINDING_STALE_ACTIVITY in _codes(findings)
+
+    def test_stale_activity_suppressed_when_waiting_at_its_prompt(self):
+        """An idle agent fires no hooks: days at the prompt is not a fault."""
+        now = datetime(2026, 4, 20, 12, 0, 0)
+        last = (now - timedelta(days=7)).isoformat()
+        for state in ("waiting_user", "waiting_oversight", "done"):
+            sess = _make_session(status="running",
+                                 stats=SessionStats(last_activity=last, current_state=state))
+            assert FINDING_STALE_ACTIVITY not in _codes(gather_data_findings(sess, now=now)), state
 
     def test_stale_activity_suppressed_when_recent(self):
         now = datetime(2026, 4, 20, 12, 0, 0)

@@ -62,6 +62,9 @@ SEVERITY_WARNING = "warning"
 # a healthy monitor bumps it whenever a hook fires.
 STALE_ACTIVITY_SECONDS = 4 * 3600
 
+# current_state values in which hooks keep firing: a working agent
+WORKING_STATES = frozenset({"running", "running_heartbeat"})
+
 # current_state values that mean "agent is doing something" — if we see any
 # of these while the session is flagged asleep, something is wrong.
 ACTIVE_STATES = frozenset({
@@ -386,8 +389,11 @@ def gather_data_findings(
                 ),
             ))
 
+    # Only an agent the daemon says is working: one waiting at its prompt
+    # (or at rest) has no hooks to fire, however long it sits there
     if (
         session.status == "running"
+        and session.stats.current_state in WORKING_STATES
         and session.stats.last_activity
         and not session.is_asleep
     ):
