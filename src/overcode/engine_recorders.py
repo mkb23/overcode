@@ -94,7 +94,7 @@ class RecorderStore:
         recorder = self.recorders.get(session.id)
         if recorder is None:
             recorder = self.recorders[session.id] = EpisodeRecorder(
-                gap_seconds=self._gap_seconds(), new_agent=self._started_since(session))
+                gap_seconds=self._gap_seconds(), new_agent=self._started_since(session, ts))
             self.dirty = True
         observed = recorder.observe(colour, ts)
         if observed.closed or observed.bell or observed.merged:
@@ -115,7 +115,7 @@ class RecorderStore:
                 engine.ring(session.id, {"colour": observed.bell.colour,
                                          "start": observed.bell.start, "name": session.name})
 
-    def _started_since(self, session) -> bool:
+    def _started_since(self, session, now: Optional[float] = None) -> bool:
         """Whether ``session`` started after this engine began recording.
 
         Such an agent had no colour before its first sight, so a red or
@@ -123,10 +123,14 @@ class RecorderStore:
         first-sight rule). One already running when the engine started
         (a restart, an upgrade with no engine_state.json) may have been
         red for hours: that stretch never rings.
+
+        ``start_time`` is a naive stamp; ``now`` (epoch) places one in the
+        hour repeated when the clocks go back, which read alone takes the
+        first pass and would date an agent just launched an hour early.
         """
         from .clock import to_epoch
 
-        started = to_epoch(getattr(session, "start_time", None))
+        started = to_epoch(getattr(session, "start_time", None), near=now)
         return started is not None and started > self.observing_since
 
     def load(self) -> None:

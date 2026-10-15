@@ -679,6 +679,33 @@ class TestDaylightSavingEnds:
         assert should_enforce_oversight_timeout(
             "waiting_oversight", "timeout", deadline, set_at + timedelta(minutes=41))
 
+    def test_an_agent_launched_in_the_repeated_hour_after_a_restart_is_new(self, london, tmp_path):
+        """Engine (re)started at 01:05 GMT; an agent launched at 01:20 GMT is
+        stamped '01:20', which read alone is 01:20 BST, before the engine."""
+        from datetime import timedelta
+        from overcode.clock import stamp
+        from overcode.engine_recorders import RecorderStore
+
+        engine_start = self._second_pass_now() - timedelta(minutes=5)  # 01:05 GMT
+        launched = engine_start + timedelta(minutes=15)  # 01:20 GMT
+        made = []
+
+        def recorder(**kwargs):
+            made.append(kwargs)
+            return MagicMock(episode=None)
+
+        store = RecorderStore(tmp_path, MagicMock(), lambda: 20.0)
+        store.begin(engine_start.timestamp())
+        session = MagicMock(id="s1", start_time=stamp(launched))
+        session.name = "child"
+        assert session.start_time == "2026-10-25T01:20:00"
+        detector = MagicMock()
+        detector.get_status_detail.return_value = None
+        with patch("overcode.engine_recorders.EpisodeRecorder", side_effect=recorder):
+            store.record(session, MagicMock(), "running", launched + timedelta(seconds=2),
+                         detector=detector)
+        assert made and made[0]["new_agent"] is True
+
 
 
 class TestStateFileWrittenOnChange:
