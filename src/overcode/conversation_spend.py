@@ -181,7 +181,7 @@ def merge(
             entry["model"] = model
         out[cid] = entry
         if legacy is not None and cid in (legacy.get("absorbs") or ()):
-            _settle(legacy, {k: _num(entry.get(k, 0)) - before[k] for k in SPEND_KEYS}, cid)
+            _settle(legacy, entry, before, _prices_or_none(prices, model), cid)
     if fold:
         out[LEGACY_KEY] = _fold(recorded, out, reads, owned_ids, prices, default_model, seg)
     return out
@@ -272,15 +272,51 @@ def _shrink(out: Dict[str, Dict[str, Any]], reads: Mapping[str, Any], key: str,
         entry[key] = round(_num(entry.get(key, 0)) * keep, places)
 
 
-def _settle(legacy: Dict[str, Any], added: Mapping[str, float], cid: str) -> None:
+def _settle(legacy: Dict[str, Any], entry: Dict[str, Any], before: Mapping[str, float],
+            px: Optional[Sequence[float]], cid: str) -> None:
     """A conversation folded into the legacy entry is read again: what that
     read added to its entry moves out of the legacy entry instead of being
-    counted twice."""
-    for k in SPEND_KEYS:
+    counted twice.
+
+    The tokens the legacy entry holds of what the read added move out of
+    it, and the cost (and energy) move *with those tokens*: their share of
+    the legacy entry's cost, by value at the conversation's prices. The
+    conversation's entry takes that share for them, not its own price of
+    them, so a conversation that comes back unchanged leaves the total
+    where it was even when the fold priced the legacy entry lower (it
+    keeps the record's one-model estimate, ``_fold``). What the read added
+    beyond the legacy tokens is new spend, at the conversation's price.
+    """
+    added = {k: _int(entry.get(k, 0)) - _int(before.get(k, 0)) for k in TOKEN_KEYS}
+    held = {k: _int(legacy.get(k, 0)) for k in TOKEN_KEYS}
+    taken = {k: max(0, min(held[k], added[k])) for k in TOKEN_KEYS}
+    priced = bool(px) and price(px, added) > 0 and price(px, held) > 0
+    w_added, w_held, w_taken = (price(px, t) if priced else float(sum(t.values()))
+                                for t in (added, held, taken))
+    for k, places in (("cost", 8), ("energy", 3)):
         have = _num(legacy.get(k, 0))
-        take = max(0.0, min(have, _num(added.get(k, 0))))
-        legacy[k] = int(have - take) if k in TOKEN_KEYS else round(have - take, 8)
+        grew = _num(entry.get(k, 0)) - _num(before.get(k, 0))
+        if w_added > 0:
+            # The part of the growth that is the legacy tokens, replaced by
+            # the legacy entry's own share of them
+            covered = grew * w_taken / w_added
+            share = have * w_taken / w_held if w_held > 0 else 0.0
+        else:
+            # Nothing but a charge grew: it is what the legacy entry held
+            covered = share = max(0.0, min(have, grew))
+        share = max(0.0, min(have, share))
+        entry[k] = round(max(0.0, _num(entry.get(k, 0)) - covered + share), places)
+        legacy[k] = round(have - share, places)
+    for k in TOKEN_KEYS:
+        legacy[k] = held[k] - taken[k]
     legacy["absorbs"] = [i for i in legacy.get("absorbs") or () if i != cid]
+
+
+def _prices_or_none(prices: PriceFn, model: Optional[str]) -> Optional[List[float]]:
+    try:
+        return [float(p) for p in prices(model)]
+    except Exception:
+        return None
 
 
 def _empty() -> Dict[str, Any]:

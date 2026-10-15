@@ -312,6 +312,43 @@ def test_the_upgrade_fold_never_reprices_the_past(sm):
     assert _spent(grew) == (3_000_000, pytest.approx(2.0 + _haiku(1_000_000)))
 
 
+def test_a_missed_conversation_back_after_a_repricing_fold_is_not_counted_twice(sm):
+    """The old estimate priced A and B (1M input each, at opus) at haiku:
+    $2. The fold reads B alone ($15 at opus), so it scales B down to $2 and
+    the legacy entry keeps A's tokens at no cost. A read again unchanged
+    must leave the total at $2; only its later growth is new spend."""
+    s = _agent(sm, ["A", "B"], model=HAIKU)
+    sm.update_stats(s.id, estimated_cost_usd=2.0, total_tokens=2_000_000,
+                    input_tokens=2_000_000)
+    folded = _sync(sm, s.id, {"B": conv(1_000_000, model=OPUS)}, model=HAIKU)
+    assert _spent(folded) == (2_000_000, pytest.approx(2.0))
+    back = _sync(sm, s.id, {"A": conv(1_000_000, model=OPUS),
+                            "B": conv(1_000_000, model=OPUS)}, model=HAIKU)
+    assert _spent(back) == (2_000_000, pytest.approx(2.0))
+    grew = _sync(sm, s.id, {"A": conv(1_100_000, model=OPUS),
+                            "B": conv(1_000_000, model=OPUS)}, model=HAIKU)
+    assert _spent(grew) == (2_100_000, pytest.approx(2.0 + _opus(100_000)))
+
+
+def test_a_missed_conversation_back_takes_its_share_of_the_legacy_cost(sm):
+    """The legacy entry holds A and a pruned conversation P (300k and
+    700k input) at $5 together. A back unchanged takes 30% of the $5; a
+    read beyond every legacy token is new spend at A's price."""
+    s = _agent(sm, ["P", "A", "B"])
+    sm.update_stats(s.id, estimated_cost_usd=5.0 + _opus(100_000), total_tokens=1_100_000,
+                    input_tokens=1_100_000)
+    _sync(sm, s.id, {"B": conv(100_000)})
+    back = _sync(sm, s.id, {"A": conv(300_000), "B": conv(100_000)})
+    assert _spent(back) == (1_100_000, pytest.approx(5.0 + _opus(100_000)))
+    legacy = back.conversations[spend.LEGACY_KEY]
+    assert (legacy["in"], legacy["cost"]) == (700_000, pytest.approx(3.5))
+    assert back.conversations["A"]["cost"] == pytest.approx(1.5)
+    sm.update_session(s.id, agent_session_ids=["P", "A", "B"])
+    p_back = _sync(sm, s.id, {"P": conv(900_000), "A": conv(300_000), "B": conv(100_000)})
+    assert _spent(p_back) == (1_300_000, pytest.approx(5.0 + _opus(300_000)))
+    assert p_back.conversations[spend.LEGACY_KEY]["cost"] == 0
+
+
 def test_totals_an_older_build_advanced_are_kept_on_re_upgrade(sm):
     """A downgrade to 0.5.x keeps the stale ``conversations`` key while it
     advances the totals (codex /new, a pruned transcript); the next 0.6
