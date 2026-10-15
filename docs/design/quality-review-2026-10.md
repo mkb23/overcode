@@ -313,9 +313,12 @@ test only failed on Linux (9bb2a07); `sleep 1m` read as one second
 Also: the 250 ms tick no longer queries the DOM to keep focus (dba2254); a
 flaky test counted other threads' sleeps (see log).
 
-Still open: 37 (work-counting tests beyond the row cache and status bar), and the rest of
-32 (cpu/rss/sandbox into daemon state, sister-only fields) and 38
-(test_cli's mocking).
+Since done: 34 (one injected clock), 35 (files by session id, with billing
+codes and bounded storage), 37 (tests that count work) and most of 38
+(test_cli on a real SessionManager). Still open, for 0.6.1: the rest of 32
+(cpu/rss/sandbox into daemon state, sister-only fields) and of 38 (the
+prompt wait and sends in `AgentIOMixin` call tmux directly, not through
+the injected client).
 
 ### The local e2e tiers, first recordings (2026-10-12)
 
