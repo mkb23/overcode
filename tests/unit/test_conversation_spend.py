@@ -348,6 +348,24 @@ def test_a_missed_conversation_back_takes_its_share_of_the_legacy_cost(sm):
     assert p_back.conversations[spend.LEGACY_KEY]["cost"] == 0
 
 
+def test_a_missed_conversation_back_with_a_subagent_is_not_counted_twice(sm):
+    """The 0.5.x totals held A, A's haiku subagent and B (1M input each,
+    $45 at opus). The fold reads B alone, so the legacy entry holds A and
+    its subagent. A back unchanged with its subagent adds no spend."""
+    s = _agent(sm, ["A", "B"])
+    sm.update_stats(s.id, estimated_cost_usd=45.0, total_tokens=3_000_000,
+                    input_tokens=3_000_000)
+    _sync(sm, s.id, {"B": conv(1_000_000)})
+    back = _sync(sm, s.id, {"A": conv(1_000_000), "A/agent-x": conv(1_000_000, model=HAIKU),
+                            "B": conv(1_000_000)})
+    assert _spent(back) == (3_000_000, pytest.approx(45.0))
+    legacy = back.conversations[spend.LEGACY_KEY]
+    assert (legacy["in"], legacy["cost"], legacy["absorbs"]) == (0, 0, [])
+    later = _sync(sm, s.id, {"A": conv(1_000_000), "A/agent-x": conv(1_000_000, model=HAIKU),
+                             "A/agent-y": conv(100_000, model=HAIKU), "B": conv(1_000_000)})
+    assert _spent(later) == (3_100_000, pytest.approx(45.0 + _haiku(100_000)))
+
+
 def test_totals_an_older_build_advanced_are_kept_on_re_upgrade(sm):
     """A downgrade to 0.5.x keeps the stale ``conversations`` key while it
     advances the totals (codex /new, a pruned transcript); the next 0.6

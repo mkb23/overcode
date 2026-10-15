@@ -36,10 +36,12 @@ record's totals hold more than its entries (an older overcode ran in
 between: it keeps the ``conversations`` key as it was and advances only
 the totals). The owned conversations that read did not cover are
 ``absorbs`` (those newer than every conversation read, or the newest
-when the read covers none, have no spend yet and are left out): their spend is inside the legacy entry, so when one is
-read again later, what that read adds to its entry is taken out of the
-legacy entry, not counted twice. The fold keeps the record's cost: when the
-read, each conversation priced at its own model, comes to more than the
+when the read covers none, have no spend yet and are left out): their
+spend is inside the legacy entry, so when one is read again later, what
+that read adds to its entry is taken out of the legacy entry, not counted
+twice; so is what a read adds to a Claude subagent of one (the old totals
+held its tokens with its parent's). The fold keeps the record's cost:
+when the read, each conversation priced at its own model, comes to more than the
 record's one-model estimate, the read entries are scaled down to it. When
 the legacy cost was an estimate at one price row, that row (``px``) and
 the billing segment it was folded in (``seg``) are kept, so the ledger can
@@ -146,6 +148,8 @@ def merge(
     fold = recorded is not None and (_beyond(recorded, _sums(out)) if out
                                      else any(v > 0 for v in recorded.values()))
     legacy = out.get(LEGACY_KEY)
+    absorbs = tuple(legacy.get("absorbs") or ()) if legacy is not None else ()
+    settled: List[str] = []
     for cid, read in reads.items():
         if not isinstance(cid, str) or not cid or cid == LEGACY_KEY:
             continue
@@ -180,8 +184,13 @@ def merge(
         if isinstance(model, str) and model:
             entry["model"] = model
         out[cid] = entry
-        if legacy is not None and cid in (legacy.get("absorbs") or ()):
-            _settle(legacy, entry, before, _prices_or_none(prices, model), cid)
+        if legacy is not None and _absorbed(cid, absorbs):
+            _settle(legacy, entry, before, _prices_or_none(prices, model))
+            settled.append(cid)
+    if settled:
+        # A parent is dropped only after the whole read: its subagents,
+        # read in the same sync, settle against it too
+        legacy["absorbs"] = [i for i in absorbs if i not in settled]
     if fold:
         out[LEGACY_KEY] = _fold(recorded, out, reads, owned_ids, prices, default_model, seg)
     return out
@@ -246,6 +255,13 @@ def _unread_before(owned_ids: Iterable[str], reads: Mapping[str, Any]) -> List[s
     return [cid for cid in owned[:end] if cid not in reads]
 
 
+def _absorbed(cid: str, absorbs: Sequence[Any]) -> bool:
+    """Whether ``cid``'s spend may be inside the legacy entry: an absorbed
+    conversation, or a Claude subagent of one (``<session id>/<agent
+    file>``), whose tokens the old totals held with its parent's."""
+    return cid in absorbs or ("/" in cid and cid.split("/", 1)[0] in absorbs)
+
+
 def _beyond(recorded: Mapping[str, float], held: Mapping[str, float]) -> bool:
     """Whether a record's totals hold more than its entries (past rounding)."""
     return (any(recorded[k] > held[k] for k in TOKEN_KEYS)
@@ -276,7 +292,7 @@ def _shrink(out: Dict[str, Dict[str, Any]], reads: Mapping[str, Any], key: str,
 
 
 def _settle(legacy: Dict[str, Any], entry: Dict[str, Any], before: Mapping[str, float],
-            px: Optional[Sequence[float]], cid: str) -> None:
+            px: Optional[Sequence[float]]) -> None:
     """A conversation folded into the legacy entry is read again: what that
     read added to its entry moves out of the legacy entry instead of being
     counted twice.
@@ -312,7 +328,6 @@ def _settle(legacy: Dict[str, Any], entry: Dict[str, Any], before: Mapping[str, 
         legacy[k] = round(have - share, places)
     for k in TOKEN_KEYS:
         legacy[k] = held[k] - taken[k]
-    legacy["absorbs"] = [i for i in legacy.get("absorbs") or () if i != cid]
 
 
 def _prices_or_none(prices: PriceFn, model: Optional[str]) -> Optional[List[float]]:
