@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.exceptions import InvalidSessionNameError, LaunchError
 from overcode.launcher import AgentLauncher
+from overcode.protocols import TmuxTimeoutError
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
 from tests.tmux_doubles import MockTmux
@@ -3308,6 +3309,47 @@ class TestTmuxNotAnswering:
         assert launcher.restart(session, graceful_exit_wait=0) is False
         assert launcher.revive(session) is False
         assert "not responding" in capsys.readouterr().err
+
+    @staticmethod
+    def _slow_from_next_has_session(tmux, after=1):
+        """tmux turns slow once ``after`` more has_session calls have
+        answered: the checks before the window is made pass, and
+        create_window's own session check times out."""
+        real = tmux.has_session
+        calls = {"n": 0}
+
+        def has_session(session):
+            calls["n"] += 1
+            if calls["n"] > after:
+                raise TmuxTimeoutError("slow")
+            return real(session)
+
+        tmux.has_session = has_session
+
+    def test_launch_slow_at_window_creation_is_a_launch_error(self, tmp_path):
+        launcher, tmux, sm = self._launcher(tmp_path)
+        tmux.new_session("agents")
+        self._slow_from_next_has_session(tmux)
+        with pytest.raises(LaunchError):
+            launcher.launch(name="kid")
+        assert sm.get_session_by_name("kid") is None
+
+    def test_fork_slow_at_window_creation_is_a_launch_error(self, tmp_path):
+        launcher, tmux, sm = self._launcher(tmp_path)
+        source = launcher.launch(name="source")
+        sm.set_active_agent_session_id(source.id, "sess-1")
+        source = sm.get_session(source.id)
+        self._slow_from_next_has_session(tmux)
+        with pytest.raises(LaunchError) as err:
+            launcher.launch_fork(name="kid", source_session=source)
+        assert err.value.action == "fork"
+
+    def test_revive_slow_at_window_creation_fails(self, tmp_path):
+        launcher, tmux, sm = self._launcher(tmp_path)
+        session = launcher.launch(name="kid")
+        tmux.kill_window("agents", session.tmux_window)
+        self._slow_from_next_has_session(tmux)
+        assert launcher.revive(sm.get_session(session.id)) is False
 
     def test_kill_keeps_the_record(self, tmp_path):
         launcher, tmux, sm = self._launcher(tmp_path)

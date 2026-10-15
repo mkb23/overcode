@@ -17,7 +17,7 @@ import shlex
 from typing import Any, Callable, Dict, List, Optional
 
 from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
-from .protocols import TmuxInterface
+from .protocols import TmuxInterface, TmuxTimeoutError
 
 # Window name reserved for the dead-window placeholder (#457). Lives on the
 # agents tmux session so the TUI can fall back to it when select_window
@@ -61,6 +61,17 @@ class TmuxManager:
         """Check if the tmux session exists."""
         return self.client.has_session(self.session_name)
 
+    def _session_ready(self) -> bool:
+        """``ensure_session`` for a write: False, not a raise, on a timeout.
+
+        A window creation is a write (its failure value is None), so a slow
+        tmux there fails it like any other refusal.
+        """
+        try:
+            return self.ensure_session()
+        except TmuxTimeoutError:
+            return False
+
     def create_window(self, window_name: str, start_directory: Optional[str] = None) -> Optional[str]:
         """Create a shell window, ready to be typed into; its name, or None.
 
@@ -68,7 +79,7 @@ class TmuxManager:
         ``RealTmux._wait_for_prompt``), so a long launch command sent next
         is not cut off.
         """
-        if not self.ensure_session():
+        if not self._session_ready():
             return None
         return self.client.new_window(
             self.session_name, window_name, cwd=start_directory, wait_for_prompt=True,
@@ -96,7 +107,7 @@ class TmuxManager:
         Returns:
             Window name on success, None on failure
         """
-        if not self.ensure_session():
+        if not self._session_ready():
             return None
         return self.client.new_window(
             self.session_name,

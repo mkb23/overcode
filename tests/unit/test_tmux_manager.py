@@ -175,6 +175,13 @@ class TestUnresponsiveServer:
         with pytest.raises(TmuxTimeoutError):
             manager.get_pane_pid("w")
 
+    def test_window_creation_fails_instead_of_raising(self, manager, tmux):
+        """Creating a window is a write: a slow server is a None, which
+        launch, fork and revive already handle, not a traceback."""
+        tmux.unresponsive = True
+        assert manager.create_window("w") is None
+        assert manager.create_ssh_proxy_window("ssh:h:w", "u@h", "agents", "w") is None
+
 
 class TestAttach:
     @pytest.mark.parametrize("window, socket, argv", [
