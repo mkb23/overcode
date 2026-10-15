@@ -424,6 +424,64 @@ class TestLaterConversation:
         assert reader.get_stats(s).input_tokens == 500
 
 
+class TestMissingRollouts:
+    """An owned id with no rollout (pruned, archived, or a conversation that
+    never wrote one) is looked up on every sync: the walk from launch to
+    today globs only day dirs a file was added to since the last miss."""
+
+    GHOSTS = [f"01a0439d-0000-7000-8000-00000000{i:04d}" for i in range(3)]
+
+    def _fleet(self, tmp_path, monkeypatch, days=20):
+        import os
+        from overcode.backends import codex_stats
+
+        root = tmp_path / "sessions"
+        now = datetime.now().replace(microsecond=0)
+        past = now.timestamp() - 3600
+        for d in range(days):
+            day = now - timedelta(days=d)
+            for i in range(5):
+                write_rollout(rollout_path(root, f"foreign-{d}-{i}",
+                                           ts=day.strftime("%Y-%m-%dT%H-%M-%S"), dt=day),
+                              [session_meta_line(f"foreign-{d}-{i}")])
+        active = write_rollout(
+            rollout_path(root, SID, ts=now.strftime("%Y-%m-%dT%H-%M-%S"), dt=now),
+            [session_meta_line(), turn_context_event(), user_turn_item(), token_count_event()])
+        for path in sorted(root.rglob("*"), reverse=True):
+            os.utime(path, (past, past))
+        globbed = []
+        real = codex_stats._rollout_files_in
+        monkeypatch.setattr(codex_stats, "_rollout_files_in",
+                            lambda d: globbed.append(d) or real(d))
+        session = make_session(
+            agent_session_ids=self.GHOSTS + [SID], active_agent_session_id=SID,
+            start_time=(now - timedelta(days=days - 1)).isoformat())
+        return root, now, active, session, globbed
+
+    def test_a_ghost_id_does_not_walk_every_day_dir_on_every_sync(self, tmp_path, monkeypatch):
+        root, _now, _active, session, globbed = self._fleet(tmp_path, monkeypatch)
+        reader = CodexStatsReader(sessions_dir=root)
+        assert list(reader.get_stats(session).per_conversation) == [SID]
+        assert globbed  # the first sync walks
+        globbed.clear()
+        assert list(reader.get_stats(session).per_conversation) == [SID]
+        assert globbed == []
+
+    def test_a_rollout_filed_later_under_an_old_day_is_still_found(self, tmp_path, monkeypatch):
+        root, now, _active, session, globbed = self._fleet(tmp_path, monkeypatch)
+        reader = CodexStatsReader(sessions_dir=root)
+        reader.get_stats(session)
+        late = now - timedelta(days=7)
+        write_rollout(
+            rollout_path(root, self.GHOSTS[1], ts=late.strftime("%Y-%m-%dT%H-%M-%S"), dt=late),
+            [session_meta_line(self.GHOSTS[1]), turn_context_event(), user_turn_item(),
+             token_count_event(input_tokens=500)])
+        globbed.clear()
+        per = reader.get_stats(session).per_conversation
+        assert per[self.GHOSTS[1]]["in"] == 500
+        assert set(globbed) == {day_dir(root, late)}
+
+
 class TestStoredCost:
     def test_no_local_cost_figure(self, reader):
         # codex is subscription/API billed; nothing is stored locally, so

@@ -111,6 +111,24 @@ def _day_dirs(root: Path, around: Optional[datetime], span: int = _DAY_SPAN) -> 
     return dirs
 
 
+# A dir changed this recently may change again within its mtime's
+# resolution: its signature never matches, so it is looked at next time.
+_SETTLED_SECONDS = 2.0
+_UNSETTLED = ("unsettled",)
+_MAX_MISSES = 4096
+
+
+def _dir_signature(day_dir: Path) -> Optional[tuple]:
+    """What changes when a file is added to ``day_dir`` (None: no such dir)."""
+    try:
+        st = day_dir.stat()
+    except OSError:
+        return None
+    if datetime.now().timestamp() - st.st_mtime < _SETTLED_SECONDS:
+        return _UNSETTLED
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
 def _rollout_files_in(day_dir: Path) -> List[Path]:
     try:
         return sorted(p for p in day_dir.glob("rollout-*.jsonl") if p.is_file())
@@ -342,6 +360,12 @@ class CodexStatsReader:
         # so a hit is kept; it saves walking an old agent's day dirs on
         # every read.
         self._found: Dict[tuple, Path] = {}
+        # Per session id with no rollout on disk (pruned, archived, or a
+        # conversation that never wrote one): the signature of each day dir
+        # the walk looked in. A later lookup globs only the dirs a file was
+        # added to since, so a ghost id costs a stat per day dir, not a
+        # glob and a stat per rollout of every day since the launch.
+        self._missed: Dict[tuple, Dict[Path, Optional[tuple]]] = {}
 
     def _root(self) -> Path:
         return self._sessions_dir if self._sessions_dir is not None else sessions_root()
@@ -374,15 +398,25 @@ class CodexStatsReader:
             while day.date() > (around + timedelta(days=_DAY_SPAN)).date():
                 dirs.append(root / f"{day.year:04d}" / f"{day.month:02d}" / f"{day.day:02d}")
                 day -= timedelta(days=1)
-        seen: set = set()
+        # A day dir that has not changed since the last miss cannot hold
+        # the rollout now: it is stat'ed, not globbed
+        missed = self._missed.get(key) or {}
+        sigs: Dict[Path, Optional[tuple]] = {}
         for day_dir in dirs:
-            if day_dir in seen:
+            if day_dir in sigs:
                 continue
-            seen.add(day_dir)
+            # Signed before the glob, so a rollout filed during it shows next time
+            sig = sigs[day_dir] = _dir_signature(day_dir)
+            if sig is None or (sig is not _UNSETTLED and missed.get(day_dir) == sig):
+                continue
             for path in _rollout_files_in(day_dir):
                 if session_id in path.name:
                     self._found[key] = path
+                    self._missed.pop(key, None)
                     return path
+        if key not in self._missed and len(self._missed) >= _MAX_MISSES:
+            self._missed.clear()
+        self._missed[key] = sigs
         return None
 
     def _find_by_cwd(self, cwd: str, since: Optional[datetime]) -> List[Path]:
