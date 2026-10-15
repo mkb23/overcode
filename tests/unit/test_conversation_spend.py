@@ -331,6 +331,18 @@ def test_totals_an_older_build_advanced_are_kept_on_re_upgrade(sm):
     assert _spent(on) == (610_000, pytest.approx(_opus(610_000)))
 
 
+def test_a_conversation_with_no_spend_yet_is_not_absorbed(sm):
+    """S0 was pruned ($6), S1 is read ($4), S2 is a /clear whose first
+    prompt has not reached history yet: S2 holds none of the legacy $6."""
+    s = _agent(sm, ["S0", "S1", "S2"])
+    sm.update_stats(s.id, total_tokens=1_000_000, input_tokens=1_000_000,
+                    estimated_cost_usd=_opus(1_000_000))
+    folded = _sync(sm, s.id, {"S1": conv(400_000)})
+    assert folded.conversations[spend.LEGACY_KEY]["absorbs"] == ["S0"]
+    later = _sync(sm, s.id, {"S1": conv(400_000), "S2": conv(300_000)})
+    assert _spent(later) == (1_300_000, pytest.approx(_opus(1_300_000)))
+
+
 def test_a_steady_record_is_never_folded_again(sm):
     s = _agent(sm, ["a", "b"])
     for n in range(1, 4):

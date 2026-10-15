@@ -34,9 +34,10 @@ that read covers. The same fold adds to the legacy entry whenever a
 record's totals hold more than its entries (an older overcode ran in
 between: it keeps the ``conversations`` key as it was and advances only
 the totals). The owned conversations that read did not cover are
-``absorbs``: their spend is inside the legacy entry, so when one is read
-again later, what that read adds to its entry is taken out of the legacy
-entry, not counted twice. The fold keeps the record's cost: when the
+``absorbs`` (those newer than every conversation read have no spend yet
+and are left out): their spend is inside the legacy entry, so when one is
+read again later, what that read adds to its entry is taken out of the
+legacy entry, not counted twice. The fold keeps the record's cost: when the
 read, each conversation priced at its own model, comes to more than the
 record's one-model estimate, the read entries are scaled down to it. When
 the legacy cost was an estimate at one price row, that row (``px``) and
@@ -210,9 +211,8 @@ def _fold(recorded: Mapping[str, float], out: Dict[str, Dict[str, Any]],
         if over > 0:
             _shrink(out, reads, k, over, places)
         legacy[k] = round(_num(legacy.get(k, 0)) + max(0.0, -over), places)
-    absorbs = list(legacy.get("absorbs") or ()) + [
-        cid for cid in owned_ids if isinstance(cid, str) and cid and cid not in reads]
-    legacy["absorbs"] = list(dict.fromkeys(absorbs))
+    legacy["absorbs"] = list(dict.fromkeys(
+        list(legacy.get("absorbs") or ()) + _unread_before(owned_ids, reads)))
     try:
         px = [float(p) for p in prices(model)]
     except Exception:
@@ -224,6 +224,22 @@ def _fold(recorded: Mapping[str, float], out: Dict[str, Dict[str, Any]],
         legacy["px"] = px
         legacy["seg"] = int(seg or 0)
     return legacy
+
+
+def _unread_before(owned_ids: Iterable[str], reads: Mapping[str, Any]) -> List[str]:
+    """The owned conversations the read missed that may hold folded spend.
+
+    Owned ids run oldest first. One newer than every conversation the read
+    covers has no spend yet: a Claude ``/clear`` whose first prompt has not
+    reached history, a codex conversation with no rollout on disk. Folding
+    it would take its first real spend out of the legacy entry, so only the
+    missed ids older than the newest one read are absorbed (all of them
+    when the read covers none).
+    """
+    owned = [cid for cid in dict.fromkeys(owned_ids) if isinstance(cid, str) and cid]
+    read_at = [i for i, cid in enumerate(owned) if cid in reads]
+    end = read_at[-1] if read_at else len(owned)
+    return [cid for cid in owned[:end] if cid not in reads]
 
 
 def _beyond(recorded: Mapping[str, float], held: Mapping[str, float]) -> bool:
