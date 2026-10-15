@@ -320,16 +320,50 @@ class CodexStatsReader:
 
     def __init__(self, sessions_dir: Optional[Path] = None) -> None:
         self._sessions_dir = sessions_dir
+        # Rollout path per session id. A rollout never moves once written,
+        # so a hit is kept; it saves walking an old agent's day dirs on
+        # every read.
+        self._found: Dict[tuple, Path] = {}
 
     def _root(self) -> Path:
         return self._sessions_dir if self._sessions_dir is not None else sessions_root()
 
     def _find_by_session_id(self, session_id: str, around: Optional[datetime]) -> Optional[Path]:
+        """The rollout named for ``session_id``, filed on or after ``around``.
+
+        A rollout is filed under the day its conversation started, which
+        for a later ``/new`` or ``restart --fresh`` can be any day between
+        the agent's launch (``around``) and now: near the launch first,
+        then from today back, so a long-lived agent's newest conversation
+        is found too.
+        """
         if not session_id:
             return None
-        for day_dir in _day_dirs(self._root(), around):
+        root = self._root()
+        key = (root, session_id)
+        cached = self._found.get(key)
+        if cached is not None:
+            if cached.is_file():
+                return cached
+            del self._found[key]
+        now = datetime.now()
+        dirs = _day_dirs(root, around)
+        dirs += _day_dirs(root, now)
+        if around is not None:
+            if around.tzinfo is not None:
+                around = around.astimezone().replace(tzinfo=None)
+            day = now - timedelta(days=_DAY_SPAN + 1)
+            while day.date() > (around + timedelta(days=_DAY_SPAN)).date():
+                dirs.append(root / f"{day.year:04d}" / f"{day.month:02d}" / f"{day.day:02d}")
+                day -= timedelta(days=1)
+        seen: set = set()
+        for day_dir in dirs:
+            if day_dir in seen:
+                continue
+            seen.add(day_dir)
             for path in _rollout_files_in(day_dir):
                 if session_id in path.name:
+                    self._found[key] = path
                     return path
         return None
 

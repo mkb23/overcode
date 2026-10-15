@@ -382,6 +382,39 @@ class TestGetStats:
         assert stats_fallback.input_tokens == 2000
 
 
+class TestLaterConversation:
+    """A /new or restart --fresh days after launch files its rollout under
+    that later day; the reader must find it, not fall back to the first."""
+
+    def _write_pair(self, root, launch, later):
+        write_rollout(rollout_path(root, SID, dt=launch), [
+            session_meta_line(), turn_context_event(), user_turn_item(),
+            token_count_event(input_tokens=90000, total=91000),
+        ])
+        write_rollout(rollout_path(root, OTHER_SID, ts=later.strftime("%Y-%m-%dT%H-%M-%S"), dt=later), [
+            session_meta_line(OTHER_SID), turn_context_event(), user_turn_item(),
+            token_count_event(input_tokens=500, total=600),
+        ])
+
+    def test_new_conversation_two_days_after_launch(self, tmp_path):
+        root = tmp_path / "sessions"
+        self._write_pair(root, LAUNCH, LAUNCH + timedelta(days=2))
+        s = make_session(agent_session_ids=[SID, OTHER_SID], active_agent_session_id=OTHER_SID)
+        stats = CodexStatsReader(sessions_dir=root).get_stats(s)
+        assert stats.input_tokens == 500
+
+    def test_new_conversation_today_on_an_old_agent(self, tmp_path):
+        root = tmp_path / "sessions"
+        launch = datetime.now().replace(microsecond=0) - timedelta(days=10)
+        self._write_pair(root, launch, datetime.now().replace(microsecond=0))
+        s = make_session(agent_session_ids=[SID, OTHER_SID], active_agent_session_id=OTHER_SID,
+                         start_time=launch.isoformat())
+        reader = CodexStatsReader(sessions_dir=root)
+        assert reader.get_stats(s).input_tokens == 500
+        # Found again from the remembered path.
+        assert reader.get_stats(s).input_tokens == 500
+
+
 class TestStoredCost:
     def test_no_local_cost_figure(self, reader):
         # codex is subscription/API billed; nothing is stored locally, so
