@@ -66,4 +66,5 @@ docs/architecture-*.pdf
 # Environment files with secrets
 .env
 .env.local
+.env.*
 artifacts/
