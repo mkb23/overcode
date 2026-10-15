@@ -1046,17 +1046,21 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
     def _attach_to(self, session: Optional[Session], name: Optional[str], bare: bool):
         """Attach to this launcher's tmux session, on ``session``'s window if given."""
-        if not self.tmux.session_exists():
-            print(f"Error: tmux session '{self.tmux.session_name}' does not exist")
-            print("No active sessions to attach to. Launch a session first with 'overcode launch'")
-            return
-
-        window = None
-        if session is not None:
-            if not self.tmux.window_exists(session.tmux_window):
-                print(f"Error: agent '{name}' tmux window no longer exists")
+        try:
+            if not self.tmux.session_exists():
+                print(f"Error: tmux session '{self.tmux.session_name}' does not exist")
+                print("No active sessions to attach to. Launch a session first with 'overcode launch'")
                 return
-            window = session.tmux_window
+
+            window = None
+            if session is not None:
+                if not self.tmux.window_exists(session.tmux_window):
+                    print(f"Error: agent '{name}' tmux window no longer exists")
+                    return
+                window = session.tmux_window
+        except TmuxTimeoutError:
+            print(f"Cannot attach: {TMUX_NOT_ANSWERING}", file=sys.stderr)
+            return
 
         self.tmux.attach_session(window=window, bare=bare)
 

@@ -3390,6 +3390,16 @@ class TestTmuxNotAnswering:
         self._slow_from_next_has_session(tmux)
         assert launcher.revive(sm.get_session(session.id)) is False
 
+    @pytest.mark.parametrize("name", [None, "kid"])
+    def test_attach_says_so_instead_of_a_traceback(self, tmp_path, capsys, name):
+        launcher, tmux, _ = self._launcher(tmp_path)
+        launcher.launch(name="kid")
+        tmux.unresponsive = True
+        with patch.object(tmux, "attach") as attach:
+            launcher.attach(name=name)
+        attach.assert_not_called()
+        assert "not responding" in capsys.readouterr().err
+
     def test_kill_keeps_the_record(self, tmp_path):
         launcher, tmux, sm = self._launcher(tmp_path)
         session = launcher.launch(name="kid")
