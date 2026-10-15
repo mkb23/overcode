@@ -656,11 +656,41 @@ def test_concurrent_grok_window_and_stats_callers(tmp_path):
 
 def test_fold_table_is_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(jsonl_tail, "_MAX_ENTRIES", 8)
+    now = [0.0]
+    monkeypatch.setattr(jsonl_tail, "clock", lambda: now[0])
     for i in range(40):
+        now[0] += jsonl_tail._ACTIVE_SECONDS  # each read leaves the working set
         log = Log(tmp_path / f"r{i}.jsonl")
         log.append(lines_to_bytes([json.dumps(user_turn_item())] * (i + 1)))
         assert codex_stats._scan_rollout(log.path)["interaction_count"] == i + 1
         assert len(jsonl_tail._entries) <= 8
+
+
+def test_a_working_set_larger_than_the_table_is_not_re_read(tmp_path, monkeypatch):
+    """The daemon folds every owned conversation of every agent each sync,
+    round robin: with more files than ``_MAX_ENTRIES``, an LRU evicted each
+    one before its next read and every pass re-parsed every file."""
+    monkeypatch.setattr(jsonl_tail, "_MAX_ENTRIES", 8)
+    now = [0.0]
+    monkeypatch.setattr(jsonl_tail, "clock", lambda: now[0])
+    logs = []
+    for i in range(30):
+        logs.append(Log(tmp_path / f"r{i}.jsonl"))
+        logs[-1].append(lines_to_bytes([json.dumps(user_turn_item())] * 3))
+    io = count_io(monkeypatch)
+    for _ in range(3):
+        for log in logs:
+            now[0] += 1.0
+            assert codex_stats._scan_rollout(log.path)["interaction_count"] == 3
+    assert io.opens == len(logs)  # the first pass only
+
+
+def test_the_working_set_still_has_a_memory_ceiling(tmp_path, monkeypatch):
+    monkeypatch.setattr(jsonl_tail, "_MAX_ENTRIES", 4)
+    monkeypatch.setattr(jsonl_tail, "_MAX_ACTIVE_ENTRIES", 10)
+    for i in range(30):
+        codex_stats._scan_rollout(Log(tmp_path / f"r{i}.jsonl").path)
+        assert len(jsonl_tail._entries) <= 10
 
 
 def test_idle_folds_are_dropped_first(tmp_path, monkeypatch):

@@ -28,7 +28,13 @@ valid UTF-8 is skipped instead of aborting the read.
 
 Each entry has its own lock (the TUI calls readers from a thread pool), and
 the table is bounded: past ``_MAX_ENTRIES`` it drops entries idle longer
-than ``_IDLE_SECONDS``, then the least recently used.
+than ``_IDLE_SECONDS``, then the least recently used of those idle longer
+than ``_ACTIVE_SECONDS``. A fold read within that window is in the working
+set (the daemon reads every owned conversation of every agent each stats
+sync, at most a minute apart), so the table grows to the fleet's working
+set instead of evicting it: a fixed LRU smaller than a set read round robin
+misses on every access and re-parses every file from byte 0. Only past
+``_MAX_ACTIVE_ENTRIES`` are recently used entries dropped.
 """
 
 import json
@@ -44,6 +50,11 @@ _CHUNK_BYTES = 1 << 20
 _CHECK_BYTES = 64
 _MAX_ENTRIES = 256
 _IDLE_SECONDS = 3600.0
+# Used within this long: in the working set, kept past _MAX_ENTRIES (five
+# of the daemon's slowest stats syncs, STATS_SYNC_UNATTENDED_SECONDS)
+_ACTIVE_SECONDS = 300.0
+# A memory guard only: a working set past this is evicted LRU after all
+_MAX_ACTIVE_ENTRIES = 8192
 
 # Test seam: eviction without sleeping.
 clock = time.monotonic
@@ -128,8 +139,13 @@ def _evict(now: float) -> None:
     for stale in [k for k, e in _entries.items() if now - e.used >= _IDLE_SECONDS]:
         del _entries[stale]
     if len(_entries) > _MAX_ENTRIES:
+        resting = sorted((k for k, e in _entries.items() if now - e.used >= _ACTIVE_SECONDS),
+                         key=lambda k: _entries[k].used)
+        for old in resting[: len(_entries) - _MAX_ENTRIES // 2]:
+            del _entries[old]
+    if len(_entries) > _MAX_ACTIVE_ENTRIES:
         by_use = sorted(_entries, key=lambda k: _entries[k].used)
-        for old in by_use[: len(by_use) - _MAX_ENTRIES // 2]:
+        for old in by_use[: len(by_use) - _MAX_ACTIVE_ENTRIES // 2]:
             del _entries[old]
 
 
