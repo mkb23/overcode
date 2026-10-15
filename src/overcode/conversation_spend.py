@@ -30,15 +30,19 @@ when larger: the cost is never lowered.
 A record from before this model (an upgrade, or a pre-release build that
 carried spend) has totals and no entries. Its first sync folds the totals
 into a ``_legacy`` entry: what the totals hold beyond the conversations
-that read covers. The owned conversations that read did not cover are
-``absorbs``: their spend is inside the legacy entry, so if one is read
-again later its first read is taken out of the legacy entry, not counted
-twice. The fold keeps the record's cost: when the read, each conversation
-priced at its own model, comes to more than the record's one-model
-estimate, the read entries are scaled down to it. When the legacy cost was an estimate at one price row, that row
-(``px``) and the billing segment it was folded in (``seg``) are kept, so
-the ledger can price a pre-upgrade rebill's base the way the folded cost
-was priced (``ledger.make_row``).
+that read covers. The same fold adds to the legacy entry whenever a
+record's totals hold more than its entries (an older overcode ran in
+between: it keeps the ``conversations`` key as it was and advances only
+the totals). The owned conversations that read did not cover are
+``absorbs``: their spend is inside the legacy entry, so when one is read
+again later, what that read adds to its entry is taken out of the legacy
+entry, not counted twice. The fold keeps the record's cost: when the
+read, each conversation priced at its own model, comes to more than the
+record's one-model estimate, the read entries are scaled down to it. When
+the legacy cost was an estimate at one price row, that row (``px``) and
+the billing segment it was folded in (``seg``) are kept, so the ledger can
+price a pre-upgrade rebill's base the way the folded cost was priced
+(``ledger.make_row``).
 
 Readers that cannot split their totals by conversation report them under
 ``TOTAL_KEY``: a monotonic max of the totals.
@@ -128,15 +132,17 @@ def merge(
 
     ``reads`` maps conversation ids to ``usage`` dicts. ``recorded`` is the
     record's totals (``recorded_totals``) and ``owned_ids`` the
-    conversations it owns: used only to fold a record that has no entries
-    yet (see the module docstring); ``seg`` is its billing segment then.
+    conversations it owns: used only to fold a record whose totals hold
+    more than its entries (see the module docstring); ``seg`` is its
+    billing segment then.
     """
     out: Dict[str, Dict[str, Any]] = {
         key: dict(value) for key, value in
         (entries.items() if isinstance(entries, Mapping) else ())
         if isinstance(key, str) and isinstance(value, Mapping)
     }
-    fold = not out and recorded is not None and any(v > 0 for v in recorded.values())
+    fold = recorded is not None and (_beyond(recorded, _sums(out)) if out
+                                     else any(v > 0 for v in recorded.values()))
     legacy = out.get(LEGACY_KEY)
     for cid, read in reads.items():
         if not isinstance(cid, str) or not cid or cid == LEGACY_KEY:
@@ -146,6 +152,7 @@ def merge(
         model = read.get("model") or default_model
         previous = out.get(cid)
         entry = dict(previous) if previous is not None else _empty()
+        before = {k: _num(entry.get(k, 0)) for k in SPEND_KEYS}
         delta = {k: max(0, _int(read.get(k, 0)) - _int(entry.get(k, 0))) for k in TOKEN_KEYS}
         grew = any(delta.values())
         for k in TOKEN_KEYS:
@@ -171,8 +178,8 @@ def merge(
         if isinstance(model, str) and model:
             entry["model"] = model
         out[cid] = entry
-        if previous is None and legacy is not None and cid in (legacy.get("absorbs") or ()):
-            _settle(legacy, entry, cid)
+        if legacy is not None and cid in (legacy.get("absorbs") or ()):
+            _settle(legacy, {k: _num(entry.get(k, 0)) - before[k] for k in SPEND_KEYS}, cid)
     if fold:
         out[LEGACY_KEY] = _fold(recorded, out, reads, owned_ids, prices, default_model, seg)
     return out
@@ -181,7 +188,13 @@ def merge(
 def _fold(recorded: Mapping[str, float], out: Dict[str, Dict[str, Any]],
           reads: Mapping[str, Any], owned_ids: Iterable[str], prices: PriceFn,
           model: Optional[str], seg: int) -> Dict[str, Any]:
-    """The legacy entry of a record's totals beyond what this read covers.
+    """The legacy entry of a record's totals beyond what the entries hold.
+
+    On an upgrade there are no entries yet. A record that already has
+    entries gets here when its totals moved on without them (an older
+    overcode, which keeps the ``conversations`` key as it was while it
+    advances the totals, then an upgrade again): the difference is added
+    to the legacy entry, never dropped.
 
     The read prices each conversation at its own model, the record priced
     every token at one: when the read's cost (or energy) is above the
@@ -189,16 +202,17 @@ def _fold(recorded: Mapping[str, float], out: Dict[str, Dict[str, Any]],
     reprices the past and the agent's total stays what the ledger holds.
     """
     covered = _sums(out)
-    legacy: Dict[str, Any] = {}
+    legacy: Dict[str, Any] = dict(out.get(LEGACY_KEY) or {})
     for k in TOKEN_KEYS:
-        legacy[k] = max(0, int(recorded[k]) - int(covered[k]))
+        legacy[k] = _int(legacy.get(k, 0)) + max(0, int(recorded[k]) - int(covered[k]))
     for k, places in (("cost", 8), ("energy", 3)):
         over = covered[k] - recorded[k]
         if over > 0:
             _shrink(out, reads, k, over, places)
-        legacy[k] = round(max(0.0, -over), places)
-    legacy["absorbs"] = [cid for cid in dict.fromkeys(owned_ids)
-                         if isinstance(cid, str) and cid and cid not in reads]
+        legacy[k] = round(_num(legacy.get(k, 0)) + max(0.0, -over), places)
+    absorbs = list(legacy.get("absorbs") or ()) + [
+        cid for cid in owned_ids if isinstance(cid, str) and cid and cid not in reads]
+    legacy["absorbs"] = list(dict.fromkeys(absorbs))
     try:
         px = [float(p) for p in prices(model)]
     except Exception:
@@ -210,6 +224,13 @@ def _fold(recorded: Mapping[str, float], out: Dict[str, Dict[str, Any]],
         legacy["px"] = px
         legacy["seg"] = int(seg or 0)
     return legacy
+
+
+def _beyond(recorded: Mapping[str, float], held: Mapping[str, float]) -> bool:
+    """Whether a record's totals hold more than its entries (past rounding)."""
+    return (any(recorded[k] > held[k] for k in TOKEN_KEYS)
+            or recorded["cost"] > held["cost"] + 1e-4
+            or recorded["energy"] > held["energy"] + 0.1)
 
 
 def _sums(entries: Mapping[str, Any]) -> Dict[str, float]:
@@ -234,12 +255,13 @@ def _shrink(out: Dict[str, Dict[str, Any]], reads: Mapping[str, Any], key: str,
         entry[key] = round(_num(entry.get(key, 0)) * keep, places)
 
 
-def _settle(legacy: Dict[str, Any], entry: Mapping[str, Any], cid: str) -> None:
-    """A conversation folded into the legacy entry is read again: its first
-    read moves out of the legacy entry instead of being counted twice."""
+def _settle(legacy: Dict[str, Any], added: Mapping[str, float], cid: str) -> None:
+    """A conversation folded into the legacy entry is read again: what that
+    read added to its entry moves out of the legacy entry instead of being
+    counted twice."""
     for k in SPEND_KEYS:
         have = _num(legacy.get(k, 0))
-        take = min(have, _num(entry.get(k, 0)))
+        take = max(0.0, min(have, _num(added.get(k, 0))))
         legacy[k] = int(have - take) if k in TOKEN_KEYS else round(have - take, 8)
     legacy["absorbs"] = [i for i in legacy.get("absorbs") or () if i != cid]
 

@@ -312,6 +312,32 @@ def test_the_upgrade_fold_never_reprices_the_past(sm):
     assert _spent(grew) == (3_000_000, pytest.approx(2.0 + _haiku(1_000_000)))
 
 
+def test_totals_an_older_build_advanced_are_kept_on_re_upgrade(sm):
+    """A downgrade to 0.5.x keeps the stale ``conversations`` key while it
+    advances the totals (codex /new, a pruned transcript); the next 0.6
+    sync must keep those totals, not recompute them from the stale map."""
+    s = _agent(sm, ["A"])
+    _sync(sm, s.id, {"A": conv(100_000)})
+    # 0.5.x: A grew to 200k, B spent 300k and C 50k; only the totals moved
+    sm.update_session(s.id, agent_session_ids=["A", "B", "C"])
+    sm.update_stats(s.id, total_tokens=550_000, input_tokens=550_000,
+                    estimated_cost_usd=_opus(550_000))
+    back = _sync(sm, s.id, {"C": conv(50_000)})
+    assert _spent(back) == (550_000, pytest.approx(_opus(550_000)))
+    # A is read again: its growth under 0.5.x is already in the totals
+    again = _sync(sm, s.id, {"A": conv(200_000), "C": conv(50_000)})
+    assert _spent(again) == (550_000, pytest.approx(_opus(550_000)))
+    on = _sync(sm, s.id, {"A": conv(260_000), "C": conv(50_000)})
+    assert _spent(on) == (610_000, pytest.approx(_opus(610_000)))
+
+
+def test_a_steady_record_is_never_folded_again(sm):
+    s = _agent(sm, ["a", "b"])
+    for n in range(1, 4):
+        after = _sync(sm, s.id, {"a": conv(n * 333, n * 7), "b": conv(n * 111)})
+    assert spend.LEGACY_KEY not in after.conversations
+
+
 def test_malformed_conversations_in_a_state_file_load_as_none(sm):
     assert SessionStats.from_dict({"conversations": ["x"], "total_tokens": 5}).conversations == {}
     s = _agent(sm, ["a"])
