@@ -334,12 +334,6 @@ def test_second_start_changes_nothing(upgraded):
     check_upgraded(root, again, before, FIXTURE / "tree")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "0.6 bug: delete_session re-reads the agent's transcripts before archiving "
-    "(_refresh_final_stats) and stages whatever the reader returns; with the "
-    "transcript gone (Claude Code prunes them after cleanupPeriodDays, or a "
-    "pre-upgrade record whose files are elsewhere) the reader returns zeros and "
-    "the archive record and the final ledger row lose the agent's recorded spend"))
 def test_archiving_a_pre_upgrade_agent_keeps_its_spend(upgraded):
     root, out, before = upgraded
     sm = out["sm"]

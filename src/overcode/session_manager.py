@@ -323,6 +323,18 @@ _STATS_FIELD_NAMES = frozenset(f.name for f in fields(SessionStats))
 _StateTxn = Transaction
 
 
+_CUMULATIVE_STATS = ("estimated_cost_usd", "total_tokens", "input_tokens", "output_tokens")
+
+
+def _lowers_spend(stats: "SessionStats", staged: Dict[str, object]) -> bool:
+    """Whether ``staged`` stats would lower a cumulative counter on record."""
+    for key in _CUMULATIVE_STATS:
+        new, old = staged.get(key), getattr(stats, key, None)
+        if isinstance(new, (int, float)) and isinstance(old, (int, float)) and new < old:
+            return True
+    return False
+
+
 class PendingUpdates:
     """A tick's worth of session mutations, committed in one read-modify-write.
 
@@ -939,10 +951,21 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             session = snapshot.get(session_id)
             if session is None:
                 continue
+            scratch = PendingUpdates()
             try:
-                sync.sync_agent_stats(session, pending)
+                sync.sync_agent_stats(session, scratch)
             except Exception as e:
                 logger.warning("final stats of %s not refreshed: %s", session_id, e)
+                continue
+            staged = scratch.stats.get(session_id, {})
+            if _lowers_spend(session.stats, staged):
+                # The transcript is gone (pruned, or a pre-upgrade record):
+                # the reader's zeros must not replace the spend on record
+                staged = {}
+            for key, changes in scratch.fields.items():
+                pending.update_session(key, **changes)
+            if staged:
+                pending.update_stats(session_id, **staged)
 
     def rebill(self, session_id: str, billing_code: str) -> Optional[str]:
         """Move an agent to another billing code, forward only; returns the old code.
