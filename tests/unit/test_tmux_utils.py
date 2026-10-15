@@ -539,6 +539,10 @@ class _RecordingPane:
     def send_keys(self, keys, **kwargs):
         self.timeline.append(("send", keys, kwargs))
 
+    def cmd(self, *args):
+        self.timeline.append(("cmd", args))
+        return MagicMock(stderr=[])
+
 
 class TestSendKeysToPane:
     """The keystroke sequence an agent receives: text, pauses, Enter."""
@@ -546,29 +550,29 @@ class TestSendKeysToPane:
     @pytest.mark.parametrize("keys, enter, expected", [
         # Text and Enter are separate commands, with a pause for the CLI
         ("echo hello", True, [
-            ("send", "echo hello", {"enter": False}), ("sleep", 0.1),
+            ("cmd", ("send-keys", "--", "echo hello")), ("sleep", 0.1),
             ("send", "", {"enter": True})]),
         ("partial text", False, [
-            ("send", "partial text", {"enter": False}), ("sleep", 0.1)]),
+            ("cmd", ("send-keys", "--", "partial text")), ("sleep", 0.1)]),
         ("", True, [("send", "", {"enter": True})]),
         ("", False, []),
         # A ! command: the ! alone first, so Claude switches to bash mode (#139)
         ("!ls -la", True, [
             ("send", "!", {"enter": False}), ("sleep", 0.15),
-            ("send", "ls -la", {"enter": False}), ("sleep", 0.1),
+            ("cmd", ("send-keys", "--", "ls -la")), ("sleep", 0.1),
             ("send", "", {"enter": True})]),
         ("!pwd", False, [
             ("send", "!", {"enter": False}), ("sleep", 0.15),
-            ("send", "pwd", {"enter": False}), ("sleep", 0.1)]),
+            ("cmd", ("send-keys", "--", "pwd")), ("sleep", 0.1)]),
         ("!", True, [
-            ("send", "!", {"enter": False}), ("sleep", 0.1),
+            ("cmd", ("send-keys", "--", "!")), ("sleep", 0.1),
             ("send", "", {"enter": True})]),
         # A slash command: one literal string, then a longer pause (#307)
         ("/clear", True, [
-            ("send", "/clear", {"enter": False, "literal": True}), ("sleep", 0.5),
+            ("cmd", ("send-keys", "-l", "--", "/clear")), ("sleep", 0.5),
             ("send", "", {"enter": True})]),
         ("/", True, [
-            ("send", "/", {"enter": False}), ("sleep", 0.1),
+            ("cmd", ("send-keys", "--", "/")), ("sleep", 0.1),
             ("send", "", {"enter": True})]),
     ])
     def test_sequence(self, keys, enter, expected):
@@ -613,6 +617,32 @@ class TestSendKeysToPane:
         assert all(len(t.encode()) <= TYPE_CHUNK_BYTES for t in typed)
         assert "".join(typed) == text
         assert timeline[-1] == ("send", "", {"enter": True})
+
+    @pytest.mark.parametrize("text", [
+        "- also update the docs", "-1 is wrong, use 0", "--help me fix this"])
+    def test_short_text_starting_with_a_dash_is_not_read_as_flags(self, text):
+        """Without "--" tmux took the text for its own flags, refused it,
+        and only the Enter arrived while the send reported success."""
+        from overcode.tmux_utils import send_keys_to_pane
+
+        timeline = []
+        with patch("overcode.tmux_utils.time.sleep"):
+            send_keys_to_pane(_RecordingPane(timeline), text, enter=True)
+        assert timeline == [
+            ("cmd", ("send-keys", "--", text)), ("send", "", {"enter": True})]
+
+    def test_a_refused_short_send_fails_before_enter(self):
+        from libtmux.exc import LibTmuxException
+        from overcode.tmux_utils import send_keys_to_pane
+
+        class Pane(_RecordingPane):
+            def cmd(self, *args):
+                return MagicMock(stderr=["unknown flag"])
+
+        timeline = []
+        with patch("overcode.tmux_utils.time.sleep"), pytest.raises(LibTmuxException):
+            send_keys_to_pane(Pane(timeline), "hello", enter=True)
+        assert timeline == []
 
     def test_a_refused_piece_fails_the_send_before_enter(self):
         from libtmux.exc import LibTmuxException

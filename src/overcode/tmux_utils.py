@@ -265,19 +265,20 @@ def _send_text_to_pane(pane, text: str, literal: bool = False) -> None:
     tmux refuses one command over ~16 KB ("command too long") and libtmux
     does not raise, so a long single-line send used to vanish while the
     Enter after it still arrived. Text over TYPE_CHUNK_BYTES goes as several
-    ``send-keys -l --`` (literal: a piece must not be read as a key name or,
-    starting with "-", as a flag); a refused piece raises LibTmuxException
-    before any Enter, so the send reports failure.
+    ``send-keys -l`` (literal: a piece must not be read as a key name).
+    Every piece follows ``--``: text starting with "-" was read as flags,
+    refused, and lost. A refused piece raises LibTmuxException before any
+    Enter, so the send reports failure.
     """
-    if len(text.encode('utf-8', 'surrogatepass')) <= TYPE_CHUNK_BYTES:
-        if literal:
-            pane.send_keys(text, enter=False, literal=True)
-        else:
-            pane.send_keys(text, enter=False)
-        return
     from libtmux.exc import LibTmuxException
-    for piece in _split_utf8(text, TYPE_CHUNK_BYTES):
-        result = pane.cmd('send-keys', '-l', '--', piece)
+    if len(text.encode('utf-8', 'surrogatepass')) <= TYPE_CHUNK_BYTES:
+        pieces = [text]
+    else:
+        pieces = _split_utf8(text, TYPE_CHUNK_BYTES)
+        literal = True
+    flags = ('-l', '--') if literal else ('--',)
+    for piece in pieces:
+        result = pane.cmd('send-keys', *flags, piece)
         if getattr(result, 'stderr', None):
             raise LibTmuxException(f"send-keys refused: {result.stderr}")
 
