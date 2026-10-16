@@ -728,6 +728,9 @@ class TUIPreferences:
     # Parents whose children are folded in tree sort mode (X key, #244),
     # persisted so a fold survives a TUI restart (#464)
     collapsed_parents: Set[str] = field(default_factory=set)
+    # The agent last highlighted by hand (its id): the next start highlights
+    # it again, and the split's bottom pane opens on its window
+    last_focused_agent: str = ""
     # Actions last run from the command palette, newest first (#482)
     recent_commands: List[str] = field(default_factory=list)
     # Log every status change to diagnostics CSV (off by default)

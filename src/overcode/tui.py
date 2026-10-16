@@ -1427,6 +1427,10 @@ class SupervisorTUI(
         except (MountError, NoMatches):
             return
 
+        # First load: highlight the agent highlighted when the TUI last ran
+        if not self._initial_sessions_loaded:
+            self._reanchor_selection(self._prefs.last_focused_agent or None)
+
         # First-load sync: align the external tmux pane with the TUI's focused
         # agent exactly once. The periodic-refresh guard in the focus watcher
         # (see _user_navigated) would otherwise leave the bottom pane stranded
@@ -1730,6 +1734,13 @@ class SupervisorTUI(
             self._user_navigated = False
             self.split.show_agent(widget)
             self.split.fit_window(widget)
+            self._remember_focus(widget.session.id)
+
+    def _remember_focus(self, session_id: str) -> None:
+        """Keep the agent the user moved to for the next start."""
+        if session_id and session_id != self._prefs.last_focused_agent:
+            self._prefs.last_focused_agent = session_id
+            self._save_prefs()
 
     def _gc_terminated_sessions(self) -> None:
         """Remove terminated sessions older than _TERMINATED_GC_SECONDS."""
@@ -2346,11 +2357,15 @@ class SupervisorTUI(
             pass
 
     def _select_first_agent(self) -> None:
-        """Select the first agent so something is highlighted from the start."""
+        """Highlight something from the start: the agent remembered from the
+        last run (already re-anchored onto), else the first."""
         try:
             widgets = list(self.query(SessionSummary))
             if widgets:
-                self.focused_session_index = 0  # Watcher handles focus + preview + tmux sync
+                remembered = self._prefs.last_focused_agent
+                keep = remembered and self._selected_session_id() == remembered
+                # Watcher handles focus + preview + tmux sync
+                self.focused_session_index = self.focused_session_index if keep else 0
         except NoMatches:
             pass
 
