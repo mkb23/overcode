@@ -49,6 +49,13 @@ is looked up by bisecting to the copy's time (``TranscriptIndex.holds``).
 writes (``ephemeral_1h_input_tokens``, billed at twice the input price)
 are kept beside the total as ``cache_creation_1h_tokens``.
 
+A request whose prompt (input + cache read + cache write tokens) is longer
+than its model's long-context threshold (``price_table``: Haiku 5.5 over
+100K, Sonnet 4 over 200K) is billed whole at the long-context rates, so
+its usage is also added to the ``long_*`` counters: a breakdown of the
+totals, never added to them. The window sums (the burn rate) do not keep
+it.
+
 A transcript's last line may be incomplete while Claude Code is still
 writing it, and a file may legitimately end without a newline. Complete
 lines are committed once; the uncommitted tail is parsed tentatively and
@@ -81,6 +88,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+from .price_table import long_context_threshold
 from .stat_gate import FileSignature, is_settled
 
 # Bytes read per ``f.read`` while consuming appended data. Lines are
@@ -116,6 +124,8 @@ _TOKEN_KEYS = (
     "cache_creation_1h_tokens",
 )
 _N = len(_TOKEN_KEYS)
+# The part of each counter spent by long-context requests (module docstring)
+LONG_KEYS = tuple("long_" + key for key in _TOKEN_KEYS)
 
 # Distinct message ids remembered per file to fold the later lines of a
 # message into its first (the content blocks of one message are written
@@ -155,6 +165,7 @@ def empty_stats() -> Tuple[dict, List[float]]:
         "cache_creation_tokens": 0,
         "cache_read_tokens": 0,
         "cache_creation_1h_tokens": 0,
+        **dict.fromkeys(LONG_KEYS, 0),
         "current_context_tokens": 0,
         "model": None,
         "provider": None,
@@ -222,9 +233,10 @@ def parse_message_time(ts_str) -> Optional[datetime]:
 
 # A parsed line, as far as the readers care:
 #   ("a", key_or_None, input, output, cache_creation, cache_read, cache_creation_1h,
-#    model, provider, effort, message_id_or_None)
+#    model, provider, effort, message_id_or_None, long)
 #       an assistant message line with a usage block; key is the timestamp
-#       key or None when the timestamp is missing or unparseable
+#       key or None when the timestamp is missing or unparseable; long
+#       whether its prompt is past the model's long-context threshold
 #   ("u", key, datetime)
 #       a user prompt (not a tool result) with a parseable timestamp
 #   ("p", pr_number)
@@ -247,6 +259,14 @@ def cache_write_1h(usage: dict, cache_creation: int) -> int:
     if not isinstance(one_hour, int) or isinstance(one_hour, bool) or one_hour <= 0:
         return 0
     return min(one_hour, max(0, cache_creation))
+
+
+def is_long_request(model, input_tokens: int, cache_creation: int, cache_read: int) -> bool:
+    """Whether a request is billed at its model's long-context rates: its
+    prompt (input + cache write + cache read tokens) is past the model's
+    threshold (``price_table.long_context_threshold``)."""
+    threshold = long_context_threshold(model) if isinstance(model, str) else None
+    return threshold is not None and input_tokens + cache_creation + cache_read > threshold
 
 
 def message_hash(msg_id: str) -> int:
@@ -306,6 +326,7 @@ def parse_line(
             msg_id = None
         provider = provider_of(msg_id) if msg_id is not None else None
         effort = data.get("effort")
+        model = message.get("model")
         return (
             "a",
             key,
@@ -314,10 +335,11 @@ def parse_line(
             cache_creation,
             cache_read,
             cache_write_1h(usage, cache_creation),
-            message.get("model"),
+            model,
             provider,
             effort if isinstance(effort, str) else None,
             msg_id,
+            is_long_request(model, input_tokens, cache_creation, cache_read),
         )
     if msg_type == "user":
         message = data.get("message", {})
@@ -376,6 +398,9 @@ def fold_assistant(
         return
     for name, value in zip(_TOKEN_KEYS, delta):
         totals[name] += value
+    if event[11]:
+        for name, value in zip(LONG_KEYS, delta):
+            totals[name] += value
     input_tokens, output_tokens, cache_creation, cache_read = event[2:6]
     context_size = input_tokens + cache_read + cache_creation
     if context_size > 0:
@@ -447,7 +472,7 @@ class TranscriptIndex:
         self._grand = [0] * _N
         # Recently seen message ids (hash -> None), newest last
         self._recent: "OrderedDict[int, None]" = OrderedDict()
-        # The file's first HEAD_IDS messages: [hash, key, usage list]
+        # The file's first HEAD_IDS messages: [hash, key, usage list + long flag]
         self._head: List[list] = []
         self._head_at: Dict[int, int] = {}
         for state in self._states.values():
@@ -585,7 +610,7 @@ class TranscriptIndex:
             self._recent.move_to_end(h)
             at = self._head_at.get(h)
             if at is not None:
-                self._head[at][2] = list(usage)
+                self._head[at][2] = list(usage) + [event[11]]
             return keys[pos], delta
         if not keys or key >= keys[-1]:
             keys.append(key)
@@ -606,7 +631,7 @@ class TranscriptIndex:
                 self._recent.popitem(last=False)
             if len(self._head) < HEAD_IDS and h not in self._head_at:
                 self._head_at[h] = len(self._head)
-                self._head.append([h, key, list(usage)])
+                self._head.append([h, key, list(usage) + [event[11]]])
         return key, usage
 
     def _tentative(self, event: _Event):
@@ -686,7 +711,8 @@ class TranscriptIndex:
     def head(self, refresh: bool = True) -> List[Tuple[int, int, Tuple[int, ...]]]:
         """The file's first ``HEAD_IDS`` messages: (id hash, key, usage), in file order.
 
-        Committed lines only. A file that copied another's messages (a
+        ``usage`` is the five counters, then whether the message was a
+        long-context request. Committed lines only. A file that copied another's messages (a
         fork's copy of its parent's last message) has them here.
         ``refresh`` False answers from what was last read.
         """

@@ -278,7 +278,8 @@ class ClaudeStatsReader:
         Returns None when the container can't be read or has no tokens yet,
         so the caller falls back to the normal host path.
         """
-        from .history_reader import CLAUDE_READER_VERSION, read_session_stats_from_content
+        from .history_reader import (
+            CLAUDE_READER_VERSION, long_usage, read_session_stats_from_content)
 
         if not session.wrapper:
             return None
@@ -339,7 +340,7 @@ class ClaudeStatsReader:
                 usage["cache_creation_tokens"], usage["cache_read_tokens"],
                 model=usage["model"],
                 cache_creation_1h_tokens=usage.get("cache_creation_1h_tokens", 0),
-                rv=CLAUDE_READER_VERSION)
+                rv=CLAUDE_READER_VERSION, long=long_usage(usage))
 
             if sid == active_sid:
                 current_context = usage["current_context_tokens"]

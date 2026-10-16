@@ -31,11 +31,13 @@ from . import conversation_spend, model_metadata
 from .stat_gate import FileSignature, is_settled, stat_signature
 from .transcript_index import (
     COPY_WINDOW_SECONDS,
+    LONG_KEYS,
     TranscriptRegistry,
     cache_write_1h,
     datetime_key,
     empty_stats,
     empty_window,
+    is_long_request,
     key_before,
     parse_message_time,
 )
@@ -965,7 +967,8 @@ def _parse_session_lines(
     by ``message.id``, at its last line's usage and its first line's time
     (``transcript_index``). A line without an id or a parseable timestamp
     counts on its own. ``cache_creation_1h_tokens`` is the 1-hour TTL part
-    of the cache writes (``usage.cache_creation``).
+    of the cache writes (``usage.cache_creation``); the ``long_*`` counts
+    the part spent by long-context requests (``transcript_index``).
 
     Args:
         lines: Iterable of JSONL line strings
@@ -980,6 +983,7 @@ def _parse_session_lines(
         "cache_creation_tokens": 0,
         "cache_read_tokens": 0,
         "cache_creation_1h_tokens": 0,
+        **dict.fromkeys(LONG_KEYS, 0),
         "current_context_tokens": 0,
         "model": None,
         "provider": None,
@@ -1030,6 +1034,10 @@ def _parse_session_lines(
 
                 for key, now, before in zip(token_keys, line_usage, previous):
                     totals[key] += now - before
+                if is_long_request(message.get("model"), input_tokens, cache_creation,
+                                   cache_read):
+                    for key, now, before in zip(LONG_KEYS, line_usage, previous):
+                        totals[key] += now - before
                 # Every one of these three is prompt the model actually
                 # processed this turn, so all three count toward context
                 # occupancy. Omitting cache_creation under-reports badly
@@ -1321,8 +1329,20 @@ _USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_tokens",
 
 
 def _take_off(totals: dict, usage: Tuple[int, ...]) -> None:
+    """Take a copied message's usage (``TranscriptIndex.head``) off a file's totals."""
     for name, value in zip(_USAGE_KEYS, usage):
         totals[name] = max(0, totals.get(name, 0) - value)
+    if len(usage) > len(_USAGE_KEYS) and usage[len(_USAGE_KEYS)]:
+        # A long-context request: off the breakdown too, where it is kept
+        for name, value in zip(LONG_KEYS, usage):
+            if name in totals:
+                totals[name] = max(0, totals[name] - value)
+
+
+def long_usage(read: dict) -> Dict[str, int]:
+    """A read's long-context breakdown, by ``conversation_spend.USAGE_KEYS``."""
+    return {key: read.get(name, 0) or 0
+            for key, name in zip(("in", "out", "cw", "cr", "cw1h"), LONG_KEYS)}
 
 
 def read_tree_stats(
@@ -1445,7 +1465,7 @@ def get_session_stats(
             read["input_tokens"], read["output_tokens"],
             read["cache_creation_tokens"], read["cache_read_tokens"],
             model=model, cache_creation_1h_tokens=read.get("cache_creation_1h_tokens", 0),
-            rv=CLAUDE_READER_VERSION)
+            rv=CLAUDE_READER_VERSION, long=long_usage(read))
 
     for sid in session_ids:
         session_file = get_session_file_path(
