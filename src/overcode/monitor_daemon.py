@@ -2062,7 +2062,7 @@ class MonitorDaemon:
         # Enforce oversight timeouts every loop
         self._enforce_oversight_timeouts(sessions, now)
 
-        # Auto-archive "done" agents after 1 hour (#244)
+        # Auto-archive "done" agents after their archive delay (#244; 1 h by default)
         # Count untracked tmux windows every 2 minutes (#344)
         # Move terminated sessions to the archive once past their grace
         housekeeping = self.housekeeping
