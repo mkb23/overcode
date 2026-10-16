@@ -203,7 +203,7 @@ def should_auto_archive(
     status: str,
     state_since: Optional[str],
     now: datetime,
-    timeout_seconds: int = 3600,
+    timeout_seconds: float = 3600,
 ) -> bool:
     """Check whether a done agent should be auto-archived.
 
@@ -213,12 +213,13 @@ def should_auto_archive(
         status: Current agent status
         state_since: ISO timestamp of when the agent entered current state
         now: Current datetime
-        timeout_seconds: How long to wait before archiving (default: 1 hour)
+        timeout_seconds: How long to wait before archiving (default: 1
+            hour; the child's preset sets it); negative never archives
 
     Returns:
         True if the agent should be auto-archived
     """
-    if status != "done":
+    if status != "done" or timeout_seconds < 0:
         return False
     if not state_since:
         return False

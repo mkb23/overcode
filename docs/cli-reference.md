@@ -22,8 +22,10 @@ overcode launch --name <name> [options]
 | `--parent` | | Name of parent agent (auto-detected if launched from within an agent) |
 | `--no-parent` | | Launch top-level instead of as the calling agent's child. Only the overagent may use it from inside an agent, for agents you will drive yourself (a guard against accidents, not a sandbox) |
 | `--follow` | `-f` | Stream child output, block until report or timeout |
-| `--on-stuck` | | Policy when child stops without reporting: `wait` (default), `fail`, `timeout:DURATION` |
+| `--on-stuck` | | Policy when child stops without reporting: `wait` (default), `fail` (a follower marks it done and exits 1 at once), `timeout:DURATION` (the daemon marks it done with ⌛ after DURATION) |
 | `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
+| `--preset` | | Children preset: `supervised` (the default for children), `balanced`, `autonomous`, or one of yours from config.yaml. Sets the oversight policy, archive delay and a default budget; explicit flags override it. An unknown name warns and uses the default. See [Child Agents: Presets](children.md#presets) |
+| `--archive-after` | | How long a done child keeps its window before the daemon closes it: a duration (`10m`, `24h`) or `never`. Default `1h` (or the preset's) |
 | `--allowed-tools` | | Comma-separated tools to allow (e.g., `Read,Glob,Grep,Edit`). Claude Code only — maps to `--allowedTools`; ignored for opencode, which has no such flag |
 | `--backend-arg` | | Extra agent-CLI flag (repeatable). Each value is a space-separated flag+value string. `--claude-arg` is a deprecated alias |
 | `--backend` | `-B` | Agent CLI backend: `claude-code` (default), `opencode`, `opencode2`, `codex`, or `grok`. See [Backends](backends.md) |
@@ -34,7 +36,15 @@ overcode launch --name <name> [options]
 | `--billing-code` | | Bill this agent's spend to this code (default: its name). A child always takes its parent's. See [Billing Codes](configuration.md#billing-codes) |
 | `--session` | | Tmux session name (default: `agents`) |
 
-**Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only.
+**Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only. Permission mode is inherited too, and there is no flag for "normal": a child of a bypass parent launched without any permission flag runs in bypass. Use `--no-inherit` for a normal-mode child. A child's billing code always comes from its parent, even with `--no-inherit`.
+
+**Children presets:** a child launched without `--preset` gets the default preset (`supervised` unless `children.preset` in config.yaml says otherwise), which is overcode's behaviour before presets. A top-level agent gets one only when named. `overcode config presets` lists them.
+
+| Preset | Stops without a report | Done child's window closes |
+|--------|------------------------|----------------------------|
+| `supervised` | waits for ever | 1 h after done |
+| `balanced` | marked ⌛ after 24 h | 1 h after done |
+| `autonomous` | marked ⌛ after 1 h | 10 min after done |
 
 **Examples:**
 ```bash
@@ -52,6 +62,9 @@ overcode launch -n subtask --parent my-agent --follow -p "Fix the auth bug. When
 
 # With oversight timeout (fail after 5 minutes without report)
 overcode launch -n subtask --follow --oversight-timeout 5m -p "Fix the bug. When done: overcode report --status success"
+
+# Unattended child: 1 h oversight timeout, window closed 10 min after done
+overcode launch -n nightly-deps --preset autonomous -p "Bump the deps. When done: overcode report --status success"
 
 # Restrict agent to read-only tools
 overcode launch -n reviewer -d ~/project --allowed-tools "Read,Glob,Grep" --skip-permissions
@@ -226,7 +239,7 @@ overcode cleanup [--done] [--session <session>]
 
 | Option | Description |
 |--------|-------------|
-| `--done` | Also archive "done" child agents (kill tmux window, remove from tracking) |
+| `--done` | Also archive "done" child agents now (kill tmux window, remove from tracking). Without it the monitor daemon closes a done child's window after its archive delay (`--archive-after`, 1 h by default) |
 
 ### `overcode report`
 
@@ -243,7 +256,7 @@ overcode report --status <success|failure> [--reason <text>]
 
 The command reads `OVERCODE_SESSION_NAME` and `OVERCODE_TMUX_SESSION` from the environment (automatically set for all agents launched by overcode).
 
-Without a report, child agents that stop enter `waiting_oversight` status instead of `done`. The parent's `--follow` blocks until a report arrives (or the oversight policy triggers).
+Without a report, child agents that stop enter `waiting_oversight` status instead of `done`. The parent's `--follow` blocks until a report arrives (or the oversight policy triggers). See [Child Agents](children.md).
 
 ### `overcode follow`
 
@@ -612,6 +625,14 @@ Display current configuration.
 
 ```bash
 overcode config show
+```
+
+### `overcode config presets`
+
+List the children presets in effect (built-in and from config.yaml), mark the default, and print any warnings about the `children` section.
+
+```bash
+overcode config presets
 ```
 
 ### `overcode config path`

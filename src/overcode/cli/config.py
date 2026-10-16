@@ -1,5 +1,5 @@
 """
-Config commands: init, show, path.
+Config commands: init, show, path, presets.
 """
 
 from typing import Annotated
@@ -25,6 +25,16 @@ CONFIG_TEMPLATE = """\
 #   wrapper: ""                # wrapper script name or path, e.g. devcontainer
 #   bypass_permissions: false  # --dangerously-skip-permissions
 #   agent_teams: false         # CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+
+# Children presets: oversight, archive delay and default budget for child
+# agents (`overcode launch --preset`; `overcode config presets` lists them)
+# children:
+#   preset: supervised         # default for children: supervised | balanced | autonomous | yours
+#   presets:
+#     overnight:
+#       on_stuck: timeout:8h   # wait | fail | timeout:DURATION
+#       archive_after: never   # DURATION or never
+#       budget: 5.00           # USD
 
 # AI summarizer settings (for corporate API gateways)
 # summarizer:
@@ -158,6 +168,24 @@ def config_path():
     """Show the config file path."""
     from ..config import config_path
     print(config_path())
+
+
+@config_app.command("presets")
+def config_presets():
+    """List the children presets (built-in and from config.yaml)."""
+    from ..child_presets import BUILTIN_PRESETS, describe, load_presets
+
+    presets, default, warnings = load_presets()
+    for warning in warnings:
+        rprint(f"[yellow]Warning:[/yellow] {warning}")
+    width = max(len(name) for name in presets)
+    for name, preset in presets.items():
+        marker = "*" if name == default else " "
+        origin = "" if name in BUILTIN_PRESETS and preset == BUILTIN_PRESETS[name] else "  [dim](config)[/dim]"
+        rprint(f"{marker} [bold]{name:<{width}}[/bold]  {describe(preset)}{origin}")
+        if preset.description:
+            rprint(f"  {'':<{width}}  [dim]{preset.description}[/dim]")
+    rprint("\n[dim]* the default for children launched without --preset (children.preset)[/dim]")
 
 
 @config_app.command("tmux")

@@ -198,7 +198,7 @@ only the overagent is allowed to.
 
 `overcode docs path` prints the docs directory: markdown that ships with
 overcode, so it matches the installed version and needs no network. TUI
-guide, configuration, CLI reference, backends, wrappers, getting started,
+guide, child agents (children.md), configuration, CLI reference, backends, wrappers, getting started,
 release notes, and design notes under `design/`. Read the relevant page
 (grep the directory) before answering, and name the page you used.
 

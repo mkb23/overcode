@@ -64,7 +64,7 @@ The TUI displays all agents with live status updates, showing:
 - **Launch agents** with custom prompts and permission settings
 - **Send instructions** directly from the dashboard
 - **Standing orders** - persistent instructions that guide agent behavior
-- **Agent hierarchy** - parent/child delegation with follow mode and reporting
+- **Agent hierarchy** - parent/child delegation with follow mode, reporting and oversight presets (see [Child Agents](docs/children.md))
 - **Cost budgets** - per-agent spending limits with automatic enforcement
 - **Sleep mode** - pause agents and exclude them from stats
 - **Shutdown and revive**: `overcode shutdown` stops agents, jobs, daemons and tmux sessions and keeps the agent records. After a reboot, `overcode revive --all` brings the agents back with their conversations.

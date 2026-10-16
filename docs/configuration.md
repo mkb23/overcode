@@ -98,6 +98,11 @@ ledger:
 billing:
   codes: []                       # e.g. [client-a, client-b, internal]
 
+# Children presets for `overcode launch --preset`; see "Children Presets" below
+children:
+  preset: supervised              # default for children: supervised | balanced | autonomous | yours
+  presets: {}                     # change a built-in or add your own
+
 # Monitor daemon loop interval while nobody is watching
 # See "Unattended Low-Power Mode" below
 monitor_daemon:
@@ -613,6 +618,55 @@ observability:
 `finished_row_seconds` is how long a finished agent keeps its own row
 under its parent once delegated work can be expanded into rows (0.6.1,
 phase 2); the 👥 counts include it from the moment it finishes.
+
+## Children Presets
+
+A children preset bundles what happens to a child agent that stops without
+reporting (its oversight policy and timeout), how soon a done child's
+window is closed, and a default budget. `overcode launch --preset <name>`
+picks one; a child launched without `--preset` gets `children.preset`.
+The built-ins:
+
+| Preset | `on_stuck` | `archive_after` | `budget` |
+|--------|------------|-----------------|----------|
+| `supervised` (the default) | `wait` (no timeout) | `1h` | none |
+| `balanced` | `timeout:24h` | `1h` | none |
+| `autonomous` | `timeout:1h` | `10m` | none |
+
+`supervised` is overcode's behaviour before presets, so leaving the
+section out changes nothing. Change a built-in field by field, or add
+presets of your own:
+
+```yaml
+children:
+  preset: balanced            # the default for children launched without --preset
+  presets:
+    autonomous:
+      archive_after: 30m      # only this field changes
+    overnight:
+      on_stuck: timeout:8h    # wait | fail | timeout:DURATION
+      archive_after: never    # DURATION, or never
+      budget: 5.00            # USD; moved out of the parent's budget if it has one
+      description: Long unattended runs
+```
+
+| Key | Value |
+|-----|-------|
+| `on_stuck` | `wait`, `fail` or `timeout:DURATION`, as `--on-stuck` |
+| `oversight_timeout` | A DURATION: shorthand for `on_stuck: timeout:DURATION` (`0` means `wait`) |
+| `archive_after` | How long a done child keeps its window before the monitor daemon closes it (`never` keeps it); the record then reaches the archive after `session_archive.terminated_grace_seconds` |
+| `budget` | A default budget in USD for children launched with the preset |
+| `description` | Shown by `overcode config presets` |
+
+A DURATION is `30s`, `5m`, `1h`, `2d` or a number of seconds. A field a
+preset leaves out takes the value of the built-in with the same name, or
+`supervised`'s for a new preset. Explicit launch flags (`--on-stuck`,
+`--oversight-timeout`, `--archive-after`, `--budget`) always win over the
+preset. An unknown preset name (on the command line or as `children.preset`),
+an unknown key or an unreadable value is reported as a warning at launch
+and ignored; the launch goes ahead with the default. `overcode config
+presets` lists the presets in effect and the warnings. See
+[Child Agents](children.md) for how oversight works.
 
 ## Billing Codes
 

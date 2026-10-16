@@ -1,6 +1,6 @@
 """The monitor daemon's slow chores, on their own wall-clock cadences.
 
-Every HOUSEKEEPING_INTERVAL_SECONDS: auto-archive agents done for an hour,
+Every HOUSEKEEPING_INTERVAL_SECONDS: auto-archive agents done for their delay,
 count untracked tmux windows, move long-terminated sessions to the archive
 and prune finished jobs. Hourly: rotate agent_status_history.csv and, when
 opted in, refresh the models.dev catalog on a background thread. None of it
@@ -110,10 +110,14 @@ class Housekeeping:
 
     def auto_archive_done_agents(self, sessions: list, pending: PendingUpdates,
                                  now: Optional[datetime] = None) -> None:
-        """Auto-archive done agents that have been done for over 1 hour (#244).
+        """Auto-archive done agents once done for their archive delay (#244).
 
-        Kills the tmux window and marks as terminated so cleanup can remove them.
+        The delay is the child's ``archive_after_seconds`` (its preset's,
+        ``child_presets``; an hour by default, never when negative). Kills
+        the tmux window and marks as terminated so cleanup can remove them.
         """
+        from .child_presets import archive_after_of
+
         now = self.clock.wall() if now is None else now
 
         for session in sessions:
@@ -121,6 +125,7 @@ class Housekeeping:
                 session.status,
                 session.stats.state_since,
                 now,
+                timeout_seconds=archive_after_of(session),
             ):
                 continue
 

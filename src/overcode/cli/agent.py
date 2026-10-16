@@ -42,17 +42,69 @@ def _parse_oversight_policy(on_stuck: Optional[str], oversight_timeout: Optional
     return policy, timeout_seconds
 
 
-def _store_oversight_policy(result, policy: str, timeout_seconds: float) -> None:
-    """Store oversight policy on session if non-default."""
+def _store_oversight_policy(result, policy: str, timeout_seconds: float,
+                            archive_after_seconds: Optional[float] = None) -> None:
+    """Store the oversight policy and done-archive delay on the session if non-default."""
+    from ..child_presets import DEFAULT_ARCHIVE_AFTER_SECONDS, format_duration
+    fields = {}
     if policy != "wait" or timeout_seconds > 0:
-        from ..session_manager import SessionManager
-        sm = SessionManager()
-        sm.update_session(
-            result.id,
-            oversight_policy=policy,
-            oversight_timeout_seconds=timeout_seconds,
-        )
+        fields.update(oversight_policy=policy, oversight_timeout_seconds=timeout_seconds)
+    if archive_after_seconds is not None and archive_after_seconds != DEFAULT_ARCHIVE_AFTER_SECONDS:
+        fields["archive_after_seconds"] = archive_after_seconds
+    if not fields:
+        return
+    from ..session_manager import SessionManager
+    SessionManager().update_session(result.id, **fields)
+    if "oversight_policy" in fields:
         rprint(f"  Oversight: {policy}" + (f" ({timeout_seconds:.0f}s)" if timeout_seconds > 0 else ""))
+    if "archive_after_seconds" in fields:
+        rprint(f"  Archive after done: {format_duration(archive_after_seconds)}")
+
+
+def _launches_child(parent: Optional[str], no_parent: bool) -> bool:
+    """Whether this launch makes a child (the launcher's rule: --parent, or run inside an agent)."""
+    import os
+    return parent is not None or (not no_parent and bool(os.environ.get("OVERCODE_SESSION_NAME")))
+
+
+def _resolve_child_settings(preset: Optional[str], is_child: bool, on_stuck: Optional[str],
+                            oversight_timeout: Optional[str], archive_after: Optional[str],
+                            budget: Optional[float]):
+    """A launch's preset and its settings, explicit flags first (child_presets).
+
+    Returns (preset or None, oversight policy, timeout seconds, archive
+    delay seconds or None, budget). Exits on an invalid flag; an unknown
+    preset or a bad config entry only warns.
+    """
+    chosen = None
+    if preset is not None or is_child:
+        from ..child_presets import resolve_preset
+        chosen, warnings = resolve_preset(preset, is_child=is_child)
+        for warning in warnings:
+            rprint(f"[yellow]Warning:[/yellow] {warning}")
+
+    if on_stuck or oversight_timeout:
+        policy, timeout_seconds = _parse_oversight_policy(on_stuck, oversight_timeout)
+    elif chosen is not None:
+        policy, timeout_seconds = chosen.oversight_policy, chosen.oversight_timeout_seconds
+    else:
+        policy, timeout_seconds = "wait", 0.0
+
+    archive_seconds = None
+    if archive_after is not None:
+        from ..child_presets import parse_archive_after
+        try:
+            archive_seconds = parse_archive_after(archive_after)
+        except ValueError:
+            rprint(f"[red]Error: Invalid --archive-after '{archive_after}'. Use a duration "
+                   f"(e.g. 10m, 24h) or never[/red]")
+            raise typer.Exit(code=1)
+    elif chosen is not None:
+        archive_seconds = chosen.archive_after_seconds
+
+    if budget is None and chosen is not None and chosen.budget_usd:
+        budget = chosen.budget_usd
+    return chosen, policy, timeout_seconds, archive_seconds, budget
 
 
 def _check_skill_staleness() -> None:
@@ -215,6 +267,22 @@ def launch(
         Optional[str],
         typer.Option("--oversight-timeout", help="Shorthand for --on-stuck timeout:DURATION (e.g. 5m, 1h)"),
     ] = None,
+    preset: Annotated[
+        Optional[str],
+        typer.Option(
+            "--preset",
+            help="Children preset: supervised (default), balanced, autonomous, or one from "
+                 "config.yaml. Sets oversight, archive delay and a default budget; flags override",
+        ),
+    ] = None,
+    archive_after: Annotated[
+        Optional[str],
+        typer.Option(
+            "--archive-after",
+            help="Close a done child's window this long after it finishes (e.g. 10m, 24h; "
+                 "default 1h), or never",
+        ),
+    ] = None,
     allowed_tools: Annotated[
         Optional[str],
         typer.Option("--allowed-tools", help="Comma-separated tools to allow (e.g. 'Bash,Read,Write,Edit')"),
@@ -342,8 +410,10 @@ def launch(
             raise typer.Exit(code=1)
         return
 
-    # Parse oversight policy
-    oversight_policy, oversight_timeout_seconds = _parse_oversight_policy(on_stuck, oversight_timeout)
+    # Children preset, oversight policy and archive delay (flags override the preset)
+    chosen_preset, oversight_policy, oversight_timeout_seconds, archive_after_seconds, budget = (
+        _resolve_child_settings(preset, _launches_child(parent, no_parent), on_stuck,
+                                oversight_timeout, archive_after, budget))
 
     # Provider/wrapper resolution (CLI flag > parent settings > config
     # default) happens in the launcher (#433); only validate the explicit
@@ -419,8 +489,12 @@ def launch(
             rprint(f"  Model: {result.model} (inherited)")
         if budget is not None and budget > 0:
             rprint(f"  Budget: ${budget:.2f}")
+        if chosen_preset is not None:
+            from ..child_presets import describe
+            rprint(f"  Preset: {chosen_preset.name} ({describe(chosen_preset)})")
 
-        _store_oversight_policy(result, oversight_policy, oversight_timeout_seconds)
+        _store_oversight_policy(result, oversight_policy, oversight_timeout_seconds,
+                                archive_after_seconds)
         _check_skill_staleness()
 
         if follow:

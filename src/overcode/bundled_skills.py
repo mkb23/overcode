@@ -57,12 +57,18 @@ A child that never reports is never counted as done.
   blocking you forever.
 - Without `--follow`, launch several children and check on them later.
   `overcode follow <name>` waits for one.
+- `--preset` sets oversight in one go: `supervised` (the default: waits for a
+  report for ever), `balanced` (timed out after 24 h) or `autonomous` (timed
+  out after 1 h, window closed 10 min after it ends). Flags such as
+  `--oversight-timeout` override it; `overcode config presets` lists them.
 - Name children after their task (`fix-jwt-refresh`, not `child-1`). The user
   sees these names.
 
-Children inherit your permission mode, model, provider and wrapper. Add
-`--bypass-permissions` only when the user wants unattended work; otherwise the
-child's permission prompts wait for the user, or for you (see below).
+Children inherit your permission mode, model, provider and wrapper, and
+always your billing code. Add `--bypass-permissions` only when the user wants
+unattended work; otherwise the child's permission prompts wait for the user, or
+for you (see below). If you run in bypass mode, your children do too unless you
+pass `--no-inherit` (which drops every inherited setting).
 
 Other options:
 - `-B opencode` (or `codex`, `grok`, ...) launches a different agent CLI.
@@ -107,7 +113,7 @@ calls yourself and mention them in `--reason`.
 
 `overcode <command> --help` documents every command and flag.
 `overcode docs path` prints where overcode's docs are: markdown shipped with it,
-such as cli-reference.md, backends.md and skill-profiles.md.
+such as children.md, cli-reference.md, backends.md and skill-profiles.md.
 """,
     },
 }
