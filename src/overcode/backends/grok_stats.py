@@ -35,6 +35,15 @@ guess:
    have put the second turn at $7,295, which is not plausible for the token
    counts involved.
 
+3. **``inputTokens`` includes the cached reads.** The same batch's
+   ``inputTokens`` was 4,130,868 with ``cachedReadTokens`` 3,339,776: the
+   791k uncached input above plus the 3.34M cached. Counted as they come,
+   the cached part was counted twice (as input and as cache read), so
+   tokens and energy read high (cost model 0.6.1 audit, item 8). Input
+   is ``inputTokens - cachedReadTokens``; the cost is grok's own charge
+   either way. Reads carry reader version ``GROK_READER_VERSION``, so an
+   entry recorded before the fix is replaced (``conversation_spend``).
+
 ``_meta.totalTokens`` is the running context-size proxy the design doc
 described; the latest one seen in file order is "current context". It lives
 at ``params._meta.totalTokens`` — nested inside ``params`` alongside
@@ -68,6 +77,11 @@ from .jsonl_tail import fold_jsonl
 # costUsdTicks unit, empirically determined (see module docstring point 2):
 # nano-dollars, i.e. 1e9 ticks == $1.00.
 _COST_TICKS_PER_USD = 1_000_000_000
+
+# The version of what this reader reports per conversation
+# (``conversation_spend``): 1 takes the cached reads out of ``inputTokens``
+# (module docstring point 3). An entry read before it is replaced.
+GROK_READER_VERSION = 1
 
 # Keys expected inside a turn_completed update's usage object. Absence of
 # all of these from the newest session's newest turn_completed event is
@@ -165,11 +179,14 @@ class _UpdatesFold:
             return
         # reasoning has no bucket of its own, so it folds into output rather
         # than vanishing from the totals — matches the codex/opencode
-        # convention this reader follows elsewhere.
+        # convention this reader follows elsewhere. inputTokens already
+        # includes the cached reads (module docstring point 3): the
+        # uncached input is the difference.
+        cached = as_int(usage.get("cachedReadTokens"))
         turn = (
-            as_int(usage.get("inputTokens")),
+            max(0, as_int(usage.get("inputTokens")) - cached),
             as_int(usage.get("outputTokens")) + as_int(usage.get("reasoningTokens")),
-            as_int(usage.get("cachedReadTokens")),
+            cached,
             as_int(usage.get("cacheCreationTokens")),
         )
         ticks = usage.get("costUsdTicks")
@@ -412,7 +429,7 @@ class GrokStatsReader:
             return conversation_usage(
                 scanned["input_tokens"], scanned["output_tokens"],
                 scanned["cache_creation_tokens"], scanned["cache_read_tokens"],
-                model=at, cost=scanned.get("cost_usd"))
+                model=at, cost=scanned.get("cost_usd"), rv=GROK_READER_VERSION)
 
         newest = newest_path.name
         out: Dict[str, Dict[str, Any]] = {}

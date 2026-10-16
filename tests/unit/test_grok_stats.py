@@ -178,7 +178,8 @@ class TestGetStats:
         # a "latest wins" implementation would read only the second turn's
         # much smaller numbers.
         stats = reader.get_stats(make_session())
-        assert stats.input_tokens == 4_130_868 + 89_480
+        # inputTokens includes the cached reads: uncached input is the rest
+        assert stats.input_tokens == (4_130_868 - 3_339_776) + (89_480 - 128)
         assert stats.output_tokens == (94_765 + 42_243) + (303 + 201)
         assert stats.cache_read_tokens == 3_339_776 + 128
 
@@ -250,13 +251,13 @@ class TestSessionIdResolution:
 class TestWindowUsage:
     def test_window_since_before_launch_includes_both_turns(self, reader):
         usage = reader.get_window_token_usage(make_session(), datetime.fromtimestamp(0))
-        assert usage["input_tokens"] == 4_130_868 + 89_480
+        assert usage["input_tokens"] == (4_130_868 - 3_339_776) + (89_480 - 128)
 
     def test_window_after_first_turn_excludes_it(self, reader):
         usage = reader.get_window_token_usage(
             make_session(), datetime.fromtimestamp(1787072225)
         )
-        assert usage["input_tokens"] == 89_480
+        assert usage["input_tokens"] == 89_480 - 128
 
     def test_missing_session_is_zeroed_not_raised(self, tmp_path):
         reader = GrokStatsReader(sessions_dir=tmp_path / "absent")
@@ -376,6 +377,41 @@ class TestBackendWiring:
             assert isinstance(reader, GrokStatsReader)
         finally:
             clear_reader_cache()
+
+
+class TestCachedInput:
+    """Cost model 0.6.1 audit, item 8: inputTokens already includes the
+    cached reads, which were counted again as cache reads."""
+
+    def test_cached_reads_are_not_counted_as_input_too(self, tmp_path):
+        root = tmp_path / "sessions"
+        sdir = root / encode_cwd(PROJECT_DIR) / SID
+        write_jsonl(sdir / "updates.jsonl", [
+            turn_completed(input_tokens=1_000, output_tokens=10, cached_read=800,
+                           cost_ticks=10**6)])
+        write_summary(sdir / "summary.json")
+        stats = GrokStatsReader(sessions_dir=root).get_stats(make_session())
+        assert (stats.input_tokens, stats.cache_read_tokens) == (200, 800)
+        assert stats.per_conversation[SID]["rv"] == 1
+
+    def test_an_entry_recorded_before_the_fix_is_replaced(self, tmp_path):
+        from overcode import conversation_spend as spend
+
+        root = tmp_path / "sessions"
+        sdir = root / encode_cwd(PROJECT_DIR) / SID
+        write_jsonl(sdir / "updates.jsonl", [
+            turn_completed(input_tokens=1_000, output_tokens=10, cached_read=800,
+                           cost_ticks=10**6)])
+        write_summary(sdir / "summary.json")
+        reads = GrokStatsReader(sessions_dir=root).get_stats(make_session()).per_conversation
+        # What the previous release recorded: input counted with the cache reads
+        old = {SID: {"in": 1_000, "out": 10, "cw": 0, "cr": 800, "cost": 0.001,
+                     "charged": 0.001, "recorded": True, "energy": 9.0, "model": "grok-4.6"}}
+        entries = spend.merge(old, reads, prices=lambda m: (2.0, 6.0, 0.0, 0.5),
+                              energy=lambda m, t: float(sum(t.values())) / 200)
+        assert entries[SID]["in"] == 200
+        assert entries[SID]["cost"] == pytest.approx(0.001)  # grok's own charge stays
+        assert spend.replaced(old, entries) == [SID]  # the daemon writes a correction
 
 
 class TestPerConversation:
