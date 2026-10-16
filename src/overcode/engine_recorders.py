@@ -90,11 +90,31 @@ class RecorderStore:
         # Lifecycle states (and not knowing) hold the record where it was
         colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN) \
             else (detail.color if detail else None)
+        self._observe(session.id, session.name, lambda: self._started_since(session, ts),
+                      colour, detail, state, ts, engine, log_episodes=True)
+
+    def record_adopted(self, state: SessionDaemonState, detail: Optional[StatusDetail],
+                       started_at: Optional[float], ts: float, engine=None) -> None:
+        """Feed an adopted row's colour (a Claude background session, claude_bg).
+
+        Bells and visits work as for an agent; its episodes are not logged
+        (it has no directory of its own, and no timeline row reads them).
+        """
+        colour = detail.color if detail is not None else None
+        self._observe(
+            state.session_id, state.name,
+            lambda: started_at is not None and self.observing_since is not None
+            and started_at > self.observing_since,
+            colour, detail, state, ts, engine, log_episodes=False)
+
+    def _observe(self, sid: str, name: str, new_agent: Callable[[], bool],
+                 colour: Optional[str], detail: Optional[StatusDetail],
+                 state: SessionDaemonState, ts: float, engine, log_episodes: bool) -> None:
         self.begin(ts)
-        recorder = self.recorders.get(session.id)
+        recorder = self.recorders.get(sid)
         if recorder is None:
-            recorder = self.recorders[session.id] = EpisodeRecorder(
-                gap_seconds=self._gap_seconds(), new_agent=self._started_since(session, ts))
+            recorder = self.recorders[sid] = EpisodeRecorder(
+                gap_seconds=self._gap_seconds(), new_agent=new_agent())
             self.dirty = True
         observed = recorder.observe(colour, ts)
         if observed.closed or observed.bell or observed.merged:
@@ -106,14 +126,15 @@ class RecorderStore:
         state.status_detail = status_detail_view(detail, ts) if colour else None
         state.input_needed_since = recorder.input_needed_since
         state.visited_at = recorder.visited_at
-        for episode in observed.closed:
-            append_episode(self.directory, session.name, session.id, episode)
+        if log_episodes:
+            for episode in observed.closed:
+                append_episode(self.directory, name, sid, episode)
         if observed.bell is not None:
-            self.log.info(f"[{session.name}] bell: {observed.bell.colour} since "
+            self.log.info(f"[{name}] bell: {observed.bell.colour} since "
                           f"{datetime.fromtimestamp(observed.bell.start).isoformat()}")
             if engine is not None:
-                engine.ring(session.id, {"colour": observed.bell.colour,
-                                         "start": observed.bell.start, "name": session.name})
+                engine.ring(sid, {"colour": observed.bell.colour,
+                                  "start": observed.bell.start, "name": name})
 
     def _started_since(self, session, now: Optional[float] = None) -> bool:
         """Whether ``session`` started after this engine began recording.

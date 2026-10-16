@@ -184,6 +184,9 @@ class WakeLoop:
             # An expanded parent's rows: a new subscription, a finished row's
             # time up, a workflow journal moved (agent-observability §6.2)
             self.publish_swarm_if_due()
+            # Claude background sessions: the jobs directory at its own
+            # cadence, a finished row's time up (agent-observability §6.3)
+            self.publish_claude_bg_if_due()
             # Hook-driven changes publish now, not at the next tick
             if not attended and elapsed - last_scan < WAKE_SCAN_UNATTENDED_SECONDS:
                 continue
@@ -208,6 +211,24 @@ class WakeLoop:
             daemon.log.warn(f"virtual rows not published: {e}")
             return False
         return True
+
+    def publish_claude_bg_if_due(self) -> bool:
+        """Re-read the background sessions when due; publish if they moved. True if published."""
+        daemon = self.daemon
+        attended = daemon.state.interval_mode != "unattended"
+        source = daemon.claude_bg
+        if not source.due(daemon.clock.monotonic(), daemon.clock.time(), attended):
+            return False
+        try:
+            moved = daemon._refresh_claude_bg()
+            if moved:
+                daemon._publish_state(daemon.state.sessions, save=False)
+            # A bell that rang, a visit applied: persisted as quick ticks do
+            daemon.recorder_store.save()
+        except Exception as e:  # the full tick will retry
+            daemon.log.warn(f"background sessions not published: {e}")
+            return False
+        return moved
 
     def quick_tick(self, ids: set, now: datetime) -> None:
         """Re-detect only the agents ``ids`` and publish, between full ticks."""
