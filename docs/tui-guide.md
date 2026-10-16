@@ -19,6 +19,8 @@ Shows all agents as single-line summaries with live status, metrics, and a conte
 
 When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children; folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
 
+The agent you last moved the highlight to is remembered the same way: quit and reopen `overcode tmux` and the highlight comes back on it, with the bottom pane on its window. If that agent has gone, the first agent is highlighted.
+
 ### Delegated work (👥, 🧩)
 
 A Claude agent can hand work out inside its own session: subagents
