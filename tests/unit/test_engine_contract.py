@@ -126,3 +126,46 @@ def test_virtual_row_spend_moves_at_the_stats_cadence():
     from overcode.monitor_daemon import STATS_SYNC_ATTENDED_SECONDS, STATS_SYNC_UNATTENDED_SECONDS
 
     assert STATS_SYNC_ATTENDED_SECONDS <= 5 and STATS_SYNC_UNATTENDED_SECONDS <= 60
+
+
+# agent-observability-0.6.1.md §5: phase 4's swarm timeline
+
+
+def test_swarm_history_is_written_on_change_not_per_tick(tmp_path):
+    """A parent's counts go to swarm_history.csv when a hook event moves
+    them; a tick that saw nothing new counts nothing and writes nothing.
+    While something is live a keepalive goes out every 5 min, and a live
+    row stands at most two keepalives (a stopped daemon is not live)."""
+    from overcode import swarm, swarm_history
+
+    assert swarm_history.KEEPALIVE_SECONDS == 300.0
+    assert swarm_history.STALE_AFTER_SECONDS == 2 * swarm_history.KEEPALIVE_SECONDS
+    writer = swarm_history.SwarmHistoryWriter(tmp_path / "swarm_history.csv")
+    state = {"event": "PreToolUse", "timestamp": 1.0,
+             "subagents": {"a1": {"kind": "subagent"}}, "swarm": {"bg_at": 0.0}}
+    rollup = swarm.rollup(state, 1.0)
+    assert writer.record("p", "p", state, rollup, 1.0) == 2
+    for t in range(2, 300):
+        assert writer.record("p", "p", state, rollup, float(t)) == 0
+    assert writer.computes == 1
+
+
+def test_the_timeline_strips_refresh_with_the_timeline():
+    """The density rows are read by the timeline's own 30 s worker (one
+    incremental read of one file); folding them with → / ← reads nothing."""
+    from overcode.tui_timers import TIMER_INTERVALS
+
+    assert TIMER_INTERVALS["timeline"] == 30
+
+
+def test_density_height_is_a_mean_never_a_median():
+    from datetime import datetime, timedelta
+
+    from overcode import swarm_history as sh
+
+    now = datetime(2026, 10, 17, 12, 0, 0)
+    pts = [sh.Point(now - timedelta(minutes=60), (9, 0, 0, 0, 0, 0, 0), "", ""),
+           sh.Point(now - timedelta(minutes=58), (0, 0, 0, 0, 0, 0, 0), "", ""),
+           sh.Point(now - timedelta(minutes=57), (0, 0, 0, 0, 0, 0, 0), "", "")]
+    slot = sh.density(pts, 20, 1.0, now)[0]  # 3 min: 9 for 2 min, 0 for 1
+    assert slot.mean == 6.0  # the median of the samples would be 0

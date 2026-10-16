@@ -5,12 +5,16 @@ Shows historical status timelines for user presence and agents.
 """
 
 from datetime import datetime
+from typing import Dict, List, Mapping, Tuple
 
 from textual.widgets import Static
+from rich.cells import cell_len
 from rich.text import Text
 
+from .. import swarm_history
 from ..presence_logger import read_presence_history
-from ..settings import get_agent_history_path
+from ..settings import get_agent_history_path, get_swarm_history_path
+from ..status_constants import emoji_or_ascii
 from ..status_history import read_agent_status_history
 from ..config import get_timeline_config
 from ..tui_helpers import (
@@ -48,6 +52,69 @@ def read_history_data(tmux_session: str, hours: float) -> tuple:
     return presence_history, agent_histories
 
 
+def read_swarm_data(tmux_session: str, hours: float) -> dict:
+    """The swarm density rows' history (``swarm_history.read_swarm_history``). Off the main thread."""
+    return swarm_history.read_swarm_history(get_swarm_history_path(tmux_session), hours)
+
+
+# Light -> the strip's colour (design §5: 🟠 > 🟢 > 🟡)
+STRIP_COLOURS = {"orange": "orange1", "green": "green", "yellow": "yellow", "idle": "grey50"}
+
+Strip = Tuple[str, str, list]  # (marker, title, points)
+
+
+def swarm_strips(session_id: str, histories: Mapping[str, Mapping[str, list]],
+                 expanded: bool) -> List[Strip]:
+    """The density strips under one agent's timeline row, in the list's fold state.
+
+    Collapsed: one strip for the whole swarm. Expanded (→ in the list):
+    one per group, workflows first (oldest first), then the team, then
+    loose subagents, as the list orders its group rows. Only groups with
+    something live inside the window get a strip.
+    """
+    groups = histories.get(session_id) or {}
+    if not expanded:
+        points = groups.get(swarm_history.TOTAL) or []
+        return [("👥", "swarm", points)] if swarm_history.has_live(points) else []
+
+    def order(item):
+        group, points = item
+        rank = 0 if group.startswith("wf/") else (1 if group == "tm" else 2)
+        return (rank, points[0].ts if points else datetime.min, group)
+
+    out: List[Strip] = []
+    for group, points in sorted(((g, p) for g, p in groups.items() if g != swarm_history.TOTAL),
+                                key=order):
+        if not swarm_history.has_live(points):
+            continue
+        last = points[-1]
+        if group.startswith("wf/"):
+            out.append(("🧩", last.title or "workflow", points))
+        else:
+            out.append(("👥", last.title or ("team" if group == "tm" else "agents"), points))
+    return out
+
+
+def _strip_label(marker: str, title: str, emoji_free: bool) -> str:
+    if marker == "🧩" and emoji_free:
+        marker = "Wf"  # as the list's workflow rows
+    else:
+        marker = emoji_or_ascii(marker, emoji_free)
+    return f"└ {marker} {title}"
+
+
+def _fit(text: str, width: int) -> str:
+    """``text`` cut and padded to ``width`` terminal cells (emoji are two)."""
+    out, used = "", 0
+    for ch in text:
+        w = cell_len(ch)
+        if used + w > width:
+            break
+        out += ch
+        used += w
+    return out + " " * (width - used)
+
+
 class StatusTimeline(Static):
     """Widget displaying historical status timelines for user presence and agents.
 
@@ -63,6 +130,13 @@ class StatusTimeline(Static):
     MAX_NAME_WIDTH = 30   # Maximum width for agent names
     MIN_TIMELINE = 20     # Minimum timeline width
     DEFAULT_TIMELINE = 60 # Fallback if can't detect width
+
+    # Swarm density rows (0.6.1 phase 4): {agent id: {group: [Point]}} from
+    # swarm_history.csv, and the parents expanded in the list (the fold state
+    # the strips follow). Class defaults, so a widget built without __init__
+    # (unit tests) draws none.
+    _swarm_histories: Dict[str, dict] = {}
+    swarm_expanded: frozenset = frozenset()
 
     def __init__(self, sessions: list, tmux_session: str = "agents", *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -80,6 +154,13 @@ class StatusTimeline(Static):
         if not self.sessions:
             return self.MIN_NAME_WIDTH
         longest = max(len(s.name) for s in self.sessions)
+        if self._swarm_histories:
+            # The density strips' labels ("└ 🧩 review") share the column
+            emoji_free = self._emoji_free()
+            for session in self._strip_sessions():
+                for marker, title, _ in swarm_strips(session.id, self._swarm_histories,
+                                                     session.id in self.swarm_expanded):
+                    longest = max(longest, cell_len(_strip_label(marker, title, emoji_free)))
         # Clamp to min/max and add padding for "  " prefix and " " suffix
         return min(self.MAX_NAME_WIDTH, max(self.MIN_NAME_WIDTH, longest))
 
@@ -114,12 +195,29 @@ class StatusTimeline(Static):
         """
         return read_history_data(self.tmux_session, self.timeline_hours)
 
-    def apply_history_data(self, sessions: list, presence_history: list, agent_histories: dict) -> None:
+    def apply_history_data(self, sessions: list, presence_history: list, agent_histories: dict,
+                           swarm_histories: dict = None) -> None:
         """Apply pre-fetched history data to the widget. Call on main thread."""
         self.sessions = sessions
         self._presence_history = presence_history
         self._agent_histories = agent_histories
+        if swarm_histories is not None:
+            self._swarm_histories = swarm_histories
         self.refresh(layout=True)
+
+    def set_swarm_fold(self, expanded) -> bool:
+        """Follow the list's expanded parents; repaint only if a drawn strip changes."""
+        expanded = frozenset(expanded)
+        if expanded == self.swarm_expanded:
+            return False
+        changed = expanded ^ self.swarm_expanded
+        self.swarm_expanded = expanded
+        shown = {getattr(s, "id", None) for s in self.sessions
+                 if not getattr(s, "is_remote", False)}
+        if any(sid in shown and sid in self._swarm_histories for sid in changed):
+            self.refresh(layout=True)
+            return True
+        return False
 
     def update_history(self, sessions: list) -> None:
         """Refresh history data from log files (blocking, legacy).
@@ -185,6 +283,7 @@ class StatusTimeline(Static):
         content.append("\n")
 
         # Agent timelines
+        drew_strips = False
         for session in self.sessions:
             agent_name = session.name
             # Remote sessions are keyed with hostname prefix for disambiguation
@@ -252,6 +351,9 @@ class StatusTimeline(Static):
                 content.append("   - ", style="dim")
 
             content.append("\n")
+            if self._swarm_histories and not getattr(session, 'is_remote', False):
+                drew_strips |= self._render_strips(content, session, width, label_w, now,
+                                                   baseline_slot)
 
         # Legend (combined on one line to save space)
         content.append(f"  {'Legend:':<14} ", style="dim")
@@ -267,5 +369,47 @@ class StatusTimeline(Static):
         content.append("locked ", style="dim")
         content.append("×", style="dim")
         content.append("terminated", style="dim")
+        if drew_strips:
+            content.append(" ▁▄█", style="green")
+            content.append("delegated work (mean live)", style="dim")
 
         return content
+
+    def _strip_sessions(self) -> list:
+        """The rows that can have strips: this machine's agents with an id."""
+        return [s for s in self.sessions
+                if not getattr(s, "is_remote", False) and isinstance(getattr(s, "id", None), str)]
+
+    def _emoji_free(self) -> bool:
+        try:
+            return getattr(self.app, "emoji_free", False) is True
+        except Exception:
+            return False  # no app context (tests)
+
+    def _render_strips(self, content: Text, session, width: int, label_w: int,
+                       now: datetime, baseline_slot) -> bool:
+        """The density strips under ``session``'s row (see ``swarm_strips``)."""
+        sid = getattr(session, "id", None)
+        if not isinstance(sid, str):
+            return False
+        strips = swarm_strips(sid, self._swarm_histories, sid in self.swarm_expanded)
+        emoji_free = self._emoji_free()
+        for marker, title, points in strips:
+            label = _fit(_strip_label(marker, title, emoji_free), label_w)
+            content.append(f"  {label} ", style="dim cyan")
+            slots = swarm_history.density(points, width, self.timeline_hours, now)
+            for i, (slot, glyph) in enumerate(zip(slots, swarm_history.glyphs(slots))):
+                if i == baseline_slot:
+                    content.append("|", style="bold cyan")
+                elif slot is None:
+                    content.append(glyph)
+                elif slot.failed:
+                    content.append(glyph if glyph.strip() else "▁", style="bold red underline")
+                elif slot.light is None:
+                    content.append(glyph, style="dim")
+                else:
+                    content.append(glyph, style=STRIP_COLOURS[slot.light])
+            peak = swarm_history.peak_live(points)
+            content.append(f" ↑{peak:<3}"[:5], style="dim")
+            content.append("\n")
+        return bool(strips)
