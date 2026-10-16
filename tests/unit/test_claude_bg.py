@@ -513,7 +513,8 @@ class TestHooks:
         self._send({"hook_event_name": "Stop", "session_id": SID, "background_tasks": []})
         assert list(self._state()["subagents"]) == ["a1"]
 
-    def test_a_nested_cli_is_noted_but_behaves_as_before(self):
+    def test_a_cli_without_a_process_id_is_noted_but_behaves_as_before(self):
+        """No CLAUDE_PID (another backend): not placed (test_conversation_placement)."""
         self._send({"hook_event_name": "PreToolUse", "session_id": "mine",
                     "tool_name": "Bash", "tool_input": {}, "tool_use_id": "t1"})
         self._send({"hook_event_name": "Stop", "session_id": "nested"})

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from . import swarm
+from . import conversation_warning, swarm
 from .clock import SYSTEM_CLOCK, Clock
 from .paths import agent_path, session_dir
 from .status_constants import (
@@ -1179,6 +1179,12 @@ class HookStatusDetector:
         self._last_detect_phase[session.id] = phase_label(ctx.event, rule)
         detail = verdict.detail()
         if detail is not None:
+            warning = conversation_warning.current(hook_state, now)
+            if warning is not None:
+                # Beside the light, never instead of it (hook_handler._place)
+                detail = StatusDetail(detail.color,
+                                      list(detail.badges) + [conversation_warning.badge(warning)],
+                                      detail.legacy_status)
             self._status_details[session.name] = detail
         return verdict.legacy_status, verdict.activity, pane_content
 

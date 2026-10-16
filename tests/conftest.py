@@ -40,6 +40,8 @@ for _var in (
     "TMUX", "TMUX_PANE",
     "OVERCODE_SESSION_NAME", "OVERCODE_SESSION_ID", "OVERCODE_TMUX_SESSION",
     "OVERCODE_PARENT_NAME", "OVERCODE_PARENT_SESSION_ID",
+    # The Claude CLI running the tests (hook_handler._place reads it)
+    "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID",
 ):
     os.environ.pop(_var, None)
 PRIVATE_TMUX_SOCKET = os.environ["OVERCODE_TMUX_SOCKET"]
