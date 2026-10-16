@@ -65,6 +65,11 @@ _TEAMMATE_ID = re.compile(r"^a(?P<name>.+)-[0-9a-f]{8,}$")
 _NOTIFICATION = re.compile(r"<task-notification>(.*?)(?:</task-notification>|$)", re.S)
 _TASK_ID = re.compile(r"<task-id>\s*([^<\s]+)\s*</task-id>")
 _STATUS = re.compile(r"<status>\s*([^<\s]+)\s*</status>")
+# An agent that ends its turn with a shell of its own still going gets a
+# "completed" notification whose result is interim; it resumes when the
+# shell ends and notifies again (2.1.301, capture 12).
+_INTERIM = re.compile(r"background work of its own still running"
+                      r"|waiting on its own background work")
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +91,11 @@ def agent_kind(agent_id: str, agent_type: Optional[str], swarm: dict) -> str:
 
 
 def task_notifications(prompt) -> list:
-    """(task id, status) for each ``<task-notification>`` in a prompt."""
+    """(task id, status, interim) for each ``<task-notification>`` in a prompt.
+
+    ``interim``: the agent stopped with its own background work still
+    running, so it has not finished whatever the status says.
+    """
     if not isinstance(prompt, str) or "<task-notification>" not in prompt:
         return []
     out = []
@@ -94,7 +103,7 @@ def task_notifications(prompt) -> list:
         task = _TASK_ID.search(block)
         status = _STATUS.search(block)
         if task and status:
-            out.append((task.group(1), status.group(1)))
+            out.append((task.group(1), status.group(1), bool(_INTERIM.search(block))))
     return out
 
 
@@ -149,6 +158,18 @@ def _set_result(subagents: dict, swarm: dict, agent_id: str, result: str, now: f
         done[agent_id]["result"] = result
         return True
     return False
+
+
+def _waits_on_own_work(subagents: dict, swarm: dict, agent_id: str, now: float) -> None:
+    """An interim notification: the agent is running again, not finished."""
+    entry = subagents.get(agent_id)
+    ended = (swarm.get("done") or {}).pop(agent_id, None)
+    if entry is None and ended is None and agent_id not in (swarm.get("async") or []):
+        return
+    entry = entry or {"kind": (ended or {}).get("kind") or KIND_SUBAGENT, "started_at": now}
+    entry.pop("idle", None)
+    entry.update(own_work=True, last_seen=now)
+    subagents[agent_id] = entry
 
 
 def _end_workflow(subagents: dict, swarm: dict, task_id: str, result: str, now: float) -> None:
@@ -216,6 +237,7 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
         if run.get("status") == "running" and task_id not in ids:
             run["status"] = RESULT_OK
 
+    shells = any(t.get("type") == "shell" for t in running)
     team_descs = {t.get("description") for t in running if t.get("type") == "teammate"}
     teammates = swarm.get("teammates") or {}
     async_ids = set(swarm.get("async") or [])
@@ -228,6 +250,8 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
             gone = (desc not in team_descs) if desc else not team_descs
         else:
             gone = agent_id not in ids and (turn_over or agent_id in async_ids)
+            # Claude lists the shell it waits on, not the agent itself
+            gone = gone and not (entry.get("own_work") and shells)
         if gone:
             _finish(subagents, swarm, agent_id, RESULT_OK, now)
     _end_orphan_workflow_agents(subagents, swarm, now)
@@ -337,10 +361,13 @@ def apply_parent_event(subagents, swarm, event: str, tool_name: Optional[str],
             _add_workflow(swarm, response["taskId"], name=response.get("workflowName"),
                           run_id=response.get("runId"))
     elif event == "UserPromptSubmit":
-        for task_id, status in task_notifications(data.get("prompt")):
-            # A notification only comes once a task has ended
+        for task_id, status, interim in task_notifications(data.get("prompt")):
+            # A notification only comes once a task has ended, or paused
+            # on its own background work
             result = _result_of(status) or RESULT_FAILED
-            if task_id in (swarm.get("workflows") or {}):
+            if interim and result == RESULT_OK and task_id not in (swarm.get("workflows") or {}):
+                _waits_on_own_work(subagents, swarm, task_id, now)
+            elif task_id in (swarm.get("workflows") or {}):
                 _end_workflow(subagents, swarm, task_id, result, now)
             else:
                 _set_result(subagents, swarm, task_id, result, now)

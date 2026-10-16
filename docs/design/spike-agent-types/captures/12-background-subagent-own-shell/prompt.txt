@@ -1,0 +1,1 @@
+Use the Agent tool twice with run_in_background set to true. Each subagent must run the shell command "sleep N" with the Bash tool, where N is 50 and 90, then reply done. After launching both, wait for both task notifications, then reply finished.

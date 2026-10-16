@@ -69,12 +69,19 @@ class TestTaskNotifications:
         prompt = ("<task-notification>\n<task-id>aa1</task-id>\n<status>completed</status>\n"
                   "</task-notification>\n<task-notification><task-id>w0dq</task-id>"
                   "<status>failed</status></task-notification>")
-        assert swarm.task_notifications(prompt) == [("aa1", "completed"), ("w0dq", "failed")]
+        assert swarm.task_notifications(prompt) == [("aa1", "completed", False),
+                                                    ("w0dq", "failed", False)]
 
     def test_a_cut_off_prompt_still_reads(self):
         prompt = ("<task-notification>\n<task-id>aa1</task-id>\n<tool-use-id>t</tool-use-id>"
                   "\n<status>completed</status>\n<summary>Agent \"a...")
-        assert swarm.task_notifications(prompt) == [("aa1", "completed")]
+        assert swarm.task_notifications(prompt) == [("aa1", "completed", False)]
+
+    def test_an_agent_waiting_on_its_own_work_is_interim(self):
+        prompt = ("<task-notification><task-id>aa1</task-id><status>completed</status>"
+                  "<summary>Agent \"Sleep 50 seconds\" is waiting on its own background "
+                  "work</summary></task-notification>")
+        assert swarm.task_notifications(prompt) == [("aa1", "completed", True)]
 
     @pytest.mark.parametrize("prompt", [None, "", "fix the tests", 42])
     def test_anything_else_is_none(self, prompt):
@@ -176,6 +183,31 @@ class TestReconcile:
         assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
         subs, sw = _parent(subs, sw, "Stop", now=50.0, background_tasks=[])
         assert swarm.rollup(_state(subs, sw), 50.0) == _rollup(total=1, ok=1)
+
+    def test_an_interim_notification_keeps_it_running_while_shells_run(self):
+        note = ("<note>This agent stopped with background work of its own still "
+                "running.</note>")
+        subs, sw = _parent({}, {}, "PostToolUse", "Agent", {},
+                           tool_response={"status": "async_launched", "agentId": "a1"})
+        subs, sw = _sub(subs, sw, "SubagentStart", "a1", 1.0)
+        subs, sw = _sub(subs, sw, "SubagentStop", "a1", 2.0, background_tasks=[
+            {"id": "a1", "type": "subagent", "status": "running"},
+            {"id": "b1", "type": "shell", "status": "running"}])
+        subs, sw = _parent(subs, sw, "UserPromptSubmit", now=2.5, prompt=(
+            f"<task-notification><task-id>a1</task-id><status>completed</status>{note}"))
+        subs, sw = _parent(subs, sw, "Stop", now=3.0, background_tasks=[
+            {"id": "b1", "type": "shell", "status": "running"}])
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
+        assert swarm.in_flight(_state(subs, sw), 3.0) == (1, 0)
+        # No shell left: whatever it waited on is over
+        subs, sw = _parent(subs, sw, "Stop", now=60.0, background_tasks=[])
+        assert swarm.rollup(_state(subs, sw), 60.0) == _rollup(total=1, ok=1)
+
+    def test_an_interim_notification_for_an_unknown_task_adds_nothing(self):
+        prompt = ("<task-notification><task-id>zz</task-id><status>completed</status>"
+                  "<summary>Agent \"x\" is waiting on its own background work</summary>")
+        subs, sw = _parent({}, {}, "UserPromptSubmit", prompt=prompt)
+        assert swarm.rollup(_state(subs, sw), 1.0) is None
 
     def test_another_agent_s_stop_leaves_a_foreground_one_alone(self):
         """Two foreground agents in parallel (07): the first one's
@@ -353,6 +385,20 @@ class TestCaptures:
                                                     workflows_running=1)
         assert _at(samples, 26.25).rollup == _rollup(total=4, ok=4, workflows=1)
 
+    def test_a_subagent_waiting_on_its_own_shell_is_still_running(self, tmp_path):
+        """2.1.301: each subagent backgrounds its sleep and ends its turn.
+        Claude drops it from the list (only the shells stay) and sends a
+        "completed" notification marked interim; it resumes when the shell
+        ends. Seen live as ✅ while both sleeps still ran."""
+        sc = _capture("12-background-subagent-own-shell",
+                      [(17.0, 63.5, YELLOW), (65.25, 105.25, YELLOW), (107.0, 110.0, RED)],
+                      110.0)
+        samples = replay(sc, tmp_path)
+        _check(sc, samples)
+        assert _at(samples, 40.0).rollup == _rollup(total=2, running=2)
+        assert _at(samples, 80.0).rollup == _rollup(total=2, running=1, ok=1)
+        assert _at(samples, 107.0).rollup == _rollup(total=2, ok=2)
+
     def test_a_team_waits_on_working_teammates_not_idle_ones(self, tmp_path):
         sc = _capture("08-team-in-process",
                       [(91.25, 92.25, YELLOW), (98.75, 150.0, RED)], 150.0)
@@ -362,7 +408,8 @@ class TestCaptures:
         assert _at(samples, 101.0).rollup == _rollup(total=2, ok=2)
 
     @pytest.mark.parametrize("name", ["03-background-subagent-with-SendMessage",
-                                      "06-workflow-slow-live-watch", "08-team-in-process"])
+                                      "06-workflow-slow-live-watch", "08-team-in-process",
+                                      "12-background-subagent-own-shell"])
     def test_the_rollup_moves_only_when_an_event_lands(self, name, tmp_path):
         """No countdowns: between two events every sample shows the same counts."""
         steps = capture_steps(name)
