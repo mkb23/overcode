@@ -172,6 +172,13 @@ def _notifications_state(app: Any) -> StateView:
         return StateView(options, None)
 
 
+def _swarm_detail_state(app: Any) -> StateView:
+    options = ("off", "groups", "needs you")
+    modes = ("off", "groups", "needs_you")
+    mode = getattr(app, "swarm_detail", None)
+    return StateView(options, modes.index(mode) if mode in modes else None)
+
+
 def _key_preset_state(app: Any) -> StateView:
     try:
         from .keymap import active, list_presets
@@ -271,10 +278,17 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("toggle_show_done", "Show done child agents", "Display", "finished children",
        state=lambda app: _toggle(getattr(app, "show_done", None))),
     _C("toggle_collapse_children", "Fold / unfold children", "Display", "collapse expand tree", agent=True),
-    _C("expand_swarm", "Expand delegated work", "Display",
-       "subagents workflow phases teammates team swarm rows open drill right", agent=True),
-    _C("collapse_swarm", "Collapse delegated work", "Display",
-       "subagents workflow phases teammates team swarm rows fold left", agent=True),
+    _C("expand_swarm", "Expand row", "Display",
+       "delegated work subagents workflow phases teammates team swarm rows done children "
+       "tree unfold open drill right", agent=True),
+    _C("collapse_swarm", "Collapse row", "Display",
+       "delegated work subagents workflow phases teammates team swarm rows done children "
+       "tree fold left", agent=True),
+    _C("toggle_expand_all", "Expand / collapse all", "Display",
+       "delegated work subagents swarm children tree fold unfold everything"),
+    _C("cycle_swarm_detail", "Delegated work detail", "Display",
+       "swarm subagents workflow groups needs you orange auto expand off cycle",
+       state=_swarm_detail_state),
     _C("toggle_monochrome", "Monochrome", "Display", "black white colour color ansi",
        state=lambda app: _toggle(getattr(app, "monochrome", None))),
     _C("toggle_emoji_free", "Emoji-free", "Display", "ascii",
@@ -385,7 +399,7 @@ class SortChoice:
     descending: bool = False
 
 
-TREE_CHOICE_DESCRIPTION = "Parents with their children indented beneath (X folds)"
+TREE_CHOICE_DESCRIPTION = "Parents with their children indented beneath (← / → fold)"
 
 
 def sort_choices(sort_mode: str, sort_reversed: bool) -> List[SortChoice]:

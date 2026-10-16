@@ -102,7 +102,10 @@ class EngineLink:
         client.set_burn_window(app._burn_hours() or None)
         self.report_focus(app._get_focused_widget())
         client.set_focus(self.focus)
-        client.set_swarm(set(getattr(app, "swarm_expanded", ())))
+        subscription = getattr(app, "_swarm_subscription", None)
+        subs = subscription() if callable(subscription) else frozenset()
+        client.set_swarm(set(subs))
+        app._swarm_reported = subs
         client.start()
 
     def stop(self) -> None:
@@ -182,6 +185,8 @@ class EngineLink:
         # A 🌙 row (an adopted Claude background session) came or went
         app._background_sessions_moved()
         self.apply_views()
+        # A rollup moved: the swarm-detail rule may open or close a parent
+        app._swarm_refresh()
         virtual = getattr(snapshot, "virtual", None) or {}
         if virtual is not self.virtual and virtual != self.virtual:
             self.virtual = virtual

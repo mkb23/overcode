@@ -230,14 +230,16 @@ class ViewActionsMixin:
             self.notify("No children to collapse", severity="warning")
             return
 
-        # Resolve parent name for notification
-        if session_id == focused_widget.session.id:
-            parent_name = focused_widget.session.name
-        else:
-            parent_session = next((s for s in self.sessions if s.id == session_id), None)
-            parent_name = parent_session.name if parent_session else session_id[:8]
+        self._fold_children(session_id, session_id not in self.collapsed_parents)
 
-        if session_id in self.collapsed_parents:
+    def _fold_children(self, session_id: str, fold: bool) -> None:
+        """Fold (hide) or unfold a parent's children in tree sort, persisted.
+
+        The palette's "Fold / unfold children" and ← / → on a tree row."""
+        parent_session = next((s for s in self.sessions if s.id == session_id), None)
+        parent_name = parent_session.name if parent_session else session_id[:8]
+
+        if not fold:
             self.collapsed_parents.discard(session_id)
             self.notify(f"Expanded children of {parent_name}", severity="information")
         else:

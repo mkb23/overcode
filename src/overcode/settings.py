@@ -728,6 +728,13 @@ class TUIPreferences:
     # Parents whose children are folded in tree sort mode (X key, #244),
     # persisted so a fold survives a TUI restart (#464)
     collapsed_parents: Set[str] = field(default_factory=set)
+    # Delegated work (0.6.1 observability): the swarm-detail rule (f:
+    # "off" | "groups" | "needs_you"), per-agent overrides of it ({agent id:
+    # expanded?}, from → / ← / X) and open or closed groups, phases and done
+    # lines ({row key: open?}); ids of agents that are gone are pruned on save
+    swarm_detail: str = "off"
+    swarm_expanded: dict = field(default_factory=dict)
+    swarm_opened: dict = field(default_factory=dict)
     # The agent last highlighted by hand (its id): the next start highlights
     # it again, and the split's bottom pane opens on its window
     last_focused_agent: str = ""

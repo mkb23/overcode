@@ -287,11 +287,13 @@ class SupervisorTUI(
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
         # Show/hide done child agents (#244)
         ("D", "toggle_show_done", "Show done"),
-        # Collapse/expand children in tree view (#244)
-        ("X", "toggle_collapse_children", "Collapse children"),
-        # Delegated work as read-only rows under its parent (0.6.1 phase 2)
-        ("right", "expand_swarm", "Expand delegated work"),
-        ("left", "collapse_swarm", "Collapse delegated work"),
+        # Expand / collapse: → / ← on one row (its delegated work, and its
+        # children in tree sort), X on everything, f cycles which agents'
+        # delegated work opens by itself (0.6.1 observability)
+        ("right", "expand_swarm", "Expand row"),
+        ("left", "collapse_swarm", "Collapse row"),
+        ("X", "toggle_expand_all", "Expand/collapse all"),
+        ("f", "cycle_swarm_detail", "Delegated work detail"),
         # Sort picker: the palette on sort choices (#61, #487)
         ("S", "choose_sort", "Sort by…"),
         # Edit agent value (#61)
@@ -423,6 +425,8 @@ class SupervisorTUI(
             self._prefs.timeline_visible = False
         # Folded parents survive a TUI restart (#464)
         self.collapsed_parents = set(self._prefs.collapsed_parents)
+        # So does what is open of delegated work (tui_actions/swarm.py)
+        self._load_swarm_prefs()
 
         # Current summary detail level index (cycles through SUMMARY_LEVELS)
         # Initialize from saved preferences
@@ -2210,8 +2214,11 @@ class SupervisorTUI(
                 widget.child_count = remote_children
         for widget in ordered_widgets:
             widget.job_count = self._job_counts.get(widget.session.id, 0)
-        # Expanded parents' virtual rows follow their parent's row
-        if self.swarm_expanded or self._swarm_lines:
+        # Expanded parents' virtual rows follow their parent's row; the
+        # swarm-detail rule may open or close some as rows come and go
+        expanded = set(self.swarm_expanded)
+        self._swarm_refresh()
+        if (self.swarm_expanded or self._swarm_lines) and expanded == self.swarm_expanded:
             self._sync_swarm_rows()
 
     def watch_preview_visible(self, preview_visible: bool) -> None:
