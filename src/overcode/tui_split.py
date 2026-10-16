@@ -67,6 +67,14 @@ class NullSplit:
     def detach(self) -> None:
         """Detach the tmux client (``q``)."""
 
+    def attach_background(self, session: "Session") -> bool:
+        """Open ``claude attach <id>`` for a 🌙 row in the bottom pane; True if it did."""
+        return False
+
+    def run_claude(self, args: list) -> tuple:
+        """Run ``claude <args>`` (stop / rm a background session): (ok, what it said)."""
+        return False, "not in the overcode split"
+
     def cleanup_stale_ssh_proxies(self) -> None:
         """Kill ssh proxy windows a previous TUI left behind."""
 
@@ -156,12 +164,18 @@ class TmuxSplit(NullSplit):
         """
         from .tui_widgets import SessionSummary
 
+        from .claude_bg import is_background
+
         app = self.app
         try:
             if not isinstance(widget, SessionSummary):
                 return
             session = widget.session
             sync_session = self.sync_target
+
+            if is_background(session):
+                self._show_background(session)
+                return
 
             if session.is_remote and session.source_ssh:
                 # The SSH proxy uses the bottom pane: leave the sister view
@@ -219,6 +233,64 @@ class TmuxSplit(NullSplit):
                 self._tmux.select_window(sync_session, EMPTY_PLACEHOLDER_WINDOW)
         except Exception:
             pass
+
+    # ── 🌙 Claude background sessions ─────────────────────────────────
+
+    def _background_window(self, session: "Session") -> str:
+        from .tmux_utils import CLAUDE_BG_WINDOW_PREFIX
+        return f"{CLAUDE_BG_WINDOW_PREFIX}{getattr(session, 'short_id', '')}"
+
+    def _show_background(self, session: "Session") -> None:
+        """A 🌙 row has no pane: its attach window if one is open, else a placeholder."""
+        from .tmux_utils import CLAUDE_BG_PLACEHOLDER_WINDOW
+
+        app = self.app
+        if app._sister_zoom_active:
+            app._exit_sister_view()
+        window = self._background_window(session)
+        if self._tmux_manager.window_exists(window):
+            self._tmux.select_window(self.sync_target, window)
+            return
+        msg = ("\n  A Claude background session (claude --bg): Claude runs it, not overcode.\n"
+               "  Enter attaches here (claude attach); x stops it (claude stop);\n"
+               "  the command palette (/) removes it (claude rm).\n")
+        try:
+            if self._tmux.ensure_empty_placeholder_window(
+                    self.sync_target, CLAUDE_BG_PLACEHOLDER_WINDOW, msg):
+                self._tmux.select_window(self.sync_target, CLAUDE_BG_PLACEHOLDER_WINDOW)
+        except Exception:
+            pass
+
+    def attach_background(self, session: "Session") -> bool:
+        """``claude attach <id>`` in a window of the agents session, shown below.
+
+        The window is kept while it runs (switching back is instant); when
+        the person leaves Claude's view it exits and the row shows the
+        placeholder again.
+        """
+        short = getattr(session, "short_id", "")
+        if not short:
+            return False
+        window = self._background_window(session)
+        if not self._tmux_manager.window_exists(window):
+            if not self._tmux_manager.create_claude_attach_window(
+                    window, short, session.start_directory):
+                return False
+        if not self._tmux.select_window(self.sync_target, window):
+            return False
+        self.focus_bottom_pane()
+        return True
+
+    def run_claude(self, args: list) -> tuple:
+        """``claude <args>``, bounded; (ok, its last line of output)."""
+        try:
+            result = subprocess.run(["claude", *args], capture_output=True, text=True,
+                                    timeout=30)
+        except (subprocess.SubprocessError, OSError) as e:
+            return False, str(e)
+        lines = [ln for ln in ((result.stdout or "") + (result.stderr or "")).splitlines()
+                 if ln.strip()]
+        return result.returncode == 0, (lines[-1].strip() if lines else "")
 
     # ── SSH proxies for sisters' agents ───────────────────────────────
 

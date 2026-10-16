@@ -274,4 +274,9 @@ class SwarmMixin:
                 self.notify("Read-only row: delegated work belongs to its parent's session "
                             "(← back to the agent)", severity="information")
                 return True
+        elif default_namespace is None or default_namespace is self:
+            # A 🌙 background session takes only Claude's own actions
+            handled = getattr(self, "_background_action", None)
+            if handled is not None and handled(_action_name(action)):
+                return True
         return await super().run_action(action, default_namespace, namespaces)
