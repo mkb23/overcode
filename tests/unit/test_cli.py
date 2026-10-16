@@ -2716,3 +2716,162 @@ class TestSplitTmuxNeverHangs:
         assert result.returncode == 1
         assert "did not answer" in result.stderr
         assert split._tmux_check("has-session", "-t", "x") is False
+
+
+class TestLaunchPresets:
+    """launch --preset: children presets (child_presets), flags override them."""
+
+    @pytest.fixture(autouse=True)
+    def _config(self, tmp_path, monkeypatch):
+        from overcode import config
+        self.config_file = tmp_path / "config.yaml"
+        self.config_file.write_text("")
+        monkeypatch.setattr(config, "CONFIG_PATH", self.config_file)
+        config._clear_config_cache()
+        yield
+        config._clear_config_cache()
+
+    def _write_config(self, text):
+        from overcode import config
+        self.config_file.write_text(text)
+        config._clear_config_cache()
+
+    @staticmethod
+    def _child(*args, name="child"):
+        return runner.invoke(app, ["launch", "--name", name, "--directory", "/tmp",
+                                   "--parent", "dad", *args])
+
+    def test_a_child_without_preset_gets_supervised(self, fleet):
+        """The default preset is today's behaviour: wait, archived an hour after done."""
+        fleet.add("dad")
+        result = self._child()
+        assert result.exit_code == 0, result.output
+        assert "Preset: supervised" in result.output
+        assert "Oversight" not in result.output
+        child = fleet.get("child")
+        assert child.oversight_policy == "wait"
+        assert child.archive_after_seconds is None
+
+    def test_a_top_level_agent_gets_no_preset(self, fleet):
+        self._write_config("children:\n  preset: autonomous\n")
+        result = runner.invoke(app, ["launch", "--name", "solo", "--directory", "/tmp"])
+        assert result.exit_code == 0, result.output
+        assert "Preset" not in result.output
+        assert fleet.get("solo").oversight_policy == "wait"
+
+    def test_balanced(self, fleet):
+        fleet.add("dad")
+        result = self._child("--preset", "balanced")
+        assert result.exit_code == 0, result.output
+        assert "Preset: balanced" in result.output
+        child = fleet.get("child")
+        assert (child.oversight_policy, child.oversight_timeout_seconds) == ("timeout", 86400)
+        assert child.archive_after_seconds is None
+
+    def test_autonomous(self, fleet):
+        fleet.add("dad")
+        result = self._child("--preset", "autonomous")
+        assert result.exit_code == 0, result.output
+        child = fleet.get("child")
+        assert (child.oversight_policy, child.oversight_timeout_seconds) == ("timeout", 3600)
+        assert child.archive_after_seconds == 600
+        assert "Archive after done: 10m" in result.output
+
+    def test_flags_override_the_preset(self, fleet):
+        fleet.add("dad")
+        result = self._child("--preset", "autonomous", "--on-stuck", "wait",
+                             "--archive-after", "never")
+        assert result.exit_code == 0, result.output
+        child = fleet.get("child")
+        assert child.oversight_policy == "wait"
+        assert child.archive_after_seconds == -1
+
+    def test_oversight_timeout_flag_overrides(self, fleet):
+        fleet.add("dad")
+        result = self._child("--preset", "balanced", "--oversight-timeout", "5m")
+        assert result.exit_code == 0, result.output
+        assert fleet.get("child").oversight_timeout_seconds == 300
+
+    def test_configured_default_preset(self, fleet):
+        self._write_config("children:\n  preset: balanced\n")
+        fleet.add("dad")
+        result = self._child()
+        assert result.exit_code == 0, result.output
+        assert fleet.get("child").oversight_timeout_seconds == 86400
+
+    def test_user_preset_with_budget(self, fleet):
+        self._write_config("children:\n  presets:\n    capped:\n      budget: 2.5\n"
+                           "      archive_after: 30m\n")
+        fleet.add("dad")
+        result = self._child("--preset", "capped")
+        assert result.exit_code == 0, result.output
+        child = fleet.get("child")
+        assert child.cost_budget_usd == 2.5
+        assert child.archive_after_seconds == 1800
+        assert "Budget: $2.50" in result.output
+
+    def test_budget_flag_overrides_the_preset_budget(self, fleet):
+        self._write_config("children:\n  presets:\n    capped:\n      budget: 2.5\n")
+        fleet.add("dad")
+        result = self._child("--preset", "capped", "--budget", "1")
+        assert result.exit_code == 0, result.output
+        assert fleet.get("child").cost_budget_usd == 1.0
+
+    def test_unknown_preset_warns_and_launches_with_the_default(self, fleet):
+        fleet.add("dad")
+        result = self._child("--preset", "autonomus")
+        assert result.exit_code == 0, result.output
+        assert "unknown preset 'autonomus'" in result.output
+        assert "Preset: supervised" in result.output
+        assert fleet.get("child") is not None
+
+    def test_bad_config_warns_never_crashes(self, fleet):
+        self._write_config("children:\n  preset: nope\n  presets:\n    x: fast\n")
+        fleet.add("dad")
+        result = self._child()
+        assert result.exit_code == 0, result.output
+        assert "unknown preset 'nope'" in result.output
+        assert "children.presets.x" in result.output
+
+    def test_invalid_archive_after_exits_before_launching(self, fleet):
+        fleet.add("dad")
+        result = self._child("--archive-after", "soonish")
+        assert result.exit_code == 1
+        assert "Invalid --archive-after" in result.output
+        assert fleet.get("child") is None
+
+    def test_inside_an_agent_counts_as_a_child(self, fleet, monkeypatch):
+        """No --parent, but OVERCODE_SESSION_NAME: the launcher makes a child, so the default applies."""
+        self._write_config("children:\n  preset: autonomous\n")
+        fleet.add("dad")
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "dad")
+        result = runner.invoke(app, ["launch", "--name", "kid", "--directory", "/tmp"])
+        assert result.exit_code == 0, result.output
+        kid = fleet.get("kid")
+        assert kid.parent_session_id == fleet.get("dad").id
+        assert kid.oversight_timeout_seconds == 3600
+
+    def test_help_lists_preset_and_archive_after(self):
+        output = strip_ansi(runner.invoke(app, ["launch", "--help"]).output)
+        assert "--preset" in output
+        assert "--archive-after" in output
+
+
+class TestConfigPresets:
+    def test_lists_builtins_and_config_presets(self, tmp_path, monkeypatch):
+        from overcode import config
+        path = tmp_path / "config.yaml"
+        path.write_text("children:\n  preset: balanced\n  presets:\n    mine:\n"
+                        "      budget: 3\n      speed: 9\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", path)
+        config._clear_config_cache()
+        try:
+            result = runner.invoke(app, ["config", "presets"])
+        finally:
+            config._clear_config_cache()
+        output = strip_ansi(result.output)
+        assert result.exit_code == 0, output
+        for name in ("supervised", "balanced", "autonomous", "mine"):
+            assert name in output
+        assert "* balanced" in output
+        assert "unknown key 'speed'" in output
