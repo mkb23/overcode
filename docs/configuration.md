@@ -41,6 +41,7 @@ pricing:
   cache_write: 3.75    # $/million tokens for cache writes (5-minute TTL)
   cache_read: 0.30     # $/million tokens for cache reads
   # cache_write_1h: 6.0  # 1-hour TTL cache writes; default twice the input price
+  table_max_age_days: 90  # doctor warns when the Claude price table in use is older
 
 # Bedrock agents (see Pricing Configuration below)
 bedrock:
@@ -800,20 +801,25 @@ splits each message's cache writes by TTL, and the 1-hour part is priced at
 
 1. Your `model_pricing:` rows, matched as substrings of the model id,
    longest key first.
-2. The **price table** (`src/overcode/data/claude_prices.json`): one row
-   per Claude model id, each with its source and as-of date, generated from
-   the AWS Price List (whose `global` column is Anthropic's list price) by
-   `scripts/refresh_price_table.py`. Bedrock, Vertex and opencode spellings
-   of an id (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`,
+2. Your **local price table** (`~/.overcode/cache/claude_prices.json`),
+   if you built one with `overcode models refresh --prices` and it is dated
+   after the shipped table (see "Prices on an air-gapped host" below).
+3. The **price table** shipped with overcode
+   (`src/overcode/data/claude_prices.json`): one row per Claude model id,
+   each with its source and as-of date, generated from the AWS Price List
+   (whose `global` column is Anthropic's list price) when the release is
+   made. Bedrock, Vertex and opencode spellings of an id
+   (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`,
    `claude-opus-4-5@20251101`, `anthropic/claude-opus-4.1`) find the same row.
-3. The built-in family rows (`pricing.MODEL_PRICING`: `opus`, `sonnet`,
+4. The built-in family rows (`pricing.MODEL_PRICING`: `opus`, `sonnet`,
    `haiku`, ...), matched as substrings: only for ids the table does not
    name, such as an alias or a model released after it. `overcode doctor`
    warns when an agent's Claude model is priced this way.
-4. The models.dev catalog (below), then the global `pricing:` rates.
+5. The models.dev catalog (below), then the global `pricing:` rates.
 
-`overcode models lookup <model>` shows which row answered. The table's
-rows as of 2026-10-12, per million tokens:
+`overcode models lookup <model>` shows which row answered; `overcode
+models info` shows which price table is in use, its date, source and age.
+The shipped table's rows as of 2026-10-12, per million tokens:
 
 | Model | Input | Output | Cache write (5 min / 1 h) | Cache read | Long context |
 |---|---|---|---|---|---|
@@ -836,6 +842,52 @@ long the session has grown.
 
 A price change applies to tokens read from then on: spend already recorded
 keeps the rate it was priced at.
+
+### Prices on an air-gapped host
+
+Pricing never needs the network. The Claude price table ships inside each
+overcode release, so upgrading overcode is the usual way to get new
+prices. `overcode doctor` warns when the table in use is more than 90 days
+old (`pricing.table_max_age_days`).
+
+When you cannot upgrade, rebuild the table from the AWS Price List file
+overcode's releases are made from. On a machine with internet access,
+download the Bedrock foundation-model offer file (public, no AWS account
+needed):
+
+```bash
+curl -o AmazonBedrockFoundationModels.json \
+  https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrockFoundationModels/current/us-east-1/index.json
+```
+
+The URL pattern is
+`https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrockFoundationModels/current/<region>/index.json`.
+Use `us-east-1`, as the releases do: its `global` column is Anthropic's
+list price. The index of all offers is
+`https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json`.
+
+Carry the file in by whatever route your site allows (it is plain JSON;
+gzip it if you like, overcode reads `.gz` too), then:
+
+```bash
+overcode models refresh --prices AmazonBedrockFoundationModels.json --check  # show what changes
+overcode models refresh --prices AmazonBedrockFoundationModels.json          # write it
+overcode models info                                                         # confirm it is in use
+```
+
+This writes `~/.overcode/cache/claude_prices.json`; the installed package
+is never modified. It is used ahead of the shipped table for as long as it
+is dated after it: its rows replace the shipped ones, and a model it does
+not list keeps its shipped row. Upgrading to an overcode whose table is as
+new or newer makes it unused (delete it, or leave it). A file older than
+the shipped table is refused, since it would be ignored. Running daemons
+pick up the new table on their next price lookup. The same thresholds and
+notes the release adds (long-context tiers the AWS list does not state)
+are applied. Your `model_pricing:` rows still win over both tables.
+
+`overcode models refresh` without `--prices` fetches the models.dev
+catalog; offline it fails within about 10 seconds and leaves everything as
+it was.
 
 ### Bedrock
 

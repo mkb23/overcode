@@ -294,8 +294,14 @@ Decided differently from §4 / left out:
   command). Live entries from before the long-context breakdown take it
   unpriced on their first read. The largest historic errors left are
   Haiku 5.5 (10× high) and Fable 5.1 cache reads (4× high).
-- The table is vendored per release from a file fetched by hand; no
-  `overcode models refresh` of it and no 30-day age warning yet (§9 Q6).
+- The table is vendored per release from a file fetched by hand (owner's
+  decision). Since then, for air-gapped hosts: `overcode models refresh
+  --prices <offer file>` builds a local override
+  (`~/.overcode/cache/claude_prices.json`, same builder and overlay as the
+  release script, no network), used while dated after the vendored table,
+  its rows over the vendored ones; `models info` names the table in use;
+  `doctor` warns past `pricing.table_max_age_days` (90, not 30: a release
+  cadence, not a price cadence).
 - The doctor check compares list prices, not the Bedrock bill.
 
 ## 9. Open questions for the owner

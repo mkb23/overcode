@@ -729,7 +729,10 @@ The catalog behind the `CTX%` and `$` columns — see
 ### `overcode models info`
 
 Show which catalog lookups resolve against (local refreshed cache,
-opencode's cache, or the bundled snapshot), its vintage and size.
+opencode's cache, or the bundled snapshot), its vintage and size; and which
+Claude price table prices come from (the one shipped with overcode, or a
+local override from `models refresh --prices`), its as-of date, source and
+age.
 
 ```bash
 overcode models info
@@ -757,6 +760,22 @@ the on-demand path; nothing is fetched unattended unless `config.yaml` sets
 ```bash
 overcode models refresh          # fetch and rewrite
 overcode models refresh --check  # report the active catalog's age only
+```
+
+Offline it fails within about 10 seconds and changes nothing.
+
+With `--prices FILE` it instead rebuilds the Claude price table from an AWS
+Price List file (the `AmazonBedrockFoundationModels` offer, JSON or `.gz`)
+and touches no network: for hosts that cannot upgrade overcode to get new
+prices, such as air-gapped ones. It writes
+`~/.overcode/cache/claude_prices.json`, used ahead of the shipped table
+while it is dated after it; a file older than the shipped table is refused.
+Where to get the file and how lookups order:
+[Configuration → Prices on an air-gapped host](configuration.md#prices-on-an-air-gapped-host).
+
+```bash
+overcode models refresh --prices AmazonBedrockFoundationModels.json --check  # show the diff only
+overcode models refresh --prices AmazonBedrockFoundationModels.json
 ```
 
 ---
