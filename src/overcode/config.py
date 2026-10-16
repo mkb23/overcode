@@ -765,6 +765,7 @@ def get_session_archive_config() -> dict:
 
 
 FINISHED_ROW_SECONDS_DEFAULT = 30.0
+DONE_ROWS_DEFAULT = 50
 
 
 def get_observability_config() -> dict:
@@ -780,15 +781,21 @@ def get_observability_config() -> dict:
     a fleet agent's directory gets a 🌙 row of its own (decision 1); a
     finished one keeps it for the same ``finished_row_seconds``.
 
+    A group's ``✅ n done`` line opens on demand: then its most recently
+    finished members get rows again, at most ``done_rows`` of them (the
+    rest show as "+k older").
+
     Config format in ~/.overcode/config.yaml:
         observability:
           finished_row_seconds: 30   # 0 folds a finished agent at once
           background_sessions: true  # false: no 🌙 rows
+          done_rows: 50              # finished members an open done line lists
 
     Returns:
         Dict with ``finished_row_seconds`` (float, never negative; a
-        missing or invalid entry falls back to 30) and
-        ``background_sessions`` (bool, default True).
+        missing or invalid entry falls back to 30),
+        ``background_sessions`` (bool, default True) and ``done_rows``
+        (int, never negative; default 50).
     """
     cfg = _get_config_value("observability", {})
     if not isinstance(cfg, dict):
@@ -799,6 +806,8 @@ def get_observability_config() -> dict:
             cfg.get("finished_row_seconds", FINISHED_ROW_SECONDS_DEFAULT),
             FINISHED_ROW_SECONDS_DEFAULT),
         "background_sessions": background if isinstance(background, bool) else True,
+        "done_rows": int(_non_negative(cfg.get("done_rows", DONE_ROWS_DEFAULT),
+                                       DONE_ROWS_DEFAULT)),
     }
 
 

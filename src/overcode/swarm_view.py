@@ -11,7 +11,12 @@ arranges what it published into lines under the parent's row:
   first) and "+k more"; a group the person collapsed shows nothing;
 * an open workflow shows its phases ("▶ Verify 18/30"), each opening on
   its own (by default the ones with live members, up to the same size);
-* finished members fold into one "✅ 25 done · ❌ 1" line per group;
+* finished members fold into one "✅ 25 done · ❌ 1" line per group; that
+  line opens (``<group>/done`` in ``opened``) to list them, newest first,
+  as many as the engine published (``observability.done_rows``), then
+  "+k older"; while it is open they show there and nowhere else;
+* ``needs_you`` (the swarm-detail cycle's last step) opens by default only
+  the groups and phases where a member waits on the person (🟠);
 * → on a member opens its read-only detail line.
 
 Nothing here reads a clock: the one duration shown (a finished member's
@@ -57,7 +62,7 @@ class SwarmLine:
 
     key: str            # the virtual row, or a synthetic key for a summary line
     owner: str          # the row ← moves back to (a group, a phase, or "" for the parent)
-    kind: str           # "group" | "phase" | "member" | "detail" | "more" | "done"
+    kind: str           # "group" | "phase" | "member" | "detail" | "more" | "done" | "older"
     depth: int
     segments: Segments = field(default_factory=list)
 
@@ -70,10 +75,19 @@ def rows_of(parent: str, virtual: Mapping[str, dict]) -> Dict[str, dict]:
     return {k: r for k, r in virtual.items() if isinstance(r, dict) and r.get("parent") == parent}
 
 
+DONE_SUFFIX = "/done"
+
+
+def done_key(group: str) -> str:
+    """The done line's key (also the engine subscription for its members)."""
+    return group + DONE_SUFFIX
+
+
 def _members(rows: Dict[str, dict], group: str, phase: Optional[str] = None,
-             any_phase: bool = False) -> List[Tuple[str, dict]]:
+             any_phase: bool = False, live_only: bool = False) -> List[Tuple[str, dict]]:
     out = [(k, r) for k, r in rows.items() if r.get("row") == "member" and r.get("group") == group
-           and (any_phase or r.get("phase") == phase)]
+           and (any_phase or r.get("phase") == phase)
+           and not (live_only and r.get("light") == "done")]
     out.sort(key=lambda kr: (kr[1].get("light") == "done", kr[1].get("started_at") or 0, kr[0]))
     return out
 
@@ -92,8 +106,9 @@ class Layout:
     def __init__(self, parent: str, virtual: Mapping[str, dict],
                  opened: Optional[Mapping[str, bool]] = None,
                  details: Optional[Set[str]] = None, emoji_free: bool = False,
-                 show_kind: bool = False) -> None:
+                 show_kind: bool = False, needs_you: bool = False) -> None:
         self.parent = parent
+        self.needs_you = needs_you
         self.rows = rows_of(parent, virtual)
         self.opened = opened or {}
         self.details = details or set()
@@ -116,14 +131,22 @@ class Layout:
         return self.lines
 
     def is_open(self, key: str) -> bool:
-        """Whether a group or phase is open (the person's choice, else its size)."""
+        """Whether a group, phase or done line is open (the person's choice,
+        else its size; a done line only when opened; in ``needs_you``, only
+        where a member is 🟠)."""
         if key in self.opened:
             return self.opened[key]
+        if key.endswith(DONE_SUFFIX):
+            return False
         row = self.rows.get(key) or {}
         if row.get("row") == "phase":
             members = _members(self.rows, row.get("group"), key)
             live = any(r.get("light") != "done" for _, r in members)
+            if self.needs_you:
+                return any(r.get("light") == "orange" for _, r in members)
             return live and len(members) <= AUTO_COLLAPSE_ABOVE
+        if self.needs_you:
+            return bool((row.get("counts") or {}).get("waiting"))
         return len(_members(self.rows, key, any_phase=True)) <= AUTO_COLLAPSE_ABOVE
 
     # -- lines --------------------------------------------------------------
@@ -169,14 +192,16 @@ class Layout:
         phases = sorted(((k, r) for k, r in self.rows.items()
                          if r.get("row") == "phase" and r.get("group") == gkey),
                         key=lambda kr: (kr[1].get("order", 0), kr[0]))
+        done_open = self.is_open(done_key(gkey))
         for pkey, phase in phases:
-            self._phase(gkey, pkey, phase, group)
-        for mkey, member in _members(self.rows, gkey, None):
+            self._phase(gkey, pkey, phase, group, live_only=done_open)
+        for mkey, member in _members(self.rows, gkey, None, live_only=done_open):
             self._member(mkey, member, gkey, 2)
-        self._done(gkey, group, 2)
+        self._done(gkey, group, 2, done_open)
 
-    def _phase(self, gkey: str, pkey: str, phase: dict, group: dict) -> None:
-        members = _members(self.rows, gkey, pkey)
+    def _phase(self, gkey: str, pkey: str, phase: dict, group: dict,
+               live_only: bool = False) -> None:
+        members = _members(self.rows, gkey, pkey, live_only=live_only)
         started, done = phase.get("started", 0), phase.get("done", 0)
         live = any(r.get("light") != "done" for _, r in members)
         mark = "▶" if live or (started > done) else ("✔" if started and done >= started else "·")
@@ -257,13 +282,28 @@ class Layout:
         self._add(f"{mkey}/detail", mkey, "detail", depth,
                   [(self._indent(depth), "dim"), (text, "italic")])
 
-    def _done(self, gkey: str, group: dict, depth: int) -> None:
+    def _done(self, gkey: str, group: dict, depth: int, opened: bool = False) -> None:
         counts = group.get("counts") or {}
         ok, failed = counts.get("ok", 0), counts.get("failed", 0)
         if not ok and not failed:
             return
+        key = done_key(gkey)
         text = f"{self.e('✅')} {ok} done" + (f" · {self.e('❌')} {failed}" if failed else "")
-        self._add(f"{gkey}/done", gkey, "done", depth, [(self._indent(depth), "dim"), (text, "dim")])
+        self._add(key, gkey, "done", depth, [(self._indent(depth), "dim"), (text, "dim"),
+                                             (" ▾" if opened else " ▸", "dim")])
+        if not opened:
+            return
+        # Newest first: what the engine published (its most recent ``done_rows``)
+        finished = [(k, r) for k, r in self.rows.items() if r.get("row") == "member"
+                    and r.get("group") == gkey and r.get("light") == "done"]
+        finished.sort(key=lambda kr: (kr[1].get("ended_at") or 0, kr[0]), reverse=True)
+        for mkey, member in finished:
+            self._member(mkey, member, key, depth + 1)
+        older = ok + failed - len(finished)
+        if older > 0:
+            self._add(f"{key}/+older", key, "older", depth + 1,
+                      [(self._indent(depth + 1), "dim"),
+                       (f"+{older} older" if finished else f"{older} finished", "dim")])
 
 
 def _ran(row: dict) -> Optional[str]:
@@ -282,8 +322,9 @@ def _tokens(n: int) -> str:
 
 
 def layout(parent: str, virtual: Mapping[str, dict], opened=None, details=None,
-           emoji_free: bool = False, show_kind: bool = False) -> List[SwarmLine]:
-    return Layout(parent, virtual, opened, details, emoji_free, show_kind).build()
+           emoji_free: bool = False, show_kind: bool = False,
+           needs_you: bool = False) -> List[SwarmLine]:
+    return Layout(parent, virtual, opened, details, emoji_free, show_kind, needs_you).build()
 
 
 def step(lines: List[SwarmLine], cursor: Optional[str], direction: int) -> Tuple[Optional[str], bool]:

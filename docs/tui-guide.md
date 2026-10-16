@@ -17,7 +17,7 @@ overcode monitor    # an alias, kept for old habits and scripts
 ### Agent List
 Shows all agents as single-line summaries with live status, metrics, and a content area. The focused agent's terminal is the bottom pane of the split. A sister agent (one on another machine) has no local terminal, so selecting one zooms the dashboard and shows a preview pane of its polled output instead; jobs view (`J`) does the same for the focused job.
 
-When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children; folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
+When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `←` on a parent to fold its children and `→` to unfold them (`←` on a child moves to its parent); `X` folds or unfolds every parent at once. Folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
 
 The agent you last moved the highlight to is remembered the same way: quit and reopen `overcode tmux` and the highlight comes back on it, with the bottom pane on its window. If that agent has gone, the first agent is highlighted.
 
@@ -42,7 +42,7 @@ a flat list:
       · +13 more  (→ to open)
 └ 🟢 👥 agents ▾ 3 agents   1🟢 2✅   ($0.15)
     · 🟢 👥 map engine  Grep TickContext
-    · ✅ 2 done
+    · ✅ 2 done ▸
 ```
 
 - A row's kind is its marker: no marker for an overcode agent, 👥 for a
@@ -63,9 +63,26 @@ a flat list:
   (send, kill, restart, rename, …) say so and do nothing; `Enter` moves to
   the parent's pane, where a subagent's permission prompt is answered.
 - A finished member stays (dimmed, ✅/❌) for 30 seconds, then folds into
-  its group's done count (`observability.finished_row_seconds` in
+  its group's done line (`observability.finished_row_seconds` in
   config.yaml). Subagents never ring the bell: their permission prompt
   already turns the parent 🟠.
+- `→` on the `✅ n done ▸` line opens it: the group's finished members,
+  newest first, at most 50 (`observability.done_rows`), then `+k older`
+  for the rest. While it is open they are listed there and nowhere else.
+  `←` closes it. The engine builds those rows only while a done line is
+  open.
+- `f` cycles which agents' delegated work opens by itself: **off** (the
+  default: only what you open with `→`), **groups** (every agent with
+  delegated work in flight; it closes again when the work is done) and
+  **needs you** (only agents with a subagent waiting for approval, and
+  only the groups that hold one). `→` / `←` on an agent still override
+  the rule for that agent; `f` starts afresh, dropping those choices.
+- `X` expands every agent that has delegated work (and, in tree sort,
+  unfolds every parent's children); with something open, it collapses
+  everything instead. It does not change the `f` rule.
+- What is open (agents, groups, phases, done lines, and the `f` rule) is
+  remembered in `tui_preferences.json`, so it comes back after restarting
+  the TUI. Entries for agents that are gone are dropped.
 - Hover the parent's tokens or $ cell for its spend split: its own turns
   and its delegated work (which is inside the total, never added again).
 - Only expanded parents cost anything: the engine reads the subagents'
@@ -128,7 +145,9 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 |-----|--------|
 | `j` / `↓` | Move to next agent |
 | `k` / `↑` | Move to previous agent |
-| `→` / `←` | Expand / collapse an agent's delegated work, one level at a time ([above](#delegated-work--)) |
+| `→` / `←` | Expand / collapse the row: an agent's delegated work, one level at a time ([above](#delegated-work--)), and its children in tree sort |
+| `X` | Expand / collapse all (delegated work, and children in tree sort) |
+| `f` | Cycle which agents' delegated work opens by itself: off → groups → needs you |
 | `b` | Jump to next agent needing attention |
 | `Ctrl+P` | Jump to an agent by name (fuzzy search) |
 | `J` | Switch between the agents and jobs views |
@@ -144,7 +163,6 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 | `g` | Show/hide terminated agents |
 | `Z` | Show/hide sleeping agents |
 | `D` | Show/hide done child agents |
-| `X` | Collapse/expand children (tree mode) |
 | `h` / `?` | Show/hide help overlay |
 
 ### Display Customization

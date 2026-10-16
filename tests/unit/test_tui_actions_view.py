@@ -615,6 +615,13 @@ class TestToggleShowDone:
         assert "(" not in notify_msg
 
 
+def _bind_fold(mock_tui):
+    """The action's fold helper, run for real on the mock."""
+    from overcode.tui_actions.view import ViewActionsMixin
+
+    mock_tui._fold_children = lambda sid, fold: ViewActionsMixin._fold_children(mock_tui, sid, fold)
+
+
 class TestToggleCollapseChildren:
     """Test action_toggle_collapse_children method."""
 
@@ -626,6 +633,7 @@ class TestToggleCollapseChildren:
         mock_tui._prefs = MagicMock()
         mock_tui._prefs.sort_mode = "alphabetical"
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         mock_tui.notify.assert_called_once()
@@ -642,6 +650,7 @@ class TestToggleCollapseChildren:
         mock_tui._prefs.sort_mode = "by_tree"
         mock_tui._get_focused_widget.return_value = None
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         mock_tui._get_focused_widget.assert_called_once()
@@ -674,6 +683,7 @@ class TestToggleCollapseChildren:
         mock_tui.collapsed_parents = set()
         mock_tui._get_widgets_in_session_order.return_value = [parent_widget]
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         assert "parent-1" in mock_tui.collapsed_parents
@@ -709,6 +719,7 @@ class TestToggleCollapseChildren:
         mock_tui.sessions = [parent_session, child_session]
         mock_tui.collapsed_parents = {"parent-1"}
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         assert "parent-1" not in mock_tui.collapsed_parents
@@ -747,6 +758,7 @@ class TestToggleCollapseChildren:
         mock_tui.collapsed_parents = set()
         mock_tui._get_widgets_in_session_order.return_value = [parent_widget]
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         # Should collapse the parent, not the child
@@ -770,6 +782,7 @@ class TestToggleCollapseChildren:
         mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui.sessions = [lone_session]
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         mock_tui.notify.assert_called_once()
@@ -808,6 +821,7 @@ class TestToggleCollapseChildren:
         mock_tui._get_widgets_in_session_order.return_value = [other_widget, parent_widget]
         mock_tui.focused_session_index = 5
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         assert mock_tui.focused_session_index == 1  # index of parent_widget
@@ -836,6 +850,7 @@ class TestToggleCollapseChildren:
         mock_tui.collapsed_parents = set()
         mock_tui._get_widgets_in_session_order.return_value = [parent_widget]
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         # Walks up to "missing-parent" and collapses it (child_session is its child)
@@ -1255,6 +1270,7 @@ class TestCollapsePersistencePrunesStaleIds:
         mock_tui.collapsed_parents = {"long-gone-parent"}
         mock_tui._get_widgets_in_session_order.return_value = [focused_widget]
 
+        _bind_fold(mock_tui)
         ViewActionsMixin.action_toggle_collapse_children(mock_tui)
 
         assert mock_tui._prefs.collapsed_parents == {"parent-1"}

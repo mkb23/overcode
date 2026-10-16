@@ -262,3 +262,60 @@ class TestCaptures:
         assert quiet_changes
         for t in quiet_changes:
             assert any(t - 0.5 < e + 30 <= t for e in times), t
+
+
+# ---------------------------------------------------------------------------
+# An open done line: the group's finished members, most recent first, capped
+# ---------------------------------------------------------------------------
+
+
+def _many_done(n, now=1000.0):
+    """``n`` loose subagents finished ten minutes or so ago (oldest first)."""
+    done = {f"d{i:03d}": {"kind": "subagent", "result": "failed" if i % 10 == 0 else "ok",
+                          "started_at": now - 700 - i, "ended_at": now - 600 + i}
+            for i in range(n)}
+    return _state({"live": {"kind": "subagent", "started_at": now - 5}}, done=done)
+
+
+class TestDoneLine:
+    def test_finished_members_fold_into_counts_until_the_line_opens(self):
+        rows, deadline = swarm.virtual_rows("P", _many_done(5), 1000.0, 30.0)
+        assert sorted(k for k in rows if k.startswith("P/sa/")) == ["P/sa/live"]
+        assert rows["P/sa"]["counts"] == {"running": 1, "ok": 4, "failed": 1}
+        assert deadline is None
+
+    def test_an_open_line_lists_the_most_recent_up_to_the_limit(self):
+        rows, deadline = swarm.virtual_rows("P", _many_done(80), 1000.0, 30.0,
+                                            done_open={"P/sa"}, done_limit=50)
+        listed = [k for k, r in rows.items() if r.get("light") == "done"]
+        assert set(listed) == {f"P/sa/d{i:03d}" for i in range(30, 80)}  # the newest 50
+        assert rows["P/sa/d079"]["result"] == "ok" and rows["P/sa/d070"]["result"] == "failed"
+        # Counts still cover every finished member; nothing here moves with the clock
+        assert rows["P/sa"]["counts"] == {"running": 1, "ok": 72, "failed": 8}
+        assert deadline is None
+        later, _ = swarm.virtual_rows("P", _many_done(80), 5000.0, 30.0,
+                                      done_open={"P/sa"}, done_limit=50)
+        assert later == rows
+
+    def test_members_still_kept_count_against_the_limit(self):
+        state = _many_done(10)
+        state["swarm"]["done"]["fresh"] = {"kind": "subagent", "result": "ok",
+                                           "started_at": 980.0, "ended_at": 990.0}
+        rows, deadline = swarm.virtual_rows("P", state, 1000.0, 30.0,
+                                            done_open={"P/sa"}, done_limit=3)
+        listed = sorted(k for k, r in rows.items() if r.get("light") == "done")
+        assert listed == ["P/sa/d008", "P/sa/d009", "P/sa/fresh"]
+        assert deadline == 1020.0  # the kept one's time still runs out on schedule
+
+    def test_another_group_s_line_does_not_open(self):
+        state = _many_done(3)
+        state["subagents"]["t1"] = {"kind": "teammate", "started_at": 990.0}
+        state["swarm"]["done"]["t0"] = {"kind": "teammate", "result": "ok", "ended_at": 100.0}
+        rows, _ = swarm.virtual_rows("P", state, 1000.0, 30.0, done_open={"P/tm"})
+        assert not any(k.startswith("P/sa/d") for k in rows)
+        assert rows["P/tm/t0"]["light"] == "done"
+
+    def test_a_zero_limit_lists_nothing(self):
+        rows, _ = swarm.virtual_rows("P", _many_done(5), 1000.0, 30.0,
+                                     done_open={"P/sa"}, done_limit=0)
+        assert not any(r.get("light") == "done" for r in rows.values())

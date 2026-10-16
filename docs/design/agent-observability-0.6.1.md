@@ -264,8 +264,8 @@ below each need a palette entry (AGENTS.md); the keys are free in the
 | Key | Action | Notes |
 |---|---|---|
 | `→` / `←` | expand / collapse the focused row (parent → groups → phases → agents) | tree convention; free today |
-| `X` | collapse or expand everything under the focused parent | existing; now includes virtual groups |
-| `v` | cycle swarm detail: `off` (rollup only) → `groups` → `needs-you` (expand only groups with 🟠, or with 🔴 for adopted rows) | per-session preference |
+| `X` | collapse or expand everything under the focused parent | existing; now includes virtual groups. *As built: fleet-wide expand/collapse all ("Phase 2 as built", 7)* |
+| `v` | cycle swarm detail (*as built on `f`*): `off` (rollup only) → `groups` → `needs-you` (expand only groups with 🟠, or with 🔴 for adopted rows) | per-session preference |
 | `b` | jump to attention | existing; now also lands on a 🟠 virtual member and focuses its parent's pane |
 | `enter` on a virtual row | focus the parent's pane | a virtual row has no pane of its own |
 | `enter` on 🛰 bg row | open `claude attach <id>` in a new tmux window of the overcode session | through `app.split`, not ad hoc |
@@ -474,10 +474,20 @@ Choices where the design left room, or the data disagreed:
    summaries in every snapshot; a collapsed parent draws only the rollup,
    so nothing about groups is published until it is expanded. One fewer
    field in the default snapshot, no cost for a collapsed swarm.
-2. **The done line does not open.** Finished members show for 30 s, then
-   only in the group's `✅ n done · ❌ k` line; opening the older ones on
-   demand would mean publishing up to 200 done members per parent. Left
-   for later if wanted.
+2. **The done line opens, capped** (owner, 2026-10-17; first built
+   closed). Finished members show for 30 s, then only in the group's
+   `✅ n done · ❌ k ▸` line. `→` on it subscribes to `<group key>/done`
+   beside the parent's id (same `swarm` message, so the union, the wake
+   check and the reconnect restatement needed no change; an older engine
+   matches no agent with it). The publisher then lists that group's most
+   recently finished members, `observability.done_rows` (50) of them
+   counting those still within their 30 s; the TUI draws them under the
+   line, newest first (and nowhere else while it is open), then
+   `+k older` from the group's counts. No time window: a window would
+   need a deadline per row and publish a change as each aged out; a count
+   moves only when a member finishes. Members already folded out of the
+   hook state (beyond `DONE_KEEP` = 200 per parent) and a finished
+   workflow run's group (gone 30 s after the run) cannot be reopened.
 3. **No running durations.** A live member's detail shows its start time
    (`since 12:03:10`), a finished one its run time: lines change only when
    rows do, so the TUI needs no clock for them.
@@ -491,10 +501,34 @@ Choices where the design left room, or the data disagreed:
    starts (the script's `phases` list is not parsed). A workflow agent is
    put in its run by the journal, else by the run its `SubagentStop`
    named, else (live) the newest running run.
-6. **Expansion is per TUI and not saved.** A restart starts collapsed.
-7. **`X` and `v` are not extended**, and `b` does not land on a 🟠 member
-   (its parent already turns 🟠 and `b` finds the parent). `v` is the
-   VSCode preset's ctrl+o key, so a swarm-detail cycle needs another key.
+6. **Expansion is saved** (owner, 2026-10-17; first built per TUI).
+   `TUIPreferences` gained `swarm_detail` (the `f` rule), `swarm_expanded`
+   (per-agent overrides of it, `{id: bool}`) and `swarm_opened` (groups,
+   phases, done lines, `{key: bool}`). An old file loads with the
+   defaults; a value of the wrong type is dropped on load, and entries of
+   agents that are gone are pruned on save (as `collapsed_parents`).
+   Details lines and the cursor are not saved.
+7. **Keys** (owner, 2026-10-17). `→`/`←` act on one row: delegated work
+   level by level, and in tree sort a parent's children (`←` folds them
+   once its delegated work is collapsed, `←` on a child moves to its
+   parent, `→` unfolds). `X` is now *expand/collapse all*
+   (`toggle_expand_all`): with anything open (an expanded agent, or in
+   tree sort an unfolded parent) it collapses everything, else it expands
+   every agent with a rollup and unfolds every parent; it sets per-agent
+   overrides and leaves the `f` rule alone. Its old per-parent action,
+   `toggle_collapse_children`, stays as a palette command without a key
+   (so a `keys:` entry naming it still works; nothing goes in
+   `REMOVED_ACTIONS`). The swarm-detail cycle (§4.4's `v`) is on `f`
+   (`cycle_swarm_detail`): `v` is the VSCode preset's ctrl+o, and `f` was
+   free in both presets. `off` (default: only what `→` opens), `groups`
+   (every agent whose rollup has live work: running, waiting, idle or a
+   running workflow; it closes again when the work ends) and `needs_you`
+   (agents whose rollup has a 🟠, with only the groups and phases holding
+   one open by default). The rule is applied in the TUI from the
+   published rollups (a view decision, not agent state); `→`/`←` override
+   it per agent, and `f` drops every override and group choice so the new
+   rule shows as it is. `b` still does not land on a 🟠 member (its parent
+   already turns 🟠 and `b` finds the parent).
 8. **Teammates group by "team"**, one group per parent (Claude makes one
    implicit team per session, F11).
 

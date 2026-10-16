@@ -172,3 +172,49 @@ def test_the_parent_publishes_its_subagents_share_of_its_spend():
                      "sid/workflows/wf/agent-b": {"cost": 0.5}}
     assert swarm.subagent_cost(conversations) == 1.25
     assert "subagent_cost_usd" in SessionDaemonState().to_dict()
+
+
+class TestDoneLineSubscription:
+    """``<group>/done`` asks for a group's finished members as well."""
+
+    def test_split_subscriptions(self):
+        from overcode.swarm_publisher import split_subscriptions
+
+        parents, done = split_subscriptions(
+            {"s1", "s1/sa/done", "s1/wf/wf_1/done", "s2/tm/done", "junk/x", 7})
+        assert parents == {"s1"}
+        assert done == {"s1": {"s1/sa", "s1/wf/wf_1"}, "s2": {"s2/tm"}}
+
+    def test_opening_the_line_publishes_older_finished_members(self, daemon):
+        from overcode.engine_wake import WakeLoop
+
+        daemon.hook_states["one"] = _hook_state(done_at=NOW - 600)  # long folded
+        loop = WakeLoop(daemon)
+        daemon._engine.subs = frozenset({"s1"})
+        daemon._publish_state(daemon.state.sessions, save=False)
+        assert "s1/sa/a2" not in _virtual(daemon)
+        daemon._engine.subs = frozenset({"s1", "s1/sa/done"})
+        assert loop.publish_swarm_if_due()
+        assert _virtual(daemon)["s1/sa/a2"]["light"] == "done"
+        daemon._engine.subs = frozenset({"s1"})
+        assert loop.publish_swarm_if_due()
+        assert "s1/sa/a2" not in _virtual(daemon)
+
+    def test_a_done_line_alone_builds_nothing(self, daemon):
+        daemon._engine.subs = frozenset({"s1/sa/done"})
+        daemon._publish_state(daemon.state.sessions, save=False)
+        assert _virtual(daemon) == {} and daemon.swarm_publisher.builds == 0
+
+
+def test_the_done_row_limit_comes_from_config(monkeypatch):
+    from overcode import config
+
+    def cfg(value):
+        return lambda key, default=None: {"done_rows": value} if key == "observability" else default
+
+    monkeypatch.setattr(config, "_get_config_value", cfg(7))
+    assert config.get_observability_config()["done_rows"] == 7
+    monkeypatch.setattr(config, "_get_config_value", cfg(-3))
+    assert config.get_observability_config()["done_rows"] == 50
+    monkeypatch.setattr(config, "_get_config_value", cfg("lots"))
+    assert config.get_observability_config()["done_rows"] == 50
