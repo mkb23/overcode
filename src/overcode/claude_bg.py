@@ -84,10 +84,6 @@ def row_id(session_id: str) -> str:
     return f"{ID_PREFIX}{session_id}"
 
 
-def is_row_id(value: Optional[str]) -> bool:
-    return isinstance(value, str) and value.startswith(ID_PREFIX)
-
-
 def _read_json(path: Path) -> Optional[dict]:
     try:
         with open(path) as f:
