@@ -568,7 +568,8 @@ and status text. `Enter` attaches, `x` stops (second press), the palette's
   sessions.json) is built from each view; the list is re-applied only when
   a row comes, goes or is renamed. `parent_session_id` nests it under its
   agent in every sort; 👶 counts leave it out; the timeline has no row for
-  it; the engine is never told it has focus. KIND says `bg`.
+  it (since Phase 4 it has one); the engine is never told it has focus.
+  KIND says `bg`.
 - **Actions** (`tui_actions/claude_bg.py`, `tui_split.py`): through
   `app.split`. `attach_background` opens `claude attach <id>` (overcode's
   env unset first) in a `bg:<id>` window of the agents session and shows it
@@ -600,6 +601,90 @@ Choices where the design left room:
    per-user background service, which an isolated HOME cannot provide
    without touching the person's real state. The state values were checked
    against Claude Code 2.1.302's code and the spike capture instead.
+
+---
+
+## Phase 4 as built
+
+What the person sees: with the timeline on (`t`), an agent that delegated
+work gets a density strip under its row (`└ 👥 swarm`): height is how many
+members were live, colour the worst light, red underline where one failed,
+`↑n` the peak. Expanding the agent in the list (`→`) unfolds the strip into
+one per group (`└ 🧩 review`, `└ 👥 team`, `└ 👥 agents`); `←` folds it back.
+🌙 background sessions get ordinary timeline rows. See `docs/tui-guide.md`,
+"Delegated work in the timeline".
+
+- **History** (`swarm_history.py`, `SwarmHistoryWriter`): the daemon calls
+  `record` for each agent it detects (full and quick ticks, beside the
+  status history), with the hook state and rollup the detector just read.
+  It does nothing unless the hook state's timestamp or the rollup moved,
+  or a keepalive is due; then it counts the groups (`group_counts`:
+  `swarm.virtual_rows` on the hook state alone, no journals, no finished
+  rows kept) and appends a row for each group whose counts changed, plus
+  the whole swarm (group `*`). Columns: `timestamp, agent, session_id,
+  group, kind, title, running, yellow, waiting, idle, ok, failed,
+  workflows`. Groups are the virtual-row keys without the parent
+  (`wf/<run>`, `tm`, `sa`). A live group gets a keepalive row every 5 min
+  (`KEEPALIVE_SECONDS`); a group that goes away while live (SessionEnd
+  cleared the record, the agent left the fleet: `forget`) gets one closing
+  row with nothing live. A swarm with nothing live writes nothing.
+- **Rotation**: the hourly housekeeping pass runs `rotate_and_retain` on
+  `swarm_history.csv` with the status history's settings
+  (`history_retention.status_history_rotate_mb` / `_max_days`).
+- **Reader** (`SwarmHistoryFile`, `read_swarm_history`): mtime/size cache,
+  tail reads, a full read on a shrink (rotation), keyed by (agent session
+  id, group) so a renamed agent keeps its strips. A live row before the
+  window within `STALE_AFTER_SECONDS` (two keepalives) is carried to the
+  window's left edge. The timeline's existing 30 s worker reads it beside
+  the status history: one more incremental read of one file.
+- **Slots** (`density`, `glyphs`): a point stands until the next one, or
+  `STALE_AFTER_SECONDS` while live (a stopped daemon is not live for
+  ever). Height is the **time-weighted mean** of live members over the
+  slot's covered time, scaled to the strip's peak; colour the worst light
+  (🟠 > 🟢 > 🟡 > idle); a slot where `failed` rose is red and underlined.
+- **TUI** (`status_timeline.py`): `swarm_strips` picks the strips in the
+  list's fold state; `set_swarm_fold` follows `app.swarm_expanded`, called
+  at the top of `_sync_swarm_rows` (the one line in `tui_actions/swarm.py`),
+  and repaints only when a parent whose strips are on screen changed. No
+  file is read on a fold. Strip labels share the name column (it widens to
+  fit them, up to its 30-cell cap).
+- **🌙 rows**: the daemon logs each background session's status to
+  `agent_status_history.csv` on change and keepalive (none once finished),
+  keyed `claude-bg:<sessionId>`; the TUI no longer filters them out of the
+  timeline.
+- **Cost** (scratch benchmark, M-series laptop): a quiet tick over 50
+  parents each with a 40-agent swarm, 0.08 ms; a hook event on a 400-agent
+  swarm, 0.8 ms (the group count); first read of 600 rows 7.6 ms, a cached
+  read 0.3 ms; a timeline render with 11 strips 1.9 ms, 34 group strips
+  3.2 ms (renders happen on the 30 s refresh and on a fold change only).
+  Tests: a quiet swarm over 300 ticks counts once and writes once
+  (`test_engine_contract.py`), a fold reads no file and a fold on a parent
+  without strips does not repaint (`test_swarm_timeline_tui.py`).
+
+Choices where the design left room:
+
+1. **One file per tmux session, not `agents/<id>/swarm_history.csv`.** The
+   timeline reads one file incrementally, as for the status history, and
+   rotation is shared. Rows carry the agent's session id.
+2. **Columns are the rollup's counts**, not §5's `n_green, n_yellow,
+   n_orange, n_done, n_failed`: `running, yellow, waiting, idle, ok,
+   failed`, plus `workflows` (running runs) on the whole-swarm row.
+3. **A keepalive while live.** "One line per change" alone cannot tell a
+   reader the state at its window's edge or that a daemon stopped; a
+   quiet (nothing live) swarm still writes nothing.
+4. **Group counts without journals.** The history must exist before anyone
+   expands the parent, and journals are read only for expanded ones; a
+   workflow agent goes to the run its SubagentStop named, else the newest
+   running run. Phases are not in the history (no strip per phase).
+5. **The strip sits under the parent**, which keeps its own status bar
+   unchanged (§5's mockup drew the density in the parent's row).
+6. **Height is a mean over the slot**, per the owner's mean-not-median
+   rule; a 10 s burst in a 3 min slot reads low. The peak is the `↑n`
+   label, not a central line.
+7. **Member rows are not drawn** (§5's "a member row is the existing
+   per-agent bar, capped at 20"): members have no status history of their
+   own, and per-member rows would need intervals from `subagents.jsonl`,
+   which the hook side does not write yet. Groups are as deep as it goes.
 
 ---
 
