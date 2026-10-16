@@ -394,6 +394,7 @@ class TestEngine:
         daemon._tick(clock.wall())
         loop = WakeLoop(daemon)
         daemon._engine.deltas.clear()
+        builds = daemon.claude_bg.builds
         published = 0
         for _ in range(30):  # 30 s of wake steps, nothing happening
             clock.t += 1.0
@@ -401,6 +402,8 @@ class TestEngine:
         assert published == 0
         assert daemon._engine.deltas == []
         assert daemon.claude_bg.scanner.reads == 1  # one stat per scan, no re-read
+        # no rebuild either, but for the spend read at the 5 s stats cadence
+        assert daemon.claude_bg.builds - builds <= 30 // 5
 
     def test_a_change_reaches_views_at_the_next_scan(self, fleet):
         from overcode.engine_wake import WakeLoop

@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Tuple
@@ -196,12 +197,17 @@ class FleetAgent:
     branch: Optional[str] = None
 
 
-def _inside(path: str, directory: str) -> bool:
+@lru_cache(maxsize=1024)
+def _real(path: str) -> str:
+    """``path`` resolved (``~``, symlinks); remembered: rows are rebuilt often."""
     try:
-        p = os.path.realpath(os.path.expanduser(path))
-        d = os.path.realpath(os.path.expanduser(directory))
+        return os.path.realpath(os.path.expanduser(path))
     except (OSError, ValueError):
-        return False
+        return path
+
+
+def _inside(path: str, directory: str) -> bool:
+    p, d = _real(path), _real(directory)
     return p == d or p.startswith(d.rstrip(os.sep) + os.sep)
 
 
@@ -235,7 +241,7 @@ def attribute(job: Mapping[str, Any], agents: Iterable[FleetAgent]
     best_len = -1
     for agent in agents:
         if agent.directory and _inside(cwd, agent.directory):
-            depth = len(os.path.realpath(os.path.expanduser(agent.directory)))
+            depth = len(_real(agent.directory))
             if depth > best_len:
                 best, best_len = agent, depth
     return (best, VIA_DIRECTORY) if best is not None else None
@@ -416,8 +422,7 @@ def build_rows(
         money = spend.get(sid) or {}
         model = money.get("model") or _flag(job.get("respawnFlags"), "--model")
         cwd = job.get("cwd") if isinstance(job.get("cwd"), str) else None
-        same_dir = bool(cwd and parent.directory and _inside(parent.directory, cwd)
-                        and _inside(cwd, parent.directory))
+        same_dir = bool(cwd and parent.directory and _real(cwd) == _real(parent.directory))
         state = SessionDaemonState(
             session_id=rid,
             name=job_name(job, short),
@@ -580,6 +585,7 @@ class ClaudeBgSource:
         self.deadline: Optional[float] = None
         self.scanned_at: Optional[float] = None  # monotonic
         self._since: Dict[str, Tuple[tuple, float]] = {}
+        self._built_for: Optional[Tuple[FleetAgent, ...]] = None
         self.builds = 0
 
     def ids(self) -> set:
@@ -601,10 +607,17 @@ class ClaudeBgSource:
         self.scanned_at = monotonic_now
         if not self.is_enabled() or not self.agents:
             # No fleet agent: no fleet repo, so nothing could be shown
-            self.rows, self.deadline = [], None
+            self.rows, self.deadline, self._built_for = [], None, None
             self._since.clear()
             return
-        self.scanner.scan()
+        jobs_moved = self.scanner.scan()
+        stale = (jobs_moved or self._built_for != self.agents
+                 or (self.deadline is not None and wall_now >= self.deadline)
+                 or any(self.spend.due(row.state.claude_bg["session_id"], wall_now, stats_every,
+                                       row.light.ended_at is not None) for row in self.rows))
+        if not stale:
+            return  # the rows as built stand: nothing to read, nothing to rebuild
+        self._built_for = self.agents
         keep = self.keep_seconds()
         rows, deadline = build_rows(self.scanner.jobs, self.agents, wall_now, keep,
                                     self._since, self.spend.values)
