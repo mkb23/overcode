@@ -273,6 +273,10 @@ class Sample:
     colour: Optional[str]
     badges: tuple[str, ...]
     rollup: Optional[dict] = None   # the 👥 counts (swarm.rollup) the engine would publish
+    # The hook state behind them (what swarm.virtual_rows builds an
+    # expanded parent's rows from), and the clock at the sample
+    swarm_state: Optional[dict] = None
+    now: float = 0.0
 
 
 class _Clock:
@@ -476,6 +480,8 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
                 detail.color if detail else None,
                 tuple(b.kind for b in detail.badges) if detail else (),
                 detector.get_swarm_rollup(AGENT),
+                detector.get_swarm_state(AGENT),
+                clock.now,
             ))
     return samples
 

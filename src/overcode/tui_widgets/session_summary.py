@@ -185,6 +185,7 @@ class SessionSummary(Static, can_focus=True):
         self.child_count: int = 0  # Number of direct children — set by TUI
         self.job_count: int = 0  # Running jobs it launched — set by TUI (#463)
         self.children_collapsed: bool = False  # True when children hidden via X — set by TUI
+        self.swarm_expanded: bool = False  # delegated work shown as rows below (→) — set by TUI
         # Always single-line display
         self.add_class("list-mode")
         self._hover_column: Optional[str] = None  # column whose popup is showing
@@ -571,6 +572,8 @@ class SessionSummary(Static, can_focus=True):
             task_reason=self.task_reason,
             child_rollup=self.child_rollup,
             swarm_rollup=self.swarm_rollup,
+            swarm_expanded=self.swarm_expanded,
+            subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
             status_changed_at=self._status_changed_at,
             max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),

@@ -162,6 +162,11 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
     return None
 
 
+def render_kind(ctx: ColumnContext) -> ColumnOutput:
+    """KIND (hidden by default): ``agent`` or ``child``, the same width."""
+    return [(f"{ctx.agent_kind:<5}", f"dim{ctx.bg}")]
+
+
 def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
     if ctx.has_focus:
         return [("→ ", ctx.status_color)]

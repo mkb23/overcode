@@ -10,6 +10,7 @@ from .view import ViewActionsMixin
 from .daemon import DaemonActionsMixin
 from .session import SessionActionsMixin
 from .input import InputActionsMixin
+from .swarm import SwarmMixin
 
 __all__ = [
     "NavigationActionsMixin",
@@ -17,4 +18,5 @@ __all__ = [
     "DaemonActionsMixin",
     "SessionActionsMixin",
     "InputActionsMixin",
+    "SwarmMixin",
 ]

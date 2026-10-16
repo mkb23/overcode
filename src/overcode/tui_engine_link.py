@@ -72,6 +72,8 @@ class EngineLink:
         self.connected: bool = False
         self.agents: dict = {}  # the last snapshot's agents
         self.fleet: dict = {}
+        # The expanded parents' virtual rows (agent-observability §6.2)
+        self.virtual: dict = {}
         self.down_since: float = time.monotonic()
         self.stalled = False
         self.start_attempt: float = float("-inf")
@@ -100,6 +102,7 @@ class EngineLink:
         client.set_burn_window(app._burn_hours() or None)
         self.report_focus(app._get_focused_widget())
         client.set_focus(self.focus)
+        client.set_swarm(set(getattr(app, "swarm_expanded", ())))
         client.start()
 
     def stop(self) -> None:
@@ -174,6 +177,13 @@ class EngineLink:
         self.agents = snapshot.agents
         self.fleet = snapshot.fleet
         self.apply_views()
+        virtual = getattr(snapshot, "virtual", None) or {}
+        if virtual is not self.virtual and virtual != self.virtual:
+            self.virtual = virtual
+            if getattr(app, "swarm_expanded", None) or getattr(app, "_swarm_lines", None):
+                app._sync_swarm_rows()
+        else:
+            self.virtual = virtual
         app._mark_event("apply_engine_end")
 
     def apply_views(self, force: bool = False) -> None:

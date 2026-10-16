@@ -181,6 +181,9 @@ class WakeLoop:
                 # Guarded: a full disk must not end the engine on a keypress
                 daemon._save_state_file()
                 return
+            # An expanded parent's rows: a new subscription, a finished row's
+            # time up, a workflow journal moved (agent-observability §6.2)
+            self.publish_swarm_if_due()
             # Hook-driven changes publish now, not at the next tick
             if not attended and elapsed - last_scan < WAKE_SCAN_UNATTENDED_SECONDS:
                 continue
@@ -191,6 +194,20 @@ class WakeLoop:
                     self.quick_tick(changed, daemon.clock.wall())
                 except Exception as e:  # the full tick will retry
                     daemon.log.warn(f"quick tick failed: {e}")
+
+    def publish_swarm_if_due(self) -> bool:
+        """Republish the virtual rows when they changed between ticks; True if it did."""
+        daemon = self.daemon
+        if daemon._engine is None:
+            return False
+        try:
+            if not daemon.swarm_publisher.due(daemon._swarm_subscriptions()):
+                return False
+            daemon._publish_state(daemon.state.sessions, save=False)
+        except Exception as e:  # the full tick will retry
+            daemon.log.warn(f"virtual rows not published: {e}")
+            return False
+        return True
 
     def quick_tick(self, ids: set, now: datetime) -> None:
         """Re-detect only the agents ``ids`` and publish, between full ticks."""

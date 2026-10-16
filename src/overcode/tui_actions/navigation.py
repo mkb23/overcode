@@ -24,6 +24,8 @@ class NavigationActionsMixin:
         widgets = self._get_widgets_in_session_order()
         if not widgets:
             return
+        if self._swarm_step(1) is True:  # through an expanded parent's virtual rows
+            return
         self._user_navigated = True
         self.focused_session_index = (self.focused_session_index + 1) % len(widgets)
 
@@ -37,6 +39,8 @@ class NavigationActionsMixin:
             return
         widgets = self._get_widgets_in_session_order()
         if not widgets:
+            return
+        if self._swarm_step(-1) is True:
             return
         self._user_navigated = True
         self.focused_session_index = (self.focused_session_index - 1) % len(widgets)

@@ -10,10 +10,17 @@ that as a property.
 Wire format: one JSON object per line, UTF-8, each with a type ``t``:
 
     engine -> view   hello, snapshot, delta, ping, bell
-    view -> engine   subscribe, visible, focus, burn_window, visit
+    view -> engine   subscribe, visible, focus, burn_window, visit, swarm
 
 Fields are kept flat on purpose: a delta replaces whole values, and a field
 that disappears is listed in ``unset``, so applying never needs a deep merge.
+
+``virtual`` holds the read-only rows of delegated work (subagents,
+workflow groups, teammates: docs/design/agent-observability-0.6.1.md
+§6.2), keyed by row identity, the same shape as ``agents``. The engine
+fills it only for the parents a visible view subscribed to (``swarm``),
+so a collapsed swarm costs nothing here. A view that does not know the
+section ignores it.
 """
 
 from __future__ import annotations
@@ -32,12 +39,14 @@ class Snapshot:
     seq: int = 0
     agents: Dict[str, AgentFields] = field(default_factory=dict)
     fleet: Dict[str, Any] = field(default_factory=dict)
+    virtual: Dict[str, AgentFields] = field(default_factory=dict)
 
     def copy(self) -> "Snapshot":
         return Snapshot(
             self.seq,
             {aid: dict(fields) for aid, fields in self.agents.items()},
             dict(self.fleet),
+            {key: dict(fields) for key, fields in self.virtual.items()},
         )
 
 
@@ -50,11 +59,16 @@ class Delta:
     removed: List[str] = field(default_factory=list)
     fleet_set: Dict[str, Any] = field(default_factory=dict)
     fleet_unset: List[str] = field(default_factory=list)
+    # The virtual rows, as the agents above
+    virtual_set: Dict[str, AgentFields] = field(default_factory=dict)
+    virtual_unset: Dict[str, List[str]] = field(default_factory=dict)
+    virtual_removed: List[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
         return not (self.set or self.unset or self.removed
-                    or self.fleet_set or self.fleet_unset)
+                    or self.fleet_set or self.fleet_unset
+                    or self.virtual_set or self.virtual_unset or self.virtual_removed)
 
 
 def _diff_fields(old: Dict[str, Any], new: Dict[str, Any]):
@@ -63,21 +77,31 @@ def _diff_fields(old: Dict[str, Any], new: Dict[str, Any]):
     return changed, gone
 
 
-def diff(old: Snapshot, new: Snapshot) -> Delta:
-    """The delta that turns ``old`` into ``new`` (``new.seq`` is its seq)."""
-    delta = Delta(seq=new.seq)
-    for aid, fields in new.agents.items():
-        before = old.agents.get(aid)
+def _diff_rows(old: Dict[str, AgentFields], new: Dict[str, AgentFields]):
+    """(set, unset, removed) turning one keyed set of rows into another."""
+    set_: Dict[str, AgentFields] = {}
+    unset: Dict[str, List[str]] = {}
+    for key, fields in new.items():
+        before = old.get(key)
         if before is None:
-            delta.set[aid] = dict(fields)
+            set_[key] = dict(fields)
             continue
         changed, gone = _diff_fields(before, fields)
         if changed:
-            delta.set[aid] = changed
+            set_[key] = changed
         if gone:
-            delta.unset[aid] = gone
-    delta.removed = sorted(aid for aid in old.agents if aid not in new.agents)
+            unset[key] = gone
+    removed = sorted(key for key in old if key not in new)
+    return set_, unset, removed
+
+
+def diff(old: Snapshot, new: Snapshot) -> Delta:
+    """The delta that turns ``old`` into ``new`` (``new.seq`` is its seq)."""
+    delta = Delta(seq=new.seq)
+    delta.set, delta.unset, delta.removed = _diff_rows(old.agents, new.agents)
     delta.fleet_set, delta.fleet_unset = _diff_fields(old.fleet, new.fleet)
+    delta.virtual_set, delta.virtual_unset, delta.virtual_removed = _diff_rows(
+        old.virtual, new.virtual)
     return delta
 
 
@@ -89,20 +113,29 @@ def apply(snapshot: Snapshot, delta: Delta) -> Snapshot:
     agent by identity instead of comparing every field. Neither snapshot
     is mutated afterwards (views treat them as read-only).
     """
-    agents = dict(snapshot.agents)
-    for aid in delta.removed:
-        agents.pop(aid, None)
-    for aid, fields in delta.set.items():
-        agents[aid] = {**agents.get(aid, {}), **fields}
-    for aid, names in delta.unset.items():
-        agent = agents.get(aid)
-        if agent is not None:
-            agents[aid] = {k: v for k, v in agent.items() if k not in names}
-    out = Snapshot(snapshot.seq, agents, dict(snapshot.fleet))
+    agents = _apply_rows(snapshot.agents, delta.set, delta.unset, delta.removed)
+    virtual = snapshot.virtual
+    if delta.virtual_set or delta.virtual_unset or delta.virtual_removed:
+        virtual = _apply_rows(virtual, delta.virtual_set, delta.virtual_unset,
+                              delta.virtual_removed)
+    out = Snapshot(snapshot.seq, agents, dict(snapshot.fleet), virtual)
     out.fleet.update(delta.fleet_set)
     for name in delta.fleet_unset:
         out.fleet.pop(name, None)
     out.seq = delta.seq
+    return out
+
+
+def _apply_rows(rows: Dict[str, AgentFields], set_, unset, removed) -> Dict[str, AgentFields]:
+    out = dict(rows)
+    for key in removed:
+        out.pop(key, None)
+    for key, fields in set_.items():
+        out[key] = {**out.get(key, {}), **fields}
+    for key, names in unset.items():
+        row = out.get(key)
+        if row is not None:
+            out[key] = {k: v for k, v in row.items() if k not in names}
     return out
 
 
@@ -118,8 +151,11 @@ def hello(seq: int) -> bytes:
 
 
 def snapshot_message(snapshot: Snapshot) -> bytes:
-    return encode({"t": "snapshot", "seq": snapshot.seq,
-                   "agents": snapshot.agents, "fleet": snapshot.fleet})
+    message = {"t": "snapshot", "seq": snapshot.seq,
+               "agents": snapshot.agents, "fleet": snapshot.fleet}
+    if snapshot.virtual:
+        message["virtual"] = snapshot.virtual
+    return encode(message)
 
 
 def delta_message(delta: Delta) -> bytes:
@@ -134,6 +170,12 @@ def delta_message(delta: Delta) -> bytes:
         msg["fleet_set"] = delta.fleet_set
     if delta.fleet_unset:
         msg["fleet_unset"] = delta.fleet_unset
+    if delta.virtual_set:
+        msg["virtual_set"] = delta.virtual_set
+    if delta.virtual_unset:
+        msg["virtual_unset"] = delta.virtual_unset
+    if delta.virtual_removed:
+        msg["virtual_removed"] = delta.virtual_removed
     return encode(msg)
 
 
@@ -178,6 +220,9 @@ def delta_from_message(message: Dict[str, Any]) -> Delta:
         removed=message.get("removed") or [],
         fleet_set=message.get("fleet_set") or {},
         fleet_unset=message.get("fleet_unset") or [],
+        virtual_set=message.get("virtual_set") or {},
+        virtual_unset=message.get("virtual_unset") or {},
+        virtual_removed=message.get("virtual_removed") or [],
     )
 
 
@@ -186,6 +231,7 @@ def snapshot_from_message(message: Dict[str, Any]) -> Snapshot:
         seq=int(message.get("seq", 0)),
         agents=message.get("agents") or {},
         fleet=message.get("fleet") or {},
+        virtual=message.get("virtual") or {},
     )
 
 

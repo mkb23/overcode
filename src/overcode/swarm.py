@@ -90,6 +90,43 @@ def agent_kind(agent_id: str, agent_type: Optional[str], swarm: dict) -> str:
     return KIND_SUBAGENT
 
 
+_WORKFLOW_RUN = re.compile(r"/workflows/(?P<run>[^/]+)/agent-[^/]+$")
+# A member row's "last:" line: the tool and its main argument
+ACTIVITY_CHARS = 80
+_ACTIVITY_ARGS = ("file_path", "path", "command", "pattern", "url", "query",
+                  "description", "prompt", "skill")
+
+
+def workflow_run_of(agent_transcript_path) -> Optional[str]:
+    """The workflow run an agent's transcript sits under (``…/workflows/<run>/agent-x.jsonl``)."""
+    if not isinstance(agent_transcript_path, str):
+        return None
+    m = _WORKFLOW_RUN.search(agent_transcript_path.removesuffix(".jsonl"))
+    return m.group("run") if m else None
+
+
+def tool_activity(tool_name, tool_input) -> Optional[str]:
+    """``Read src/x.py``: what a delegated agent's tool call is doing, one short line."""
+    if not isinstance(tool_name, str) or not tool_name:
+        return None
+    arg = None
+    if isinstance(tool_input, dict):
+        for key in _ACTIVITY_ARGS:
+            value = tool_input.get(key)
+            if isinstance(value, str) and value.strip():
+                arg = " ".join(value.split())
+                break
+    text = f"{tool_name} {arg}" if arg else tool_name
+    return text if len(text) <= ACTIVITY_CHARS else text[:ACTIVITY_CHARS - 1] + "…"
+
+
+def _note_transcript(swarm: dict, data) -> None:
+    """Remember the parent's transcript: its delegated agents' files sit beside it."""
+    path = data.get("transcript_path") if isinstance(data, dict) else None
+    if isinstance(path, str) and path.endswith(".jsonl") and swarm.get("transcript") != path:
+        swarm["transcript"] = path
+
+
 def task_notifications(prompt) -> list:
     """(task id, status, interim) for each ``<task-notification>`` in a prompt.
 
@@ -142,6 +179,9 @@ def _finish(subagents: dict, swarm: dict, agent_id: str, result: str, now: float
     done.pop(agent_id, None)  # re-inserted last: the map is oldest-first
     done[agent_id] = {"kind": entry.get("kind") or KIND_SUBAGENT, "result": result,
                       "ended_at": now}
+    for key in ("run", "type", "started_at"):
+        if entry.get(key):
+            done[agent_id][key] = entry[key]
     while len(done) > DONE_KEEP:
         oldest = next(iter(done))
         _fold(swarm, "agents", done.pop(oldest).get("result") or RESULT_OK)
@@ -176,6 +216,8 @@ def _end_workflow(subagents: dict, swarm: dict, task_id: str, result: str, now: 
     run = (swarm.get("workflows") or {}).get(task_id)
     if run is None:
         return
+    if run.get("status") == "running":
+        run["ended_at"] = now
     run["status"] = result
     _end_orphan_workflow_agents(subagents, swarm, now)
 
@@ -193,10 +235,12 @@ def _end_orphan_workflow_agents(subagents: dict, swarm: dict, now: float) -> Non
         _finish(subagents, swarm, agent_id, RESULT_OK, now)
 
 
-def _add_workflow(swarm: dict, task_id: str, name=None, run_id=None) -> None:
+def _add_workflow(swarm: dict, task_id: str, name=None, run_id=None, now=None) -> None:
     runs = swarm.setdefault("workflows", {})
     run = runs.get(task_id) or {}
     run["status"] = run.get("status") or "running"
+    if run.get("started_at") is None and now is not None:
+        run["started_at"] = now
     if name and not run.get("name"):
         run["name"] = str(name)[:80]
     if run_id and not run.get("run_id"):
@@ -232,10 +276,11 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
 
     for t in running:
         if t.get("type") == "workflow":
-            _add_workflow(swarm, t["id"], name=t.get("name") or t.get("description"))
+            _add_workflow(swarm, t["id"], name=t.get("name") or t.get("description"), now=now)
     for task_id, run in (swarm.get("workflows") or {}).items():
         if run.get("status") == "running" and task_id not in ids:
             run["status"] = RESULT_OK
+            run["ended_at"] = now
 
     shells = any(t.get("type") == "shell" for t in running)
     team_descs = {t.get("description") for t in running if t.get("type") == "teammate"}
@@ -289,6 +334,9 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
             "last_seen": now,
         }
     elif event == "SubagentStop":
+        run = workflow_run_of(data.get("agent_transcript_path"))
+        if run and entry is not None:
+            entry["run"] = run
         if entry is not None and entry.get("kind") == KIND_TEAMMATE:
             # A teammate stops each time it goes idle; it is still listening
             entry.pop("waiting", None)
@@ -316,6 +364,11 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
             entry["waiting"] = True
         else:
             entry.pop("waiting", None)
+        if event == "PreToolUse":
+            activity = tool_activity(data.get("tool_name"), data.get("tool_input"))
+            if activity:
+                entry["activity"] = activity
+    _note_transcript(swarm, data)
     return subagents, swarm
 
 
@@ -359,7 +412,7 @@ def apply_parent_event(subagents, swarm, event: str, tool_name: Optional[str],
         response = data.get("tool_response")
         if isinstance(response, dict) and response.get("taskId"):
             _add_workflow(swarm, response["taskId"], name=response.get("workflowName"),
-                          run_id=response.get("runId"))
+                          run_id=response.get("runId"), now=now)
     elif event == "UserPromptSubmit":
         for task_id, status, interim in task_notifications(data.get("prompt")):
             # A notification only comes once a task has ended, or paused
@@ -373,6 +426,8 @@ def apply_parent_event(subagents, swarm, event: str, tool_name: Optional[str],
                 _set_result(subagents, swarm, task_id, result, now)
     if event == "Stop" and isinstance(data.get("background_tasks"), list):
         _reconcile(subagents, swarm, data["background_tasks"], now, turn_over=True)
+    if subagents or swarm:
+        _note_transcript(swarm, data)
     return subagents, swarm
 
 
@@ -380,15 +435,15 @@ def apply_parent_event(subagents, swarm, event: str, tool_name: Optional[str],
 # Daemon side
 # ---------------------------------------------------------------------------
 
-def _live(hook_state: dict, now: float) -> Tuple[list, int]:
-    """The live entries, and how many legacy entries went stale."""
+def _live_items(hook_state: dict, now: float) -> Tuple[list, int]:
+    """The live (agent id, entry) pairs, and how many legacy entries went stale."""
     subagents = hook_state.get("subagents")
     if not isinstance(subagents, dict):
         return [], 0
     swarm = hook_state.get("swarm") if isinstance(hook_state.get("swarm"), dict) else {}
     reconciled = "bg_at" in swarm
     live, stale = [], 0
-    for entry in subagents.values():
+    for agent_id, entry in subagents.items():
         if not isinstance(entry, dict):
             continue
         if not reconciled:
@@ -396,8 +451,14 @@ def _live(hook_state: dict, now: float) -> Tuple[list, int]:
             if not isinstance(seen, (int, float)) or now - seen > LEGACY_STALE_SECONDS:
                 stale += 1
                 continue
-        live.append(entry)
+        live.append((agent_id, entry))
     return live, stale
+
+
+def _live(hook_state: dict, now: float) -> Tuple[list, int]:
+    """The live entries, and how many legacy entries went stale."""
+    items, stale = _live_items(hook_state, now)
+    return [entry for _, entry in items], stale
 
 
 def in_flight(hook_state: dict, now: float) -> Tuple[int, int]:
@@ -460,3 +521,341 @@ def rollup(hook_state: Optional[dict], now: float) -> Optional[dict]:
         "ok": ok, "failed": failed, "workflows": workflows,
         "workflows_running": sum(1 for r in runs if r.get("status") == "running"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Virtual rows (phase 2): an expanded parent's delegated work, row by row
+# ---------------------------------------------------------------------------
+#
+# Published only for parents a visible view has expanded (the engine's
+# ``swarm:<id>`` subscription), in the snapshot's ``virtual`` section, keyed
+# by the row's identity (design §3.2):
+#
+#   <parent>/wf/<run>             a workflow run (group)
+#   <parent>/wf/<run>/ph/<n>      one of its phases
+#   <parent>/wf/<run>/<agent id>  one of its agents
+#   <parent>/tm, <parent>/tm/<name>     the team and a teammate
+#   <parent>/sa, <parent>/sa/<agent id> loose subagents (and forks)
+#
+# Every value holds still between events: absolute times, counts, names.
+# A finished member keeps its row for ``keep_seconds`` after it ended (so
+# does a finished workflow run's group); the earliest such deadline is
+# returned with the rows, for the engine to publish their removal on time.
+
+ROW_GROUP = "group"
+ROW_PHASE = "phase"
+ROW_MEMBER = "member"
+
+GROUP_WORKFLOW = "workflow"
+GROUP_TEAM = "team"
+GROUP_AGENTS = "agents"
+
+LIGHT_GREEN = "green"     # working
+LIGHT_YELLOW = "yellow"   # waiting on its own background work
+LIGHT_ORANGE = "orange"   # its permission prompt is up in the parent's pane
+LIGHT_IDLE = "idle"       # a teammate, listening
+LIGHT_DONE = "done"       # finished: see ``result``
+
+RESULT_TEXT_CHARS = 80
+_COUNT_KEYS = ("running", "yellow", "waiting", "idle", "ok", "failed")
+_LIGHT_COUNT = {LIGHT_GREEN: "running", LIGHT_YELLOW: "yellow", LIGHT_ORANGE: "waiting",
+                LIGHT_IDLE: "idle"}
+
+
+class NoDetails:
+    """Lookups into the transcript directory (``swarm_files.SwarmFiles``); none here."""
+
+    def meta(self, agent_id: str, run_id: Optional[str]) -> Optional[dict]:
+        return None
+
+    def journal(self, run_id: str) -> Optional[list]:
+        return None
+
+
+def member_light(entry: dict) -> str:
+    """A live member's light (design §3.4)."""
+    if entry.get("waiting"):
+        return LIGHT_ORANGE
+    if entry.get("idle"):
+        return LIGHT_IDLE
+    if entry.get("own_work"):
+        return LIGHT_YELLOW
+    return LIGHT_GREEN
+
+
+def group_light(counts: dict) -> str:
+    """A group's light: any 🟠, else any 🟢, else 🟡, else idle, else done."""
+    if counts.get("waiting"):
+        return LIGHT_ORANGE
+    if counts.get("running"):
+        return LIGHT_GREEN
+    if counts.get("yellow"):
+        return LIGHT_YELLOW
+    if counts.get("idle"):
+        return LIGHT_IDLE
+    return LIGHT_DONE
+
+
+def _num(value) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _cost(value: float) -> Optional[float]:
+    return round(value, 4) if value > 0 else None
+
+
+def spend_by_agent(conversations) -> Tuple[dict, dict]:
+    """``({agent id: (cost, tokens)}, {workflow run: cost})`` from an agent's
+    spend per conversation (``SessionStats.conversations``: a subagent is
+    ``<session>/agent-<id>``, a workflow agent ``<session>/workflows/<run>/agent-<id>``)."""
+    agents: dict = {}
+    runs: dict = {}
+    if not isinstance(conversations, dict):
+        return agents, runs
+    for key, entry in conversations.items():
+        if not isinstance(key, str) or key.startswith("_") or "/" not in key:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        parts = key.split("/")[1:]
+        name = parts[-1]
+        if not name.startswith("agent-"):
+            continue
+        cost = _num(entry.get("cost"))
+        tokens = int(sum(_num(entry.get(k)) for k in ("in", "out", "cw", "cr")))
+        agent_id = name[len("agent-"):]
+        old_cost, old_tokens = agents.get(agent_id, (0.0, 0))
+        agents[agent_id] = (old_cost + cost, old_tokens + tokens)
+        if len(parts) >= 3 and parts[0] == "workflows":
+            runs[parts[1]] = runs.get(parts[1], 0.0) + cost
+    return agents, runs
+
+
+def subagent_cost(conversations) -> Optional[float]:
+    """What the agent's delegated work cost (already inside its own total), or None."""
+    agents, _ = spend_by_agent(conversations)
+    return _cost(sum(cost for cost, _ in agents.values()))
+
+
+def parse_journal(events) -> dict:
+    """A workflow journal (``started``/``result`` lines) as
+    ``{"agents": {id: {"label", "phase", "result"}}, "phases": [title, ...]}``."""
+    agents: dict = {}
+    phases: list = []
+    for event in events or ():
+        if not isinstance(event, dict):
+            continue
+        agent_id = event.get("agentId")
+        if not isinstance(agent_id, str):
+            continue
+        if event.get("type") == "started":
+            phase = event.get("phase") if isinstance(event.get("phase"), str) else None
+            agents[agent_id] = {"label": event.get("label"), "phase": phase, "result": None}
+            if phase and phase not in phases:
+                phases.append(phase)
+        elif event.get("type") == "result" and agent_id in agents:
+            result = event.get("result")
+            agents[agent_id]["result"] = result if isinstance(result, str) else "done"
+    return {"agents": agents, "phases": phases}
+
+
+def _short(text) -> Optional[str]:
+    if not isinstance(text, str) or not text.strip():
+        return None
+    text = " ".join(text.split())
+    return text if len(text) <= RESULT_TEXT_CHARS else text[:RESULT_TEXT_CHARS - 1] + "…"
+
+
+class _Builder:
+    """One parent's virtual rows (``virtual_rows``)."""
+
+    def __init__(self, parent, hook_state, now, keep_seconds, details, conversations):
+        self.parent = parent
+        self.now = now
+        self.keep = keep_seconds
+        self.details = details
+        swarm = hook_state.get("swarm") if isinstance(hook_state.get("swarm"), dict) else {}
+        live, _ = _live_items(hook_state, now)
+        done = [(a, e) for a, e in (swarm.get("done") or {}).items() if isinstance(e, dict)]
+        self.members = [(a, e, True) for a, e in live] + [(a, e, False) for a, e in done]
+        self.runs = {t: r for t, r in (swarm.get("workflows") or {}).items()
+                     if isinstance(r, dict)}
+        self.teammates = swarm.get("teammates") or {}
+        self.spend, self.run_spend = spend_by_agent(conversations)
+        self.rows: dict = {}
+        self.groups: dict = {}
+        self.deadlines: list = []
+        # Workflow runs: their journals say which agents are theirs
+        self.journals: dict = {}
+        self.run_of_agent: dict = {}
+        self.task_of_run: dict = {}
+        for task_id, run in self.runs.items():
+            run_id = run.get("run_id")
+            if not run_id:
+                continue
+            self.task_of_run[run_id] = task_id
+            journal = parse_journal(details.journal(run_id))
+            self.journals[task_id] = journal
+            for agent_id in journal["agents"]:
+                self.run_of_agent[agent_id] = task_id
+        self.running_runs = [t for t, r in self.runs.items() if r.get("status") == "running"]
+        self.run_order = {t: i for i, t in enumerate(self.runs)}
+        self.shown_runs = {t: self._run_shown(r) for t, r in self.runs.items()}
+
+    # -- workflow runs ----------------------------------------------------
+
+    def _kept(self, ended) -> bool:
+        """A finished thing still within its time on screen (noting the deadline)."""
+        if not isinstance(ended, (int, float)) or self.now >= ended + self.keep:
+            return False
+        self.deadlines.append(ended + self.keep)
+        return True
+
+    def _run_shown(self, run: dict) -> bool:
+        return run.get("status") == "running" or self._kept(run.get("ended_at"))
+
+    def _run_for(self, agent_id: str, entry: dict, is_live: bool) -> Optional[str]:
+        task = self.run_of_agent.get(agent_id) or self.task_of_run.get(entry.get("run"))
+        if task:
+            return task
+        if is_live and self.running_runs:
+            return self.running_runs[-1]
+        if len(self.runs) == 1:
+            return next(iter(self.runs))
+        return None
+
+    def _run_key(self, task_id: Optional[str]) -> str:
+        run_id = (self.runs.get(task_id) or {}).get("run_id")
+        return f"{self.parent}/wf/{run_id or task_id or '-'}"
+
+    def _run_group(self, task_id: Optional[str]) -> dict:
+        run = self.runs.get(task_id) or {}
+        return self._group(self._run_key(task_id), GROUP_WORKFLOW,
+                           self.run_order.get(task_id, len(self.runs)),
+                           title=run.get("name") or "workflow", run_id=run.get("run_id"),
+                           status=run.get("status") or "running",
+                           started_at=run.get("started_at"))
+
+    # -- groups and members -----------------------------------------------
+
+    def _group(self, key: str, kind: str, order: int, **fields) -> dict:
+        row = self.groups.get(key)
+        if row is None:
+            row = {"parent": self.parent, "row": ROW_GROUP, "kind": kind, "order": order,
+                   "counts": {k: 0 for k in _COUNT_KEYS}}
+            row.update({k: v for k, v in fields.items() if v is not None})
+            self.groups[key] = row
+        return row
+
+    def _place(self, agent_id: str, entry: dict, is_live: bool):
+        """(group row, its key, the member's key, shown?, workflow task)."""
+        kind = entry.get("kind") or KIND_SUBAGENT
+        if kind == KIND_WORKFLOW:
+            task = self._run_for(agent_id, entry, is_live)
+            shown = self.shown_runs.get(task, False) if task is not None else is_live
+            key = self._run_key(task)
+            return self._run_group(task), key, f"{key}/{agent_id}", shown, task
+        if kind == KIND_TEAMMATE:
+            key = f"{self.parent}/tm"
+            name = (self.teammates.get(agent_id) or {}).get("name") or entry.get("type") or agent_id
+            return self._group(key, GROUP_TEAM, 1000, title="team"), key, f"{key}/{name}", True, None
+        key = f"{self.parent}/sa"
+        return self._group(key, GROUP_AGENTS, 2000, title="agents"), key, f"{key}/{agent_id}", True, None
+
+    def _member(self, agent_id, entry, is_live) -> None:
+        group, gkey, mkey, shown, task = self._place(agent_id, entry, is_live)
+        counts = group["counts"]
+        if is_live:
+            light, result, ended = member_light(entry), None, None
+            counts[_LIGHT_COUNT[light]] += 1
+        else:
+            light, result = LIGHT_DONE, entry.get("result") or RESULT_OK
+            ended = entry.get("ended_at")
+            counts["failed" if result == RESULT_FAILED else "ok"] += 1
+        if not shown or (not is_live and not self._kept(ended)):
+            return
+        run = self.runs.get(task) or {}
+        journal = self.journals.get(task) or {"agents": {}, "phases": []}
+        from_journal = journal["agents"].get(agent_id) or {}
+        meta = self.details.meta(agent_id, run.get("run_id") or entry.get("run")) or {}
+        kind = entry.get("kind") or KIND_SUBAGENT
+        title = (from_journal.get("label") or meta.get("description")
+                 or (mkey.rsplit("/", 1)[1] if kind == KIND_TEAMMATE else None)
+                 or entry.get("type") or meta.get("agentType") or agent_id)
+        model = meta.get("model")
+        cost, tokens = self.spend.get(agent_id, (0.0, 0))
+        phase = from_journal.get("phase") or meta.get("workflowPhase")
+        row = {
+            "parent": self.parent, "row": ROW_MEMBER, "group": gkey, "kind": kind,
+            "agent_id": agent_id, "title": str(title)[:80], "light": light,
+            "agent_type": entry.get("type") or meta.get("agentType"),
+            "started_at": entry.get("started_at"), "ended_at": ended, "result": result,
+            "activity": entry.get("activity"),
+            "model": model if isinstance(model, str) and model != "inherit" else None,
+            "cost_usd": _cost(cost), "tokens": tokens or None,
+            "result_text": _short(from_journal.get("result")),
+        }
+        if phase in journal["phases"]:
+            row["phase"] = f"{gkey}/ph/{journal['phases'].index(phase)}"
+        self.rows[mkey] = {k: v for k, v in row.items() if v is not None}
+
+    def _finish_workflow(self, key: str, row: dict) -> None:
+        task = next((t for t in self.runs if self._run_key(t) == key), None)
+        run_id = row.get("run_id")
+        if run_id and self.run_spend.get(run_id):
+            row["cost_usd"] = _cost(self.run_spend[run_id])
+        journal = self.journals.get(task)
+        if not journal or not journal["agents"]:
+            return
+        row["agents"] = len(journal["agents"])
+        for i, title in enumerate(journal["phases"]):
+            in_phase = [a for a in journal["agents"].values() if a["phase"] == title]
+            finished = sum(1 for a in in_phase if a["result"] is not None)
+            self.rows[f"{key}/ph/{i}"] = {
+                "parent": self.parent, "row": ROW_PHASE, "group": key, "title": title,
+                "order": i, "started": len(in_phase), "done": finished,
+            }
+            row["phase"], row["phase_done"], row["phase_started"] = title, finished, len(in_phase)
+
+    def build(self) -> Tuple[dict, Optional[float]]:
+        for agent_id, entry, is_live in self.members:
+            self._member(agent_id, entry, is_live)
+        # A run whose agents have not started yet still gets its group
+        for task_id in self.runs:
+            if self.shown_runs[task_id]:
+                self._run_group(task_id)
+        for key, row in self.groups.items():
+            counts = row["counts"]
+            if row["kind"] == GROUP_WORKFLOW:
+                task = next((t for t in self.runs if self._run_key(t) == key), None)
+                if task is not None and not self.shown_runs[task]:
+                    continue
+                if task is None and not any(counts.get(k) for k in _LIGHT_COUNT.values()):
+                    continue
+                self._finish_workflow(key, row)
+            else:
+                team = row["kind"] == GROUP_TEAM
+                total = sum(self.spend.get(a, (0.0, 0))[0] for a, e, _ in self.members
+                            if e.get("kind") != KIND_WORKFLOW
+                            and (e.get("kind") == KIND_TEAMMATE) == team)
+                if total:
+                    row["cost_usd"] = _cost(total)
+            row["light"] = group_light(counts)
+            row["counts"] = {k: v for k, v in counts.items() if v}
+            self.rows[key] = row
+        return self.rows, (min(self.deadlines) if self.deadlines else None)
+
+
+def virtual_rows(parent: str, hook_state: Optional[dict], now: float, keep_seconds: float,
+                 details=None, conversations=None) -> Tuple[dict, Optional[float]]:
+    """``parent``'s virtual rows and when they next change with the clock (None: never).
+
+    ``details`` reads members' ``.meta.json`` and workflow journals
+    (``NoDetails`` when absent); ``conversations`` is the parent's spend
+    per conversation, for each row's own share of it. Pure otherwise.
+    """
+    if not isinstance(hook_state, dict):
+        return {}, None
+    builder = _Builder(parent, hook_state, now, keep_seconds,
+                       details if details is not None else NoDetails(), conversations)
+    return builder.build()
