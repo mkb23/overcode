@@ -184,6 +184,22 @@ class TestAttendance:
         a.set_burn_window(None)
         assert wait_for(lambda: server.burn_windows == {3.0})
 
+    def test_swarm_subscriptions_come_from_visible_views(self, server, client_factory):
+        """A view that expands a parent subscribes to ``swarm:<id>``
+        (agent-observability-0.6.1.md §6.2): the union over visible views."""
+        a, _ = client_factory()
+        b, _ = client_factory()
+        a.set_swarm({"p1"})
+        b.set_swarm({"p2", "p3"})
+        a.set_visible(True)
+        assert wait_for(lambda: server.swarm_subscriptions == {"p1"})
+        b.set_visible(True)
+        assert wait_for(lambda: server.swarm_subscriptions == {"p1", "p2", "p3"})
+        a.set_swarm(())
+        assert wait_for(lambda: server.swarm_subscriptions == {"p2", "p3"})
+        b.set_visible(False)
+        assert wait_for(lambda: server.swarm_subscriptions == frozenset())
+
     def test_visibility_and_focus_are_restated_after_a_reconnect(self, sock_path, client_factory):
         srv = EngineServer(sock_path)
         srv.start()
@@ -191,13 +207,15 @@ class TestAttendance:
         client.set_visible(True)
         client.set_focus("x")
         client.set_burn_window(2.0)
+        client.set_swarm({"p"})
         assert wait_for(lambda: srv.attended)
         srv.stop()
         srv2 = EngineServer(sock_path)
         srv2.start()
         try:
             assert wait_for(lambda: srv2.attended and srv2.focused_agents == {"x"}
-                            and srv2.burn_windows == {2.0}, timeout=5)
+                            and srv2.burn_windows == {2.0}
+                            and srv2.swarm_subscriptions == {"p"}, timeout=5)
         finally:
             srv2.stop()
 

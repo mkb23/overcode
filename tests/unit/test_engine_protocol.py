@@ -23,18 +23,21 @@ def random_snapshot(rng, seq=0, agents=8, fields=6):
             f"f{f}": rng.choice(VALUES) for f in rng.sample(range(fields * 2), rng.randint(0, fields))
         }
     snap.fleet = {f"g{f}": rng.choice(VALUES) for f in range(rng.randint(0, 4))}
+    # The virtual rows of an expanded parent's delegated work (§6.2)
+    for v in rng.sample(range(agents * 2), rng.randint(0, agents)):
+        snap.virtual[f"agent-0/sa/{v}"] = {
+            f"f{f}": rng.choice(VALUES) for f in rng.sample(range(fields * 2), rng.randint(0, fields))
+        }
     return snap
 
 
-def mutate(rng, snap):
-    """A plausible next tick: some agents change, appear, vanish or lose fields."""
-    nxt = snap.copy()
-    for aid in list(nxt.agents):
+def _mutate_rows(rng, rows, prefix):
+    for key in list(rows):
         roll = rng.random()
         if roll < 0.1:
-            del nxt.agents[aid]
+            del rows[key]
         elif roll < 0.5:
-            fields = nxt.agents[aid]
+            fields = rows[key]
             for name in list(fields):
                 if rng.random() < 0.2:
                     del fields[name]
@@ -43,7 +46,14 @@ def mutate(rng, snap):
             if rng.random() < 0.3:
                 fields[f"f{rng.randint(0, 12)}"] = rng.choice(VALUES)
     if rng.random() < 0.3:
-        nxt.agents[f"new-{rng.randint(0, 99)}"] = {"f0": rng.choice(VALUES)}
+        rows[f"{prefix}{rng.randint(0, 99)}"] = {"f0": rng.choice(VALUES)}
+
+
+def mutate(rng, snap):
+    """A plausible next tick: some agents change, appear, vanish or lose fields."""
+    nxt = snap.copy()
+    _mutate_rows(rng, nxt.agents, "new-")
+    _mutate_rows(rng, nxt.virtual, "agent-1/wf/r/")
     if rng.random() < 0.3:
         nxt.fleet[f"g{rng.randint(0, 5)}"] = rng.choice(VALUES)
     if nxt.fleet and rng.random() < 0.2:
@@ -84,8 +94,27 @@ class TestDiffApply:
             engine = nxt
 
     def test_identical_snapshots_give_an_empty_delta(self):
-        snap = proto.Snapshot(3, {"a": {"x": 1}}, {"g": 2})
+        snap = proto.Snapshot(3, {"a": {"x": 1}}, {"g": 2}, {"a/sa/1": {"light": "green"}})
         assert proto.diff(snap, snap.copy()).empty
+
+    def test_virtual_rows_travel_in_their_own_section(self):
+        old = proto.Snapshot(1, {"a": {"x": 1}}, {}, {"a/sa/1": {"light": "green", "t": 1}})
+        new = proto.Snapshot(2, {"a": {"x": 1}}, {}, {"a/sa/1": {"light": "orange"},
+                                                      "a/sa/2": {"light": "green"}})
+        delta = proto.diff(old, new)
+        assert not delta.set and not delta.unset
+        assert delta.virtual_set == {"a/sa/1": {"light": "orange"}, "a/sa/2": {"light": "green"}}
+        assert delta.virtual_unset == {"a/sa/1": ["t"]}
+        assert proto.diff(new, old).virtual_removed == ["a/sa/2"]
+        message = json.loads(proto.delta_message(delta))
+        assert "virtual_set" in message and "set" not in message
+
+    def test_an_old_view_ignores_the_virtual_section(self):
+        """A view built before phase 2 reads agents and fleet only."""
+        snap = proto.Snapshot(1, {"a": {"x": 1}}, {"g": 1}, {"a/sa/1": {"light": "green"}})
+        message = json.loads(proto.snapshot_message(snap))
+        assert message["agents"] == {"a": {"x": 1}} and message["virtual"]
+        assert "virtual" not in json.loads(proto.snapshot_message(proto.Snapshot(1)))
 
     def test_delta_carries_only_what_changed(self):
         old = proto.Snapshot(1, {"a": {"x": 1, "y": 2}, "b": {"z": 3}})

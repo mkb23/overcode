@@ -90,7 +90,7 @@ def _prepare_socket_dir(directory: Path) -> None:
 
 
 class _Peer:
-    __slots__ = ("sock", "outbox", "inbox", "visible", "focus", "burn_hours")
+    __slots__ = ("sock", "outbox", "inbox", "visible", "focus", "burn_hours", "swarm")
 
     def __init__(self, sock: socket.socket) -> None:
         self.sock = sock
@@ -99,6 +99,8 @@ class _Peer:
         self.visible = False
         self.focus: Optional[str] = None
         self.burn_hours: Optional[float] = None
+        # Parents whose delegated work this view has expanded (``swarm:<id>``)
+        self.swarm: frozenset = frozenset()
 
 
 class EngineServer:
@@ -218,6 +220,16 @@ class EngineServer:
                     if p.visible and p.burn_hours}
 
     @property
+    def swarm_subscriptions(self) -> frozenset:
+        """Parents whose virtual rows a visible view wants (agent-observability §6.2)."""
+        with self._lock:
+            out: set = set()
+            for p in self._peers.values():
+                if p.visible:
+                    out |= p.swarm
+            return frozenset(out)
+
+    @property
     def view_count(self) -> int:
         with self._lock:
             return len(self._peers)
@@ -334,6 +346,10 @@ class EngineServer:
             elif kind == "burn_window":
                 hours = message.get("hours")
                 peer.burn_hours = float(hours) if isinstance(hours, (int, float)) and hours > 0 else None
+            elif kind == "swarm":
+                agents = message.get("agents")
+                peer.swarm = frozenset(a for a in agents if isinstance(a, str)) \
+                    if isinstance(agents, list) else frozenset()
             elif kind == "visit":
                 agent = message.get("agent")
                 if isinstance(agent, str):
@@ -374,6 +390,7 @@ class EngineClient:
         self._visible = False
         self._focus: Optional[str] = None
         self._burn_hours: Optional[float] = None
+        self._swarm: tuple = ()
         # When this view last heard the engine, and the main loop's beat age
         # in its last ping (None: an engine too old to send one)
         self._heard_at = time.monotonic()
@@ -427,6 +444,11 @@ class EngineClient:
         self._focus = agent
         self._send({"t": "focus", "agent": agent})
 
+    def set_swarm(self, agents) -> None:
+        """Subscribe to the virtual rows of these parents (``swarm:<id>``); () for none."""
+        self._swarm = tuple(sorted(agents))
+        self._send({"t": "swarm", "agents": list(self._swarm)})
+
     def _send(self, message: dict) -> None:
         with self._send_lock:
             sock = self._sock
@@ -466,6 +488,8 @@ class EngineClient:
                 self._send({"t": "focus", "agent": self._focus})
             if self._burn_hours:
                 self._send({"t": "burn_window", "hours": self._burn_hours})
+            if self._swarm:
+                self._send({"t": "swarm", "agents": list(self._swarm)})
             self._read(sock)
             with self._send_lock:
                 self._sock = None
