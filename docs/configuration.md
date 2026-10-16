@@ -106,6 +106,7 @@ monitor_daemon:
 # See "Delegated Work" below
 observability:
   finished_row_seconds: 30        # a finished agent's own row stays this long
+  done_rows: 50                   # finished agents an open "✅ n done" line lists
 
 # Sister instances for cross-machine monitoring
 # See docs/advanced-features.md for setup guide
@@ -607,11 +608,16 @@ and the parent's own rules decide.
 ```yaml
 observability:
   finished_row_seconds: 30   # 0 folds a finished agent into the counts at once
+  done_rows: 50              # finished agents an open done line lists
 ```
 
 `finished_row_seconds` is how long a finished agent keeps its own row
 under its parent once delegated work can be expanded into rows (0.6.1,
 phase 2); the 👥 counts include it from the moment it finishes.
+
+`done_rows` caps how many finished agents a group's `✅ n done` line lists
+when you open it with `→` (the most recent ones; the rest show as
+`+k older`). 0 lists none.
 
 ## Billing Codes
 
