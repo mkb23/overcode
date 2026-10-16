@@ -270,7 +270,7 @@ class TestBedrockDiscount:
     def test_flat_discount_applied_to_bedrock(self):
         from overcode.settings import get_model_pricing
         cfg = self._config(bedrock_discount=0.30)
-        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock")
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock", routing="global")
         assert mp.input == pytest.approx(5.0 * 0.7)
         assert mp.output == pytest.approx(25.0 * 0.7)
         assert mp.cache_write == pytest.approx(6.25 * 0.7)
@@ -282,18 +282,18 @@ class TestBedrockDiscount:
             bedrock_discount=0.30,
             bedrock_model_discount={"opus": 0.25, "sonnet": 0.40},
         )
-        opus = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock")
+        opus = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock", routing="global")
         assert opus.input == pytest.approx(5.0 * 0.75)
-        sonnet = get_model_pricing("claude-sonnet-4-6", cfg, provider="bedrock")
+        sonnet = get_model_pricing("claude-sonnet-4-6", cfg, provider="bedrock", routing="global")
         assert sonnet.input == pytest.approx(3.0 * 0.60)
         # haiku has no per-model entry -> falls back to the flat discount
-        haiku = get_model_pricing("claude-haiku-4-5", cfg, provider="bedrock")
+        haiku = get_model_pricing("claude-haiku-4-5", cfg, provider="bedrock", routing="global")
         assert haiku.input == pytest.approx(1.0 * 0.70)
 
     def test_default_config_has_no_discount(self):
         from overcode.settings import get_model_pricing
         cfg = self._config()
-        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock")
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock", routing="global")
         assert mp.input == 5.0  # unchanged
 
     def test_discount_loaded_from_yaml(self, tmp_path):
@@ -317,6 +317,158 @@ class TestBedrockDiscount:
         assert _clamp_fraction(1.5) == 0.9999
         assert _clamp_fraction("nope") == 0.0
         assert _clamp_fraction(0.3) == pytest.approx(0.3)
+
+
+class TestBedrockRouting:
+    """Cost model 0.6.1 §5: only a global. profile is billed at list price;
+    a geographic or in-region one costs the model's regional multiple (1.1)."""
+
+    def _config(self, **kw):
+        from overcode.settings import UserConfig
+        return UserConfig(**kw)
+
+    def test_default_region_derives_a_geographic_profile(self):
+        from overcode.settings import get_model_pricing
+        # bedrock.region defaults to us-east-1, so Claude Code picks us.
+        mp = get_model_pricing("claude-opus-4-6", self._config(), provider="bedrock")
+        assert (mp.input, mp.output, mp.cache_read) == pytest.approx((5.5, 27.5, 0.55))
+        assert mp.cache_write_1h_price == pytest.approx(11.0)
+
+    def test_global_profile_is_list_price(self):
+        from overcode.settings import get_model_pricing
+        mp = get_model_pricing("claude-opus-4-6", self._config(), provider="bedrock",
+                               routing="global")
+        assert mp.input == pytest.approx(5.0)
+
+    def test_config_routing_for_agents_without_a_recorded_one(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(bedrock_routing="global")
+        assert get_model_pricing("claude-opus-4-6", cfg, provider="bedrock").input \
+            == pytest.approx(5.0)
+        # The routing recorded at launch wins over config
+        assert get_model_pricing("claude-opus-4-6", cfg, provider="bedrock",
+                                 routing="eu").input == pytest.approx(5.5)
+        # A region outside us/eu/ap derives global.
+        cfg = self._config(bedrock_region="ca-central-1")
+        assert get_model_pricing("claude-opus-4-6", cfg, provider="bedrock").input \
+            == pytest.approx(5.0)
+
+    def test_older_models_have_no_premium(self):
+        from overcode.settings import get_model_pricing
+        mp = get_model_pricing("claude-sonnet-4-20250514", self._config(), provider="bedrock",
+                               routing="us")
+        assert mp.input == pytest.approx(3.0)
+
+    def test_premium_scales_the_long_context_tier(self):
+        from overcode.settings import get_model_pricing
+        mp = get_model_pricing("claude-haiku-5-5", self._config(), provider="bedrock",
+                               routing="us")
+        assert mp.long.input == pytest.approx(0.55)
+
+    def test_premium_then_discount(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(bedrock_discount=0.30)
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock", routing="us")
+        assert mp.input == pytest.approx(5.0 * 1.1 * 0.7)
+
+    def test_web_sessions_are_untouched(self):
+        from overcode.settings import get_model_pricing
+        mp = get_model_pricing("claude-opus-4-6", self._config(bedrock_discount=0.3),
+                               provider="web", routing="us")
+        assert mp.input == pytest.approx(5.0)
+
+
+class TestDiscountOnce:
+    """Cost model 0.6.1 §2 item 7: the bedrock discount was applied on top of
+    model_pricing rows the docs told users to fill with *net* rates."""
+
+    def _config(self, **kw):
+        from overcode.settings import UserConfig
+        return UserConfig.from_dict(kw)
+
+    def test_net_row_is_taken_as_it_is(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(
+            bedrock={"discount": 0.30},
+            model_pricing={"opus": {"input": 3.5, "output": 17.5, "cache_write": 4.375,
+                                    "cache_read": 0.35, "net": True}})
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock")
+        assert (mp.input, mp.output, mp.cache_read) == pytest.approx((3.5, 17.5, 0.35))
+
+    def test_list_row_gets_premium_and_discount(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(
+            bedrock={"discount": 0.30},
+            model_pricing={"opus": {"input": 5.0, "output": 25.0}})
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock", routing="us")
+        # regional comes from the built-in row: a list override keeps the premium
+        assert mp.regional == pytest.approx(1.1)
+        assert mp.input == pytest.approx(5.0 * 1.1 * 0.7)
+
+    def test_user_row_wins_over_a_more_specific_builtin_row(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(model_pricing={"sonnet": {"input": 9.0, "output": 9.0}})
+        assert get_model_pricing("claude-sonnet-5-5", cfg).input == 9.0
+
+    def test_config_parses_routing_region_and_net(self):
+        cfg = self._config(bedrock={"routing": "global", "region": "eu-west-1"},
+                           model_pricing={"x": {"input": 1.0, "net": True},
+                                          "y": {"input": 1.0, "net": "yes"}})
+        assert cfg.bedrock_routing == "global" and cfg.bedrock_region == "eu-west-1"
+        assert cfg.model_pricing["x"].net is True
+        assert cfg.model_pricing["y"].net is False  # only a real true counts
+
+
+class TestBedrockRoutingDetection:
+    @pytest.mark.parametrize("kw,expected", [
+        ({"model": "global.anthropic.claude-opus-5-5"}, "global"),
+        ({"model": "us.anthropic.claude-sonnet-4-6", "prefix": "global"}, "us"),
+        ({"model": "eu.anthropic.claude-opus-4-8"}, "eu"),
+        ({"model": "anthropic.claude-opus-4-8"}, "in-region"),
+        ({"model": "arn:aws:bedrock:us-east-1:1:application-inference-profile/abc"}, "profile"),
+        ({"model": "arn:aws:bedrock:us-east-1:1:inference-profile/global.anthropic.claude-x"},
+         "global"),
+        ({"model": "opus", "prefix": "apac"}, "apac"),
+        ({"model": "opus", "prefix": "nonsense", "region": "eu-west-1"}, "eu"),
+        ({"region": "us-east-1"}, "us"),
+        ({"region": "us-gov-west-1"}, "us-gov"),
+        ({"region": "ap-southeast-2"}, "apac"),
+        ({"region": "sa-east-1"}, "global"),
+        ({}, "global"),
+    ])
+    def test_routing(self, kw, expected):
+        from overcode.pricing import bedrock_routing
+        assert bedrock_routing(**kw) == expected
+
+    def test_launch_reads_config_then_environment(self):
+        from overcode import launcher
+        with patch("overcode.config.get_bedrock_config",
+                   return_value={"region": "us-east-1", "routing": None}):
+            assert launcher.launch_bedrock_routing(None, environ={}) == "us"
+            assert launcher.launch_bedrock_routing(
+                None, environ={"ANTHROPIC_BEDROCK_REGION_PREFIX": "global"}) == "global"
+            assert launcher.launch_bedrock_routing(
+                None, environ={"ANTHROPIC_MODEL": "eu.anthropic.claude-opus-5-5"}) == "eu"
+            assert launcher.launch_bedrock_routing(
+                "global.anthropic.claude-opus-5-5",
+                environ={"ANTHROPIC_MODEL": "eu.anthropic.claude-opus-5-5"}) == "global"
+        with patch("overcode.config.get_bedrock_config",
+                   return_value={"region": "us-east-1", "routing": "global"}):
+            assert launcher.launch_bedrock_routing(
+                "sonnet", environ={"ANTHROPIC_BEDROCK_REGION_PREFIX": "us"}) == "global"
+
+    def test_daemon_prices_at_the_recorded_routing(self):
+        from types import SimpleNamespace
+        from overcode.daemon_stats_sync import spend_pricing
+        from overcode.settings import UserConfig
+        session = SimpleNamespace(provider="bedrock", model="claude-opus-4-6",
+                                  bedrock_routing="global")
+        with patch("overcode.settings.get_user_config", return_value=UserConfig()):
+            prices, _, _ = spend_pricing(session)
+            assert prices("claude-opus-4-6")[0] == pytest.approx(5.0)
+            session.bedrock_routing = "us"
+            prices, _, _ = spend_pricing(session)
+            assert prices("claude-opus-4-6")[0] == pytest.approx(5.5)
 
 
 class TestTUIPreferences:

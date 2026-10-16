@@ -6,6 +6,7 @@ third-party models (OpenAI, etc.) used across the codebase — agent sessions
 and the AI summariser.
 """
 
+import re
 from dataclasses import dataclass, replace
 from typing import Optional
 
@@ -256,6 +257,51 @@ def priced_by_family(model: Optional[str]) -> bool:
     row (a guess: ``overcode doctor`` says so)."""
     return (price_table.price_key(model) is not None and table_pricing(model) is None
             and family_pricing(model) is not None)
+
+
+# Bedrock routing (cost model 0.6.1, §3 and §5). Only a ``global.`` cross-region
+# inference profile is billed at list price; a geographic one (``us.``,
+# ``eu.``, ...), a single-region model id and an application inference
+# profile (which wraps one or the other; overcode cannot see which) are
+# billed at the model's ``regional`` multiple.
+BEDROCK_GLOBAL = "global"
+BEDROCK_PREFIXES = ("global", "us-gov", "us", "eu", "apac", "jp", "au")
+_BEDROCK_ID_PREFIX_RE = re.compile(r"^(global|us-gov|us|eu|apac|jp|au)\.anthropic\.")
+
+
+def bedrock_routing(*, model: Optional[str] = None, prefix: Optional[str] = None,
+                    region: Optional[str] = None) -> str:
+    """How a Bedrock agent's requests are routed, from what it was launched with.
+
+    ``model`` is the model id or inference-profile ARN Claude Code was given
+    (an alias such as ``opus`` says nothing), ``prefix`` the preferred
+    profile prefix (``bedrock.routing`` in config, else Claude Code's
+    ``ANTHROPIC_BEDROCK_REGION_PREFIX``), ``region`` the AWS region, from
+    which Claude Code derives the prefix otherwise (``us-*`` -> ``us``,
+    ``eu-*`` -> ``eu``, ``ap-*`` -> ``apac``, GovCloud -> ``us-gov``, other
+    regions -> ``global``). Returns a prefix, ``in-region`` (a bare
+    ``anthropic.`` id) or ``profile`` (an application inference profile).
+    """
+    text = (model or "").strip().lower()
+    if text.startswith("arn:"):
+        if ":application-inference-profile/" in text:
+            return "profile"
+        text = text.rsplit("/", 1)[-1]
+    match = _BEDROCK_ID_PREFIX_RE.match(text)
+    if match:
+        return match.group(1)
+    if text.startswith("anthropic."):
+        return "in-region"
+    chosen = (prefix or "").strip().lower().rstrip(".")
+    if chosen in BEDROCK_PREFIXES:
+        return chosen
+    area = (region or "").strip().lower()
+    if area.startswith("us-gov-"):
+        return "us-gov"
+    for start, derived in (("us-", "us"), ("eu-", "eu"), ("ap-", "apac")):
+        if area.startswith(start):
+            return derived
+    return BEDROCK_GLOBAL
 
 
 def cost_of_1h_writes(cache_creation_1h_tokens: int, pricing: ModelPricing) -> float:

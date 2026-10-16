@@ -208,6 +208,9 @@ class Session:
     transcript_model: Optional[str] = None
     effort: Optional[str] = None  # Reasoning effort, detected from the backend's store (#497)
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
+    # A bedrock launch's routing (``pricing.bedrock_routing``): "global" is
+    # billed at list price, any other profile at the model's regional premium
+    bedrock_routing: Optional[str] = None
     backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)
     wrapper: Optional[str] = None  # Wrapper script path (wraps claude invocation)
     skill_profile: Optional[str] = None  # Skill profile applied at every (re)launch (#499)

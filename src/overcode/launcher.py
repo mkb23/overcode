@@ -104,6 +104,26 @@ def drop_model_flag(extra_args: Optional[List[str]]) -> Optional[List[str]]:
     return kept
 
 
+def launch_bedrock_routing(model: Optional[str], environ=None) -> str:
+    """The routing a Bedrock launch's requests take (``pricing.bedrock_routing``).
+
+    From the model id overcode passes, else ``ANTHROPIC_MODEL``; the prefix
+    from ``bedrock.routing`` in config, else ``ANTHROPIC_BEDROCK_REGION_PREFIX``;
+    the region overcode sets as ``AWS_REGION`` (``bedrock.region``). The
+    environment is overcode's own: agents start with what tmux passes on.
+    """
+    from .config import get_bedrock_config
+    from .pricing import bedrock_routing
+
+    env = os.environ if environ is None else environ
+    cfg = get_bedrock_config()
+    return bedrock_routing(
+        model=model or env.get("ANTHROPIC_MODEL"),
+        prefix=cfg.get("routing") or env.get("ANTHROPIC_BEDROCK_REGION_PREFIX"),
+        region=cfg.get("region"),
+    )
+
+
 def validate_session_name(name: str) -> None:
     """Validate session name format.
 
@@ -904,6 +924,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             session.id,
             command=claude_cmd,
             launcher_version=get_full_version(),
+            **({"bedrock_routing": launch_bedrock_routing(session.model)}
+               if session.provider == "bedrock" else {}),
         )
 
         if new_claude_sid:
