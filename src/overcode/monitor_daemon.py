@@ -84,6 +84,8 @@ from .child_lifecycle import CHILD_NOT_WORKING, OVERSIGHT_TIMEOUT_REASON, child_
 from .engine_recorders import RecorderStore
 from .ledger import billing_code_of
 from .engine_wake import WakeLoop
+from .swarm_publisher import SwarmPublisher
+from . import swarm
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
     NullPresence,
@@ -435,6 +437,10 @@ class MonitorDaemon:
         # snapshot it holds (None: not written yet); see _state_file_due
         self._last_state_save = 0.0
         self._saved_snapshot = None
+        # Expanded parents' delegated work, row by row (agent-observability
+        # §6.2): built only for parents a visible view subscribed to
+        self.swarm_publisher = SwarmPublisher(
+            self._swarm_state, self._conversations, clock=self.clock.time)
 
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
@@ -570,6 +576,18 @@ class MonitorDaemon:
                     self.log.info(f"Migrated {session.name} window: {session.tmux_window} → {new_name}")
         except Exception as e:
             self.log.warn(f"Legacy window migration failed: {e}")
+
+    def _swarm_state(self, session_name: str) -> Optional[dict]:
+        getter = getattr(self.detector, "get_swarm_state", None)
+        return getter(session_name) if callable(getter) else None
+
+    def _conversations(self, session_id: str) -> Optional[dict]:
+        session = self.session_manager.sessions_by_id().get(session_id)
+        return getattr(getattr(session, "stats", None), "conversations", None)
+
+    def _swarm_subscriptions(self) -> frozenset:
+        engine = self._engine
+        return getattr(engine, "swarm_subscriptions", None) or frozenset()
 
     def _session_index(self) -> SessionIndex:
         """A ``SessionIndex`` over the manager's current snapshot (one stat)."""
@@ -725,6 +743,7 @@ class MonitorDaemon:
             task_result=result,
             task_reason=reason,
             swarm_rollup=swarm_rollup if isinstance(swarm_rollup, dict) else None,
+            subagent_cost_usd=swarm.subagent_cost(getattr(stats, "conversations", None)),
             # Last user command (from history sync)
             last_command=self.stats_sync.last_commands.get(session_id),
             pr_number=session.pr_number,
@@ -1048,6 +1067,13 @@ class MonitorDaemon:
         engine = self._engine
         if engine is not None:
             try:
+                # The expanded parents' virtual rows go to views only, never
+                # to the state file (a new object: _saved_snapshot stays as saved)
+                virtual = self.swarm_publisher.rows(
+                    self._swarm_subscriptions(), session_states)
+                if virtual:
+                    from .engine_protocol import Snapshot
+                    snapshot = Snapshot(snapshot.seq, snapshot.agents, snapshot.fleet, virtual)
                 engine.publish(snapshot)
             except Exception as e:  # a view problem must never stop the tick
                 self.log.warn(f"engine.sock publish failed: {e}")

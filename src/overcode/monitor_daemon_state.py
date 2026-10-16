@@ -180,6 +180,10 @@ class SessionDaemonState:
     # "running", "waiting", "idle", "ok", "failed", "workflows",
     # "workflows_running"} counts. None for an agent that never delegated.
     swarm_rollup: Optional[dict] = None
+    # What that delegated work cost: the subagents' share of
+    # estimated_cost_usd (already inside it), for the $ hover's split.
+    # None when nothing was delegated or it cost nothing yet.
+    subagent_cost_usd: Optional[float] = None
 
     # Skills (#252)
     available_skills: List[str] = field(default_factory=list)  # All skills in ~/.claude/skills

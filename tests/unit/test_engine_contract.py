@@ -84,3 +84,45 @@ def test_git_columns_refresh_every_fifteen_seconds_and_burn_every_ten():
 
     assert GIT_SYNC_SECONDS <= 15
     assert BURN_SYNC_SECONDS <= 10
+
+
+# agent-observability-0.6.1.md §6.3: phase 2's virtual rows
+
+
+def test_virtual_rows_are_checked_at_every_wake_step():
+    """An expanded parent's rows (a new subscription, a finished row's time
+    up, a moved workflow journal) are checked at every wake step: ≤ 0.5 s
+    attended, ≤ 1 s unattended (the step), so workflow progress meets its
+    ≤ 1 s / ≤ 2 s contract. Hook-driven row changes ride the quick tick."""
+    import inspect
+
+    from overcode.engine_wake import WAKE_SCAN_ATTENDED_SECONDS, WakeLoop
+
+    assert WAKE_SCAN_ATTENDED_SECONDS <= 0.5
+    source = inspect.getsource(WakeLoop.sleep)
+    assert source.index("publish_swarm_if_due") < source.index("WAKE_SCAN_UNATTENDED_SECONDS:")
+
+
+def test_finished_virtual_rows_stay_thirty_seconds_by_default():
+    from overcode.config import FINISHED_ROW_SECONDS_DEFAULT
+
+    assert FINISHED_ROW_SECONDS_DEFAULT == 30.0  # owner decision 3
+
+
+def test_virtual_rows_hold_still_between_events():
+    """Rows hold absolute times and counts (no countdowns, no last_seen), so
+    a quiet swarm sends no delta however often it is rebuilt."""
+    from overcode import swarm
+
+    state = {"subagents": {"a1": {"kind": "subagent", "started_at": 1.0, "last_seen": 2.0}},
+             "swarm": {"bg_at": 0.0, "done": {"a2": {"result": "ok", "ended_at": 5.0}}}}
+    frames = [swarm.virtual_rows("p", state, t, 30.0)[0] for t in (10.0, 20.0, 34.9)]
+    assert frames[0] == frames[1] == frames[2]
+
+
+def test_virtual_row_spend_moves_at_the_stats_cadence():
+    """A row's cost comes from the parent's per-conversation spend, which the
+    stats sync refreshes at 5 s watched / 60 s unwatched; nothing faster."""
+    from overcode.monitor_daemon import STATS_SYNC_ATTENDED_SECONDS, STATS_SYNC_UNATTENDED_SECONDS
+
+    assert STATS_SYNC_ATTENDED_SECONDS <= 5 and STATS_SYNC_UNATTENDED_SECONDS <= 60
