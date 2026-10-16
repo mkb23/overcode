@@ -738,9 +738,12 @@ overcode models info
 ### `overcode models lookup`
 
 Show what overcode resolves for a model id — context window, list price,
-short name — and which tier (curated table, catalog, or unknown) answered.
+short name — and which tier (the price table's row with its date, a curated
+family row, the catalog, or unknown) answered. A Claude model also shows
+its long-context tier and Bedrock's regional premium.
 
 ```bash
+overcode models lookup claude-haiku-5-5
 overcode models lookup zai/glm-4.6
 overcode models lookup openai/gpt-5.6-sol
 ```

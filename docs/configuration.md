@@ -42,9 +42,11 @@ pricing:
   cache_read: 0.30     # $/million tokens for cache reads
   # cache_write_1h: 6.0  # 1-hour TTL cache writes; default twice the input price
 
-# Negotiated Bedrock discount off list prices (see Pricing Configuration below)
+# Bedrock agents (see Pricing Configuration below)
 bedrock:
-  discount: 0.0        # flat fraction off list for Bedrock sessions (e.g. 0.30)
+  region: us-east-1    # AWS_REGION for Bedrock agents; us-* means us. profiles (1.1x list)
+  # routing: global    # the profile prefix in use, when launches don't say
+  discount: 0.0        # negotiated fraction off for Bedrock sessions (e.g. 0.30)
   # model_discount:    # optional per-model-family overrides
   #   opus: 0.25
 
@@ -792,27 +794,101 @@ Claude Code writes its prompt cache with the 1-hour TTL, which Anthropic
 bills at twice the input price (5-minute writes are 1.25x). The transcript
 splits each message's cache writes by TTL, and the 1-hour part is priced at
 `cache_write_1h`: twice `input` unless set, in `pricing:` or per model in
-`model_pricing:`. The Bedrock discount scales it too.
+`model_pricing:`. The Bedrock premium and discount scale it too.
 
-Model names are matched as substrings, **longest key first**, so `"sonnet"` matches `"claude-sonnet-4-6"` and a more specific key like `"opus-4-1"` wins over `"opus"`. User overrides in `model_pricing:` take precedence over the built-in table.
+**Where a model's price comes from**, first match wins:
 
-Built-in rates use **list prices** (verified June 2026): current Opus 4.5–4.8 at `$5/$25`, Sonnet 4.x at `$3/$15`, Haiku 4.5 at `$1/$5`; legacy Opus 4.0/4.1 keep `$15/$75` and legacy Haiku 3.5 keeps `$0.80/$4`.
+1. Your `model_pricing:` rows, matched as substrings of the model id,
+   longest key first.
+2. The **price table** (`src/overcode/data/claude_prices.json`): one row
+   per Claude model id, each with its source and as-of date, generated from
+   the AWS Price List (whose `global` column is Anthropic's list price) by
+   `scripts/refresh_price_table.py`. Bedrock, Vertex and opencode spellings
+   of an id (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`,
+   `claude-opus-4-5@20251101`, `anthropic/claude-opus-4.1`) find the same row.
+3. The built-in family rows (`pricing.MODEL_PRICING`: `opus`, `sonnet`,
+   `haiku`, ...), matched as substrings: only for ids the table does not
+   name, such as an alias or a model released after it. `overcode doctor`
+   warns when an agent's Claude model is priced this way.
+4. The models.dev catalog (below), then the global `pricing:` rates.
 
-### Bedrock discount
+`overcode models lookup <model>` shows which row answered. The table's
+rows as of 2026-10-12, per million tokens:
 
-Amazon Bedrock on-demand list prices equal the Anthropic API list prices in the built-in table. Enterprise customers usually pay a **negotiated discount** off that list (an AWS Marketplace private offer / committed-use agreement). Apply it so estimates match your invoice — it only affects sessions detected as Bedrock (`msg_bdrk_` message IDs):
+| Model | Input | Output | Cache write (5 min / 1 h) | Cache read | Long context |
+|---|---|---|---|---|---|
+| Fable 5.1 | $10 | $50 | $12.50 / $20 | $0.25 | — |
+| Fable 5 | $10 | $50 | $12.50 / $20 | $1.00 | — |
+| Opus 5.5 | $4 | $20 | $5 / $8 | $0.20 | — |
+| Opus 4.5 – 5 | $5 | $25 | $6.25 / $10 | $0.50 | — |
+| Opus 4, 4.1 | $15 | $75 | $18.75 / $30 | $1.50 | — |
+| Sonnet 5.5 | $2 | $10 | $2.50 / $4 | $0.10 | — |
+| Sonnet 5 | $2 | $10 | $2.50 / $4 | $0.20 | — |
+| Sonnet 4 – 4.6, 3.5, 3.7 | $3 | $15 | $3.75 / $6 | $0.30 | Sonnet 4 over 200K: $6 / $22.50 |
+| Haiku 5.5 | $0.10 | $0.50 | $0.125 / $0.20 | $0.01 | over 100K: $0.50 / $2.50 |
+| Haiku 4.5 | $1 | $5 | $1.25 / $2 | $0.10 | — |
+| Haiku 3.5 | $0.80 | $4 | $1 / $1.60 | $0.08 | — |
+
+**Long context** is priced per request: a request whose prompt (input +
+cache read + cache write tokens) is over the threshold is billed whole at
+the long-context rates, and every other request at the base rates, however
+long the session has grown.
+
+A price change applies to tokens read from then on: spend already recorded
+keeps the rate it was priced at.
+
+### Bedrock
+
+Amazon Bedrock bills a `global.` cross-region inference profile at the
+list price above, and a **geographic** (`us.`, `eu.`, `apac.`, ...) or
+**in-region** one at **1.1x** list, on every model from the 4.5 generation
+on (older models cost the same everywhere). overcode records the routing
+when it launches a Bedrock agent, from (first match) the model id it
+passes (`--model us.anthropic.claude-...`), else `ANTHROPIC_MODEL`; then
+`bedrock.routing` in config, else `ANTHROPIC_BEDROCK_REGION_PREFIX`; else
+the prefix Claude Code derives from `bedrock.region` (`us-*` → `us.`,
+`eu-*` → `eu.`, `ap-*` → `apac.`, other regions → `global.`). With the
+default `us-east-1`, that is `us.`: 1.1x. An application inference profile
+ARN is priced as regional. Agents launched before overcode 0.6.1, or
+detected as Bedrock without being launched as such, use `bedrock.routing`
+(else the region's):
 
 ```yaml
 bedrock:
-  discount: 0.30          # flat fraction off list for all Bedrock sessions (30% off)
+  region: us-east-1       # what overcode sets as AWS_REGION for Bedrock agents
+  routing: global         # optional: the profile prefix your agents use
+```
+
+Enterprise customers usually pay a **negotiated discount** off that (an
+AWS Marketplace private offer / committed-use agreement). Apply it so
+estimates match your invoice — it only affects sessions detected as
+Bedrock (`msg_bdrk_` message IDs):
+
+```yaml
+bedrock:
+  discount: 0.30          # flat fraction off for all Bedrock sessions (30% off)
   model_discount:         # optional per-model-family overrides (win over the flat rate)
     opus: 0.25
     sonnet: 0.35
 ```
 
-Discounts are clamped to `[0, 1)` and scale every rate (input, output, cache write, cache read) uniformly. Web / Claude-Max / direct-API sessions are unaffected.
+Discounts are clamped to `[0, 1)` and scale every rate (input, output, cache write, cache read, both tiers) uniformly, after the regional premium. Web / Claude-Max / direct-API sessions are unaffected.
 
-> **What this can't express:** a flat percentage can't model **provisioned throughput** (a fixed `$/hour` reserved-capacity commitment, not per-token billing) or **input/output-asymmetric** net rates. For those, pin exact net per-MTok rates directly via `model_pricing:` instead. Ask your AWS/Anthropic account manager for your effective per-model rate. Note also that Claude **Max** is a flat subscription with no per-token billing, so its `$` figure is an *API-equivalent* estimate, not an amount you are billed.
+> **What this can't express:** a flat percentage can't model **provisioned throughput** (a fixed `$/hour` reserved-capacity commitment, not per-token billing) or **input/output-asymmetric** net rates. For those, pin exact net per-MTok rates via `model_pricing:` and mark them `net: true`: a net row is taken as it is, with no premium and no discount. A `model_pricing:` row without `net: true` is a list price and gets both (it takes the built-in row's premium unless it sets `regional:`). `overcode doctor` warns when a discount is set and a row does not say which it is. Ask your AWS/Anthropic account manager for your effective per-model rate. Note also that Claude **Max** is a flat subscription with no per-token billing, so its `$` figure is an *API-equivalent* estimate, not an amount you are billed.
+>
+> ```yaml
+> model_pricing:
+>   opus-4-6: {input: 3.85, output: 19.25, cache_write: 4.81, cache_read: 0.385, net: true}
+> ```
+
+### Checking the estimate
+
+When a Claude Code session ends it records what it counted and charged
+(the transcript's `cost-state` line). `overcode doctor` prices the same
+conversation at overcode's list prices and warns, naming the model, when
+the two differ by more than 2% (and $0.05): a sign the model's price row
+is wrong. Conversations begun before the agent started, or resumed after
+the record, are not compared.
 
 The TUI shows costs based on these rates. Press `$` to toggle between token counts and dollar amounts.
 
@@ -821,9 +897,10 @@ The TUI shows costs based on these rates. Press `$` to toggle between token coun
 Two tiers feed the `CTX` (context window) and `$` (cost) columns for any
 model id a backend reports (#473):
 
-1. **Curated tables** — `history_reader.MODEL_CONTEXT_WINDOWS` and
-   `pricing.MODEL_PRICING`. Every row cites a primary source or a live CLI
-   figure. These always win.
+1. **Curated tables** — `history_reader.MODEL_CONTEXT_WINDOWS`, the Claude
+   price table (`data/claude_prices.json`) and `pricing.MODEL_PRICING`.
+   Every row cites a primary source or a live CLI figure. These always win
+   (see "Where a model's price comes from" above for their order).
 2. **The models.dev catalog** — [models.dev](https://models.dev)'s open,
    community-maintained catalog (`https://models.dev/api.json`), transcoded
    to ~1,000 text models from first-party vendors and the major gateways
