@@ -59,7 +59,7 @@ def models_lookup(
         model_short_name,
     )
     from ..model_metadata import lookup, snapshot_info
-    from ..pricing import MODEL_PRICING, lookup_pricing
+    from ..pricing import lookup_pricing, priced_by_family
 
     bare = _bare_model_id(model)
     meta = lookup(model)
@@ -73,8 +73,12 @@ def models_lookup(
         window_tier = f"catalog ({snapshot_info()['tier']})"
     else:
         window_tier = "unknown"
-    if any(key in model.lower() for key in MODEL_PRICING):
-        price_tier = "curated"
+    if pricing.source.startswith("price table"):
+        price_tier = pricing.source
+    elif pricing.source.startswith("family"):
+        price_tier = f"curated {pricing.source}"
+        if priced_by_family(model):
+            price_tier += "; no price-table row for this model"
     elif meta and meta.has_pricing:
         price_tier = f"catalog ({snapshot_info()['tier']})"
     else:
@@ -87,6 +91,12 @@ def models_lookup(
             f"  list price:     ${pricing.input:g} in / ${pricing.output:g} out per MTok"
             f" (cache read ${pricing.cache_read:g}, write ${pricing.cache_write:g})  {escape(f'[{price_tier}]')}"
         )
+        if pricing.long is not None:
+            rprint(f"  long context:   ${pricing.long.input:g} in / ${pricing.long.output:g} out"
+                   f" per MTok on prompts over {pricing.long_above:,} tokens")
+        if pricing.regional != 1.0:
+            rprint(f"  bedrock:        x{pricing.regional:g} on geographic / in-region profiles"
+                   " (global. is list price)")
     else:
         rprint(f"  list price:     —  {escape(f'[{price_tier}]')}")
     if meta:

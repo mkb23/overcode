@@ -2518,6 +2518,14 @@ class TestModelsCommands:
         assert "258,400" in result.output
         assert "[curated]" in result.output
 
+    def test_lookup_claude_model_names_its_price_table_row(self):
+        result = runner.invoke(app, ["models", "lookup", "claude-haiku-5-5"])
+        assert result.exit_code == 0
+        assert "list price:     $0.1 in / $0.5 out" in result.output
+        assert "price table: claude-haiku-5-5" in result.output
+        assert "on prompts over 100,000 tokens" in result.output
+        assert "x1.1 on geographic" in result.output
+
     def test_lookup_catalog_model(self):
         result = runner.invoke(app, ["models", "lookup", "zai/glm-4.6"])
         assert result.exit_code == 0
