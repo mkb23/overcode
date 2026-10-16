@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Tuple
 
+from .session_manager import Session
 from .status_constants import (
     STATUS_BUSY_SLEEPING,
     STATUS_COLOR_GREEN,
@@ -53,7 +54,7 @@ KIND = "claude_bg"
 ID_PREFIX = "claude-bg:"
 # Shown before NAME (§4.0), and its emoji-free stand-in
 MARKER = "🌙"
-MARKER_ASCII = "Bg"
+MARKER_ASCII = "Bs"
 
 # Job states (Claude Code 2.1.30x): working/blocked are live; done, failed,
 # stopped and crashed are over; starting/resuming/adopted are on the way up
@@ -642,3 +643,60 @@ def fleet_agents(sessions: Iterable[Any], foreign_of=None) -> List[FleetAgent]:
             branch=getattr(s, "branch", None),
         ))
     return out
+
+
+# ── The views' side ────────────────────────────────────────────────────
+
+
+@dataclass(eq=True)
+class BackgroundSession(Session):
+    """A 🌙 row's Session: never in sessions.json, no tmux window of its own.
+
+    ``claude_bg`` is the view's identity dict (``id`` is the short id the
+    claude CLI takes); ``parent_session_id`` nests it under the agent it
+    came from.
+    """
+
+    kind: str = KIND
+    claude_bg: Optional[dict] = None
+
+    @property
+    def short_id(self) -> str:
+        return str((self.claude_bg or {}).get("id") or "")
+
+
+def is_background(session: Any) -> bool:
+    """Whether ``session`` (a Session, a widget's) is an adopted background session."""
+    return getattr(session, "kind", None) == KIND
+
+
+def session_from_view(view: Mapping[str, Any]):
+    """The Session a 🌙 row is drawn from, built from its published view."""
+    info = view.get("claude_bg") if isinstance(view.get("claude_bg"), dict) else {}
+    return BackgroundSession(
+        id=view.get("session_id") or "",
+        name=view.get("name") or f"bg-{info.get('id', '')}",
+        tmux_session="",
+        tmux_window="",
+        command=[],
+        start_directory=view.get("start_directory"),
+        start_time=view.get("start_time") or "",
+        repo_name=view.get("repo_name"),
+        branch=view.get("branch"),
+        model=view.get("model"),
+        backend="claude-code",
+        parent_session_id=info.get("parent_id"),
+        claude_bg=dict(info),
+    )
+
+
+def adopted_key(agents: Mapping[str, Mapping[str, Any]]) -> tuple:
+    """What decides the 🌙 rows a view draws: which, their names and parents."""
+    out = []
+    for sid, view in agents.items():
+        if not isinstance(view, Mapping) or view.get("kind") != KIND:
+            continue
+        info = view.get("claude_bg") if isinstance(view.get("claude_bg"), dict) else {}
+        out.append((sid, view.get("name"), info.get("parent_id"), info.get("id"),
+                    view.get("start_directory"), view.get("repo_name"), view.get("branch")))
+    return tuple(sorted(out, key=lambda t: t[0]))

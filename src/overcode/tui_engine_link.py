@@ -126,7 +126,10 @@ class EngineLink:
 
     def report_focus(self, widget: Optional[SessionSummary]) -> None:
         """Tell the engine which local agent has focus; hand back the old row's pane."""
-        sid = widget.session.id if widget is not None and not widget.session.is_remote else None
+        from .claude_bg import is_background
+
+        sid = (widget.session.id if widget is not None and not widget.session.is_remote
+               and not is_background(widget.session) else None)
         if sid == self.focus:
             return
         for w in self.app.query(SessionSummary):
@@ -176,6 +179,8 @@ class EngineLink:
             self.set_connected(True)
         self.agents = snapshot.agents
         self.fleet = snapshot.fleet
+        # A 🌙 row (an adopted Claude background session) came or went
+        app._background_sessions_moved()
         self.apply_views()
         virtual = getattr(snapshot, "virtual", None) or {}
         if virtual is not self.virtual and virtual != self.virtual:

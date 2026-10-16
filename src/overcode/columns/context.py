@@ -212,9 +212,12 @@ class ColumnContext:
 
     @property
     def agent_kind(self) -> str:
-        """The KIND column (agent-observability §4.0): every fleet row is an
-        overcode agent, ``child`` when another agent launched it. Virtual
+        """The KIND column (agent-observability §4.0): an overcode agent,
+        ``child`` when another agent launched it, ``bg`` for a 🌙 Claude
+        background session nested under the agent it came from. Virtual
         rows (👥 subagents, 🧩 workflows) are drawn under their parent."""
+        if getattr(self.session, "kind", None) == "claude_bg":
+            return "bg"
         return "child" if getattr(self.session, "parent_session_id", None) else "agent"
 
     @property

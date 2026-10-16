@@ -182,9 +182,13 @@ async def ready(pilot) -> None:
     timeline, which moves every agent row down; wait for it to hold the
     agents before measuring or clicking a row.
     """
+    from overcode.claude_bg import is_background
+
     app = pilot.app
     await pilot.pause()
-    rows = len(app._get_widgets_in_session_order())
+    # The timeline has a row per agent; a 🌙 background session has none
+    rows = len([w for w in app._get_widgets_in_session_order()
+                if not is_background(w.session)])
 
     def settled():
         timeline = app.query_one("#timeline")
