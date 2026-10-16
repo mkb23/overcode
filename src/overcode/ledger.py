@@ -13,6 +13,12 @@ harmless: readers keep the last row of each agent's segment. Rows::
      "cost", "tokens", "tok_in", "tok_out", "tok_cache", "tok_cw", "tok_cr",
      "px", "base_cost", "base_tokens", "base_usage", "kind"}
 
+A Claude background session the engine adopted (a 🌙 row) is billed the
+same way, as an "agent" of its own (``sid`` ``claude-bg:<sessionId>``,
+``parent`` the agent it nests under, that agent's code) whose rows carry
+``claude_bg: true`` (``claude_bg_ledger``); reports count those segments
+in ``background`` as well as ``agents``.
+
 ``kind`` is ``checkpoint`` (a running agent, at most every
 ``ledger.checkpoint_minutes``), ``final`` (written with its archive
 record), ``close`` / ``open`` (a rebill: the old code's last row, the new
@@ -571,6 +577,8 @@ class Ledger:
             for name in AMOUNTS:
                 entry[name] = entry.get(name, 0) - previous.get(name, 0)
             entry["agents"] = entry.get("agents", 0) - 1
+            if closed[key].get("bg"):
+                entry["background"] = entry.get("background", 0) - 1
             del closed[key]
         last = open_.get(key)
         if (last is not None and not closing
@@ -586,6 +594,9 @@ class Ledger:
             entry["agents"] = entry.get("agents", 0) + 1
             closed[key] = {"code": code, "amounts": amounts, "at": stamp(now),
                            "seq": int(row.get("seq", 0))}
+            if row.get("claude_bg"):
+                entry["background"] = entry.get("background", 0) + 1
+                closed[key]["bg"] = True
         else:
             open_[key] = row
 
@@ -593,8 +604,9 @@ class Ledger:
         """Spend per billing code over the whole ledger, folded incrementally.
 
         ``{code: {"cost", "tokens", "tok_in", "tok_out", "tok_cache",
-        "agents", "running"}}``: closed segments from the fold, plus each
-        open segment's last row (``running`` counts those).
+        "agents", "running", "background"}}``: closed segments from the
+        fold, plus each open segment's last row (``running`` counts those;
+        ``background`` the background sessions' segments among ``agents``).
         """
         now = now or datetime.now()
         totals = self._load_totals()
@@ -652,13 +664,17 @@ class Ledger:
             report[code] = {name: entry.get(name, 0) for name in AMOUNTS}
             report[code]["agents"] = entry.get("agents", 0)
             report[code]["running"] = 0
+            report[code]["background"] = entry.get("background", 0)
         for row in totals["open"].values():
             code = row.get("billing_code") or "?"
-            entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0, "running": 0})
+            entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0)
+                                      | {"agents": 0, "running": 0, "background": 0})
             for name, value in contribution(row).items():
                 entry[name] += value
             entry["agents"] += 1
             entry["running"] += 1
+            if row.get("claude_bg"):
+                entry["background"] += 1
         return report
 
     def report(self, since: Optional[datetime] = None,
@@ -706,12 +722,15 @@ class Ledger:
                                                 - price(px, prior_usage))
                                           * row_factor["cost"])
             code = row.get("billing_code") or "?"
-            entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0, "running": 0})
+            entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0)
+                                      | {"agents": 0, "running": 0, "background": 0})
             for name in AMOUNTS:
                 entry[name] += amounts[name]
             entry["agents"] += 1
             if not is_closing(row):
                 entry["running"] += 1
+            if row.get("claude_bg"):
+                entry["background"] += 1
         return report
 
     # ── backfill ────────────────────────────────────────────────────────

@@ -56,6 +56,7 @@ FINDING_MODEL_DRIFT = "model_drift"
 FINDING_UNPRICED_BUDGET = "unpriced_model_with_budget"
 FINDING_PRICE_GUESS = "price_from_family_row"
 FINDING_SPEND_DRIFT = "spend_drift"
+FINDING_CONVERSATION = "unknown_conversation"
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -536,7 +537,34 @@ def gather_data_findings(
         ))
 
     findings.extend(spend_findings(session, live_stats))
+    findings.extend(conversation_findings(session, now_dt))
     return findings
+
+
+def conversation_findings(session: Session, now: datetime) -> List[Finding]:
+    """A conversation overcode never saw ran in the agent's name in the last day
+    (``conversation_warning``): resumed into and adopted, another agent's, or
+    one it could not place and ignored."""
+    from . import conversation_warning
+    from .paths import agent_path
+
+    tmux_session = getattr(session, "tmux_session", None)
+    if not tmux_session:
+        return []
+    try:
+        import json
+
+        path = agent_path(tmux_session, session.id, session.name, "hook_state")
+        hook_state = json.loads(path.read_text())
+    except (OSError, ValueError, KeyError):
+        return []
+    warning = conversation_warning.current(hook_state, now.timestamp(),
+                                           within=conversation_warning.DOCTOR_SECONDS)
+    if warning is None:
+        return []
+    at = datetime.fromtimestamp(float(warning["at"])).strftime("%H:%M")
+    return [Finding(code=FINDING_CONVERSATION, severity=SEVERITY_WARNING,
+                    message=f"{conversation_warning.text(warning)} (at {at})")]
 
 
 def spend_findings(session: Session, live_stats) -> List[Finding]:

@@ -304,7 +304,9 @@ overcode billing --month 2026-09
 overcode billing --json
 ```
 
-See [Billing Codes](configuration.md#billing-codes).
+Claude background sessions billed to a code (🌙 rows) are counted among its
+agents and, when there are any, in a `background` column (`"background"` in
+`--json`). See [Billing Codes](configuration.md#billing-codes).
 
 ### `overcode send`
 

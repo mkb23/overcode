@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .paths import agent_dir, agent_file, legacy_agent_file
-from . import hook_dialects
+from . import conversation_warning, hook_dialects
 from . import swarm
 
 try:
@@ -357,25 +357,136 @@ _MAX_AGENT_SESSION_IDS = 20
 
 # Other conversations whose hooks ran under this agent's name, kept so the
 # engine can tell which agent a Claude background session came from
-# (claude_bg.attribute): the newest few, each with when it was last seen
-# and whether it is a registered background session. One that is not is
-# looked for again at most this often (a copy can register late).
+# (claude_bg.attribute): the newest few, each with when it was last seen,
+# whether it is a registered background session (``bg``) and how it was
+# placed (``kind``, below). One not yet placed for good is looked at again
+# at most this often (a background copy can register late).
 _MAX_FOREIGN_SESSIONS = 20
 _FOREIGN_RECHECK_SECONDS = 30.0
 
+# How a foreign conversation was placed (``foreign_sessions[sid]["kind"]``).
+# Only the agent's own CLI may steer its status, obligations and swarm:
+#
+# * ``bg``       a registered Claude background session (``claude_bg``)
+# * ``nested``   a Claude the agent's own Claude started (``claude -p`` in
+#                its Bash tool inherits the agent's OVERCODE_* environment):
+#                its CLI process descends from the agent's
+# * ``own``      the agent's own CLI process (``/resume`` into a
+#                conversation overcode never saw), or a new top-level CLI
+#                in its name after the agent's own exited: this IS the agent
+# * ``unplaced`` neither can be shown: its events are ignored and the agent
+#                carries a warning
+#
+# The discriminator is the CLI's process id: Claude Code gives every hook
+# ``CLAUDE_PID`` (its own ``process.pid``), and ``/resume`` and ``/clear``
+# switch conversations inside the same process. A backend whose hooks carry
+# no such id (codex, opencode, grok, hermes) is not placed: its foreign
+# events behave as they always have (#500).
+FOREIGN_BG = "bg"
+FOREIGN_NESTED = "nested"
+FOREIGN_OWN = "own"
+FOREIGN_UNPLACED = "unplaced"
+_SETTLED_KINDS = frozenset({FOREIGN_BG, FOREIGN_NESTED, FOREIGN_OWN})
 
-def _note_foreign_session(prev_state: dict, session_id: str, now: float) -> dict:
-    """``prev_state``'s foreign conversations with ``session_id`` (seen ``now``) in it."""
+# The warning an agent carries when a conversation overcode never saw ran
+# under its name (``conversation_warning``; see that module)
+WARN_ADOPTED = conversation_warning.ADOPTED
+WARN_SHARED = conversation_warning.SHARED
+WARN_UNPLACED = conversation_warning.UNPLACED
+
+
+def _cli_pid() -> int | None:
+    """The process id of the Claude CLI that ran this hook (``CLAUDE_PID``), or None."""
+    try:
+        pid = int(os.environ.get("CLAUDE_PID") or 0)
+    except ValueError:
+        return None
+    return pid if pid > 1 else None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _descends_from(pid: int, ancestor: int) -> bool | None:
+    """Whether ``ancestor`` is among ``pid``'s parents; None if the table can't be read."""
+    from .process_resources import snapshot_processes
+
+    table = snapshot_processes()
+    if not table:
+        return None
+    current, seen = pid, set()
+    while current > 1 and current not in seen and len(seen) < 64:
+        seen.add(current)
+        info = table.get(current)
+        if info is None:
+            return False
+        if info.ppid == ancestor:
+            return True
+        current = info.ppid
+    return False
+
+
+def _place(entry: dict, cli_pid: int | None, agent_pid: int | None) -> str | None:
+    """How a foreign conversation's CLI relates to the agent's own (see FOREIGN_*)."""
+    if entry.get("bg"):
+        return FOREIGN_BG
+    if cli_pid is None:
+        return None  # no process id to tell by: behave as before
+    if agent_pid is not None and cli_pid == agent_pid:
+        return FOREIGN_OWN
+    if agent_pid is None:
+        return FOREIGN_UNPLACED  # the agent's own CLI has not been seen yet
+    if not _pid_alive(agent_pid):
+        # The agent's CLI is gone, so this one cannot be running inside it:
+        # a CLI started by hand in the agent's pane, in its name
+        return FOREIGN_OWN
+    nested = _descends_from(cli_pid, agent_pid)
+    if nested:
+        return FOREIGN_NESTED
+    return FOREIGN_UNPLACED
+
+
+def _note_foreign_session(prev_state: dict, session_id: str, now: float,
+                          cli_pid: int | None = None) -> dict:
+    """``prev_state``'s foreign conversations with ``session_id`` (seen ``now``) in it.
+
+    The entry is placed (``kind``) the first time it is seen and again at
+    most every ``_FOREIGN_RECHECK_SECONDS`` until it settles; ``cli_pid``
+    is the CLI that sent this event, compared with the agent's own
+    (``cli_pid`` in its hook state).
+    """
     from .claude_bg import find_job
 
     known = prev_state.get("foreign_sessions")
     foreign = dict(known) if isinstance(known, dict) else {}
     entry = dict(foreign.get(session_id) or {})
-    if not entry.get("bg") and now - float(entry.get("checked") or 0.0) >= _FOREIGN_RECHECK_SECONDS:
+    due = now - float(entry.get("checked") or 0.0) >= _FOREIGN_RECHECK_SECONDS
+    if not entry.get("bg") and due:
         try:
             entry["bg"] = find_job(session_id) is not None
         except Exception:  # noqa: BLE001 — a hook must never fail the agent's turn
             entry["bg"] = False
+    if entry.get("kind") not in _SETTLED_KINDS and (due or "kind" not in entry):
+        try:
+            kind = _place(entry, cli_pid, _int_or_none(prev_state.get("cli_pid")))
+        except Exception:  # noqa: BLE001
+            kind = None
+        if kind is None:
+            entry.pop("kind", None)
+        else:
+            entry["kind"] = kind
+            if cli_pid is not None:
+                entry["pid"] = cli_pid
+    if due:
         entry["checked"] = now
     entry["at"] = now
     foreign[session_id] = entry
@@ -384,6 +495,33 @@ def _note_foreign_session(prev_state: dict, session_id: str, now: float) -> dict
         for stale in newest[:-_MAX_FOREIGN_SESSIONS]:
             del foreign[stale]
     return foreign
+
+
+def _int_or_none(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _conversation_owner(session_id: str, session_name: str) -> str:
+    """The name of another live agent that owns ``session_id``, or ``""``."""
+    try:
+        from .claude_pid import is_session_id_owned_by_others
+        from .session_manager import SessionManager
+
+        sessions = SessionManager(skip_git_detection=True).list_sessions()
+        own = next((s for s in sessions if s.name == session_name), None)
+        if own is None or not is_session_id_owned_by_others(session_id, own.id, sessions):
+            return ""
+        for s in sessions:
+            if s.id != own.id and session_id in (getattr(s, "agent_session_ids", None) or []):
+                return s.name
+    except Exception:  # noqa: BLE001 — a hook must never fail the agent's turn
+        return ""
+    return ""
 
 
 def _detect_from_tmux_pane() -> tuple[str | None, str | None]:
@@ -727,6 +865,7 @@ _RESUME_SOURCE = "resume"
 def _sync_agent_session_id(
     session_name: str, session_id: str, transcript_path: str | None = None,
     event: str | None = None, source: str | None = None, retry_new: bool = False,
+    adopt: bool = False,
 ) -> tuple[str | None, bool]:
     """Point the session record at the conversation the agent is actually in.
 
@@ -745,7 +884,10 @@ def _sync_agent_session_id(
       seen: SessionStart from a reset, or the agent's first id. Other events
       are nested agent CLIs as far as the record is concerned (#500) and
       report the record's current id instead. ``retry_new`` re-allows an id
-      whose reset did not land durably (see handle_hook_event).
+      whose reset did not land durably (see handle_hook_event). ``adopt``
+      moves the record to a conversation the agent's own CLI process is now
+      in (``FOREIGN_OWN``), aged now: a ``/resume`` of an old conversation
+      has an old transcript, which the age check would call superseded.
     * ``durable`` is False when an error stopped the write, and also when the
       advance could not be ordered against the record's existing ordering
       metadata, so the synced marker is left alone and a later event
@@ -766,8 +908,9 @@ def _sync_agent_session_id(
 
         is_start = event == "SessionStart"
         outcome, current = sm.advance_active_agent_session_id(
-            session.id, session_id, ordinal=_session_ordinal(transcript_path),
-            allow_new=(is_start and source in _RESET_SOURCES) or retry_new,
+            session.id, session_id,
+            ordinal=time.time() if adopt else _session_ordinal(transcript_path),
+            allow_new=(is_start and source in _RESET_SOURCES) or retry_new or adopt,
             allow_first=is_start,
             allow_return=is_start and source == _RESUME_SOURCE,
         )
@@ -820,6 +963,7 @@ def write_hook_state(
     pending_session_id: str | None = None,
     prev_state: dict | None = None,
     data: dict | None = None,
+    cli_pid: int | None = None,
 ) -> None:
     """Write hook state JSON for status detection.
 
@@ -842,6 +986,10 @@ def write_hook_state(
     ``data`` is the event's whole payload, for what ``swarm`` reads from it
     (``background_tasks``, an Agent or Workflow call's ``tool_response``, a
     ``<task-notification>`` prompt).
+
+    ``cli_pid`` is the process id of the agent's own CLI, given only for an
+    event of the agent's own conversation and carried forward otherwise:
+    what tells a nested or foreign CLI's events apart (``_place``).
     """
     state_path = _get_hook_state_path(tmux_session, session_name)
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -857,6 +1005,8 @@ def write_hook_state(
     prev_subagents: dict | None = None
     prev_swarm: dict | None = None
     prev_foreign: dict | None = None
+    prev_cli_pid = None
+    prev_warning = None
     try:
         prev = prev_state if prev_state is not None else json.loads(state_path.read_text())
         prev_foreign = prev.get("foreign_sessions") if isinstance(
@@ -869,6 +1019,8 @@ def write_hook_state(
         prev_synced_agent_session_id = prev.get("agent_session_id_synced")
         prev_subagents = prev.get("subagents")
         prev_swarm = prev.get("swarm")
+        prev_cli_pid = prev.get("cli_pid")
+        prev_warning = prev.get("conversation_warning")
     except (json.JSONDecodeError, FileNotFoundError, OSError):
         pass
 
@@ -930,6 +1082,11 @@ def write_hook_state(
     # per-event hook-state write, so nothing else has to rewrite this file.
     if prev_foreign:
         state["foreign_sessions"] = prev_foreign
+    resolved_cli_pid = cli_pid if cli_pid is not None else prev_cli_pid
+    if resolved_cli_pid:
+        state["cli_pid"] = resolved_cli_pid
+    if isinstance(prev_warning, dict):
+        state["conversation_warning"] = prev_warning
 
     synced = synced_session_id or prev_synced_agent_session_id
     if synced:
@@ -1119,7 +1276,14 @@ def handle_hook_event(backend: str | None = None) -> None:
         # A reset whose write didn't land durably leaves its id pending, so a
         # later event carrying it may still introduce it (#500).
         pending_session_id = prev_state.get("agent_session_id_pending")
-        if session_id:
+        foreign_known = prev_state.get("foreign_sessions")
+        known = foreign_known.get(session_id) if (
+            session_id and isinstance(foreign_known, dict)) else None
+        if isinstance(known, dict) and known.get("kind") in (FOREIGN_BG, FOREIGN_NESTED):
+            # A background session's or nested CLI's event: the record is not
+            # asked (it could only refuse), the agent's own id stands
+            effective_session_id = prev_state.get("agent_session_id") or None
+        elif session_id:
             if session_id == prev_state.get("agent_session_id_synced"):
                 # Already known durable, and no newer id has been recorded
                 # under this lock, so the session store stays out of the
@@ -1138,20 +1302,61 @@ def handle_hook_event(backend: str | None = None) -> None:
                 if is_reset or retry:
                     pending_session_id = None if durable else session_id
 
+        cli_pid = _cli_pid()
+        own_event = True
         if (session_id and effective_session_id and session_id != effective_session_id
                 and session_id not in (prev_state.get("agent_session_ids") or [])):
             # Another conversation running under this agent's name: a nested
-            # CLI, or a Claude background session that inherited the agent's
-            # environment (/bg from its Claude). Noted, so the engine can
-            # nest that session's row under this agent (claude_bg.attribute).
-            foreign = _note_foreign_session(prev_state, session_id, time.time())
-            if foreign[session_id].get("bg"):
-                # A background session lives on its own: its turns are not
-                # this agent's, so none of them may move its status or swarm
-                _write_state_file(_get_hook_state_path(tmux_session, session_name),
-                                  dict(prev_state, foreign_sessions=foreign))
+            # CLI, a Claude background session that inherited the agent's
+            # environment (/bg from its Claude), or the agent's own CLI in a
+            # conversation overcode never saw (_place). Noted, so the engine
+            # can nest a background session's row under this agent
+            # (claude_bg.attribute).
+            now = time.time()
+            foreign = _note_foreign_session(prev_state, session_id, now, cli_pid)
+            entry = foreign[session_id]
+            kind = entry.get("kind")
+            if kind in (FOREIGN_BG, FOREIGN_NESTED, FOREIGN_UNPLACED):
+                # It lives on its own: its turns are not this agent's, so none
+                # of them may move its status, obligations or swarm
+                quiet = dict(prev_state, foreign_sessions=foreign)
+                if kind == FOREIGN_UNPLACED:
+                    quiet["conversation_warning"] = {
+                        "kind": WARN_UNPLACED, "session_id": session_id, "at": now}
+                _write_state_file(_get_hook_state_path(tmux_session, session_name), quiet)
                 return
-            prev_state = dict(prev_state, foreign_sessions=foreign)
+            if kind == FOREIGN_OWN:
+                # The agent's own CLI in a conversation overcode never saw
+                # (/resume into it): it IS the agent, so it steers, and the
+                # record follows it unless another agent owns that conversation
+                if "owner" not in entry:
+                    entry["owner"] = _conversation_owner(session_id, session_name)
+                previous = effective_session_id
+                if entry["owner"]:
+                    warning = {"kind": WARN_SHARED, "session_id": session_id,
+                               "owner": entry["owner"], "previous": previous, "at": now}
+                else:
+                    adopted, durable = _sync_agent_session_id(
+                        session_name, session_id, data.get("transcript_path"),
+                        event=event, source=data.get("source"), adopt=True,
+                    )
+                    if adopted == session_id:
+                        foreign.pop(session_id, None)
+                        effective_session_id = session_id
+                        if durable:
+                            synced_session_id = session_id
+                        pending_session_id = None if durable else session_id
+                    warning = {"kind": WARN_ADOPTED, "session_id": session_id,
+                               "previous": previous, "at": now}
+                prev_state = dict(prev_state, foreign_sessions=foreign,
+                                  conversation_warning=warning)
+                own_event = effective_session_id == session_id
+            else:
+                # Not placed (a backend whose hooks carry no CLI process id):
+                # it reaches the snapshot as it always has, under the
+                # agent's own id (#500)
+                own_event = False
+                prev_state = dict(prev_state, foreign_sessions=foreign)
 
         # Write state file for status detection (snapshot) and append to the
         # event log (#448 — preserves bursts hidden by overwrite).
@@ -1164,6 +1369,7 @@ def handle_hook_event(backend: str | None = None) -> None:
             pending_session_id=pending_session_id,
             prev_state=prev_state,
             data=data,
+            cli_pid=cli_pid if own_event else None,
         )
     append_hook_event(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
 

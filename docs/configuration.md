@@ -694,6 +694,17 @@ agent's spend so far and starts a new segment under the new one. Children
 launched afterwards take the new code; children already running keep
 theirs.
 
+A Claude background session shown under an agent (a 🌙 row, see
+[TUI guide](tui-guide.md#claude-background-sessions-)) is billed to that
+agent's code, as a child would be. It is its own conversation, so its spend
+is never added to the agent's: it gets ledger rows of its own (a checkpoint
+as soon as it spends, then at most every `ledger.checkpoint_minutes`, and a
+final row when it finishes or its row goes), and `overcode billing` counts
+it among the code's agents and in a `background` column. A session resumed
+after it finished opens a new segment from where the last one closed, and a
+rebill of its agent moves only its later spend, so neither is counted twice;
+a daemon restart picks up where the ledger stands (`ledger/claude_bg.json`).
+
 An agent's spend can go *down* once, when a fix to a transcript reader
 restates it (0.6.1: Claude spend was over-counted by up to 2x, see
 [Claude Session Files](claude-session-files.md)). The ledger then gets a

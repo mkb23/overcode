@@ -513,7 +513,8 @@ class TestHooks:
         self._send({"hook_event_name": "Stop", "session_id": SID, "background_tasks": []})
         assert list(self._state()["subagents"]) == ["a1"]
 
-    def test_a_nested_cli_is_noted_but_behaves_as_before(self):
+    def test_a_cli_without_a_process_id_is_noted_but_behaves_as_before(self):
+        """No CLAUDE_PID (another backend): not placed (test_conversation_placement)."""
         self._send({"hook_event_name": "PreToolUse", "session_id": "mine",
                     "tool_name": "Bash", "tool_input": {}, "tool_use_id": "t1"})
         self._send({"hook_event_name": "Stop", "session_id": "nested"})
@@ -533,3 +534,73 @@ class TestHooks:
                 state, f"s{i}", float(i))}
         assert len(state["foreign_sessions"]) == hook_handler._MAX_FOREIGN_SESSIONS
         assert "s0" not in state["foreign_sessions"]
+
+
+def _git(*args, cwd):
+    import subprocess
+
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                    "-c", "init.defaultBranch=main", *args],
+                   cwd=cwd, check=True, capture_output=True)
+
+
+@pytest.fixture
+def repo_with_worktree(tmp_path):
+    """A synthetic repo at tmp/main and a linked worktree outside it, at tmp/elsewhere/wt."""
+    main = tmp_path / "main"
+    main.mkdir()
+    _git("init", "-q", cwd=main)
+    _git("commit", "-q", "--allow-empty", "-m", "start", cwd=main)
+    (tmp_path / "elsewhere").mkdir()
+    _git("worktree", "add", "-q", "-b", "feature", str(tmp_path / "elsewhere" / "wt"), cwd=main)
+    return main, tmp_path / "elsewhere" / "wt"
+
+
+class TestWorktreePlacement:
+    """Owner decision (0.6.1 follow-ups): a worktree outside every agent's
+    directory nests under the agent working in its repository."""
+
+    def test_a_worktree_outside_every_directory_nests_under_its_repo_s_agent(
+            self, repo_with_worktree, tmp_path):
+        main, wt = repo_with_worktree
+        alpha = FleetAgent(id="a", name="alpha", directory=str(main), repo_name="main")
+        other = FleetAgent(id="o", name="other", directory=str(tmp_path / "elsewhere"))
+        (tmp_path / "unrelated").mkdir()
+        unrelated = FleetAgent(id="u", name="unrelated", directory=str(tmp_path / "unrelated"))
+        assert attribute(job(cwd=str(wt / "src")), [unrelated, alpha]) == (alpha, claude_bg.VIA_REPO)
+        # a directory that holds it still wins (rule 3 before rule 4)
+        assert attribute(job(cwd=str(wt)), [alpha, other]) == (other, VIA_DIRECTORY)
+
+    def test_the_main_checkout_s_agent_beats_one_in_another_worktree(
+            self, repo_with_worktree, tmp_path):
+        main, wt = repo_with_worktree
+        _git("worktree", "add", "-q", "-b", "second", str(tmp_path / "w2"), cwd=main)
+        _git("worktree", "add", "-q", "-b", "third", str(tmp_path / "w3"), cwd=main)
+        in_main = FleetAgent(id="m", name="zulu", directory=str(main))
+        in_w2 = FleetAgent(id="w", name="alpha", directory=str(tmp_path / "w2"))
+        assert attribute(job(cwd=str(tmp_path / "w3")), [in_w2, in_main])[0] is in_main
+        assert attribute(job(cwd=str(tmp_path / "w3")), [in_w2])[0] is in_w2
+
+    def test_not_a_repository_is_not_the_fleet_s(self, tmp_path):
+        (tmp_path / "plain").mkdir()
+        (tmp_path / "agent").mkdir()
+        agent = FleetAgent(id="a", name="a", directory=str(tmp_path / "agent"))
+        assert attribute(job(cwd=str(tmp_path / "plain")), [agent]) is None
+
+    def test_the_repository_is_found_once(self, repo_with_worktree, monkeypatch):
+        main, wt = repo_with_worktree
+        alpha = FleetAgent(id="a", name="alpha", directory=str(main))
+        assert attribute(job(cwd=str(wt)), [alpha])[1] == claude_bg.VIA_REPO
+        monkeypatch.setattr(claude_bg.subprocess, "run",
+                            lambda *a, **k: pytest.fail("git asked again"))
+        for _ in range(3):
+            assert attribute(job(cwd=str(wt)), [alpha])[1] == claude_bg.VIA_REPO
+
+    def test_the_row_takes_its_repo_s_name(self, repo_with_worktree):
+        main, wt = repo_with_worktree
+        alpha = FleetAgent(id="a", name="alpha", directory=str(main), repo_name="main",
+                           branch="main")
+        rows, _ = build_rows({SID[:8]: job(cwd=str(wt))}, [alpha], NOW, 30.0)
+        assert rows[0].state.repo_name == "main"
+        assert rows[0].state.claude_bg["via"] == claude_bg.VIA_REPO
+        assert rows[0].state.branch is None  # the worktree's own branch is not known
