@@ -86,6 +86,7 @@ from .ledger import billing_code_of
 from .engine_wake import WakeLoop
 from .swarm_publisher import SwarmPublisher
 from . import swarm
+from .claude_bg import ClaudeBgSource, fleet_agents
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
     NullPresence,
@@ -323,6 +324,7 @@ class MonitorDaemon:
         log=None,
         tmux_session: str = "agents",
         clock: Optional[Clock] = None,
+        claude_jobs_dir: Optional[Path] = None,
     ) -> "MonitorDaemon":
         """A daemon whose files live in ``state_dir``, for tests.
 
@@ -332,7 +334,9 @@ class MonitorDaemon:
         ``SessionManager`` on ``state_dir`` unless one is given.
         ``detector`` replaces the status detector dispatcher; ``clock``
         the host's clocks (a test steps one to step every reading). Nothing
-        here reads the environment's session directory.
+        here reads the environment's session directory. Claude background
+        sessions are read from ``claude_jobs_dir`` (default: a directory
+        under ``state_dir`` that does not exist), never ``~/.claude/jobs``.
         """
         state_dir = Path(state_dir)
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -354,6 +358,8 @@ class MonitorDaemon:
             log=log if log is not None else MemoryLogger(),
             interval_unattended=int(DAEMON.interval_unattended),
             clock=clock,
+            claude_jobs_dir=(Path(claude_jobs_dir) if claude_jobs_dir is not None
+                             else state_dir / "claude-jobs"),
         )
         return daemon
 
@@ -375,6 +381,7 @@ class MonitorDaemon:
         detector=None,
         detector_tmux: Optional["TmuxInterface"] = None,
         clock: Optional[Clock] = None,
+        claude_jobs_dir: Optional[Path] = None,
     ) -> None:
         """Every attribute the daemon has, from its resolved dependencies."""
         # Every time the daemon reads, wall and monotonic, comes from here;
@@ -441,6 +448,11 @@ class MonitorDaemon:
         # §6.2): built only for parents a visible view subscribed to
         self.swarm_publisher = SwarmPublisher(
             self._swarm_state, self._conversations, clock=self.clock.time)
+        # Claude background sessions under the fleet's directories (phase 3):
+        # adopted rows, published as agent views to the views only
+        self.claude_bg = ClaudeBgSource(claude_jobs_dir)
+        # The views those rows were last published as (see _claude_bg_views)
+        self._claude_bg_published: Optional[dict] = None
 
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
@@ -1064,6 +1076,11 @@ class MonitorDaemon:
             self._saved_snapshot = snapshot
         # Published whether or not the file could be written: a full disk
         # must not freeze every view's status (the error rides along)
+        # Adopted Claude background sessions are agent views too, for the
+        # views only (the CLI, supervisor and sister API read the state
+        # file, which never holds them)
+        adopted = self._claude_bg_views()
+        self._claude_bg_published = adopted
         engine = self._engine
         if engine is not None:
             try:
@@ -1071,12 +1088,41 @@ class MonitorDaemon:
                 # to the state file (a new object: _saved_snapshot stays as saved)
                 virtual = self.swarm_publisher.rows(
                     self._swarm_subscriptions(), session_states)
-                if virtual:
+                if virtual or adopted:
                     from .engine_protocol import Snapshot
-                    snapshot = Snapshot(snapshot.seq, snapshot.agents, snapshot.fleet, virtual)
+                    agents = dict(snapshot.agents, **adopted) if adopted else snapshot.agents
+                    snapshot = Snapshot(snapshot.seq, agents, snapshot.fleet, virtual or {})
                 engine.publish(snapshot)
             except Exception as e:  # a view problem must never stop the tick
                 self.log.warn(f"engine.sock publish failed: {e}")
+
+    def _claude_bg_views(self) -> dict:
+        """The adopted background sessions as agent views, by row id."""
+        skip = MonitorDaemonState.ENGINE_TICK_AGENT_FIELDS
+        return {row.state.session_id: {k: v for k, v in row.state.to_dict().items()
+                                       if k not in skip}
+                for row in self.claude_bg.rows}
+
+    def _refresh_claude_bg(self, sessions: Optional[list] = None) -> bool:
+        """Re-read the background sessions, feed their colours; True if their views moved.
+
+        ``sessions`` (a full tick's) refreshes which agents they may belong
+        to; between ticks the last tick's stand. Each row's colour goes to
+        the recorder on every refresh, as an agent's does on every tick, so
+        a blocked session rings once its red has stood G seconds.
+        """
+        source = self.claude_bg
+        if sessions is not None:
+            source.set_agents(fleet_agents(
+                sessions, getattr(self.detector, "get_foreign_sessions", None)))
+        attended = self.state.interval_mode != "unattended"
+        source.refresh(self.clock.monotonic(), self.clock.time(),
+                       STATS_SYNC_ATTENDED_SECONDS if attended else STATS_SYNC_UNATTENDED_SECONDS)
+        ts = self.clock.time()
+        for row in source.rows:
+            self.recorder_store.record_adopted(row.state, row.light.detail(), row.started_at,
+                                               ts, engine=self._engine)
+        return self._claude_bg_views() != self._claude_bg_published
 
     def _state_file_due(self, snapshot) -> bool:
         """Whether to rewrite the state file this tick (engine-0.6.md: on change).
@@ -1323,8 +1369,12 @@ class MonitorDaemon:
             newly_done = self._settle_children(sessions)
             session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
             self._cleanup_stale(sessions)
+            try:
+                self._refresh_claude_bg(sessions)
+            except Exception as e:  # the agents' own rows must still publish
+                self.log.warn(f"background sessions not read: {e}")
             self._publish_and_enforce(sessions, session_states, all_waiting, index, now)
-            self.recorder_store.save({s.id for s in sessions})
+            self.recorder_store.save({s.id for s in sessions} | self.claude_bg.ids())
         finally:
             # One write for the whole tick, even when a phase raised: what
             # was staged before the failure lands, as it did when each

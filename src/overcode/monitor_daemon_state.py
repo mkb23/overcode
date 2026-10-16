@@ -71,6 +71,15 @@ class SessionDaemonState:
     session_id: str = ""
     name: str = ""
     tmux_window: str = ""
+    # What the row is (agent-observability-0.6.1 §3.1): "agent" for an
+    # overcode agent or child; "claude_bg" for a Claude background session
+    # the engine adopted (claude_bg.py), published to views only, never to
+    # the state file.
+    kind: str = "agent"
+    # A "claude_bg" row's identity and attribution: {"id": short id the
+    # claude CLI takes, "session_id", "parent_id": the fleet agent it is
+    # nested under, "via": "hooks" | "conversation" | "directory", "cwd"}.
+    claude_bg: Optional[dict] = None
 
     # Status (from the status detector)
     current_status: str = "unknown"  # running, waiting_user, waiting_approval, waiting_heartbeat, terminated

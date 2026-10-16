@@ -116,6 +116,23 @@ class TmuxManager:
             options={'@is_ssh_proxy': 'on'},
         )
 
+    def create_claude_attach_window(self, window_name: str, short_id: str,
+                                    cwd: Optional[str] = None) -> Optional[str]:
+        """A window running ``claude attach <short_id>`` (a 🌙 background session).
+
+        The agent's overcode environment is unset first, so nothing Claude
+        starts from it can be taken for that agent (the /bg confusion).
+        Returns the window name, or None.
+        """
+        import shlex
+
+        if not self._session_ready():
+            return None
+        command = ("unset OVERCODE_SESSION_NAME OVERCODE_SESSION_ID OVERCODE_TMUX_SESSION; "
+                   f"exec claude attach {shlex.quote(short_id)}")
+        return self.client.new_window(self.session_name, window_name, command=[command],
+                                      cwd=cwd or None)
+
     def send_keys(self, window_name: str, keys: str, enter: bool = True) -> bool:
         """Send keys to a tmux window.
 

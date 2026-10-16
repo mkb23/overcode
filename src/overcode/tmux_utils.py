@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 EMPTY_PLACEHOLDER_WINDOW = "oc-empty"  # TUI dead-window placeholder (#457)
 DAEMON_CLAUDE_WINDOW_NAME = "_daemon_claude"  # supervisor daemon's claude
 SSH_PROXY_WINDOW_PREFIX = "ssh:"  # TUI proxies to sister agents over SSH
+CLAUDE_BG_WINDOW_PREFIX = "bg:"  # TUI's `claude attach` windows for 🌙 rows
+CLAUDE_BG_PLACEHOLDER_WINDOW = "oc-bg"  # what a 🌙 row shows before attaching
 
 
 def is_overcode_owned_window(name: str) -> bool:
@@ -31,6 +33,8 @@ def is_overcode_owned_window(name: str) -> bool:
         name == EMPTY_PLACEHOLDER_WINDOW
         or name == DAEMON_CLAUDE_WINDOW_NAME
         or name.startswith(SSH_PROXY_WINDOW_PREFIX)
+        or name.startswith(CLAUDE_BG_WINDOW_PREFIX)
+        or name == CLAUDE_BG_PLACEHOLDER_WINDOW
     )
 
 

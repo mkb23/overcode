@@ -942,6 +942,9 @@ class HookStatusDetector:
         # The hook state behind each rollup: the engine builds an expanded
         # parent's virtual rows from it (swarm.virtual_rows)
         self._swarm_states: Dict[str, dict] = {}
+        # Other conversations whose hooks ran under each agent's name
+        # (hook_handler._note_foreign_session), for claude_bg.attribute
+        self._foreign_sessions: Dict[str, dict] = {}
         # Last visible status-bar counts: (seen_at, monitors, shells) (#507)
         self._status_bar_counts: Dict[str, Tuple[float, int, int]] = {}
         # The PermissionRequest (by hook-state timestamp) whose dialog has
@@ -1133,6 +1136,11 @@ class HookStatusDetector:
         self._last_hook_at.pop(session.name, None)
         self._swarm_rollups.pop(session.name, None)
         self._swarm_states.pop(session.name, None)
+        foreign = hook_state.get("foreign_sessions") if isinstance(hook_state, dict) else None
+        if isinstance(foreign, dict) and foreign:
+            self._foreign_sessions[session.name] = foreign
+        else:
+            self._foreign_sessions.pop(session.name, None)
 
         if hook_state is None:
             # No hook state file — agent hasn't triggered a hook yet.
@@ -1345,6 +1353,10 @@ class HookStatusDetector:
     def get_swarm_state(self, session_name: str) -> Optional[dict]:
         """The hook state behind the last 👥 counts (for swarm.virtual_rows), or None."""
         return self._swarm_states.get(session_name)
+
+    def get_foreign_sessions(self, session_name: str) -> Optional[dict]:
+        """Other conversations the agent's hooks saw, by session id (None: none)."""
+        return self._foreign_sessions.get(session_name)
 
     def get_status_detail(self, session_name: str) -> Optional[StatusDetail]:
         """Return the most recent StatusDetail for a session, or None.

@@ -190,7 +190,8 @@ subagent (read-only, inside its parent's session); 🧩 for a workflow group;
 🌙 for a Claude background session. A KIND column (hidden by default) spells
 it out. Until Phase 2, only overcode agents have rows; subagents and
 workflows are counts in the parent's 👥 DLG cell, and background sessions
-are not shown.
+are not shown. Since Phase 3 they are (🌙, KIND `bg`; the mockups below
+still draw the earlier 🛰).
 
 ### 4.1 Rules
 
@@ -505,6 +506,100 @@ KIND column (`columns/registry.py`, `columns/render_identity.py`), and the
 read-only guard's action set in `tui_actions/swarm.py` (`READ_ONLY_BLOCKED`)
 for the actions a 🛰 row allows. `swarm_view` and `SwarmRows` stay for
 virtual rows only.
+
+---
+
+## Phase 3 as built
+
+What the person sees: a Claude background session whose directory is
+inside one of the fleet's agents' gets a 🌙 row (`Bs` emoji-free) right
+under the agent it came from, with Claude's own record of it as its light
+and status text. `Enter` attaches, `x` stops (second press), the palette's
+"Remove background session" removes (confirmed). A blocked one rings. See
+`docs/tui-guide.md`, "Claude background sessions".
+
+- **Source** (`claude_bg.py`): `JobsScanner` lists `$CLAUDE_CONFIG_DIR` (else
+  `~/.claude`)`/jobs` and stats each `<short>/state.json`, re-reading only
+  a file whose `(mtime_ns, size)` moved; a half-written file keeps the last
+  good read, a removed job (`claude rm`) is dropped. `claude agents --json`
+  is not used at all (no reconciliation pass): the files carry everything
+  the rows need.
+- **Lights** (`job_light`, §3.4): `working` + tempo `active` (or
+  `starting`/`resuming`/`adopted`) 🟢; `working` + tempo `idle` 🟡 ("Waiting
+  on N background tasks" from `inFlight`, badge 🔌); `blocked`, or tempo
+  `blocked`, 🔴 with `needs` as the status text (badge 📥); `done` ✅,
+  `failed`/`crashed` ❌, `stopped` 📭, all ⚪ with `output.result` as the
+  Result reason; anything else ❔. The state and tempo values were read from
+  Claude Code 2.1.302's own code, not just the spike.
+- **Attribution** (`attribute`), strongest first: (1) the agent's hooks saw
+  it: the hook handler now notes, in the agent's hook state
+  (`foreign_sessions`, newest 20), every other conversation whose hooks ran
+  under the agent's name, and whether it is a registered background session
+  (`find_job`: `jobs/<sessionId[:8]>`, then a scan, at most every 30 s per
+  id); (2) its `sessionId` or `resumeSessionId` is one of the agent's own
+  conversations; (3) its `cwd` is inside the agent's `start_directory` (the
+  deepest wins). None of these: not shown (decision 1). Only this tmux
+  session's live agents (not terminated or done) count.
+- **The /bg confusion, fixed at the source**: an event from a conversation
+  that is a registered background session no longer touches the agent's
+  hook snapshot (status, obligations, swarm): only `foreign_sessions` is
+  written. Other foreign conversations (a nested `claude -p`) behave as
+  before, apart from being noted.
+- **Engine** (`monitor_daemon.py`, `engine_wake.py`): `ClaudeBgSource`
+  refreshes at every full tick and, between ticks, at every wake step that
+  is due (1 s watched, 5 s not; a finished row's time running out). The
+  rows are rebuilt only when a state file moved, the agents changed, a
+  deadline passed or a spend read is due. Each row is a
+  `SessionDaemonState` with `kind: "claude_bg"` and `claude_bg: {id,
+  session_id, parent_id, via, cwd}`, keyed `claude-bg:<sessionId>`, merged
+  into the snapshot's `agents` for views only: the state file (CLI,
+  supervisor, sister API) never holds one, so nothing that acts on agents
+  can reach it. They are republished only when one moved.
+- **Spend** (`BgSpend`): its own transcript (`linkScanPath`) plus its
+  subagents, deduplicated by `read_tree_stats`, priced per file's model, at
+  the stats cadence while live, once more when it finishes, then frozen. It
+  counts once, under its own row; never added to the agent it nests under,
+  and not billed to the ledger.
+- **Bell**: each row's colour goes to its own recorder at every refresh
+  (`RecorderStore.record_adopted`): bells and visits as for an agent (rings
+  once its red has stood G, at most once per stretch; a session already
+  blocked when the engine started does not ring), no episode log.
+- **TUI**: `BackgroundSession` (a `Session` subclass, never in
+  sessions.json) is built from each view; the list is re-applied only when
+  a row comes, goes or is renamed. `parent_session_id` nests it under its
+  agent in every sort; 👶 counts leave it out; the timeline has no row for
+  it; the engine is never told it has focus. KIND says `bg`.
+- **Actions** (`tui_actions/claude_bg.py`, `tui_split.py`): through
+  `app.split`. `attach_background` opens `claude attach <id>` (overcode's
+  env unset first) in a `bg:<id>` window of the agents session and shows it
+  below; focusing the row shows that window, else an `oc-bg` placeholder
+  explaining the keys. `run_claude` runs `claude stop|rm <id>` (30 s bound)
+  in a worker. `x` on a finished row points at the palette instead (there
+  is nothing to stop). Other agent actions (`BACKGROUND_BLOCKED`) refuse
+  with a notice. The `bg:` and `oc-bg` windows count as overcode's own.
+- **Config**: `observability.finished_row_seconds` (30) and
+  `observability.background_sessions` (true).
+- **Freshness** (`test_engine_contract.py`): state ≤ 2 s watched / ≤ 10 s
+  not; views hold still between changes; spend at the stats cadence. A
+  quiet jobs directory sends no delta and re-reads nothing (test); a quiet
+  scan of 20 jobs under 10 agents costs about 0.1 ms.
+
+Choices where the design left room:
+
+1. **Marker 🌙**, per §4.0's latest text (the mockups' 🛰 predates it).
+2. **Identity `claude-bg:<sessionId>`**, not `claude-bg/<sessionId>`: a `/`
+   would read as a virtual row under a parent in the swarm cursor's keys.
+3. **Rows go to views only.** §6.2 said ordinary `AgentView`s; they are,
+   on engine.sock, but not in the state file, so `overcode list`, the
+   supervisor (which would try to steer a blocked one) and sisters do not
+   see them.
+4. **The bell is not opt-in** (decision 4 over §3.4's per-row toggle).
+5. **No `claude agents --json` cross-check**: nothing the files lack was
+   found to need it.
+6. **No live run**: a `claude --bg` needs the real login and Claude's
+   per-user background service, which an isolated HOME cannot provide
+   without touching the person's real state. The state values were checked
+   against Claude Code 2.1.302's code and the spike capture instead.
 
 ---
 

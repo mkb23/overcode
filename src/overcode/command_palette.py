@@ -299,6 +299,14 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("revive_dead_agents", "Revive all dead agents", "Agent",
        "restart resume reboot terminated killed dead crashed bulk restore recover bring back"),
     _C("kill_focused", "Kill / clean up agent", "Agent", "stop delete remove", agent=True),
+    # 🌙 Claude background sessions (0.6.1 phase 3): Enter and x on the row
+    # attach and stop; removing is here only
+    _C("attach_background_session", "Attach background session", "Agent",
+       "claude attach bg moon open", agent=True),
+    _C("stop_background_session", "Stop background session", "Agent",
+       "claude stop bg moon kill", agent=True),
+    _C("remove_background_session", "Remove background session", "Agent",
+       "claude rm bg moon delete", agent=True),
     _C("sync_to_main_and_clear", "Sync to main and clear", "Agent", "git reset", agent=True),
     _C("toggle_sleep", "Sleep", "Agent", "asleep wake pause", state=_agent_toggle("is_asleep"), agent=True),
     _C("toggle_heartbeat_pause", "Heartbeat", "Agent", "hb pause resume", state=_heartbeat_state, agent=True),

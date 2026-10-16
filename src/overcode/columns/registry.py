@@ -255,8 +255,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Fold marker for tree view"),
     SummaryColumn(id="kind", group="identity", detail_levels=set(), render=render_kind,
                   label="Kind", header="KIND", name="Kind",
-                  description="Agent, or a child another agent launched (→ shows "
-                              "delegated work: 👥, 🧩)",
+                  description="Agent, a child another agent launched, or bg: a 🌙 Claude "
+                              "background session (→ shows delegated work: 👥, 🧩)",
                   sort_key=lambda ctx: ctx.agent_kind, hide_when_uniform=True),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
                   header="NAME", name="Agent Name",

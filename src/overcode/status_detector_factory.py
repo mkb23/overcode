@@ -243,6 +243,11 @@ class StatusDetectorDispatcher:
         getter = getattr(self._last_detector.get(session_name), "get_swarm_state", None)
         return getter(session_name) if getter is not None else None
 
+    def get_foreign_sessions(self, session_name: str) -> Optional[dict]:
+        """Other conversations the agent's hooks saw (claude_bg.attribute; None: none)."""
+        getter = getattr(self._last_detector.get(session_name), "get_foreign_sessions", None)
+        return getter(session_name) if getter is not None else None
+
     @staticmethod
     def _has_hook_state(hooks, session: "Session") -> bool:
         path_for = getattr(hooks, "_hook_state_path", None)

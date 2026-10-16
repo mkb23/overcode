@@ -117,6 +117,7 @@ from .tui_actions import (
     SwarmMixin,
 )
 from .tui_actions.activity import ActivityMixin
+from .tui_actions.claude_bg import BackgroundSessionsMixin
 from .tui_actions.view_control import ViewControlMixin
 from .tui_actions.overagent import JourneyMixin, OveragentMixin
 from .tui_actions.mentor import MentorMixin
@@ -172,6 +173,7 @@ def remote_visits(prefs) -> dict:
 
 class SupervisorTUI(
     SwarmMixin,
+    BackgroundSessionsMixin,
     ActivityMixin,
     ViewControlMixin,
     OveragentMixin,
@@ -518,6 +520,12 @@ class SupervisorTUI(
         # session_row_key of the local session list last applied: the
         # focused-pane tick applies a new list when this no longer matches
         self._session_row_key: tuple = ()
+        # The local session list last applied, and the 🌙 rows (adopted
+        # Claude background sessions, built from the engine's views) with
+        # the claude_bg.adopted_key they were built for
+        self._local_sessions: list = []
+        self._adopted_sessions: list = []
+        self._adopted_key: tuple = ()
         self._terminated_times: dict[str, float] = {}  # session_id -> monotonic time
         self._TERMINATED_GC_SECONDS: float = 600.0  # 10 minutes
 
@@ -1272,8 +1280,11 @@ class SupervisorTUI(
             timeline = self.query_one("#timeline", StatusTimeline)
         except NoMatches:
             return
+        from .claude_bg import is_background
+
         sessions = filter_visible_sessions(
-            active_sessions=list(self.sessions),
+            # A 🌙 row has no status history (the engine logs none for it)
+            active_sessions=[s for s in self.sessions if not is_background(s)],
             terminated_sessions=list(self._terminated_sessions.values()),
             hide_asleep=self.hide_asleep,
             show_terminated=self.show_terminated,
@@ -1398,8 +1409,10 @@ class SupervisorTUI(
         # index alone is meaningless once self.sessions is replaced (#471).
         selected_id = self._selected_session_id()
 
-        # Merge local + remote sessions (#245), filtering disabled sisters (#323)
-        self.sessions = sessions + self._visible_remote_sessions()
+        # Merge local + adopted (🌙) + remote sessions (#245), filtering
+        # disabled sisters (#323)
+        self._local_sessions = sessions
+        self.sessions = sessions + self._background_sessions() + self._visible_remote_sessions()
         # Resolve cross-machine parent relationships (#245)
         self._resolve_remote_parents()
         # Apply sorting (#61), re-anchoring the highlight to that agent (#471)
@@ -1413,6 +1426,10 @@ class SupervisorTUI(
             self.update_session_widgets(force_refresh=False)
         except (MountError, NoMatches):
             return
+
+        # First load: highlight the agent highlighted when the TUI last ran
+        if not self._initial_sessions_loaded:
+            self._reanchor_selection(self._prefs.last_focused_agent or None)
 
         # First-load sync: align the external tmux pane with the TUI's focused
         # agent exactly once. The periodic-refresh guard in the focus watcher
@@ -1440,6 +1457,28 @@ class SupervisorTUI(
             self.update_daemon_status()
             # Select first agent immediately (no timer delay)
             self._select_first_agent()
+
+    def _background_sessions(self) -> list:
+        """The 🌙 rows' Sessions, from the engine's views (rebuilt when their key moves)."""
+        from .claude_bg import adopted_key, session_from_view
+
+        agents = self.engine_link.agents
+        key = adopted_key(agents)
+        if key != self._adopted_key:
+            self._adopted_key = key
+            self._adopted_sessions = [session_from_view(agents[sid]) for sid, *_ in key]
+        return list(self._adopted_sessions)
+
+    def _background_sessions_moved(self) -> None:
+        """A 🌙 row appeared, went or moved: re-apply the session list (no I/O)."""
+        from .claude_bg import adopted_key
+
+        if adopted_key(self.engine_link.agents) == self._adopted_key:
+            return
+        if not self._initial_sessions_loaded:
+            self._background_sessions()  # the first local list will bring them
+            return
+        self._apply_sessions(self._local_sessions)
 
     def _recalc_column_widths(self, sessions) -> bool:
         """Recalculate max name/repo/branch widths and name-match flag.
@@ -1695,6 +1734,13 @@ class SupervisorTUI(
             self._user_navigated = False
             self.split.show_agent(widget)
             self.split.fit_window(widget)
+            self._remember_focus(widget.session.id)
+
+    def _remember_focus(self, session_id: str) -> None:
+        """Keep the agent the user moved to for the next start."""
+        if session_id and session_id != self._prefs.last_focused_agent:
+            self._prefs.last_focused_agent = session_id
+            self._save_prefs()
 
     def _gc_terminated_sessions(self) -> None:
         """Remove terminated sessions older than _TERMINATED_GC_SECONDS."""
@@ -2133,16 +2179,19 @@ class SupervisorTUI(
         # In tree mode: full metadata (prefix, depth, child_count) via compute_tree_metadata
         # Otherwise: lightweight child_count only via compute_child_counts
         is_tree_mode = self._prefs.sort_mode == "by_tree"
+        # 👶 counts overcode children; a 🌙 row nests under its agent
+        # (parent_session_id) without being one
+        from .claude_bg import is_background
+        child_counts = compute_child_counts([s for s in self.sessions if not is_background(s)])
         if is_tree_mode:
             tree_meta = compute_tree_metadata(self.sessions)
             for widget in ordered_widgets:
                 meta = tree_meta.get(widget.session.id)
-                widget.child_count = meta.child_count if meta else 0
+                widget.child_count = child_counts.get(widget.session.id, 0)
                 widget.children_collapsed = widget.session.id in self.collapsed_parents
                 widget.tree_prefix = meta.prefix if meta else ""
                 widget.tree_depth = meta.depth if meta else 0
         else:
-            child_counts = compute_child_counts(self.sessions)
             for widget in ordered_widgets:
                 widget.child_count = child_counts.get(widget.session.id, 0)
                 widget.children_collapsed = widget.session.id in self.collapsed_parents
@@ -2308,11 +2357,15 @@ class SupervisorTUI(
             pass
 
     def _select_first_agent(self) -> None:
-        """Select the first agent so something is highlighted from the start."""
+        """Highlight something from the start: the agent remembered from the
+        last run (already re-anchored onto), else the first."""
         try:
             widgets = list(self.query(SessionSummary))
             if widgets:
-                self.focused_session_index = 0  # Watcher handles focus + preview + tmux sync
+                remembered = self._prefs.last_focused_agent
+                keep = remembered and self._selected_session_id() == remembered
+                # Watcher handles focus + preview + tmux sync
+                self.focused_session_index = self.focused_session_index if keep else 0
         except NoMatches:
             pass
 

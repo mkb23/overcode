@@ -2142,6 +2142,7 @@ class TestSortSessionsKeepsSelection:
         tui = self._tui([alpha, bravo], focused_index=1)
         tui._apply_sessions = MethodType(SupervisorTUI._apply_sessions, tui)
         tui._visible_remote_sessions.return_value = []
+        tui._background_sessions.return_value = []
         tui._initial_tmux_sync_done = True
         tui._initial_sessions_loaded = True
         tui.in_split = False

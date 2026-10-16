@@ -11,6 +11,7 @@ from typing import List, Optional
 from textual.widgets import Static
 from textual.reactive import reactive
 from textual import events
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..clock import from_iso
@@ -505,14 +506,23 @@ class SessionSummary(Static, can_focus=True):
         # Fold indicator for parents with collapsed children
         fold_suffix = " ▶" if self.children_collapsed else ""
 
+        # A 🌙 Claude background session leads its name with the marker
+        # (agent-observability §4.0); the marker's cells come off the name
+        marker = ""
+        if getattr(s, "kind", None) == "claude_bg":
+            from ..claude_bg import MARKER, MARKER_ASCII
+            marker = (MARKER_ASCII if ef else MARKER) + " "
+        marker_cells = cell_len(marker)
+
         # Apply tree indentation when in tree sort mode (#244)
         if self.tree_prefix:
             tree_str = self.tree_prefix
-            available = name_width - len(tree_str) - len(fold_suffix)
-            display_name = (tree_str + s.name[:available] + fold_suffix).ljust(name_width)
+            available = name_width - len(tree_str) - len(fold_suffix) - marker_cells
+            display_name = tree_str + marker + s.name[:available] + fold_suffix
         else:
-            available = name_width - len(fold_suffix)
-            display_name = (s.name[:available] + fold_suffix).ljust(name_width)
+            available = name_width - len(fold_suffix) - marker_cells
+            display_name = marker + s.name[:available] + fold_suffix
+        display_name += " " * max(0, name_width - cell_len(display_name))
 
         # Compute sleep wake estimate (#289)
         sleep_wake_estimate = None
