@@ -69,6 +69,41 @@ a flat list:
 - Only expanded parents cost anything: the engine reads the subagents'
   meta files and workflow journals, and sends their rows, for those alone.
 
+### Claude background sessions (🌙)
+
+A Claude background session (`claude --bg`, `/bg` or `←` in Claude, or one
+dispatched from `claude agents`) runs under Claude's own supervisor, not
+overcode's. When its directory is inside one of your agents' directories it
+gets a row of its own, marked 🌙 (`Bs` emoji-free), right under the agent it
+came from:
+
+```
+🟡 bravo            opus   Waiting on 2 background agents            $4.20
+🔴 └─🌙 migrate-db  haiku  Allow rm -rf build?                       $0.31
+```
+
+- It is nested under the agent whose hooks it ran under (it inherited that
+  agent's environment, as `/bg` from the agent's Claude does), or whose
+  conversation it continues, or else whose directory holds it. A session
+  outside every agent's directory is not shown. KIND says `bg`.
+- Its light comes from Claude's own record of it: 🟢 working, 🟡 waiting on
+  its own background work, 🔴 blocked on a question or permission (the
+  status text is what it asks), ⚪ finished with a Result (✅ done, ❌
+  failed, 📭 stopped). A blocked session rings the bell, once per stretch.
+- A finished session keeps its row for 30 seconds
+  (`observability.finished_row_seconds`), then the row goes.
+- Its tokens and $ are its own conversation's and count once in the totals;
+  they are never added to the agent it is nested under.
+- Only Claude's own actions work on it. `Enter` attaches: `claude attach
+  <id>` opens in the pane below (leave it with Claude's `←` or `Ctrl+Z`).
+  `x` stops it after a second press (`claude stop`). "Remove background
+  session" in the `/` palette deletes it (`claude rm`), also confirmed.
+  Every other agent key says so and does nothing.
+- Selecting the row shows its attach window if one is open, else a short
+  note about these keys.
+- `observability.background_sessions: false` in config.yaml turns the rows
+  off.
+
 ### Sorting and Column Headers
 
 Click any column header to sort by that column; click it again to reverse. The sorted column is drawn bold with ▼ (largest first) or ▲ (smallest / A→Z first). Numbers sort largest first by default, text A→Z; agents with no value for the column (e.g. no CPU sample yet) always go last. Child agents stay grouped under their parent in every sort.
