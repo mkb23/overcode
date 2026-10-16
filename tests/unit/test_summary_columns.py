@@ -305,6 +305,13 @@ class TestRenderSleepCountdown:
         assert "⏰" in text
         assert "4.5m" in text or "4.4m" in text  # Allow small timing variance
 
+    def test_an_aware_estimate_counts_down_too(self):
+        """The engine's time base is aware; naive minus aware used to raise."""
+        wake_time = datetime.now().astimezone() + timedelta(seconds=270)
+        ctx = _make_ctx(sleep_wake_estimate=wake_time, any_is_sleeping=True)
+        text = render_sleep_countdown(ctx)[0][0]
+        assert "4.5m" in text or "4.4m" in text
+
     def test_shows_zero_when_expired(self):
         """Should show '0s' when sleep_wake_estimate is in the past."""
         wake_time = datetime.now() - timedelta(seconds=10)

@@ -173,10 +173,11 @@ def status_changed_at(view: AgentView) -> Optional[datetime]:
         live, episode = view.get("live_colour"), view.get("episode_colour")
         ts = view.get("live_since") if live and live != episode else view.get("episode_start")
         if isinstance(ts, (int, float)):
-            # Naive local, with ``fold`` set in the repeated autumn hour;
-            # renderers measure it with ``clock.seconds_since`` (epoch
-            # arithmetic), so a state spanning a DST change reads true
-            return datetime.fromtimestamp(ts)
+            # Aware, so it stays the instant it is: a naive first-pass time
+            # in the repeated autumn hour was re-placed on the second pass
+            # once an hour had gone by. Renderers measure it with
+            # ``clock.seconds_since`` (epoch arithmetic)
+            return datetime.fromtimestamp(ts).astimezone()
     since = view.get("status_since")
     if since:
         try:

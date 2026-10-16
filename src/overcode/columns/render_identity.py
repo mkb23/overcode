@@ -1,10 +1,11 @@
 """Identity and sisters columns: status, time in state, status detail, name, host."""
 
+import time
 import unicodedata
 from datetime import datetime
 from typing import Optional
 
-from ..clock import from_iso, seconds_since
+from ..clock import from_iso, seconds_since, to_epoch
 from ..status_constants import (
     BADGE_KINDS,
     STATUS_COLOR_GREEN,
@@ -157,7 +158,8 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
 
     # Legacy fallback (#289)
     if ctx.sleep_wake_estimate is not None:
-        remaining = max(0, (ctx.sleep_wake_estimate - datetime.now()).total_seconds())
+        # Epoch arithmetic: the estimate may be aware (the engine's time base)
+        remaining = max(0.0, (to_epoch(ctx.sleep_wake_estimate) or 0.0) - time.time())
         return [(f" {ctx.e('⏰')}{format_duration(remaining):>5} ", f"yellow{ctx.bg}")]
     return None
 

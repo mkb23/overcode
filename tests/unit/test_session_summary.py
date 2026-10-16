@@ -280,11 +280,11 @@ class TestApplyEngine:
         widget = _make_bare_widget()
         widget.apply_engine(_view(live_colour="green", episode_colour="green",
                                   episode_start=1_000.0, live_since=1_000.0))
-        assert widget._status_changed_at == datetime.fromtimestamp(1_000.0)
+        assert widget._status_changed_at.timestamp() == 1_000.0
         # A pending excursion: the timer shows the live colour's own start
         widget.apply_engine(_view(live_colour="red", episode_colour="green",
                                   episode_start=1_000.0, live_since=1_500.0))
-        assert widget._status_changed_at == datetime.fromtimestamp(1_500.0)
+        assert widget._status_changed_at.timestamp() == 1_500.0
 
     def test_unvisited_from_the_attention_fields(self):
         widget = _make_bare_widget()

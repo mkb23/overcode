@@ -5,6 +5,7 @@ Sisters stay on HTTP polling; each poll builds a fresh remote Session and
 Synthetic agent dicts only.
 """
 
+import time
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -25,7 +26,7 @@ def _agent(status, seconds_in_state, daemon_state=None):
 
 
 def _seconds_in_state(row):
-    return (datetime.now() - row._status_changed_at).total_seconds()
+    return time.time() - row._status_changed_at.timestamp()
 
 
 class TestTimeInState:

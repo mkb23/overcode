@@ -635,6 +635,20 @@ class TestDaylightSavingEnds:
         assert seconds_since(stamp(first), now.timestamp()) == pytest.approx(900)
         assert to_epoch(stamp(first), near=now) == pytest.approx(first.timestamp())
 
+    def test_time_in_state_from_the_engine_runs_forward_through_the_repeated_hour(self, london):
+        """The engine's epoch stays the instant it is: a naive first-pass
+        time was re-placed on the second pass once an hour had gone by."""
+        from overcode import tui_engine
+        from overcode.clock import seconds_since
+
+        start = datetime(2026, 10, 25, 1, 40, fold=0).timestamp()  # 01:40 BST
+        changed = tui_engine.status_changed_at({
+            'current_status': 'waiting_user', 'episode_colour': 'red',
+            'live_colour': 'red', 'episode_start': start,
+        })
+        assert [seconds_since(changed, start + m * 60) / 60 for m in (30, 40, 55, 70)] \
+            == pytest.approx([30, 40, 55, 70])
+
     # A first-pass "since" read more than half an hour later must not be
     # placed in the second pass, an hour in the future: nearness alone did,
     # and heartbeats and auto-archive then came an hour late.
