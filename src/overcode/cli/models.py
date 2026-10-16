@@ -5,7 +5,8 @@ The catalog behind the CTX% and $ columns — see docs/configuration.md,
 "Model metadata (context windows and pricing)".
 """
 
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Optional
 
 import typer
 from rich import print as rprint
@@ -45,6 +46,57 @@ def models_info():
     rprint(f"  opencode cache:  {'present' if oc.exists() else '[dim]absent[/dim]'} ({oc})")
     for finding in staleness_findings(DEFAULT_STALE_AFTER_DAYS):
         rprint(f"[yellow]⚠[/yellow] {finding}")
+    rprint()
+    _print_price_table()
+
+
+def _print_price_table() -> None:
+    """Which Claude price table prices are read from, its date, source and age."""
+    from .. import price_table
+
+    rows, header = price_table.table()
+    max_age = price_table_max_age_days()
+    rprint("[bold]Claude price table[/bold] (config model_pricing: rows win over it)")
+    tier = header.get("tier", "vendored")
+    label = {"local": "local override (overcode models refresh --prices)",
+             "vendored": "shipped with this overcode"}.get(tier, tier)
+    rprint(f"  in use:     {label}")
+    rprint(f"  path:       {header.get('origin')}")
+    age = price_table.age_days(header)
+    age_text = "" if age is None else f" ({age} days old)"
+    rprint(f"  as of:      {header.get('as_of') or 'unknown'}{age_text}")
+    rprint(f"  source:     {escape(_table_source(header, rows))}")
+    rprint(f"  models:     {len(rows)}")
+    if tier == "local":
+        rprint(f"  shipped:    as of {header.get('vendored_as_of')} (rows the override lacks)")
+    ignored = header.get("ignored_local")
+    if ignored:
+        rprint(f"  [dim]override {ignored['origin']} (as of {ignored['as_of']}) is ignored: "
+               f"the shipped table is as new or newer[/dim]")
+    elif tier != "local":
+        rprint(f"  [dim]local override: absent ({price_table.local_override_path()})[/dim]")
+    for finding in price_table.staleness_findings(max_age):
+        rprint(f"[yellow]⚠[/yellow] {escape(finding)}")
+
+
+def _table_source(header: dict, rows: dict) -> str:
+    if header.get("source"):
+        return str(header["source"])
+    # The vendored file names its source per row; the first clause is the list it came from
+    first = next(iter(rows.values()), None)
+    if first is not None and first.source:
+        return first.source.split(":")[0]
+    return str(header.get("generated_by") or "unknown")
+
+
+def price_table_max_age_days() -> float:
+    """``pricing.table_max_age_days`` in config.yaml, else the default."""
+    from ..price_table import max_age_days_from
+    try:
+        from ..config import _cached_config
+        return max_age_days_from(_cached_config())
+    except Exception:
+        return max_age_days_from({})
 
 
 @models_app.command("lookup")
@@ -107,18 +159,41 @@ def models_lookup(
                "or see docs/design/model-alias-resolution.md.[/dim]")
 
 
+# The CLI refresh gives up on models.dev after this long in all (DNS included):
+# an air-gapped host should hear "offline" in seconds, not wait on a resolver
+CLI_FETCH_DEADLINE_SECONDS = 10.0
+CLI_FETCH_TIMEOUT_SECONDS = 8.0
+
+OFFLINE_HINT = ("The Claude price table does not need the network: it ships with each "
+                "release, and `overcode models refresh --prices <file>` rebuilds it from an AWS "
+                "Price List file copied in by hand (docs/configuration.md, "
+                "\"Prices on an air-gapped host\").")
+
+
 @models_app.command("refresh")
 def models_refresh(
     check: Annotated[
-        bool, typer.Option("--check", help="Only report the active catalog's age; fetch nothing")
+        bool, typer.Option("--check", help="Report only; fetch and write nothing "
+                                           "(with --prices: show what would change)")
     ] = False,
+    prices: Annotated[
+        Optional[Path], typer.Option(
+            "--prices", metavar="FILE",
+            help="Rebuild the Claude price table from an AWS Price List file "
+                 "(AmazonBedrockFoundationModels offer, JSON or .gz) instead of fetching "
+                 "models.dev. No network; writes ~/.overcode/cache/claude_prices.json"),
+    ] = None,
 ):
-    """Fetch models.dev and rewrite the local cache (~/.overcode/cache/model_metadata.json).
+    """Fetch models.dev and rewrite the local cache (~/.overcode/cache/model_metadata.json),
+    or, with --prices FILE, rebuild the Claude price table offline.
 
     This is the on-demand path; nothing is fetched unattended unless
     config.yaml sets model_metadata.auto_refresh: true.
     """
-    from ..model_metadata import refresh_local_cache, snapshot_info
+    if prices is not None:
+        _refresh_prices(prices, check=check)
+        return
+    from ..model_metadata import fetch_models_dev, refresh_local_cache, snapshot_info
 
     before = snapshot_info()
     rprint(f"[dim]before: {before['tier']} catalog, {before['model_count']} models, "
@@ -126,10 +201,73 @@ def models_refresh(
     if check:
         return
     try:
-        info = refresh_local_cache()
+        info = refresh_local_cache(fetch=lambda: _bounded(
+            lambda: fetch_models_dev(timeout=CLI_FETCH_TIMEOUT_SECONDS),
+            CLI_FETCH_DEADLINE_SECONDS))
     except Exception as e:
-        rprint(f"[red]Refresh failed:[/red] {e}")
+        if _is_network_error(e):
+            rprint(f"[red]Refresh failed:[/red] cannot reach models.dev "
+                   f"({escape(str(e) or type(e).__name__)}); offline or blocked?")
+        else:
+            rprint(f"[red]Refresh failed:[/red] {escape(str(e))}")
         rprint("[dim]Lookups keep using the previous catalog.[/dim]")
+        rprint(f"[dim]{escape(OFFLINE_HINT)}[/dim]")
         raise typer.Exit(code=1)
     rprint(f"[green]✓[/green] {info['model_count']} models from {info['source']} "
            f"(fetched {info['fetched_at']}) -> {info['path']}")
+
+
+def _bounded(fetch, seconds: float):
+    """``fetch()`` on a daemon thread, abandoned after ``seconds`` (TimeoutError):
+    urlopen's timeout does not cover DNS resolution."""
+    import threading
+
+    box: dict = {}
+
+    def run():
+        try:
+            box["value"] = fetch()
+        except BaseException as e:  # noqa: BLE001 — re-raised on the caller's thread
+            box["error"] = e
+
+    worker = threading.Thread(target=run, name="models-refresh-fetch", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise TimeoutError(f"no answer in {seconds:g}s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
+def _is_network_error(error: BaseException) -> bool:
+    # urllib.error.URLError, socket errors and TimeoutError are all OSError
+    return isinstance(error, OSError)
+
+
+def _refresh_prices(path: Path, *, check: bool) -> None:
+    from ..price_table import PriceListError, refresh_local_override
+
+    try:
+        result = refresh_local_override(path, write=not check)
+    except PriceListError as e:
+        rprint(f"[red]Price table not rebuilt:[/red] {escape(str(e))}")
+        raise typer.Exit(code=1)
+    doc = result["doc"]
+    rprint(f"[dim]{escape(path.name)}: {len(doc['rows'])} Claude rows, "
+           f"published {doc['as_of']}[/dim]")
+    for line in result["diff"]:
+        rprint(f"  {escape(line)}")
+    if not result["diff"]:
+        rprint("  [dim]no price changes against the table in use[/dim]")
+    if not result["newer"]:
+        rprint(f"[yellow]⚠[/yellow] the price table shipped with this overcode is as of "
+               f"{result['vendored_as_of']}, as new as this file or newer: nothing written "
+               f"(an older override would be ignored)")
+        raise typer.Exit(code=1)
+    if check:
+        rprint(f"[dim]--check: nothing written (would write {result['path']})[/dim]")
+        return
+    rprint(f"[green]✓[/green] price table as of {doc['as_of']} -> {result['path']} "
+           f"(used ahead of the shipped table, as of {result['vendored_as_of']}; "
+           f"running daemons pick it up on their next price lookup)")

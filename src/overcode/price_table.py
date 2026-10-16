@@ -27,6 +27,7 @@ normaliser, so the reader can ask for tier thresholds cheaply.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -232,6 +233,15 @@ def age_days(header: Mapping[str, Any], today: Optional[date] = None) -> Optiona
 DEFAULT_STALE_AFTER_DAYS = 90
 STALE_HINT = ("upgrade overcode, or `overcode models refresh --prices <AWS price list file>` "
               "(works offline: docs/configuration.md, \"Prices on an air-gapped host\")")
+
+
+def max_age_days_from(config: Any) -> float:
+    """``pricing.table_max_age_days`` of a parsed config.yaml, else the default."""
+    pricing = config.get("pricing") if isinstance(config, Mapping) else None
+    value = pricing.get("table_max_age_days") if isinstance(pricing, Mapping) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return float(DEFAULT_STALE_AFTER_DAYS)
+    return float(value)
 
 
 def staleness_findings(max_age_days: float = DEFAULT_STALE_AFTER_DAYS,
@@ -539,6 +549,7 @@ __all__ = [
     "DATA_PATH", "DEFAULT_STALE_AFTER_DAYS", "OFFER_URL", "OVERLAY", "PRICE_FIELDS",
     "PriceListError", "PriceRow", "age_days", "aws_model_id", "build_table", "diff_tables",
     "invalidate", "load_offer", "local_override_path", "long_context_threshold",
+    "max_age_days_from",
     "parse_aws_price_list", "price_key", "refresh_local_override", "row_for",
     "staleness_findings", "table", "vendored_table", "write_table",
 ]

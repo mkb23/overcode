@@ -227,6 +227,17 @@ def doctor(
     except Exception:
         pass
 
+    # Global: the Claude price table in use is older than pricing.table_max_age_days
+    try:
+        from rich.markup import escape
+        from ..config import _cached_config
+        from ..price_table import max_age_days_from
+        from ..price_table import staleness_findings as price_table_staleness
+        for finding in price_table_staleness(max_age_days_from(_cached_config())):
+            rprint(f"[yellow]⚠[/yellow] {escape(finding)}")
+    except Exception:
+        pass
+
     # Global: the models.dev catalog behind CTX%/pricing is stale (#473).
     try:
         from ..model_metadata import staleness_findings

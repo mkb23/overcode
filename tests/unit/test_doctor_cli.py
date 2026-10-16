@@ -317,3 +317,34 @@ class TestDoctorSkillsStaleness:
             _exit(patches)
         assert result.exit_code == 0
         assert "overcode skills install" in result.output
+
+
+class TestDoctorPriceTableAge:
+    """The Claude price table in use is older than pricing.table_max_age_days."""
+
+    def _run(self, age):
+        sess = _make_session("healthy-1")
+        health = AgentHealth(
+            name="healthy-1", tmux_window="healthy-1-0", launcher_version="0.4.0",
+            claude_pid=9999, claude_argv="claude --settings /tmp/s.json",
+            verdict=VERDICT_OK, details="hooks injected via --settings",
+        )
+        patches, _ = _patch_doctor(sessions=[sess], health_by_name={"healthy-1": health})
+        patches.append(patch("overcode.price_table.age_days", return_value=age))
+        _enter(patches)
+        try:
+            return runner.invoke(app, ["doctor"])
+        finally:
+            _exit(patches)
+
+    def test_old_table_is_a_warning_with_an_offline_hint(self):
+        result = self._run(400)
+        assert result.exit_code == 0
+        out = " ".join(result.output.split())
+        assert "Claude price table" in out and "400 days old" in out
+        assert "upgrade overcode" in out and "--prices" in out
+
+    def test_fresh_table_says_nothing(self):
+        result = self._run(5)
+        assert result.exit_code == 0
+        assert "Claude price table" not in result.output
