@@ -136,7 +136,9 @@ Heartbeats and supervision resume automatically on the next daemon loop (~10s).
 
 ### No Global Default
 
-Budgets are per-agent only. There is no global default budget in config.
+Budgets are per-agent only. There is no global default budget in config;
+a [children preset](configuration.md#children-presets) can give the
+children launched with it a default budget.
 
 ## Billing Codes
 
@@ -155,7 +157,7 @@ limits of their own: budgets stay per agent. Details:
 
 ## Agent Hierarchy
 
-Agents can spawn child agents, creating a parent/child tree. This enables delegation patterns where a parent agent launches children to handle subtasks.
+Agents can spawn child agents, creating a parent/child tree. This enables delegation patterns where a parent agent launches children to handle subtasks. [Child Agents](children.md) covers the whole model, including presets and when to use a child instead of a Claude subagent.
 
 ### Launching Child Agents
 
@@ -184,7 +186,7 @@ overcode launch -n child --follow -p "Do the task. When done: overcode report --
 overcode follow child-agent
 ```
 
-When the child reports success, it's marked "done" — it stays alive in tmux but is hidden from default views.
+When the child reports success, it's marked "done" — it stays alive in tmux but is hidden from default views, until the monitor daemon closes its window after its archive delay (1 h by default; `--archive-after` or a preset changes it).
 
 ### Reporting Completion
 
@@ -213,6 +215,8 @@ overcode launch -n child --follow --on-stuck fail -p "..."
 # Wait up to 5 minutes, then fail
 overcode launch -n child --follow --oversight-timeout 5m -p "..."
 ```
+
+`--preset supervised|balanced|autonomous` sets the oversight policy and the archive delay together (see [Presets](children.md#presets)).
 
 The TUI shows a countdown timer (⏳) for agents with a timeout policy. The monitor daemon starts the timeout when the child stops, so it applies whether or not a parent follows it; a child prompted again before it expires loses its deadline and gets a fresh one when it next stops. An expired timeout shows ⌛ in the Result column.
 
