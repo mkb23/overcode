@@ -289,9 +289,13 @@ def billing(
     rprint(f"\n[bold]Spend by billing code ({scope}):[/bold]\n")
     rows = sorted(report.items(), key=lambda kv: (-kv[1]["cost"], kv[0]))
     width = max(12, *(len(code) for code, _ in rows))
-    print(f"  {'code':<{width}}  {'cost':>10}  {'tokens':>8}  {'agents':>6}  running")
+    # Claude background sessions billed to a code are among its agents
+    background = any(entry.get("background") for _, entry in rows)
+    bg_head = "  background" if background else ""
+    print(f"  {'code':<{width}}  {'cost':>10}  {'tokens':>8}  {'agents':>6}  running{bg_head}")
     for code, entry in rows:
+        bg_cell = f"  {entry.get('background', 0):>10}" if background else ""
         print(f"  {code:<{width}}  ${entry['cost']:>9.2f}  {format_tokens(entry['tokens']):>8}  "
-              f"{entry['agents']:>6}  {entry['running']:>7}")
+              f"{entry['agents']:>6}  {entry['running']:>7}{bg_cell}")
     total = sum(e["cost"] for _, e in rows)
     print(f"  {'total':<{width}}  ${total:>9.2f}")

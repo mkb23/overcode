@@ -196,6 +196,7 @@ class FleetAgent:
     foreign: FrozenSet[str] = frozenset()         # other conversations its hooks saw
     repo_name: Optional[str] = None
     branch: Optional[str] = None
+    billing_code: Optional[str] = None  # what its 🌙 rows' spend is billed to
 
 
 @lru_cache(maxsize=1024)
@@ -531,7 +532,8 @@ class BgSpend:
     A background session is its own conversation (§3.5): it counts once,
     under its own row, deduplicated like an agent's (``read_tree_stats``
     over the transcript and its subagents). Read at the stats cadence while
-    the session is live, once more when it finishes, then frozen.
+    the session is live, once more when it finishes, then frozen until it
+    runs again (a finished session resumed).
     """
 
     values: Dict[str, dict] = field(default_factory=dict)  # session id -> spend
@@ -554,6 +556,9 @@ class BgSpend:
         live = set()
         for sid, job, finished in rows_jobs:
             live.add(sid)
+            if not finished and sid in self._frozen:
+                self._frozen.discard(sid)  # a finished session resumed: it spends again
+                self._read_at.pop(sid, None)
             if not self.due(sid, now, every, finished):
                 continue
             self._read_at[sid] = now
@@ -656,6 +661,18 @@ class ClaudeBgSource:
     def ids(self) -> set:
         return {row.state.session_id for row in self.rows}
 
+    def read_spend_of(self, rid: str) -> Optional[dict]:
+        """A session's spend read now, by row id (None: its job or transcript is gone).
+
+        For the ledger's last row of a session whose 🌙 row has gone
+        (``claude_bg_ledger``): what it really spent, not its last checkpoint.
+        """
+        sid = rid[len(ID_PREFIX):] if rid.startswith(ID_PREFIX) else rid
+        for job in self.scanner.jobs.values():
+            if isinstance(job, dict) and job.get("sessionId") == sid:
+                return read_spend(job)
+        return None
+
     def set_agents(self, agents: Iterable[FleetAgent]) -> None:
         self.agents = tuple(agents)
 
@@ -719,6 +736,7 @@ def fleet_agents(sessions: Iterable[Any], foreign_of=None) -> List[FleetAgent]:
             foreign=frozenset(k for k in (foreign or {}) if isinstance(k, str)),
             repo_name=getattr(s, "repo_name", None),
             branch=getattr(s, "branch", None),
+            billing_code=getattr(s, "billing_code", None) or s.name,
         ))
     return out
 

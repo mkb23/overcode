@@ -126,3 +126,23 @@ def test_virtual_row_spend_moves_at_the_stats_cadence():
     from overcode.monitor_daemon import STATS_SYNC_ATTENDED_SECONDS, STATS_SYNC_UNATTENDED_SECONDS
 
     assert STATS_SYNC_ATTENDED_SECONDS <= 5 and STATS_SYNC_UNATTENDED_SECONDS <= 60
+
+
+def test_background_sessions_reach_views_within_two_seconds_watched():
+    """agent-observability-0.6.1.md, phase 3: a background session's state
+    reaches views within 2 s watched, 10 s not (a scan is a stat per job)."""
+    from overcode.claude_bg import SCAN_ATTENDED_SECONDS, SCAN_UNATTENDED_SECONDS
+
+    assert SCAN_ATTENDED_SECONDS <= 1.0 and SCAN_UNATTENDED_SECONDS <= 5.0
+
+
+def test_background_session_spend_moves_at_the_stats_cadence():
+    """A 🌙 row's spend is read from its transcript at the stats cadence while
+    it runs (tests/unit/test_claude_bg_ledger.py: TestLive); its ledger rows
+    follow ledger.checkpoint_minutes, then a final row when it ends."""
+    import inspect
+
+    from overcode.monitor_daemon import MonitorDaemon
+
+    source = inspect.getsource(MonitorDaemon._refresh_claude_bg)
+    assert "STATS_SYNC_ATTENDED_SECONDS" in source and "STATS_SYNC_UNATTENDED_SECONDS" in source

@@ -87,6 +87,7 @@ from .engine_wake import WakeLoop
 from .swarm_publisher import SwarmPublisher
 from . import swarm
 from .claude_bg import ClaudeBgSource, fleet_agents
+from .claude_bg_ledger import BgLedger
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
     NullPresence,
@@ -453,6 +454,13 @@ class MonitorDaemon:
         self.claude_bg = ClaudeBgSource(claude_jobs_dir)
         # The views those rows were last published as (see _claude_bg_views)
         self._claude_bg_published: Optional[dict] = None
+        # Their spend in the billing ledger, under their agent's code
+        # (claude_bg_ledger); synced after each rebuild of the rows and at
+        # every housekeeping pass
+        self.claude_bg_ledger = BgLedger(
+            lambda: getattr(getattr(self.session_manager, "ledger", None), "dir", None),
+            owner=tmux_session)
+        self._claude_bg_ledger_builds = -1
 
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
@@ -1122,7 +1130,31 @@ class MonitorDaemon:
         for row in source.rows:
             self.recorder_store.record_adopted(row.state, row.light.detail(), row.started_at,
                                                ts, engine=self._engine)
+        self._sync_claude_bg_ledger()
         return self._claude_bg_views() != self._claude_bg_published
+
+    def _sync_claude_bg_ledger(self, force: bool = False) -> int:
+        """Bill the background sessions' spend (claude_bg_ledger); rows written.
+
+        After a rebuild of their rows (spend read, a row come or gone), and
+        at every housekeeping pass (``force``: a checkpoint that waited for
+        its interval), and when every row went at once (the last agent
+        ended, the source switched off): what they spent closes.
+        """
+        source = self.claude_bg
+        vanished = not source.rows and self.claude_bg_ledger.observing
+        if not force and not vanished and source.builds == self._claude_bg_ledger_builds:
+            return 0
+        self._claude_bg_ledger_builds = source.builds
+        ledger = getattr(self.session_manager, "ledger", None)
+        if ledger is None:
+            return 0
+        try:
+            return self.claude_bg_ledger.sync(source.rows, source.agents, ledger,
+                                              self.clock.time(), reread=source.read_spend_of)
+        except Exception as e:  # the ledger must never stop the engine
+            self.log.warn(f"background-session spend not billed: {e}")
+            return 0
 
     def _state_file_due(self, snapshot) -> bool:
         """Whether to rewrite the state file this tick (engine-0.6.md: on change).
@@ -2089,6 +2121,7 @@ class MonitorDaemon:
                 [self._pending.view(s) for s in sessions], self.session_manager)
             if ledger is not None:
                 housekeeping.checkpoint_spend(views, ledger, now)
+                self._sync_claude_bg_ledger(force=True)
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

@@ -336,7 +336,7 @@ class TestTotals:
         ])
         oct_report = ledger.report(since=datetime(2026, 10, 1), until=datetime(2026, 11, 1))
         assert oct_report == {"x": {"cost": 3.0, "tokens": 300, "tok_in": 0, "tok_out": 0,
-                                    "tok_cache": 0, "agents": 1, "running": 1}}
+                                    "tok_cache": 0, "agents": 1, "running": 1, "background": 0}}
         sep_report = ledger.report(since=datetime(2026, 9, 1), until=datetime(2026, 10, 1))
         assert sep_report["x"]["cost"] == 1.0 and sep_report["y"]["cost"] == 2.0
 
