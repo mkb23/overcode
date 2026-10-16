@@ -1,0 +1,141 @@
+"""The files Claude writes beside a parent's transcript for its delegated work.
+
+docs/design/agent-observability-0.6.1.md §6.1, phase 2. A virtual row's
+name, phase and model are not in any hook payload; they live next to the
+parent's transcript (``<transcript>.jsonl`` → ``<transcript>/subagents/``):
+
+* ``agent-<id>.meta.json`` (``workflows/<run>/agent-<id>.meta.json`` for a
+  workflow agent): description, agentType, workflowPhase, model. Written by
+  the agent's first tool call and never changed: read once per agent.
+* ``workflows/<run>/journal.jsonl``: ``started {agentId, label, phase}``
+  and ``result {agentId, result}`` as the run goes. Re-read when its
+  (mtime, size) moves: one stat per live run of an expanded parent.
+
+Only the engine reads these, and only for parents a view has expanded
+(``swarm.virtual_rows`` takes one ``Details`` per parent).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from typing import Callable, Dict, Optional, Tuple
+
+# A meta file not there yet (the agent has not made a tool call) is looked
+# for again at most this often
+META_RETRY_SECONDS = 2.0
+# Bounds on the caches (agents and runs seen by expanded parents)
+META_CACHE_MAX = 4000
+JOURNAL_CACHE_MAX = 200
+
+
+def _base(transcript_path: Optional[str]) -> Optional[str]:
+    if not isinstance(transcript_path, str) or not transcript_path.endswith(".jsonl"):
+        return None
+    return os.path.expanduser(transcript_path[: -len(".jsonl")])
+
+
+def _signature(path: str) -> Optional[Tuple[int, int]]:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+class SwarmFiles:
+    """Cached reads of meta files and workflow journals, for the whole fleet."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.clock = clock
+        self._meta: Dict[str, dict] = {}
+        self._meta_missing: Dict[str, float] = {}
+        self._journals: Dict[str, Tuple[Optional[Tuple[int, int]], list]] = {}
+        self.reads = 0  # files opened (tests and diagnostics)
+
+    def details(self, transcript_path: Optional[str]) -> "Details":
+        return Details(self, _base(transcript_path))
+
+    def meta(self, path: str) -> Optional[dict]:
+        hit = self._meta.get(path)
+        if hit is not None:
+            return hit
+        missed = self._meta_missing.get(path)
+        now = self.clock()
+        if missed is not None and now - missed < META_RETRY_SECONDS:
+            return None
+        try:
+            with open(path) as f:
+                self.reads += 1
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = None
+        if not isinstance(data, dict):
+            if len(self._meta_missing) >= META_CACHE_MAX:
+                self._meta_missing.clear()
+            self._meta_missing[path] = now
+            return None
+        self._meta_missing.pop(path, None)
+        if len(self._meta) >= META_CACHE_MAX:
+            self._meta.clear()
+        self._meta[path] = data
+        return data
+
+    def journal(self, path: str) -> Optional[list]:
+        sig = _signature(path)
+        if sig is None:
+            return None
+        hit = self._journals.get(path)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+        events = []
+        try:
+            with open(path) as f:
+                self.reads += 1
+                for line in f:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue  # a line still being written
+                    if isinstance(event, dict):
+                        events.append(event)
+        except OSError:
+            return None
+        if len(self._journals) >= JOURNAL_CACHE_MAX:
+            self._journals.clear()
+        self._journals[path] = (sig, events)
+        return events
+
+    def journals_changed(self) -> bool:
+        """Whether a journal read before has moved since (one stat each)."""
+        return any(_signature(path) != sig for path, (sig, _) in self._journals.items())
+
+    def forget_journals(self, keep) -> None:
+        """Stop watching journals not in ``keep`` (paths of runs still shown)."""
+        for path in [p for p in self._journals if p not in keep]:
+            del self._journals[path]
+
+
+class Details:
+    """``swarm.virtual_rows``'s lookups for one parent (its transcript's directory)."""
+
+    def __init__(self, files: SwarmFiles, base: Optional[str]) -> None:
+        self.files = files
+        self.base = base
+        self.journal_paths: set = set()
+
+    def meta(self, agent_id: str, run_id: Optional[str]) -> Optional[dict]:
+        if self.base is None or not agent_id:
+            return None
+        sub = os.path.join(self.base, "subagents")
+        if run_id:
+            sub = os.path.join(sub, "workflows", run_id)
+        return self.files.meta(os.path.join(sub, f"agent-{agent_id}.meta.json"))
+
+    def journal(self, run_id: str) -> Optional[list]:
+        if self.base is None or not run_id:
+            return None
+        path = os.path.join(self.base, "subagents", "workflows", run_id, "journal.jsonl")
+        self.journal_paths.add(path)
+        return self.files.journal(path)

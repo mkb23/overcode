@@ -170,7 +170,8 @@ class TestApplySubagentEvent:
         s = _apply_subagent_event(s, "SubagentStop", "a1", {}, 120.0)
         assert "subagents" not in s
         assert s["swarm"]["done"] == {"a1": {"kind": "subagent", "result": "ok",
-                                             "ended_at": 120.0}}
+                                             "ended_at": 120.0, "type": "general-purpose",
+                                             "started_at": 110.0}}
         assert s["event"] == "Stop" and s["loaded_skills"] == ["x"]
 
     def test_tool_events_touch_only_last_seen(self):

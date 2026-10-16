@@ -939,6 +939,9 @@ class HookStatusDetector:
         # The 👥 rollup of each agent's delegated work, as of its last
         # detect_status (swarm.rollup); absent when it never delegated
         self._swarm_rollups: Dict[str, dict] = {}
+        # The hook state behind each rollup: the engine builds an expanded
+        # parent's virtual rows from it (swarm.virtual_rows)
+        self._swarm_states: Dict[str, dict] = {}
         # Last visible status-bar counts: (seen_at, monitors, shells) (#507)
         self._status_bar_counts: Dict[str, Tuple[float, int, int]] = {}
         # The PermissionRequest (by hook-state timestamp) whose dialog has
@@ -1129,6 +1132,7 @@ class HookStatusDetector:
         self._status_details.pop(session.name, None)
         self._last_hook_at.pop(session.name, None)
         self._swarm_rollups.pop(session.name, None)
+        self._swarm_states.pop(session.name, None)
 
         if hook_state is None:
             # No hook state file — agent hasn't triggered a hook yet.
@@ -1159,6 +1163,7 @@ class HookStatusDetector:
         rollup = swarm.rollup(hook_state, now)
         if rollup is not None:
             self._swarm_rollups[session.name] = rollup
+            self._swarm_states[session.name] = hook_state
 
         pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
         ctx = self._tick_context(session, hook_state, pane_content, now)
@@ -1336,6 +1341,10 @@ class HookStatusDetector:
     def get_swarm_rollup(self, session_name: str) -> Optional[dict]:
         """The 👥 counts from the last detect_status (swarm.rollup), or None."""
         return self._swarm_rollups.get(session_name)
+
+    def get_swarm_state(self, session_name: str) -> Optional[dict]:
+        """The hook state behind the last 👥 counts (for swarm.virtual_rows), or None."""
+        return self._swarm_states.get(session_name)
 
     def get_status_detail(self, session_name: str) -> Optional[StatusDetail]:
         """Return the most recent StatusDetail for a session, or None.
