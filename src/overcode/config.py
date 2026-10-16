@@ -771,20 +771,30 @@ def get_observability_config() -> dict:
     parent's 👥 counts. The counts always include it; the rows arrive with
     expandable groups (phase 2).
 
+    Phase 3: a Claude background session (``claude --bg``, ``/bg``) under
+    a fleet agent's directory gets a 🌙 row of its own (decision 1); a
+    finished one keeps it for the same ``finished_row_seconds``.
+
     Config format in ~/.overcode/config.yaml:
         observability:
           finished_row_seconds: 30   # 0 folds a finished agent at once
+          background_sessions: true  # false: no 🌙 rows
 
     Returns:
-        Dict with ``finished_row_seconds`` (float, never negative); a
-        missing or invalid entry falls back to 30.
+        Dict with ``finished_row_seconds`` (float, never negative; a
+        missing or invalid entry falls back to 30) and
+        ``background_sessions`` (bool, default True).
     """
     cfg = _get_config_value("observability", {})
     if not isinstance(cfg, dict):
         cfg = {}
-    return {"finished_row_seconds": _non_negative(
-        cfg.get("finished_row_seconds", FINISHED_ROW_SECONDS_DEFAULT),
-        FINISHED_ROW_SECONDS_DEFAULT)}
+    background = cfg.get("background_sessions", True)
+    return {
+        "finished_row_seconds": _non_negative(
+            cfg.get("finished_row_seconds", FINISHED_ROW_SECONDS_DEFAULT),
+            FINISHED_ROW_SECONDS_DEFAULT),
+        "background_sessions": background if isinstance(background, bool) else True,
+    }
 
 
 _SIZE_UNITS = {"": 1, "B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}

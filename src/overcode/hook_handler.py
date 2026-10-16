@@ -355,6 +355,36 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
 # state file without bound.
 _MAX_AGENT_SESSION_IDS = 20
 
+# Other conversations whose hooks ran under this agent's name, kept so the
+# engine can tell which agent a Claude background session came from
+# (claude_bg.attribute): the newest few, each with when it was last seen
+# and whether it is a registered background session. One that is not is
+# looked for again at most this often (a copy can register late).
+_MAX_FOREIGN_SESSIONS = 20
+_FOREIGN_RECHECK_SECONDS = 30.0
+
+
+def _note_foreign_session(prev_state: dict, session_id: str, now: float) -> dict:
+    """``prev_state``'s foreign conversations with ``session_id`` (seen ``now``) in it."""
+    from .claude_bg import find_job
+
+    known = prev_state.get("foreign_sessions")
+    foreign = dict(known) if isinstance(known, dict) else {}
+    entry = dict(foreign.get(session_id) or {})
+    if not entry.get("bg") and now - float(entry.get("checked") or 0.0) >= _FOREIGN_RECHECK_SECONDS:
+        try:
+            entry["bg"] = find_job(session_id) is not None
+        except Exception:  # noqa: BLE001 — a hook must never fail the agent's turn
+            entry["bg"] = False
+        entry["checked"] = now
+    entry["at"] = now
+    foreign[session_id] = entry
+    if len(foreign) > _MAX_FOREIGN_SESSIONS:
+        newest = sorted(foreign, key=lambda k: float(foreign[k].get("at") or 0.0))
+        for stale in newest[:-_MAX_FOREIGN_SESSIONS]:
+            del foreign[stale]
+    return foreign
+
 
 def _detect_from_tmux_pane() -> tuple[str | None, str | None]:
     """Detect agent name and tmux session from the current tmux pane.
@@ -826,8 +856,11 @@ def write_hook_state(
     prev_synced_agent_session_id: str | None = None
     prev_subagents: dict | None = None
     prev_swarm: dict | None = None
+    prev_foreign: dict | None = None
     try:
         prev = prev_state if prev_state is not None else json.loads(state_path.read_text())
+        prev_foreign = prev.get("foreign_sessions") if isinstance(
+            prev.get("foreign_sessions"), dict) else None
         prev_skills = prev.get("loaded_skills", [])
         prev_obligations = prev.get("pending_obligations", []) or []
         prev_agent_session_ids = prev.get("agent_session_ids", []) or []
@@ -895,6 +928,9 @@ def write_hook_state(
     # Only a confirmed session-store write advances this; otherwise it is
     # carried forward so the next event retries. Written here, in the single
     # per-event hook-state write, so nothing else has to rewrite this file.
+    if prev_foreign:
+        state["foreign_sessions"] = prev_foreign
+
     synced = synced_session_id or prev_synced_agent_session_id
     if synced:
         state["agent_session_id_synced"] = synced
@@ -1101,6 +1137,21 @@ def handle_hook_event(backend: str | None = None) -> None:
                     synced_session_id = effective_session_id
                 if is_reset or retry:
                     pending_session_id = None if durable else session_id
+
+        if (session_id and effective_session_id and session_id != effective_session_id
+                and session_id not in (prev_state.get("agent_session_ids") or [])):
+            # Another conversation running under this agent's name: a nested
+            # CLI, or a Claude background session that inherited the agent's
+            # environment (/bg from its Claude). Noted, so the engine can
+            # nest that session's row under this agent (claude_bg.attribute).
+            foreign = _note_foreign_session(prev_state, session_id, time.time())
+            if foreign[session_id].get("bg"):
+                # A background session lives on its own: its turns are not
+                # this agent's, so none of them may move its status or swarm
+                _write_state_file(_get_hook_state_path(tmux_session, session_name),
+                                  dict(prev_state, foreign_sessions=foreign))
+                return
+            prev_state = dict(prev_state, foreign_sessions=foreign)
 
         # Write state file for status detection (snapshot) and append to the
         # event log (#448 — preserves bursts hidden by overwrite).

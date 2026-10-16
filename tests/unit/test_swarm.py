@@ -592,8 +592,8 @@ def test_finished_rows_keep_thirty_seconds_unless_configured(monkeypatch):
     from overcode import config
 
     monkeypatch.setattr(config, "_get_config_value", lambda key, default=None: default)
-    assert config.get_observability_config() == {"finished_row_seconds": 30.0}
+    assert config.get_observability_config()["finished_row_seconds"] == 30.0
     for value, expected in ((5, 5.0), (0, 0.0), (-1, 30.0), ("soon", 30.0)):
         monkeypatch.setattr(config, "_get_config_value", lambda key, default=None, v=value: (
             {"finished_row_seconds": v} if key == "observability" else default))
-        assert config.get_observability_config() == {"finished_row_seconds": expected}
+        assert config.get_observability_config()["finished_row_seconds"] == expected
