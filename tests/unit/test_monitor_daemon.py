@@ -1898,7 +1898,9 @@ class TestMaybeRotateHistory:
                    return_value={"archived": None, "deleted": []}) as mock_rotate:
             daemon.housekeeping.maybe_rotate_history(now)
 
-        mock_rotate.assert_called_once()
+        # The status history, then the swarm history beside it (phase 4)
+        assert [c.args[0].name for c in mock_rotate.call_args_list] == [
+            "agent_status_history.csv", "swarm_history.csv"]
         assert daemon.cadence.history_rotation.last == now
 
     def test_skips_when_interval_not_elapsed(self, tmp_path):
@@ -1922,7 +1924,7 @@ class TestMaybeRotateHistory:
                    return_value={"archived": None, "deleted": []}) as mock_rotate:
             daemon.housekeeping.maybe_rotate_history(first + timedelta(hours=2))
 
-        mock_rotate.assert_called_once()
+        assert mock_rotate.call_count == 2  # status history and swarm history
 
     def test_exception_is_caught_and_logged(self, tmp_path):
         """A rotation failure must not crash the daemon loop."""

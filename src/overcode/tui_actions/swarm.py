@@ -199,6 +199,7 @@ class SwarmMixin:
 
     def _sync_swarm_rows(self) -> None:
         """Put each expanded parent's lines right under its row; drop the rest."""
+        self._sync_timeline_fold()  # the timeline's density rows fold in step (phase 4)
         from textual.containers import ScrollableContainer
         from textual.css.query import NoMatches
 

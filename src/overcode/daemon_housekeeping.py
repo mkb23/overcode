@@ -351,7 +351,8 @@ class Housekeeping:
             self.log.warn(f"job retention not applied: {e}")
 
     def maybe_rotate_history(self, now: datetime) -> None:
-        """Rotate/compress agent_status_history.csv and prune old archives (#465, #468).
+        """Rotate/compress agent_status_history.csv (and swarm_history.csv) and
+        prune old archives (#465, #468).
 
         Runs at most hourly — a size/age stat check is cheap, but there's no
         reason to do even that on every 2-30s tick.
@@ -376,6 +377,18 @@ class Housekeeping:
                 self.log.info(
                     f"Pruned {len(result['deleted'])} expired agent_status_history archive(s)"
                 )
+            # swarm_history.csv (the timeline's density rows) the same way
+            from .swarm_history import SWARM_HISTORY_FILE
+
+            swarm_path = self.history_path.with_name(SWARM_HISTORY_FILE)
+            result = rotate_and_retain(
+                swarm_path,
+                rotate_mb=cfg["status_history_rotate_mb"],
+                retention_days=cfg["status_history_max_days"],
+                now=now,
+            )
+            if result["archived"]:
+                self.log.info(f"Rotated {SWARM_HISTORY_FILE} -> {result['archived'].name}")
         except Exception as e:
             self.log.error(f"History rotation check failed: {e}")
 

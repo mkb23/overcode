@@ -46,17 +46,20 @@ class TestTimelineWorker:
         app._sister_poller.poll_all_timelines.return_value = {"remote": [("t", "running")]}
         sessions = [SimpleNamespace(name="a")]
         with patch("overcode.tui.read_history_data",
-                   return_value=(["p"], {"a": [("t", "waiting")]})) as read:
+                   return_value=(["p"], {"a": [("t", "waiting")]})) as read, \
+                patch("overcode.tui.read_swarm_data", return_value={"id-a": {}}) as swarm:
             _body(SupervisorTUI._fetch_timeline_async)(app, sessions, "agents", 3.0, True)
         read.assert_called_once_with("agents", 3.0)
+        swarm.assert_called_once_with("agents", 3.0)
         app._sister_poller.poll_all_timelines.assert_called_once_with(3.0)
         app.call_from_thread.assert_called_once_with(
             "apply-timeline", sessions, ["p"],
-            {"a": [("t", "waiting")], "remote": [("t", "running")]})
+            {"a": [("t", "waiting")], "remote": [("t", "running")]}, {"id-a": {}})
 
     def test_no_sisters_no_remote_poll(self):
         app = _stand_in(_sister_poller=MagicMock())
-        with patch("overcode.tui.read_history_data", return_value=([], {})):
+        with patch("overcode.tui.read_history_data", return_value=([], {})), \
+                patch("overcode.tui.read_swarm_data", return_value={}):
             _body(SupervisorTUI._fetch_timeline_async)(app, [], "agents", 3.0, False)
         app._sister_poller.poll_all_timelines.assert_not_called()
 

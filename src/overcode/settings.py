@@ -448,6 +448,11 @@ def get_agent_history_path(session: str) -> Path:
     return get_session_dir(session) / "agent_status_history.csv"
 
 
+def get_swarm_history_path(session: str) -> Path:
+    """Swarm counts history CSV (the timeline's density rows) for a session."""
+    return get_session_dir(session) / "swarm_history.csv"
+
+
 def get_activity_signal_path(session: str) -> Path:
     """Get activity signal file path for a specific session."""
     return get_session_dir(session) / "activity_signal"

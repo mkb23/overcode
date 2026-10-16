@@ -81,7 +81,7 @@ from .tui_logic import (
     compute_session_widget_diff,
 )
 from .tui_widgets.daemon_status_bar import LocalBarState, read_local_state
-from .tui_widgets.status_timeline import read_history_data
+from .tui_widgets.status_timeline import read_history_data, read_swarm_data
 from .tui_widgets import (
     HelpOverlay,
     PreviewPane,
@@ -1284,11 +1284,9 @@ class SupervisorTUI(
             timeline = self.query_one("#timeline", StatusTimeline)
         except NoMatches:
             return
-        from .claude_bg import is_background
-
         sessions = filter_visible_sessions(
-            # A 🌙 row has no status history (the engine logs none for it)
-            active_sessions=[s for s in self.sessions if not is_background(s)],
+            # 🌙 rows included: the engine logs their status history too
+            active_sessions=list(self.sessions),
             terminated_sessions=list(self._terminated_sessions.values()),
             hide_asleep=self.hide_asleep,
             show_terminated=self.show_terminated,
@@ -1308,18 +1306,35 @@ class SupervisorTUI(
         Reads no widget and no app state: its inputs are the arguments.
         """
         presence_history, agent_histories = read_history_data(tmux_session, hours)
+        # The swarm density rows' counts (swarm_history.csv, phase 4)
+        swarm_histories = read_swarm_data(tmux_session, hours)
         # Merge remote timeline data from sisters (#296)
         if has_sisters:
             agent_histories.update(self._sister_poller.poll_all_timelines(hours))
-        self.call_from_thread(self._apply_timeline, sessions, presence_history, agent_histories)
+        self.call_from_thread(self._apply_timeline, sessions, presence_history, agent_histories,
+                              swarm_histories)
 
-    def _apply_timeline(self, sessions: list, presence_history: list, agent_histories: dict) -> None:
+    def _apply_timeline(self, sessions: list, presence_history: list, agent_histories: dict,
+                        swarm_histories: Optional[dict] = None) -> None:
         """Main thread: the worker's history onto the timeline (no I/O)."""
         try:
             timeline = self.query_one("#timeline", StatusTimeline)
         except NoMatches:
             return
-        timeline.apply_history_data(sessions, presence_history, agent_histories)
+        timeline.swarm_expanded = frozenset(getattr(self, "swarm_expanded", ()))
+        timeline.apply_history_data(sessions, presence_history, agent_histories, swarm_histories)
+
+    def _sync_timeline_fold(self) -> None:
+        """The timeline's density rows fold with the list (→ / ←): no file read.
+
+        Called whenever the list's expansion is re-synced; repaints only when
+        an expanded or collapsed parent has strips on screen.
+        """
+        try:
+            timeline = self.query_one("#timeline", StatusTimeline)
+        except NoMatches:
+            return
+        timeline.set_swarm_fold(getattr(self, "swarm_expanded", ()))
 
     def _save_prefs(self) -> None:
         """Save current TUI preferences to disk."""

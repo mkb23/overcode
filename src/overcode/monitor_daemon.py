@@ -75,6 +75,7 @@ from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
+from .swarm_history import SWARM_HISTORY_FILE, SwarmHistoryWriter
 from . import daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
@@ -481,6 +482,12 @@ class MonitorDaemon:
         # keepalive old, and the first time this daemon sees the session.
         self._last_logged: Dict[str, Tuple[str, str]] = {}
         self._last_keepalive: Dict[str, datetime] = {}
+        # The same for the adopted background sessions' rows (by row id)
+        self._bg_logged: Dict[str, Tuple[str, str]] = {}
+        self._bg_keepalive: Dict[str, datetime] = {}
+        # swarm_history.csv beside it: each parent's delegated-work counts,
+        # a row per group when they change (the timeline's density rows)
+        self.swarm_history = SwarmHistoryWriter(history_path.with_name(SWARM_HISTORY_FILE))
 
         # What views render beside the status, per session id (0.6.0: the
         # TUI computes none of it). Time accounting as of the last status
@@ -1122,7 +1129,38 @@ class MonitorDaemon:
         for row in source.rows:
             self.recorder_store.record_adopted(row.state, row.light.detail(), row.started_at,
                                                ts, engine=self._engine)
+        self._log_claude_bg_history(source.rows)
         return self._claude_bg_views() != self._claude_bg_published
+
+    def _log_claude_bg_history(self, rows) -> None:
+        """Status history rows for the 🌙 rows, as for agents: on change and keepalive.
+
+        Keyed by row id (``claude-bg:<sessionId>``) in the session id
+        column, so the timeline draws an ordinary row for each. A finished
+        one gets its one row and no keepalives.
+        """
+        now = self.clock.wall()
+        ids = set()
+        for row in rows:
+            state = row.state
+            rid = state.session_id
+            ids.add(rid)
+            status, activity = state.current_status, state.current_activity or ""
+            if not status_row_due(self._bg_logged.get(rid), self._bg_keepalive.get(rid),
+                                  status, activity, now,
+                                  (float("inf") if status in (STATUS_TERMINATED, STATUS_DONE)
+                                   else STATUS_HISTORY_KEEPALIVE_SECONDS)):
+                continue
+            try:
+                log_agent_status(state.name, status, activity, history_file=self.history_path,
+                                 session_id=rid, hostname=self._hostname, now=now)
+            except OSError as e:
+                self.log.warn(f"[{state.name}] status history not written: {e}")
+            self._bg_logged[rid] = (status, activity[:100])
+            self._bg_keepalive[rid] = now
+        for rid in [r for r in self._bg_logged if r not in ids]:
+            del self._bg_logged[rid]
+            self._bg_keepalive.pop(rid, None)
 
     def _state_file_due(self, snapshot) -> bool:
         """Whether to rewrite the state file this tick (engine-0.6.md: on change).
@@ -1764,6 +1802,7 @@ class MonitorDaemon:
                     effective_status, activity[:100] if activity else ""
                 )
                 self._last_keepalive[session.id] = now
+            self._record_swarm_history(session, now)
 
             # Track if any session is not waiting for user (one at rest,
             # or not known yet, is quiet too)
@@ -1775,6 +1814,21 @@ class MonitorDaemon:
         self._compute_child_rollups(session_states, index)
 
         return session_states, all_waiting_user
+
+    def _record_swarm_history(self, session, now: datetime) -> None:
+        """Append the parent's delegated-work counts to swarm_history.csv if they moved.
+
+        From the hook state the detector just read (the 👥 rollup's), so
+        only a hook event, a keepalive or the record going away writes.
+        """
+        rollup = getattr(self.detector, "get_swarm_rollup", None)
+        rollup = rollup(session.name) if callable(rollup) else None
+        try:
+            self.swarm_history.record(session.id, session.name, self._swarm_state(session.name),
+                                      rollup if isinstance(rollup, dict) else None,
+                                      now.timestamp())
+        except OSError as e:
+            self.log.warn(f"[{session.name}] swarm history not written: {e}")
 
     def _detection_failed(
         self, session, error: Exception, now: datetime
@@ -2016,6 +2070,10 @@ class MonitorDaemon:
         for stale_id in set(self._last_logged) - current_session_ids:
             del self._last_logged[stale_id]
             self._last_keepalive.pop(stale_id, None)
+        try:
+            self.swarm_history.forget(current_session_ids, self.clock.time())
+        except OSError as e:
+            self.log.warn(f"swarm history not written: {e}")
         for per_session in (self._time_bases, self.stats_sync.stats_views, self._pane_views,
                             self.last_state_times, self._last_hook_phases, self._detect_failures):
             for stale_id in set(per_session) - current_session_ids:

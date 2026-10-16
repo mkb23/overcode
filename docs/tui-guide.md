@@ -87,6 +87,9 @@ a flat list:
   and its delegated work (which is inside the total, never added again).
 - Only expanded parents cost anything: the engine reads the subagents'
   meta files and workflow journals, and sends their rows, for those alone.
+- The timeline (`t`) draws a density strip of the delegated work under the
+  agent, unfolded per group while the agent is expanded here (see
+  "Delegated work in the timeline").
 
 ### Claude background sessions (🌙)
 
@@ -354,6 +357,37 @@ Press `t` to show a timeline visualization of agent status over time. Each agent
 - **Green** - Running/working
 - **Yellow/Orange/Red** - Various waiting states
 - **Grey hatching** - Sleeping
+
+🌙 background sessions get a row of their own like any agent, for as long
+as their list row is shown.
+
+### Delegated work in the timeline
+
+An agent that delegated work (a 👥 cell in the list) gets a density strip
+right under its timeline row:
+
+```
+  review-060        ████████▓▓▓▓▓▓████████████████
+  └ 👥 swarm          ▁▂▅▇██▇▆▆▇█▇▅▃▂▁········ ↑20
+  fix-flaky         ██████████████████████████████
+```
+
+- **Height** is how many of its subagents, workflow agents and teammates
+  were live, as the mean over each slot's time, scaled to the strip's own
+  peak. `↑20` at the end is that peak (the most live at once in the
+  window). `·` means nothing was live; a blank, no record.
+- **Colour** is the worst light in the slot: orange (a permission prompt)
+  over green (working) over yellow (waiting on its own background work).
+- A slot where a member failed is **red and underlined**.
+- The strips fold with the list: expanding the agent with `→` replaces
+  the one strip with one per group (each workflow run, the team, loose
+  subagents), in the list's order; `←` folds them back.
+- Only groups with something live inside the window get a strip.
+
+The engine writes these counts to `swarm_history.csv` (beside
+`agent_status_history.csv`) only when they change, plus one row every
+5 minutes while something is live; the file is rotated and compressed with
+the status history.
 
 ### Baseline Adjustment
 
