@@ -251,7 +251,7 @@ class TestHelpCoversEveryBinding:
     LABELS = {
         "left_square_bracket": "[", "right_square_bracket": "]", "backslash": "\\",
         "question_mark": "?", "colon": ":", "dollar_sign": "$", "comma": ",",
-        "full_stop": ".", "less_than_sign": "<", "down": "↓", "up": "↑",
+        "full_stop": ".", "less_than_sign": "<", "down": "↓", "up": "↑", "left": "←", "right": "→",
         "enter": "Enter", "escape": "Esc", "equals_sign": "=", "minus": "-", "slash": "/",
     }
     # Documented as a range or pair rather than one key each.

@@ -45,7 +45,9 @@ class TestSummaryConfigModal:
         modal = SummaryConfigModal()
         modal.level = "low"
         modal.overrides = {}
-        # Identity group — all columns are ALL, so all visible at low
+        # Identity group: every column is ALL but KIND (hidden by default)
+        assert modal._group_state("identity") == "mixed"
+        modal.overrides = {"kind": True}
         assert modal._group_state("identity") == "all"
 
     def test_group_state_none(self):

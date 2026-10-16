@@ -107,12 +107,14 @@ from .tui_widgets import (
     CommandPalette,
     ColumnHeader,
 )
+from .tui_widgets.swarm_rows import SwarmRows
 from .tui_actions import (
     NavigationActionsMixin,
     ViewActionsMixin,
     DaemonActionsMixin,
     SessionActionsMixin,
     InputActionsMixin,
+    SwarmMixin,
 )
 from .tui_actions.activity import ActivityMixin
 from .tui_actions.view_control import ViewControlMixin
@@ -169,6 +171,7 @@ def remote_visits(prefs) -> dict:
 
 
 class SupervisorTUI(
+    SwarmMixin,
     ActivityMixin,
     ViewControlMixin,
     OveragentMixin,
@@ -284,6 +287,9 @@ class SupervisorTUI(
         ("D", "toggle_show_done", "Show done"),
         # Collapse/expand children in tree view (#244)
         ("X", "toggle_collapse_children", "Collapse children"),
+        # Delegated work as read-only rows under its parent (0.6.1 phase 2)
+        ("right", "expand_swarm", "Expand delegated work"),
+        ("left", "collapse_swarm", "Collapse delegated work"),
         # Sort picker: the palette on sort choices (#61, #487)
         ("S", "choose_sort", "Sort by…"),
         # Edit agent value (#61)
@@ -388,6 +394,8 @@ class SupervisorTUI(
         self.detector = StatusDetectorDispatcher(tmux_session, mode=detection_mode)
         # Track collapsed parents in tree view (#244)
         self.collapsed_parents: set[str] = set()
+        # Delegated work expanded into virtual rows (tui_actions/swarm.py)
+        self._init_swarm_state()
         # Max repo/branch/name widths for alignment in full detail mode
         self.max_repo_width: int = 10
         self.max_branch_width: int = 10
@@ -1676,6 +1684,7 @@ class SupervisorTUI(
             )
         widget.focus()
         self.engine_link.report_focus(widget)
+        self._swarm_focus_moved(widget)
         if self.preview_visible:
             self._update_preview()
         # Only sync tmux on explicit user navigation, not programmatic restores.
@@ -1833,7 +1842,7 @@ class SupervisorTUI(
         # Check if we have an empty message widget that needs removal
         # (Static widgets that aren't SessionSummary)
         has_empty_message = any(
-            isinstance(w, Static) and not isinstance(w, SessionSummary)
+            isinstance(w, Static) and not isinstance(w, (SessionSummary, SwarmRows))
             for w in container.children
         )
 
@@ -2152,6 +2161,9 @@ class SupervisorTUI(
                 widget.child_count = remote_children
         for widget in ordered_widgets:
             widget.job_count = self._job_counts.get(widget.session.id, 0)
+        # Expanded parents' virtual rows follow their parent's row
+        if self.swarm_expanded or self._swarm_lines:
+            self._sync_swarm_rows()
 
     def watch_preview_visible(self, preview_visible: bool) -> None:
         """React to preview pane visibility changes."""

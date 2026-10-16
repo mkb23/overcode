@@ -116,7 +116,9 @@ def render_swarm(ctx: ColumnContext) -> ColumnOutput:
     rollup = ctx.swarm_rollup
     if not rollup:
         return [(f" {ctx.e('👥')} {'-':>2}", f"dim{ctx.bg}")]
-    text = f" {ctx.e('👥')} {rollup.get('total') or 0:>2}"
+    # The fold marker in the leading space: → expands it into rows (phase 2)
+    fold = ("▾" if ctx.swarm_expanded else "▸") if ctx.is_list_mode and not ctx.is_remote else " "
+    text = f"{fold}{ctx.e('👥')} {rollup.get('total') or 0:>2}"
     for key, glyph in _SWARM_SEGMENTS:
         n = rollup.get(key) or 0
         if n:

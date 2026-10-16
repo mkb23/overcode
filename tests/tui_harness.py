@@ -31,7 +31,8 @@ class FakeEngine:
     """The engine, in memory: what it publishes reaches the app at once.
 
     Mirrors the parts of ``EngineServer`` tests use (``publish``, ``ring``,
-    ``attended``, ``focused_agents``, ``burn_windows``, ``take_visits``),
+    ``attended``, ``focused_agents``, ``burn_windows``, ``swarm_subscriptions``,
+    ``take_visits``),
     so a test reads the same against either.
     """
 
@@ -59,8 +60,11 @@ class FakeEngine:
         old = self.snapshot.agents
         agents = {aid: (old[aid] if aid in old and old[aid] == view else view)
                   for aid, view in snapshot.agents.items()}
+        virtual = snapshot.virtual
+        if virtual == self.snapshot.virtual:
+            virtual = self.snapshot.virtual  # unchanged: the same dict, as a delta leaves it
         self.snapshot = Snapshot(seq=self.snapshot.seq + 1, agents=agents,
-                                 fleet=dict(snapshot.fleet))
+                                 fleet=dict(snapshot.fleet), virtual=virtual)
         if self.client is not None and self.client.connected:
             self.client.link.apply_snapshot(self.snapshot)
 
@@ -88,6 +92,10 @@ class FakeEngine:
     def burn_windows(self) -> set:
         return {self.client.burn_hours} if self.client and self.client.burn_hours else set()
 
+    @property
+    def swarm_subscriptions(self) -> frozenset:
+        return frozenset(self.client.swarm) if self.client and self.client.visible else frozenset()
+
     def take_visits(self) -> list:
         visits, self._visits = self._visits, []
         return visits
@@ -106,6 +114,7 @@ class FakeEngineClient:
         self.visible = False
         self.focus: Optional[str] = None
         self.burn_hours: Optional[float] = None
+        self.swarm: set = set()  # parents subscribed to (swarm:<id>)
         self.stopped = False
 
     @property
@@ -136,6 +145,9 @@ class FakeEngineClient:
 
     def set_focus(self, agent: Optional[str]) -> None:
         self.focus = agent
+
+    def set_swarm(self, agents) -> None:
+        self.swarm = set(agents)
 
     def visit(self, agent: str) -> None:
         import time

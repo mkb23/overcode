@@ -149,6 +149,19 @@ def hover_swarm(ctx: ColumnContext):
     return _emoji_legend("Delegated work", rows)
 
 
+def hover_spend(ctx: ColumnContext):
+    """The agent's spend split into its own and its delegated work's (decision 6)."""
+    sub = ctx.subagent_cost_usd
+    total = getattr(ctx.session.stats, "estimated_cost_usd", 0.0) or 0.0
+    if not sub or ctx.claude_stats is None:
+        return None
+    own = max(0.0, total - sub)
+    rows = [("$", f"${total:.2f} in all"),
+            ("·", f"${own:.2f} its own turns"),
+            (ctx.e("👥"), f"${sub:.2f} its subagents, workflow agents and teammates")]
+    return _emoji_legend("Spend", rows, "Delegated work is inside the total; never add it again.")
+
+
 def hover_status_detail(ctx: ColumnContext):
     detail = ctx.status_detail
     if detail is None or not detail.badges:

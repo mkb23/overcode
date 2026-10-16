@@ -165,6 +165,10 @@ class ColumnContext:
     child_rollup: Optional[dict] = None
     # Its delegated work (swarm.rollup counts), None if it never delegated
     swarm_rollup: Optional[dict] = None
+    # Its delegated work is expanded into rows under it (→ / ←, TUI only)
+    swarm_expanded: bool = False
+    # The delegated work's share of its spend (engine: subagent_cost_usd)
+    subagent_cost_usd: Optional[float] = None
 
     # Fleet-wide column gates, the same for every row
     fleet: FleetFlags = field(default_factory=FleetFlags)
@@ -205,6 +209,13 @@ class ColumnContext:
     # "plan" or "" (#444). Overlays the launch mode through
     # status_constants.effective_permission_mode.
     in_session_mode: str = ""
+
+    @property
+    def agent_kind(self) -> str:
+        """The KIND column (agent-observability §4.0): every fleet row is an
+        overcode agent, ``child`` when another agent launched it. Virtual
+        rows (👥 subagents, 🧩 workflows) are drawn under their parent."""
+        return "child" if getattr(self.session, "parent_session_id", None) else "agent"
 
     @property
     def effective_permission_mode(self) -> str:
