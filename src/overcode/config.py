@@ -648,13 +648,18 @@ def get_bedrock_config() -> dict:
     Config format in ~/.overcode/config.yaml:
         bedrock:
           region: us-east-1
+          routing: global      # optional: the inference-profile prefix in use
 
     Returns:
-        Dict with region (str).
+        Dict with region (str) and routing (str or None).
     """
     bedrock = _get_config_value("bedrock", {})
+    if not isinstance(bedrock, dict):
+        bedrock = {}
+    routing = bedrock.get("routing")
     return {
         "region": bedrock.get("region", "us-east-1"),
+        "routing": routing if isinstance(routing, str) and routing else None,
     }
 
 

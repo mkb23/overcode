@@ -163,7 +163,9 @@ class TestSnapshotPricing:
     def test_curated_table_still_wins(self):
         from overcode.pricing import MODEL_PRICING, lookup_pricing
         assert lookup_pricing("gpt-5.6-sol") is MODEL_PRICING["gpt-5.6-sol"]
-        assert lookup_pricing("claude-opus-5") is MODEL_PRICING["opus"]
+        # A Claude model with its own price-table row is priced by it
+        assert lookup_pricing("claude-opus-5").source.startswith("price table: claude-opus-5")
+        assert lookup_pricing("claude-opus-9").source == "family: opus"
 
     def test_zero_priced_listing_is_not_a_price(self):
         from overcode import model_metadata

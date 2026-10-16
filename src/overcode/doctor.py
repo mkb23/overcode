@@ -54,6 +54,8 @@ FINDING_BUDGET_EXCEEDED = "budget_exceeded"
 FINDING_SIDS_EMPTY = "sids_empty_with_interactions"
 FINDING_MODEL_DRIFT = "model_drift"
 FINDING_UNPRICED_BUDGET = "unpriced_model_with_budget"
+FINDING_PRICE_GUESS = "price_from_family_row"
+FINDING_SPEND_DRIFT = "spend_drift"
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -533,6 +535,43 @@ def gather_data_findings(
             ),
         ))
 
+    findings.extend(spend_findings(session, live_stats))
+    return findings
+
+
+def spend_findings(session: Session, live_stats) -> List[Finding]:
+    """Cost checks of one agent (cost model 0.6.1): a Claude model priced by a
+    family row (no price-table row of its own), and spend that drifts from
+    Claude Code's own ``cost-state`` (``cost_check``)."""
+    from .pricing import priced_by_family
+
+    reads = getattr(live_stats, "per_conversation", None) if live_stats is not None else None
+    if not isinstance(reads, dict) or not reads:
+        return []
+    findings: List[Finding] = []
+    guessed = sorted({r.get("model") for r in reads.values()
+                      if isinstance(r, dict) and priced_by_family(r.get("model"))})
+    for model in guessed:
+        findings.append(Finding(
+            code=FINDING_PRICE_GUESS,
+            severity=SEVERITY_WARNING,
+            message=(f"model '{model}' has no price-table row: priced by a family row, "
+                     f"which may be wrong for it (overcode models lookup {model})"),
+        ))
+    if getattr(session, "backend", "claude-code") != "claude-code":
+        return findings
+    try:
+        from .cost_check import drift_messages, spend_drift
+        from .settings import get_model_pricing, get_user_config
+
+        config = get_user_config()
+        drifts = spend_drift(
+            session, reads, lambda model: get_model_pricing(model, config).per_million())
+    except Exception:
+        return findings
+    for message in drift_messages(drifts):
+        findings.append(Finding(code=FINDING_SPEND_DRIFT, severity=SEVERITY_WARNING,
+                                message=message))
     return findings
 
 
@@ -709,6 +748,30 @@ def storage_report(tmux_session: str, session_manager) -> dict:
         "legacy_names": len(legacy - prior),
         "legacy_live": len(legacy & prior),
     }
+
+
+def pricing_config_findings(config: dict) -> List[str]:
+    """config.yaml's pricing, globally: a ``model_pricing:`` row that does not
+    say whether it is a list or a net rate while a bedrock discount is set.
+
+    Before 0.6.1 the discount applied on top of every row, and the docs
+    told users to put net rates there; now a row is a list price unless it
+    says ``net: true``, so an unmarked net row is discounted twice.
+    """
+    if not isinstance(config, dict):
+        return []
+    bedrock = config.get("bedrock")
+    rows = config.get("model_pricing")
+    if not isinstance(bedrock, dict) or not isinstance(rows, dict):
+        return []
+    discounted = bedrock.get("discount") or bedrock.get("model_discount")
+    unmarked = sorted(str(key) for key, row in rows.items()
+                      if isinstance(row, dict) and "net" not in row)
+    if not discounted or not unmarked:
+        return []
+    return [f"model_pricing {', '.join(unmarked)}: Bedrock agents get the bedrock discount "
+            f"on top of these rates; mark each net: true (a rate you already pay) or "
+            f"net: false (a list price)"]
 
 
 def storage_findings(report: dict, *, terminated_grace_seconds: float = 0.0) -> List[str]:

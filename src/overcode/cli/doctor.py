@@ -218,6 +218,15 @@ def doctor(
     except Exception:
         pass
 
+    # Global: model_pricing rows the bedrock discount may apply to twice
+    try:
+        from ..config import _cached_config
+        from ..doctor import pricing_config_findings
+        for finding in pricing_config_findings(_cached_config()):
+            rprint(f"[yellow]⚠[/yellow] {finding}")
+    except Exception:
+        pass
+
     # Global: the models.dev catalog behind CTX%/pricing is stale (#473).
     try:
         from ..model_metadata import staleness_findings

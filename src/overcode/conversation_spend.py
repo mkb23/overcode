@@ -11,6 +11,8 @@ subagent is ``<session id>/<agent file>``, at its own model) in
 
     {conversation_id: {"in", "out", "cw", "cr",   # tokens, as priced
                        "cw1h"?,                   # the 1-hour part of "cw"
+                       "lin"?, "lout"?, "lcw"?, "lcr"?, "lcw1h"?,
+                                                  # the long-context part
                        "cost", "energy", "model", "rv"?, "recorded"?, "charged"?}}
 
 Each sync (``merge``) updates only the conversations the read covers, each
@@ -71,6 +73,17 @@ cache write and ``cw1h`` the part written with the 1-hour TTL, priced at
 the fifth price of a price row (``price``; twice the input price unless
 configured), the rest at the 5-minute cache-write price.
 
+Requests are priced at their own tier: a request whose prompt passes its
+model's long-context threshold is billed whole at the long-context rates
+(Haiku 5.5 over 100K tokens). A reader that sees each request reports the
+part of every count spent by such requests (``lin``, ``lout``, ``lcw``,
+``lcr``, ``lcw1h``: a breakdown, like ``cw1h``), and a price row with a
+long-context tier (ten prices, ``price``) prices that part at it. What a
+read adds to the breakdown is never more than what it adds to the count.
+An entry from before the breakdown has none: a read whose breakdown grew
+by more than its count did is that entry's first, and its breakdown is
+taken as it is, unpriced (those tokens were priced already).
+
 Nothing here imports the rest of overcode: readers build usages with
 ``usage`` and the daemon passes the pricing in.
 """
@@ -89,6 +102,8 @@ SPEND_KEYS = TOKEN_KEYS + ("cost", "energy")
 # The 1-hour TTL part of ``cw`` (a breakdown, not summed into the totals)
 CW1H = "cw1h"
 USAGE_KEYS = TOKEN_KEYS + (CW1H,)
+# The long-context part of each of USAGE_KEYS (a breakdown)
+LONG_KEYS = {"in": "lin", "out": "lout", "cw": "lcw", "cr": "lcr", CW1H: "lcw1h"}
 # The pseudo conversation a pre-per-conversation record's totals fold into
 LEGACY_KEY = "_legacy"
 # The pseudo conversation of a reader that reports only totals
@@ -103,13 +118,16 @@ EnergyFn = Callable[[Optional[str], Mapping[str, int]], float]
 def usage(input_tokens: Any = 0, output_tokens: Any = 0, cache_creation_tokens: Any = 0,
           cache_read_tokens: Any = 0, *, model: Optional[str] = None,
           cost: Optional[float] = None, cache_creation_1h_tokens: Any = 0,
-          rv: Optional[int] = None) -> Dict[str, Any]:
+          rv: Optional[int] = None,
+          long: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """One conversation's read, as a reader reports it.
 
     ``cost`` is the backend's own recorded charge, when it keeps one and it
     is non-zero; otherwise the daemon prices the tokens.
     ``cache_creation_1h_tokens`` is the part of the cache writes made with
-    the 1-hour TTL; ``rv`` the reader's version (see the module docstring).
+    the 1-hour TTL; ``rv`` the reader's version; ``long`` the part of each
+    count (by ``USAGE_KEYS``) spent by long-context requests, from a reader
+    that sees each request (see the module docstring).
     """
     out: Dict[str, Any] = {
         "in": _int(input_tokens), "out": _int(output_tokens),
@@ -118,6 +136,11 @@ def usage(input_tokens: Any = 0, output_tokens: Any = 0, cache_creation_tokens: 
     one_hour = min(_int(cache_creation_1h_tokens), out["cw"])
     if one_hour:
         out[CW1H] = one_hour
+    if isinstance(long, Mapping):
+        for k, lk in LONG_KEYS.items():
+            part = min(_int(long.get(k, 0)), out.get(k, 0))
+            if part:
+                out[lk] = part
     if isinstance(rv, int) and not isinstance(rv, bool) and rv > 0:
         out["rv"] = rv
     if model:
@@ -133,13 +156,27 @@ def price(px: Sequence[float], tokens: Mapping[str, Any]) -> float:
     ``px`` is (input, output, cache write, cache read) and optionally a
     fifth, the 1-hour cache write: then the ``cw1h`` part of ``cw`` is
     priced at it and the rest at the cache-write price. A four-price row
-    prices every cache write at the cache-write price.
+    prices every cache write at the cache-write price. A ten-price row
+    adds the long-context tier's five: the long-context part of the
+    tokens (``LONG_KEYS``) is priced at those, the rest at the first five.
+    A row without the tier prices every token at its one tier.
     """
     px = list(px)
-    cw = _int(tokens.get("cw", 0))
-    one_hour = min(cw, _int(tokens.get(CW1H, 0))) if len(px) > 4 else 0
-    total = (float(px[0]) * _int(tokens.get("in", 0)) + float(px[1]) * _int(tokens.get("out", 0))
-             + float(px[2]) * (cw - one_hour) + float(px[3]) * _int(tokens.get("cr", 0)))
+    counts = {k: _int(tokens.get(k, 0)) for k in USAGE_KEYS}
+    if len(px) >= 10:
+        long = {k: min(counts[k], _int(tokens.get(lk, 0))) for k, lk in LONG_KEYS.items()}
+        if any(long.values()):
+            rest = {k: counts[k] - long[k] for k in USAGE_KEYS}
+            return _price_one(px[:5], rest) + _price_one(px[5:10], long)
+    return _price_one(px[:5], counts)
+
+
+def _price_one(px: Sequence[float], counts: Mapping[str, int]) -> float:
+    """``counts`` (by ``USAGE_KEYS``) at one tier's four or five prices."""
+    cw = counts["cw"]
+    one_hour = min(cw, counts[CW1H]) if len(px) > 4 else 0
+    total = (float(px[0]) * counts["in"] + float(px[1]) * counts["out"]
+             + float(px[2]) * (cw - one_hour) + float(px[3]) * counts["cr"])
     if one_hour:
         total += float(px[4]) * one_hour
     return total / 1_000_000
@@ -219,6 +256,7 @@ def merge(
             entry[k] = _int(entry.get(k, 0)) + delta[k]
         if delta[CW1H] or CW1H in entry:
             entry[CW1H] = min(entry["cw"], _int(entry.get(CW1H, 0)) + delta[CW1H])
+        _take_long(entry, read, delta)
         if grew:
             entry["energy"] = round(_num(entry.get("energy", 0))
                                     + energy(model, {k: delta[k] for k in TOKEN_KEYS}), 3)
@@ -282,6 +320,27 @@ def merge_restating(
     return merge(entries, reads, recorded=recorded, **kwargs)
 
 
+def _take_long(entry: Dict[str, Any], read: Mapping[str, Any], delta: Dict[str, int]) -> None:
+    """Fold a read's long-context breakdown into ``entry`` and ``delta`` (module docstring).
+
+    ``delta`` (by ``USAGE_KEYS``) is what the read adds and has been added
+    to the entry's counts. What the read adds to the breakdown goes into
+    the delta (``LONG_KEYS``) when it is within the count's growth; past
+    it, the entry had no breakdown yet: the breakdown is taken, unpriced.
+    A briefly low read never lowers the breakdown.
+    """
+    for k, lk in LONG_KEYS.items():
+        held = _int(entry.get(lk, 0))
+        seen = _int(read.get(lk, 0))
+        grew = seen - held
+        delta[lk] = grew if 0 < grew <= delta.get(k, 0) else 0
+        part = min(max(held + delta[lk], seen), _int(entry.get(k, 0)))
+        if part:
+            entry[lk] = part
+        else:
+            entry.pop(lk, None)
+
+
 def _replace(entry: Dict[str, Any], read: Mapping[str, Any], model: Optional[str],
              prices: PriceFn, energy: EnergyFn) -> None:
     """Replace an entry's tokens by a newer reader's read (module docstring).
@@ -291,8 +350,9 @@ def _replace(entry: Dict[str, Any], read: Mapping[str, Any], model: Optional[str
     conversation that ran on several models keeps their mix. A charged
     entry (``recorded``) keeps its charge.
     """
-    old = {k: _int(entry.get(k, 0)) for k in USAGE_KEYS}
-    new = {k: _int(read.get(k, 0)) for k in USAGE_KEYS}
+    long_keys = tuple(LONG_KEYS.values())
+    old = {k: _int(entry.get(k, 0)) for k in USAGE_KEYS + long_keys}
+    new = {k: _int(read.get(k, 0)) for k in USAGE_KEYS + long_keys}
     new[CW1H] = min(new[CW1H], new["cw"])
     px = _prices_or_none(prices, model)
     if not entry.get("recorded") and px is not None:
@@ -310,10 +370,11 @@ def _replace(entry: Dict[str, Any], read: Mapping[str, Any], model: Optional[str
                             else joules_new, 3)
     for k in TOKEN_KEYS:
         entry[k] = new[k]
-    if new[CW1H]:
-        entry[CW1H] = new[CW1H]
-    else:
-        entry.pop(CW1H, None)
+    for k in (CW1H,) + long_keys:
+        if new[k]:
+            entry[k] = new[k]
+        else:
+            entry.pop(k, None)
 
 
 def replaced(before: Optional[Mapping[str, Any]], after: Mapping[str, Any]) -> List[str]:
@@ -537,7 +598,7 @@ def legacy_base_cost(stats: Any, seg: int, base_usage: Any) -> Optional[float]:
     if not isinstance(legacy, Mapping) or not seg or not isinstance(base_usage, Mapping):
         return None
     px = legacy.get("px")
-    if not isinstance(px, list) or len(px) not in (4, 5) or _int(legacy.get("seg")) != int(seg):
+    if not isinstance(px, list) or len(px) not in (4, 5, 10) or _int(legacy.get("seg")) != int(seg):
         return None
     return price(px, base_usage)
 
@@ -550,7 +611,8 @@ def has_entries(stats: Any) -> bool:
 
 
 __all__: List[str] = [
-    "CW1H", "LEGACY_KEY", "TOTAL_KEY", "TOKEN_KEYS", "STATS_FIELDS", "USAGE_KEYS",
+    "CW1H", "LEGACY_KEY", "LONG_KEYS", "TOTAL_KEY", "TOKEN_KEYS",
+    "STATS_FIELDS", "USAGE_KEYS",
     "has_entries", "legacy_base_cost", "merge", "merge_restating", "price", "recorded_totals",
     "replaced",
     "totals", "usage",

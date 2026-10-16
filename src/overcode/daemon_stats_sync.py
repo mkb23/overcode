@@ -365,17 +365,21 @@ def spend_pricing(session: Any, stats: Any = None) -> Tuple[
     """``(prices, energy, default model)`` for ``conversation_spend.merge`` of an agent.
 
     ``prices(model)`` is the per-million price row (input, output, cache
-    write, cache read, 1-hour cache write) at the agent's provider;
-    unknown models fall back to the global config.
+    write, cache read, 1-hour cache write, then the long-context tier's
+    five when the model has one) at the agent's provider and, on Bedrock,
+    its routing (recorded at launch); unknown models fall back to the
+    global config.
     """
     from .settings import get_user_config, get_model_pricing
 
     config = get_user_config()
     provider = getattr(stats, "provider", None) or getattr(session, "provider", None)
     default_model = getattr(stats, "model", None) or getattr(session, "model", None)
+    routing = getattr(session, "bedrock_routing", None)
 
     def prices(model):
-        return get_model_pricing(model, config, provider=provider).per_million()
+        return get_model_pricing(model, config, provider=provider,
+                                 routing=routing).per_million()
 
     def energy(model, tokens):
         return estimate_energy_joules(

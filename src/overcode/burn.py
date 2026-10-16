@@ -104,6 +104,7 @@ def compute_window_burn(
         mp = get_model_pricing(
             getattr(session, 'model', None), config,
             provider=getattr(session, 'provider', None),
+            routing=getattr(session, 'bedrock_routing', None),
         )
         cost = calculate_cost_estimate(
             u["input_tokens"],

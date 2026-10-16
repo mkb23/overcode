@@ -185,7 +185,9 @@ def scan_updates(path: Path, *, since_ts: Optional[float] = None) -> Dict[str, A
             continue
         if since_ts is not None and _as_number(entry.get("timestamp")) < since_ts:
             continue
-        out["input_tokens"] += _as_int(usage.get("inputTokens"))
+        # inputTokens includes the cached reads (grok_stats docstring point 3)
+        out["input_tokens"] += max(0, _as_int(usage.get("inputTokens"))
+                                   - _as_int(usage.get("cachedReadTokens")))
         # reasoning has no bucket of its own, so it folds into output rather
         # than vanishing from the totals — matches the codex/opencode
         # convention this reader follows elsewhere.

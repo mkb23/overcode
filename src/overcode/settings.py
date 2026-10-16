@@ -14,13 +14,13 @@ TODO: Make INTERVAL_FAST/SLOW/IDLE configurable via config.yaml
 
 import dataclasses
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, List, Optional, Set, Tuple, Union
 
 
 from . import paths
-from .pricing import ModelPricing, MODEL_PRICING
+from .pricing import BEDROCK_GLOBAL, ModelPricing, bedrock_routing, builtin_pricing
 
 if TYPE_CHECKING:
     from .energy import EnergyConfig
@@ -130,34 +130,45 @@ def _apply_discount(pricing: ModelPricing, fraction: float) -> ModelPricing:
     """Return a copy of ``pricing`` with every rate scaled by (1 - fraction)."""
     if not fraction:
         return pricing
-    keep = 1.0 - fraction
-    return ModelPricing(
-        input=pricing.input * keep,
-        output=pricing.output * keep,
-        cache_write=pricing.cache_write * keep,
-        cache_read=pricing.cache_read * keep,
-        cache_write_1h=(None if pricing.cache_write_1h is None
-                        else pricing.cache_write_1h * keep),
-    )
+    return pricing.scaled(1.0 - fraction)
+
+
+def bedrock_routing_of(fallback: "UserConfig", recorded: str | None = None) -> str:
+    """A Bedrock agent's routing: the one recorded at launch, else config's.
+
+    Config's is ``bedrock.routing`` when set, else what Claude Code derives
+    from ``bedrock.region`` (``pricing.bedrock_routing``).
+    """
+    if recorded:
+        return recorded
+    return bedrock_routing(prefix=fallback.bedrock_routing, region=fallback.bedrock_region)
 
 
 def get_model_pricing(
     model: str | None,
     fallback: "UserConfig",
     provider: str | None = None,
+    routing: str | None = None,
 ) -> ModelPricing:
     """Look up pricing for a model name, falling back to global config.
 
-    Matches against MODEL_PRICING keys as substrings of the model name
-    (e.g. "claude-sonnet-4-6" matches "sonnet").  User overrides in
-    config.yaml under ``model_pricing:`` take precedence over built-ins.
+    User overrides in config.yaml under ``model_pricing:`` first (substring,
+    longest key first), then the built-in price table's row for the exact
+    model id, the family rows and the models.dev snapshot
+    (``pricing.builtin_pricing``), then the global ``pricing:`` rates.
 
-    When ``provider == "bedrock"``, any configured bedrock discount (flat or
-    per-model) is applied to the resolved list rates so the estimate reflects
-    a negotiated private-offer / committed-use rate rather than list price.
+    When ``provider == "bedrock"`` the list rates become what AWS bills:
+    times the model's regional premium unless the agent's requests go
+    through a ``global.`` profile (``routing``, recorded at launch; else
+    config's, ``bedrock_routing_of``), then less any configured bedrock
+    discount (flat or per-model). A ``model_pricing:`` row marked
+    ``net: true`` is already the price paid and is taken as it is: the
+    discount applies once, never on top of a net rate.
     """
     base = _get_list_pricing(model, fallback)
-    if provider == "bedrock":
+    if provider == "bedrock" and not base.net:
+        if bedrock_routing_of(fallback, routing) != BEDROCK_GLOBAL:
+            base = base.scaled(base.regional if base.regional is not None else 1.0)
         return _apply_discount(base, _bedrock_discount_for(model, fallback))
     return base
 
@@ -165,24 +176,24 @@ def get_model_pricing(
 def _get_list_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing:
     """Resolve list (pre-discount) pricing for a model name.
 
-    Order: config.yaml ``model_pricing`` overrides and the built-in
-    ``MODEL_PRICING`` table (substring, longest key first), then the bundled
-    models.dev snapshot by exact bare id (#473), then the configured default
-    per-token rates.
+    Order: config.yaml ``model_pricing`` overrides (substring, longest key
+    first), then the built-in price table's row, family rows and models.dev
+    snapshot (``pricing.builtin_pricing``), then the configured default
+    per-token rates. A user row the user wrote without ``regional`` takes
+    the built-in row's, so a list price override keeps Bedrock's premium.
     """
     if model:
-        # Check user overrides first, then built-ins. Match longest key first
-        # so versioned keys (e.g. "opus-4-1") win over generic ones ("opus");
-        # see MODEL_PRICING for why ordering matters.
-        all_pricing = {**MODEL_PRICING, **fallback.model_pricing}
         model_lower = model.lower()
-        for key in sorted(all_pricing, key=len, reverse=True):
+        for key in sorted(fallback.model_pricing, key=len, reverse=True):
             if key in model_lower:
-                return all_pricing[key]
-        from .pricing import snapshot_pricing
-        from_snapshot = snapshot_pricing(model)
-        if from_snapshot is not None:
-            return from_snapshot
+                user = fallback.model_pricing[key]
+                if user.regional is None:
+                    builtin = builtin_pricing(model)
+                    user = replace(user, regional=builtin.regional if builtin else 1.0)
+                return user
+        builtin = builtin_pricing(model)
+        if builtin is not None:
+            return builtin
     return ModelPricing(
         input=fallback.price_input,
         output=fallback.price_output,
@@ -222,15 +233,21 @@ class UserConfig:
     # Per-model pricing overrides (loaded from config.yaml model_pricing section)
     model_pricing: dict = field(default_factory=dict)
 
-    # Bedrock discount (loaded from config.yaml bedrock section). Bedrock
-    # on-demand list prices equal the Anthropic API list prices baked into
-    # MODEL_PRICING; enterprise customers negotiate a private-offer / committed-
-    # use discount off that list (commonly a flat % across all models, sometimes
-    # per-model). These are applied only to provider == "bedrock" sessions.
-    # For anything a flat % can't express (input/output-asymmetric net rates,
-    # provisioned throughput), set exact net rates via model_pricing instead.
+    # Bedrock discount (loaded from config.yaml bedrock section). Bedrock's
+    # global-profile on-demand prices equal the Anthropic API list prices of
+    # the price table; geographic and in-region profiles cost the model's
+    # ``regional`` multiple (1.1). Enterprise customers negotiate a private-
+    # offer / committed-use discount off that (commonly a flat % across all
+    # models, sometimes per-model). Applied only to provider == "bedrock"
+    # sessions, once. For anything a flat % can't express (input/output-
+    # asymmetric net rates, provisioned throughput), set exact net rates via
+    # model_pricing with ``net: true``.
     bedrock_discount: float = 0.0          # fraction off list, e.g. 0.30 = 30% off
     bedrock_model_discount: dict = field(default_factory=dict)  # {family: fraction}
+    # bedrock.routing: "global" or a geography prefix, for agents whose
+    # routing was not recorded at launch; None: derived from bedrock.region
+    bedrock_routing: Optional[str] = None
+    bedrock_region: str = "us-east-1"
 
     # Skill emoji overrides (loaded from config.yaml skill_emoji section) (#252)
     skill_emoji: dict = field(default_factory=dict)
@@ -282,12 +299,19 @@ class UserConfig:
                         cache_write=vals.get("cache_write", 3.75),
                         cache_read=vals.get("cache_read", 0.30),
                         cache_write_1h=_optional_price(vals.get("cache_write_1h")),
+                        # None: the built-in row's (_get_list_pricing)
+                        regional=_optional_price(vals.get("regional")),
+                        net=vals.get("net") is True,
+                        source=f"config: model_pricing.{key}",
                     )
 
-        # Parse bedrock discount (flat + optional per-model overrides)
+        # Parse bedrock discount (flat + optional per-model overrides),
+        # the routing override and the region Claude Code derives it from
         bedrock_raw = data.get("bedrock", {})
         bedrock_discount = 0.0
         bedrock_model_discount: dict[str, float] = {}
+        bedrock_routing_cfg: Optional[str] = None
+        bedrock_region = "us-east-1"
         if isinstance(bedrock_raw, dict):
             bedrock_discount = _clamp_fraction(bedrock_raw.get("discount", 0.0))
             md_raw = bedrock_raw.get("model_discount", {})
@@ -295,6 +319,10 @@ class UserConfig:
                 bedrock_model_discount = {
                     str(k).lower(): _clamp_fraction(v) for k, v in md_raw.items()
                 }
+            if isinstance(bedrock_raw.get("routing"), str):
+                bedrock_routing_cfg = bedrock_raw["routing"]
+            if isinstance(bedrock_raw.get("region"), str) and bedrock_raw["region"]:
+                bedrock_region = bedrock_raw["region"]
 
         # Parse skill emoji overrides (#252)
         skill_emoji_raw = data.get("skill_emoji", {})
@@ -356,6 +384,8 @@ class UserConfig:
             model_pricing=model_pricing_parsed,
             bedrock_discount=bedrock_discount,
             bedrock_model_discount=bedrock_model_discount,
+            bedrock_routing=bedrock_routing_cfg,
+            bedrock_region=bedrock_region,
             skill_emoji=skill_emoji_parsed,
             wrapper_emoji=wrapper_emoji_parsed,
         )
