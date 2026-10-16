@@ -19,6 +19,56 @@ Shows all agents as single-line summaries with live status, metrics, and a conte
 
 When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children; folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
 
+### Delegated work (👥, 🧩)
+
+A Claude agent can hand work out inside its own session: subagents
+(background by default), forks, workflows and teammates. None of them is an
+overcode agent; the DLG column rolls them up on the parent's row, e.g.
+`▸👥 43 ▶15 🟠1 ✅27 ❌1 🧩1` (total, working, waiting for approval,
+finished, failed, workflow runs).
+
+Press `→` on that row to expand it: the work appears as read-only rows right
+under the parent, and the fold marker turns to `▾`. Groups come first, never
+a flat list:
+
+```
+└ 🟠 🧩 review ▾ 40 agents  phase Verify 18/30   12🟢 3🟡 1🟠 24✅   ($3.95)
+    ✔ Find  10/10
+    ▶ Verify  18/30  ▸
+      · 🟠 👥 verify-api-auth  needs approval in the parent's pane
+      · 🟢 👥 verify-cache-ttl  Read src/overcode/cache.py
+      · +13 more  (→ to open)
+└ 🟢 👥 agents ▾ 3 agents   1🟢 2✅   ($0.15)
+    · 🟢 👥 map engine  Grep TickContext
+    · ✅ 2 done
+```
+
+- A row's kind is its marker: no marker for an overcode agent, 👥 for a
+  subagent, fork or teammate, 🧩 for a workflow run. The KIND column
+  (hidden by default; switch it on with `C`) spells out agent / child for
+  fleet rows.
+- A group (or a workflow phase) with more than 8 members opens collapsed and
+  shows its top three "needs you" members (🟠 first, then 🟢 oldest first)
+  and `+k more`.
+- `j`/`k` move the highlight through the rows and on to the next agent. The
+  parent keeps focus, so the pane below stays on the parent: a virtual row
+  has no terminal of its own.
+- `→` goes one level in: opens a group or phase, then moves into it; on a
+  member it opens a detail line (model, type, phase, start time, tokens,
+  cost, last tool, result). `←` closes what the highlight is on, or goes up a
+  level; on the agent's own row it collapses the whole thing.
+- Virtual rows are read only. With the highlight on one, the agent keys
+  (send, kill, restart, rename, …) say so and do nothing; `Enter` moves to
+  the parent's pane, where a subagent's permission prompt is answered.
+- A finished member stays (dimmed, ✅/❌) for 30 seconds, then folds into
+  its group's done count (`observability.finished_row_seconds` in
+  config.yaml). Subagents never ring the bell: their permission prompt
+  already turns the parent 🟠.
+- Hover the parent's tokens or $ cell for its spend split: its own turns
+  and its delegated work (which is inside the total, never added again).
+- Only expanded parents cost anything: the engine reads the subagents'
+  meta files and workflow journals, and sends their rows, for those alone.
+
 ### Sorting and Column Headers
 
 Click any column header to sort by that column; click it again to reverse. The sorted column is drawn bold with ▼ (largest first) or ▲ (smallest / A→Z first). Numbers sort largest first by default, text A→Z; agents with no value for the column (e.g. no CPU sample yet) always go last. Child agents stay grouped under their parent in every sort.
@@ -41,6 +91,7 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 |-----|--------|
 | `j` / `↓` | Move to next agent |
 | `k` / `↑` | Move to previous agent |
+| `→` / `←` | Expand / collapse an agent's delegated work, one level at a time ([above](#delegated-work--)) |
 | `b` | Jump to next agent needing attention |
 | `Ctrl+P` | Jump to an agent by name (fuzzy search) |
 | `J` | Switch between the agents and jobs views |

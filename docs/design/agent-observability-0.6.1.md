@@ -414,6 +414,100 @@ Phase 0 stays on release/0.6.1; it is not cherry-picked to main.
 
 ---
 
+## Phase 2 as built
+
+What the person sees: `→` on a parent with a 👥 rollup expands its
+delegated work into read-only rows right under it (the DLG cell's leading
+space becomes `▸` / `▾`); `j`/`k` walk them, `→`/`←` go a level in or out,
+`←` on the parent collapses. See `docs/tui-guide.md`, "Delegated work".
+
+- **Hook side** (`swarm.py`): a member's last tool call (`activity`, one
+  short line from its `PreToolUse`), a workflow agent's run (from
+  `SubagentStop.agent_transcript_path`), each run's `started_at` /
+  `ended_at`, a done entry's `type` and `started_at`, and the parent's
+  `transcript_path` (only once it has delegated). No new hook events, no
+  extra writes.
+- **Rows** (`swarm.virtual_rows`, pure): group rows (`<p>/wf/<run>`,
+  `<p>/tm`, `<p>/sa`), phase rows (`<p>/wf/<run>/ph/<n>`) and member rows
+  (`<p>/wf/<run>/<agent>`, `<p>/tm/<name>`, `<p>/sa/<agent>`), as §3.2.
+  Each holds absolute times, counts, names and its own share of the spend;
+  none holds `last_seen` or a countdown. A finished member (and a finished
+  run's group) keeps its row for `observability.finished_row_seconds`
+  (30 s) after it ended; the function returns the earliest such deadline.
+  Group counts always include every finished member.
+- **Details** (`swarm_files.py`): description, type, phase and model come
+  from `<transcript>/subagents/[workflows/<run>/]agent-<id>.meta.json`, read
+  once per agent (a missing one is retried at most every 2 s); a workflow's
+  membership, labels, phases and per-agent results from its
+  `journal.jsonl`, re-read when its (mtime, size) moves. Only for expanded
+  parents.
+- **Engine** (`swarm_publisher.py`, `engine_protocol.py`,
+  `engine_socket.py`): snapshots gained a `virtual` section keyed by row
+  identity, diffed and applied like `agents` (`virtual_set` /
+  `virtual_unset` / `virtual_removed`; the protocol property test covers
+  it; an older view ignores it). A view sends `{"t": "swarm", "agents":
+  [...]}` with the parents it expanded (restated on reconnect); the server
+  reports the union over visible views. Rows are built on every publish and,
+  between ticks, at each wake step when a subscription changed, a deadline
+  passed or a watched journal moved. They go to views only, never to the
+  state file. `SessionDaemonState.subagent_cost_usd` (default snapshot) is
+  the delegated share of the agent's spend, for the $ hover.
+- **TUI** (`tui_actions/swarm.py`, `swarm_view.py`,
+  `tui_widgets/swarm_rows.py`): one `SwarmRows` widget per expanded parent,
+  mounted after its row, redrawn only when its lines change. The highlight
+  on a virtual row is `app.swarm_cursor`; the parent's row keeps Textual
+  focus and the split's pane. With it set, agent actions (send, kill,
+  restart, rename, fork, sleep, …) are refused with a notice, through one
+  `run_action` guard (keys and palette alike), and Enter focuses the
+  parent's pane. `→`/`←` have palette entries (help lists them).
+- **Kind markers** (§4.0): fleet rows unchanged (no marker); member rows
+  👥, workflow groups 🧩 (`Wf` emoji-free). The KIND column (hidden below
+  full detail, and while every row is the same kind) says `agent` or
+  `child`.
+- **Bell**: virtual rows have no episodes; a pilot test publishes a 🟠
+  member and sees no ring and no 🔔.
+
+Choices where the design left room, or the data disagreed:
+
+1. **Groups travel with members, under the subscription.** §6.2 put group
+   summaries in every snapshot; a collapsed parent draws only the rollup,
+   so nothing about groups is published until it is expanded. One fewer
+   field in the default snapshot, no cost for a collapsed swarm.
+2. **The done line does not open.** Finished members show for 30 s, then
+   only in the group's `✅ n done · ❌ k` line; opening the older ones on
+   demand would mean publishing up to 200 done members per parent. Left
+   for later if wanted.
+3. **No running durations.** A live member's detail shows its start time
+   (`since 12:03:10`), a finished one its run time: lines change only when
+   rows do, so the TUI needs no clock for them.
+4. **Lights without a green window.** A live member is 🟢 unless it waits
+   for approval (🟠), on its own background work (🟡) or is an idle
+   teammate (⚪); there is no ❔ "no tool hook yet" state (nothing in the
+   hook state tells the first tool call apart, and it would last under a
+   second).
+5. **Phases are journal-driven.** "Verify 18/30" is finished/started in
+   that phase as the journal tells it; a phase appears once its first agent
+   starts (the script's `phases` list is not parsed). A workflow agent is
+   put in its run by the journal, else by the run its `SubagentStop`
+   named, else (live) the newest running run.
+6. **Expansion is per TUI and not saved.** A restart starts collapsed.
+7. **`X` and `v` are not extended**, and `b` does not land on a 🟠 member
+   (its parent already turns 🟠 and `b` finds the parent). `v` is the
+   VSCode preset's ctrl+o key, so a swarm-detail cycle needs another key.
+8. **Teammates group by "team"**, one group per parent (Claude makes one
+   implicit team per session, F11).
+
+For Phase 3 (🛰 background sessions as ordinary agent views): the row
+class goes into the default snapshot's `agents`, not `virtual`, so extend
+`monitor_daemon.py` (a jobs-dir source beside the detector),
+`SessionDaemonState` (a `kind` field), `ColumnContext.agent_kind` and the
+KIND column (`columns/registry.py`, `columns/render_identity.py`), and the
+read-only guard's action set in `tui_actions/swarm.py` (`READ_ONLY_BLOCKED`)
+for the actions a 🛰 row allows. `swarm_view` and `SwarmRows` stay for
+virtual rows only.
+
+---
+
 ## Appendix: capture index
 
 `docs/design/spike-agent-types/captures/`, scrubbed (paths become `~`,
