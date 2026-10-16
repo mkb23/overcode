@@ -75,9 +75,9 @@ a flat list:
 
 A Claude background session (`claude --bg`, `/bg` or `←` in Claude, or one
 dispatched from `claude agents`) runs under Claude's own supervisor, not
-overcode's. When its directory is inside one of your agents' directories it
-gets a row of its own, marked 🌙 (`Bs` emoji-free), right under the agent it
-came from:
+overcode's. When its directory is inside one of your agents' directories, or
+in another git worktree of a repository one of them works in, it gets a row
+of its own, marked 🌙 (`Bs` emoji-free), right under the agent it came from:
 
 ```
 🟡 bravo            opus   Waiting on 2 background agents            $4.20
@@ -86,16 +86,23 @@ came from:
 
 - It is nested under the agent whose hooks it ran under (it inherited that
   agent's environment, as `/bg` from the agent's Claude does), or whose
-  conversation it continues, or else whose directory holds it. A session
-  outside every agent's directory is not shown. KIND says `bg`.
+  conversation it continues, or else whose directory holds it (the deepest
+  one). A session in a worktree outside every agent's directory nests under
+  the agent working in that worktree's repository: the one in the main
+  checkout, else the one with the shortest directory path, then by name. A
+  session in none of these is not shown. KIND says `bg`.
 - Its light comes from Claude's own record of it: 🟢 working, 🟡 waiting on
   its own background work, 🔴 blocked on a question or permission (the
   status text is what it asks), ⚪ finished with a Result (✅ done, ❌
   failed, 📭 stopped). A blocked session rings the bell, once per stretch.
 - A finished session keeps its row for 30 seconds
   (`observability.finished_row_seconds`), then the row goes.
-- Its tokens and $ are its own conversation's and count once in the totals;
-  they are never added to the agent it is nested under.
+- Its tokens and $ are its own conversation's, read at the stats cadence
+  (every 5 s while you watch) while it runs, and count once in the totals;
+  they are never added to the agent it is nested under. Its spend is billed
+  to that agent's billing code: `overcode billing` counts it among the
+  code's agents and in a `background` column (see
+  [Billing Codes](configuration.md#billing-codes)).
 - Only Claude's own actions work on it. `Enter` attaches: `claude attach
   <id>` opens in the pane below (leave it with Claude's `←` or `Ctrl+Z`).
   `x` stops it after a second press (`claude stop`). "Remove background
@@ -111,6 +118,27 @@ came from:
 Click any column header to sort by that column; click it again to reverse. The sorted column is drawn bold with ▼ (largest first) or ▲ (smallest / A→Z first). Numbers sort largest first by default, text A→Z; agents with no value for the column (e.g. no CPU sample yet) always go last. Child agents stay grouped under their parent in every sort.
 
 Click an agent's row to select it, just like moving to it with `j`/`k`: the tmux pane below switches to that agent. Hover a row's emoji cells (skills, PRF, tools, status detail) to see what each emoji means.
+
+### A conversation overcode did not start (🔀)
+
+Only an agent's own Claude moves its status. A Claude the agent starts
+itself (`claude -p` in its Bash tool inherits the agent's overcode
+environment) is told apart by its process, and its turns never change the
+agent's light, obligations or 👥 list. When a conversation overcode never
+saw does run in an agent's name, the agent shows 🔀 (`Cv` emoji-free) in its
+status detail for 30 minutes, beside its own light; hover it for which one:
+
+- **resumed a conversation overcode did not start; now tracked as this
+  agent's**: you `/resume`d into it in the agent's own pane (or started
+  `claude` by hand there after the agent's exited). It is the agent: its
+  turns drive the row, and `restart` resumes it.
+- **in a conversation another agent owns**: the same, into another live
+  agent's conversation. The row follows it, but the record stays on the old
+  conversation, so `restart` returns there.
+- **a conversation overcode can't place ran in this agent's name; its events
+  are ignored**: neither the agent's own Claude nor one it started.
+
+`overcode doctor` lists the same warning for a day.
 
 From the keyboard, `S` opens the command palette on sort choices: every sortable column plus Tree order. Type a few letters of the column's name or its header code (`cpu`, `tok`, `git`) and press `Enter`; choosing the current sort again reverses it, and `Tab` does the same while keeping the picker open. "Reverse sort" in the `/` palette flips the current direction. The sort is saved in `tui_preferences.json`.
 

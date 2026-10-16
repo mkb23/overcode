@@ -538,13 +538,13 @@ and status text. `Enter` attaches, `x` stops (second press), the palette's
   (`find_job`: `jobs/<sessionId[:8]>`, then a scan, at most every 30 s per
   id); (2) its `sessionId` or `resumeSessionId` is one of the agent's own
   conversations; (3) its `cwd` is inside the agent's `start_directory` (the
-  deepest wins). None of these: not shown (decision 1). Only this tmux
-  session's live agents (not terminated or done) count.
+  deepest wins); (4) its `cwd` is a git worktree of the repository an agent
+  works in (follow-up 3 below). None of these: not shown (decision 1). Only
+  this tmux session's live agents (not terminated or done) count.
 - **The /bg confusion, fixed at the source**: an event from a conversation
   that is a registered background session no longer touches the agent's
   hook snapshot (status, obligations, swarm): only `foreign_sessions` is
-  written. Other foreign conversations (a nested `claude -p`) behave as
-  before, apart from being noted.
+  written. Nested CLIs get the same treatment since follow-up 1 below.
 - **Engine** (`monitor_daemon.py`, `engine_wake.py`): `ClaudeBgSource`
   refreshes at every full tick and, between ticks, at every wake step that
   is due (1 s watched, 5 s not; a finished row's time running out). The
@@ -557,9 +557,9 @@ and status text. `Enter` attaches, `x` stops (second press), the palette's
   can reach it. They are republished only when one moved.
 - **Spend** (`BgSpend`): its own transcript (`linkScanPath`) plus its
   subagents, deduplicated by `read_tree_stats`, priced per file's model, at
-  the stats cadence while live, once more when it finishes, then frozen. It
-  counts once, under its own row; never added to the agent it nests under,
-  and not billed to the ledger.
+  the stats cadence while live, once more when it finishes, then frozen
+  (until it runs again). It counts once, under its own row; never added to
+  the agent it nests under. Billed to the ledger since follow-up 2 below.
 - **Bell**: each row's colour goes to its own recorder at every refresh
   (`RecorderStore.record_adopted`): bells and visits as for an agent (rings
   once its red has stood G, at most once per stretch; a session already
@@ -600,6 +600,93 @@ Choices where the design left room:
    per-user background service, which an isolated HOME cannot provide
    without touching the person's real state. The state values were checked
    against Claude Code 2.1.302's code and the spike capture instead.
+
+### Follow-ups as built (owner decisions after phase 3)
+
+**1. Only the agent's own Claude steers it** (`hook_handler._place`,
+`conversation_warning.py`). A nested Claude (an agent runs `claude -p` in
+its Bash tool; it inherits OVERCODE_*) no longer moves the agent's status,
+obligations or subagent list.
+
+- *Discriminator: the CLI's process id.* Claude Code builds every hook's
+  environment as `{...process.env, ...k9e(...), CLAUDE_PROJECT_DIR}` where
+  `k9e` sets `CLAUDECODE=1`, `CLAUDE_CODE_SESSION_ID`,
+  `CLAUDE_CODE_CHILD_SESSION=1` and **`CLAUDE_PID: String(process.pid)`**
+  (read from the 2.1.302 binary: the hook executor and the Bash tool share
+  `k9e`). `/resume` and `/clear` switch conversations inside the same
+  process (the `~/.claude/sessions/<pid>.json` registry, F16, is keyed by
+  pid with a changing `sessionId`). Observed live from inside an overcode
+  agent: its Bash tool's env carries `CLAUDE_PID` = the agent's `claude`
+  process (parent of the shell), `CLAUDE_CODE_SESSION_ID` = its
+  conversation. `CLAUDE_CODE_CHILD_SESSION` / `CLAUDECODE` do *not*
+  discriminate in a hook: `k9e` sets them for the agent's own hooks too.
+  The spike captures carry payloads only (no env), so they cannot show it;
+  no live nested run was made (it would need the real login).
+- The hook handler records the agent's own CLI pid (`cli_pid` in hook
+  state) from every event of its own conversation, and places each foreign
+  conversation once (rechecked every 30 s until settled), in
+  `foreign_sessions[sid].kind`: `bg` (a registered job, as before);
+  `nested` (its `CLAUDE_PID` descends from the agent's: one `ps -eo` walk);
+  `own` (same pid as the agent's, or the agent's CLI is dead: a `claude`
+  started by hand in its pane); `unplaced` (neither, or the agent's own pid
+  not seen yet). `bg`, `nested` and `unplaced` write only
+  `foreign_sessions` (and skip the session record entirely once placed).
+  `own` steers: the record moves to the conversation (`adopt`, aged now so
+  an old resumed transcript is not called superseded) unless another live
+  agent owns it (`shared`: the row follows it, the record stays). Backends
+  whose hooks have no `CLAUDE_PID` (codex, opencode, grok, hermes) are not
+  placed and behave as before (#500).
+- *The warning* (owner: "if resuming into an unknown agent can a warning
+  appear?"): `conversation_warning` in hook state, `{kind: adopted | shared
+  | unplaced, session_id, previous?, owner?, at}`. The detector appends a
+  🔀 badge (`Cv`; `conv_adopted` / `conv_shared` / `conv_unplaced`) to the
+  status detail for 30 min after `at`, beside the light; the hover says
+  "resumed a conversation overcode did not start; now tracked as this
+  agent's", "in a conversation another agent owns; not adopted, restart
+  returns to the old one", or "a conversation overcode can't place ran in
+  this agent's name; its events are ignored". `overcode doctor` adds an
+  `unknown_conversation` warning for a day, e.g. "resumed conversation
+  1a2b3c4d, which overcode did not start: now tracked as this agent's (was
+  9f8e7d6c) (at 14:02)".
+- Known gaps: a nested CLI resuming the agent's *own* conversation id
+  (`claude -p --continue` in the agent's directory) still reads as the
+  agent (it is not foreign); right after an upgrade, before the agent's
+  first own event records its pid, a nested CLI reads as `unplaced` (a
+  false warning for 30 min).
+
+**2. Background-session spend in the billing ledger** (`claude_bg_ledger.py`).
+Each adopted session is a ledger "agent" of its own: `sid`
+`claude-bg:<sessionId>`, `parent` the agent it nests under, that agent's
+billing code (children inherit; a child agent's session bills the child's
+code), rows marked `claude_bg: true`. Cumulative rows as for agents: a
+`checkpoint` as soon as it has spent anything, then at most every
+`ledger.checkpoint_minutes` when it moved; `final` when it finishes, or when
+its row goes unfinished (agent ended, `claude rm`), closing at what it
+really spent (its transcript read again, not the last checkpoint). A
+finished session that spends again (resumed) gets an `open` row in a new
+segment based on where the last closed; a rebill of its agent writes
+`close` + `open`, moving only later spend. A session whose `sessionId` is
+one of its agent's own conversations is skipped (the agent's own spend
+already reads that transcript). The segment state (seg, closed, base, last
+values, code, which engine wrote it) lives in `ledger/claude_bg.json`, so a
+restart neither re-bills nor reopens; only the engine that opened a segment
+closes it when its row is gone. Synced after every rebuild of the rows and
+at every housekeeping pass; planned against the last-read state (one stat),
+locked only to write. `overcode billing` counts them among the code's
+agents and in a `background` column (`"background"` in `--json`; totals and
+period reports alike). The 🌙 row's own $ moves at the stats cadence (5 s
+watched / 60 s not) and holds still between reads (TestLive).
+
+**3. Worktree placement** (`claude_bg.repo_of`, `_by_repo`; owner: pick a
+behaviour, revise with experience). A session whose `cwd` is a git worktree
+outside every agent's directory nests under the agent working in the same
+repository: `git rev-parse --git-common-dir` (the main checkout's `.git` for
+every worktree alike), asked once per directory and remembered (a directory
+in no repository is asked again at most every 60 s), so no git call per
+tick. Of several agents in that repository: the one in the main checkout,
+else the shortest directory path, then the name. A directory that holds the
+session still wins (rule 3 before rule 4). The row is `via: "repo"` and
+takes the agent's repo name, with no branch.
 
 ---
 
