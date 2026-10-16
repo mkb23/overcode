@@ -16,11 +16,13 @@ The engine reads those files (one ``stat`` per job per scan, a read only
 when one changed) and publishes each session that belongs to the fleet as
 an ordinary agent view with ``kind: "claude_bg"``: owner decision 1 shows a
 background session only when its ``cwd`` is inside the directory of one of
-this tmux session's live agents. Each is nested under the agent it came
-from when that is known, else the agent whose directory holds it
-(``attribute``).
+this tmux session's live agents, or in another worktree of the repository
+one of them works in. Each is nested under the agent it came from when that
+is known, else the agent whose directory holds it, else the agent working
+in its repository (``attribute``).
 
 Everything here is pure except ``JobsScanner`` (the jobs directory),
+``repo_of`` (one remembered call per directory),
 ``find_job`` (one job, for the hook handler) and ``BgSpend`` (transcripts).
 """
 
@@ -28,6 +30,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from datetime import datetime
@@ -67,6 +71,7 @@ _TERMINAL = {"done": "success", "failed": "failure", "crashed": "failure",
 VIA_HOOKS = "hooks"                # overcode's hooks fired in it under the agent's name
 VIA_CONVERSATION = "conversation"  # it continues one of the agent's conversations
 VIA_DIRECTORY = "directory"        # only its directory says so
+VIA_REPO = "repo"                  # its directory is a worktree of an agent's repository
 
 
 def claude_config_dir() -> Path:
@@ -207,6 +212,62 @@ def _inside(path: str, directory: str) -> bool:
     return p == d or p.startswith(d.rstrip(os.sep) + os.sep)
 
 
+# ``repo_of`` answers: path -> (main repository, or None; when a None may
+# be asked again). A repository is found once per path for the engine's
+# life; a path in none is asked again at most every _REPO_RETRY_SECONDS
+# (a worktree created after its first look). Never a git call per tick.
+_REPOS: Dict[str, Tuple[Optional[str], float]] = {}
+_REPO_RETRY_SECONDS = 60.0
+_REPO_TIMEOUT_SECONDS = 2.0
+
+
+def repo_of(path: str) -> Optional[str]:
+    """The main repository of the git working tree holding ``path``, or None.
+
+    ``git rev-parse --git-common-dir``: the main checkout's ``.git`` for the
+    main checkout and for every linked worktree alike, so two directories
+    with the same answer are working trees of one repository. Remembered
+    (``_REPOS``).
+    """
+    key = _real(path)
+    now = time.monotonic()
+    known = _REPOS.get(key)
+    if known is not None and (known[0] is not None or now < known[1]):
+        return known[0]
+    found: Optional[str] = None
+    where = key
+    while not os.path.isdir(where) and os.path.dirname(where) != where:
+        where = os.path.dirname(where)  # a directory since removed: its nearest parent
+    try:
+        out = subprocess.run(
+            ["git", "-C", where, "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, timeout=_REPO_TIMEOUT_SECONDS,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            found = os.path.realpath(os.path.join(where, out.stdout.strip()))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        found = None
+    _REPOS[key] = (found, now + _REPO_RETRY_SECONDS)
+    return found
+
+
+def _by_repo(cwd: str, agents: List[FleetAgent]) -> Optional[FleetAgent]:
+    """The agent working in the repository whose worktree ``cwd`` is (``VIA_REPO``).
+
+    Of several agents in that repository: the one in its main checkout,
+    else the one whose directory is shallowest, then by name.
+    """
+    repo = repo_of(cwd)
+    if repo is None:
+        return None
+    main = os.path.dirname(repo) if os.path.basename(repo) == ".git" else None
+    candidates = [a for a in agents if a.directory and repo_of(a.directory) == repo]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda a: (_real(a.directory) != main,
+                                          len(_real(a.directory)), a.name))
+
+
 def attribute(job: Mapping[str, Any], agents: Iterable[FleetAgent]
               ) -> Optional[Tuple[FleetAgent, str]]:
     """The fleet agent ``job`` came from, and how that is known; None: not the fleet's.
@@ -217,6 +278,10 @@ def attribute(job: Mapping[str, Any], agents: Iterable[FleetAgent]
     2. It continues one of the agent's own conversations (``sessionId`` or
        ``resumeSessionId``).
     3. Its ``cwd`` is inside the agent's directory (the deepest one wins).
+    4. Its ``cwd`` is a git worktree of the repository an agent works in
+       (``repo_of``: same ``--git-common-dir``), wherever it lives: the
+       agent in that repository's main checkout, else the shallowest
+       directory, then by name (``_by_repo``).
 
     A session that matches none of these is not under a fleet repo and is
     not shown (owner decision 1).
@@ -240,7 +305,10 @@ def attribute(job: Mapping[str, Any], agents: Iterable[FleetAgent]
             depth = len(_real(agent.directory))
             if depth > best_len:
                 best, best_len = agent, depth
-    return (best, VIA_DIRECTORY) if best is not None else None
+    if best is not None:
+        return best, VIA_DIRECTORY
+    owner = _by_repo(cwd, agents)
+    return (owner, VIA_REPO) if owner is not None else None
 
 
 # ── State mapping (§3.4) ───────────────────────────────────────────────
@@ -419,6 +487,7 @@ def build_rows(
         model = money.get("model") or _flag(job.get("respawnFlags"), "--model")
         cwd = job.get("cwd") if isinstance(job.get("cwd"), str) else None
         same_dir = bool(cwd and parent.directory and _real(cwd) == _real(parent.directory))
+        same_repo = same_dir or via == VIA_REPO
         state = SessionDaemonState(
             session_id=rid,
             name=job_name(job, short),
@@ -428,8 +497,8 @@ def build_rows(
             status_since=stamp(datetime.fromtimestamp(status_at)),
             start_time=stamp(datetime.fromtimestamp(started)) if started else None,
             start_directory=cwd,
-            repo_name=parent.repo_name if same_dir else (os.path.basename(cwd.rstrip(os.sep))
-                                                         if cwd else None),
+            repo_name=parent.repo_name if same_repo else (os.path.basename(cwd.rstrip(os.sep))
+                                                          if cwd else None),
             branch=parent.branch if same_dir else None,
             parent_name=parent.name,
             depth=1,
