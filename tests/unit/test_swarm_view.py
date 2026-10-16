@@ -82,6 +82,67 @@ class TestPhases:
         assert _kinds(lines) == ["group", "phase", "member", "member", "member", "more"]
 
 
+def _loose(n_live, n_done, orange=()):
+    subs = {f"a{i}": {"kind": "subagent", "started_at": 50.0 + i,
+                      **({"waiting": True} if i in orange else {})} for i in range(n_live)}
+    done = {f"d{i}": {"kind": "subagent", "result": "failed" if i == 1 else "ok",
+                      "started_at": 1.0, "ended_at": 10.0 + i} for i in range(n_done)}
+    return {"subagents": subs, "swarm": {"bg_at": 0.0, "done": done}}
+
+
+class TestDoneLine:
+    def test_closed_it_is_one_line_with_an_open_marker(self):
+        rows, _ = swarm.virtual_rows("p", _loose(1, 5), 100.0, 30)
+        lines = swarm_view.layout("p", rows)
+        assert _kinds(lines) == ["group", "member", "done"]
+        assert lines[-1].text.endswith("✅ 4 done · ❌ 1 ▸")
+        assert lines[-1].key == "p/sa/done" == swarm_view.done_key("p/sa")
+
+    def test_open_it_lists_what_the_engine_published_newest_first_then_older(self):
+        rows, _ = swarm.virtual_rows("p", _loose(1, 5), 100.0, 30,
+                                     done_open={"p/sa"}, done_limit=3)
+        lines = swarm_view.layout("p", rows, opened={"p/sa/done": True})
+        assert _kinds(lines) == ["group", "member", "done", "member", "member", "member", "older"]
+        assert lines[2].text.endswith("▾")
+        assert [ln.key for ln in lines[3:6]] == ["p/sa/d4", "p/sa/d3", "p/sa/d2"]
+        assert all(ln.owner == "p/sa/done" and ln.depth == 3 for ln in lines[3:7])
+        assert "+2 older" in lines[6].text
+
+    def test_while_open_finished_members_show_only_under_it(self):
+        # Finished 5 s ago: still a row of its own in the plain list
+        state = _loose(1, 0)
+        state["swarm"]["done"]["fresh"] = {"kind": "subagent", "result": "ok",
+                                           "started_at": 90.0, "ended_at": 95.0}
+        rows, _ = swarm.virtual_rows("p", state, 100.0, 30)
+        plain = swarm_view.layout("p", rows)
+        assert [ln.key for ln in plain] == ["p/sa", "p/sa/a0", "p/sa/fresh", "p/sa/done"]
+        opened = swarm_view.layout("p", rows, opened={"p/sa/done": True})
+        assert [ln.key for ln in opened] == ["p/sa", "p/sa/a0", "p/sa/done", "p/sa/fresh"]
+
+    def test_before_the_engine_answers_it_says_how_many_finished(self):
+        rows, _ = swarm.virtual_rows("p", _loose(1, 5), 100.0, 30)
+        lines = swarm_view.layout("p", rows, opened={"p/sa/done": True})
+        assert lines[-1].kind == "older" and "5 finished" in lines[-1].text
+
+
+class TestNeedsYou:
+    def test_only_groups_with_an_orange_member_open(self):
+        rows = _workflow(3, orange={1})
+        rows.update(swarm.virtual_rows("p", _loose(2, 0), 100.0, 30)[0])
+        lines = swarm_view.layout("p", rows, needs_you=True)
+        groups = [ln for ln in lines if ln.kind == "group"]
+        assert "▾" in groups[0].text and "▸" in groups[1].text   # review open, agents closed
+        # A closed group still shows its top "needs you" members, as auto-collapse does
+        assert [ln.key for ln in lines if ln.owner == "p/sa"] == ["p/sa/a0", "p/sa/a1"]
+        assert swarm_view.layout("p", rows, opened={"p/sa": False}, needs_you=True)[-1].kind \
+            == "group"
+
+    def test_the_person_s_choice_still_wins(self):
+        rows = swarm.virtual_rows("p", _loose(2, 0), 100.0, 30)[0]
+        lines = swarm_view.layout("p", rows, opened={"p/sa": True}, needs_you=True)
+        assert "▾" in lines[0].text
+
+
 class TestStep:
     def test_down_enters_up_leaves_and_detail_lines_are_skipped(self):
         rows = _workflow(2)
