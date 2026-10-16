@@ -221,8 +221,8 @@ def parse_aws_price_list(doc: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
                 if dim.get("unit") != "1M tokens":
                     continue
                 try:
-                    usd = float((dim.get("pricePerUnit") or {}).get("USD"))
-                except (TypeError, ValueError):
+                    usd = float((dim.get("pricePerUnit") or {})["USD"])
+                except (KeyError, TypeError, ValueError):
                     continue
                 found.setdefault(model, {})[(kind, tier, routing)] = usd
                 names[model] = str(attrs.get("model"))

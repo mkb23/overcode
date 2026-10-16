@@ -168,7 +168,7 @@ def get_model_pricing(
     base = _get_list_pricing(model, fallback)
     if provider == "bedrock" and not base.net:
         if bedrock_routing_of(fallback, routing) != BEDROCK_GLOBAL:
-            base = base.scaled(base.regional)
+            base = base.scaled(base.regional if base.regional is not None else 1.0)
         return _apply_discount(base, _bedrock_discount_for(model, fallback))
     return base
 

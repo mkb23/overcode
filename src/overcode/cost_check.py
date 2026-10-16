@@ -104,15 +104,15 @@ def conversation_drift(conversation: str, reads: Mapping[str, Mapping[str, Any]]
     for model, theirs in (usage.items() if isinstance(usage, Mapping) else ()):
         if not isinstance(theirs, Mapping):
             continue
-        group = ours.get(_model_key(model))
+        mine = ours.get(_model_key(model))
         charged = theirs.get("costUSD")
-        if group is None or not isinstance(charged, (int, float)) or group["cost"] != group["cost"]:
+        if mine is None or not isinstance(charged, (int, float)) or mine["cost"] != mine["cost"]:
             continue
-        if not (_close(group["cw"], float(theirs.get("cacheCreationInputTokens") or 0))
-                and _close(group["cr"], float(theirs.get("cacheReadInputTokens") or 0))):
+        if not (_close(mine["cw"], float(theirs.get("cacheCreationInputTokens") or 0))
+                and _close(mine["cr"], float(theirs.get("cacheReadInputTokens") or 0))):
             continue
-        if abs(group["cost"] - charged) > max(DRIFT_RELATIVE * charged, DRIFT_ABSOLUTE):
-            found.append(Drift(conversation, model, group["cost"], float(charged)))
+        if abs(mine["cost"] - charged) > max(DRIFT_RELATIVE * charged, DRIFT_ABSOLUTE):
+            found.append(Drift(conversation, model, mine["cost"], float(charged)))
     return found
 
 
