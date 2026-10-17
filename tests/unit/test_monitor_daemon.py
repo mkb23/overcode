@@ -6,6 +6,8 @@ without running the actual daemon loop.
 """
 
 import json
+import threading
+
 import pytest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1035,9 +1037,14 @@ class TestInterruptibleSleep:
         )
 
         sleep_calls = []
+        me = threading.get_ident()
 
         def track_sleep(seconds):
-            sleep_calls.append(seconds)
+            # time.sleep is patched process-wide: the daemon's own threads
+            # (the presence logger) sleep through it too, so count this
+            # thread's calls only
+            if threading.get_ident() == me:
+                sleep_calls.append(seconds)
 
         with patch('overcode.monitor_daemon.time.sleep', side_effect=track_sleep):
             daemon.wake.sleep(30)
