@@ -12,6 +12,7 @@ from .hover import (
     hover_child_count,
     hover_loaded_skills,
     hover_permission_mode,
+    hover_quota,
     hover_skill_profile,
     hover_spend,
     hover_status_detail,
@@ -114,6 +115,9 @@ from .render_usage import (
     render_cost,
     render_cost_plain,
     render_joules,
+    quota_pp,
+    render_quota,
+    render_quota_plain,
     render_subtree_cost,
     render_subtree_cost_plain,
     render_token_count,
@@ -358,6 +362,16 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Cost of this agent plus all its children",
                   sort_key=lambda ctx: ctx.subtree_cost_usd or None,
                   sort_desc=True),
+    # Subscription quota (cost model Phase B): optional ($ cycler "quota"
+    # mode, or the column configurator); never shown without a subscription.
+    SummaryColumn(id="quota", group="llm_usage", detail_levels=set(), render=render_quota,
+                  label="Quota", render_plain=render_quota_plain,
+                  visible=lambda ctx: ctx.fleet.any_has_quota,
+                  header="Q%", name="Weekly Quota",
+                  description="Estimated share of the weekly subscription quota this week, "
+                              "in percentage points (hover: 5-hour window, model confidence)",
+                  sort_key=quota_pp,
+                  sort_desc=True, hover=hover_quota),
     # Hidden below full detail; `overcode list` (full) shows it.
     SummaryColumn(id="billing_code", group="llm_usage", detail_levels={"full"},
                   render=render_billing_code, label="Billing",

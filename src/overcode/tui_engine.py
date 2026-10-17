@@ -253,6 +253,7 @@ def is_unvisited(view: AgentView, visited_here: Optional[float] = None) -> bool:
 STATUS_BAR_AGENT_FIELDS = (
     "session_id", "current_status", "status_since", "median_work_time",
     "input_tokens", "output_tokens", "estimated_cost_usd", "estimated_energy_j",
+    "quota",
 )
 
 

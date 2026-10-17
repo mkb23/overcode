@@ -960,3 +960,48 @@ def window_start(latest: Optional[Mapping], now: float) -> float:
     if isinstance(r7, (int, float)) and r7 > now - WEEK:
         return float(r7) - WEEK
     return now - WEEK
+
+
+def model_in_use(store: UsageStore, account: str, cfg: Mapping,
+                 plan: Optional[str] = None) -> qm.QuotaModel:
+    """The saved fit when it was fitted against today's prior, else the prior."""
+    prior = qm.prior_model(cfg.get("plan") or plan, cfg.get("weekly_usd"))
+    saved = store.load_model(account)
+    return saved if saved is not None and saved.prior == prior.prior else prior
+
+
+def quota_status(store: UsageStore, account: str, cfg: Mapping, *, now: float,
+                 price_fn: Optional[qm.PriceFn] = None) -> dict:
+    """Everything ``overcode usage model``, ``overcode billing`` and doctor say about the quota.
+
+    Read from the files the engine writes (no network): the latest reading,
+    the model in use, this week's predicted points per billing code and the
+    unattributed rest, and the sample counts behind the fit.
+    """
+    latest = store.last_history(account)
+    plan = cfg.get("plan") or (latest or {}).get("plan")
+    model = model_in_use(store, account, cfg, plan)
+    start = window_start(latest, now)
+    codes = quota_by_code(store, model, since=start, account=account, price_fn=price_fn)
+    attributed = sum(codes.values())
+    counts = {"api": 0, "statusline": 0, "other": 0}
+    for line in store.read_history(account, since=now - cfg.get("weeks", 4) * WEEK):
+        src = line.get("src")
+        counts[src if src in counts else "other"] += 1
+    observed = None
+    if latest is not None:
+        from .quota_calibration import observed_value
+        observed = observed_value(latest)
+    return {
+        "account": account,
+        "plan": plan,
+        "prior_weekly_usd": qm.weekly_budget_usd(plan, cfg.get("weekly_usd")),
+        "model": model,
+        "latest": {k: v for k, v in latest.items() if k != "x"} if latest else None,
+        "week_start": start,
+        "codes": codes,
+        "attributed": attributed,
+        "observed": observed,
+        "unattributed": (observed - attributed) if isinstance(observed, (int, float)) else None,
+        "samples": counts,
+    }

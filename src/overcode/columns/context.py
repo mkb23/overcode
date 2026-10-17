@@ -48,6 +48,7 @@ class FleetFlags:
     any_has_burn: bool = False  # a non-zero burn rate (#174)
     any_has_task_result: bool = False  # a child with a result (the Result column)
     any_has_swarm: bool = False  # an agent that delegated work in its session (👥)
+    any_has_quota: bool = False  # a subscription agent with a quota estimate (Q%)
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class FleetRow:
     has_status_detail: bool = False
     task_result: Optional[str] = None  # the child's result kind, if any
     has_swarm: bool = False  # a 👥 rollup published for it
+    has_quota: bool = False  # a quota estimate published for it
 
 
 def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
@@ -93,6 +95,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
         ),
         any_has_task_result=any(r.task_result for r in rows),
         any_has_swarm=any(r.has_swarm for r in rows),
+        any_has_quota=any(r.has_quota for r in rows),
     )
 
 
@@ -169,6 +172,8 @@ class ColumnContext:
     swarm_expanded: bool = False
     # The delegated work's share of its spend (engine: subagent_cost_usd)
     subagent_cost_usd: Optional[float] = None
+    # Its subscription quota estimate (engine: quota): pp7d, pp5h, w7, w5, conf
+    quota: Optional[dict] = None
 
     # Fleet-wide column gates, the same for every row
     fleet: FleetFlags = field(default_factory=FleetFlags)
@@ -261,6 +266,7 @@ def build_cli_context(
     task_reason: str = "",
     child_rollup: Optional[dict] = None,
     swarm_rollup: Optional[dict] = None,
+    quota: Optional[dict] = None,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed).
 
@@ -327,6 +333,7 @@ def build_cli_context(
         task_reason=task_reason,
         child_rollup=child_rollup,
         swarm_rollup=swarm_rollup,
+        quota=quota,
         status_changed_at=status_changed_at,
         max_name_width=max_name_width,
         max_repo_width=max_repo_width,

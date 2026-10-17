@@ -1100,13 +1100,32 @@ class TestToggleCostDisplay:
         assert mock_tui.show_cost == "joules"
         assert "joules" in mock_tui.notify.call_args[0][0].lower()
 
-    def test_cycles_from_joules_to_all(self):
-        """Should cycle from joules to all three columns."""
+    def test_cycles_from_joules_to_quota(self):
+        """Joules (saved before the quota preset: no "quota" key) goes to the quota mode,
+        which shows only the quota column."""
         from overcode.tui_actions.view import ViewActionsMixin
         config = {lvl: {"token_count": False, "cost": False, "joules": True,
                         "budget": False, "subtree_cost": True}
                   for lvl in ("low", "med", "high", "full")}
         mock_tui = self._make_mock_tui(show_cost="joules", column_config=config)
+        mock_tui.query.return_value = []
+        mock_tui.query_one.return_value = MagicMock()
+
+        ViewActionsMixin.action_toggle_cost_display(mock_tui)
+
+        assert mock_tui.show_cost == "quota"
+        assert "quota" in mock_tui.notify.call_args[0][0].lower()
+        overrides = mock_tui._prefs.column_config["low"]
+        assert overrides["quota"] is True
+        assert not any(overrides[k] for k in ("token_count", "cost", "joules", "budget", "subtree_cost"))
+
+    def test_cycles_from_quota_to_all(self):
+        """Should cycle from the quota mode to all three columns."""
+        from overcode.tui_actions.view import ViewActionsMixin
+        config = {lvl: {"token_count": False, "cost": False, "joules": False,
+                        "budget": False, "subtree_cost": False, "quota": True}
+                  for lvl in ("low", "med", "high", "full")}
+        mock_tui = self._make_mock_tui(show_cost="quota", column_config=config)
         mock_tui.query.return_value = []
         mock_tui.query_one.return_value = MagicMock()
 

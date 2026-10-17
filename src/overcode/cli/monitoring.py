@@ -575,9 +575,22 @@ def history(
             f"${stats.estimated_cost_usd:.2f}{duration}{kept}"
         )
 
-@app.command()
-def usage():
-    """Show Claude Code subscription usage (5h session + 7d weekly limits)."""
+usage_app = typer.Typer(
+    name="usage",
+    help="Claude subscription usage, and the quota model behind the Q% column",
+    invoke_without_command=True,
+)
+app.add_typer(usage_app, name="usage")
+
+
+@usage_app.callback()
+def usage(ctx: typer.Context):
+    """Show Claude Code subscription usage (5h session + 7d weekly limits).
+
+    Subcommands: `model` (the fitted quota model), `calibration on|off`.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
     from ..usage_monitor import UsageMonitor
 
     token = UsageMonitor._get_access_token()

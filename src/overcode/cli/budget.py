@@ -278,12 +278,28 @@ def billing(
         rprint(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
+    # Subscription quota (cost model Phase B): predicted points of the
+    # weekly quota per code, from the quota token stream. With no filter,
+    # this week's (the quota is weekly); for a period, the period's.
+    quota = _quota_by_code(
+        since=(start if month else (parse_since(since) if since else None)),
+        until=(end if month else None))
+    if quota is not None:
+        for code, pp in quota["codes"].items():
+            report.setdefault(code, {"cost": 0.0, "tokens": 0, "agents": 0, "running": 0})
+        for code, entry in report.items():
+            entry["quota_pp"] = round(quota["codes"].get(code, 0.0), 2)
+
     if as_json:
-        print(json.dumps({"scope": scope, "codes": report}, indent=2, sort_keys=True))
+        out = {"scope": scope, "codes": report}
+        if quota is not None:
+            out["quota"] = {k: v for k, v in quota.items() if k != "codes"}
+        print(json.dumps(out, indent=2, sort_keys=True))
         return
     if not report:
         rprint(f"[dim]No spend recorded ({scope})[/dim]")
         return
+    from ..quota_model import format_pp
     from ..tui_helpers import format_tokens
 
     rprint(f"\n[bold]Spend by billing code ({scope}):[/bold]\n")
@@ -292,10 +308,51 @@ def billing(
     # Claude background sessions billed to a code are among its agents
     background = any(entry.get("background") for _, entry in rows)
     bg_head = "  background" if background else ""
-    print(f"  {'code':<{width}}  {'cost':>10}  {'tokens':>8}  {'agents':>6}  running{bg_head}")
+    q_head = f"  {quota['label']:>9}" if quota is not None else ""
+    print(f"  {'code':<{width}}  {'cost':>10}  {'tokens':>8}{q_head}  {'agents':>6}  running{bg_head}")
     for code, entry in rows:
         bg_cell = f"  {entry.get('background', 0):>10}" if background else ""
-        print(f"  {code:<{width}}  ${entry['cost']:>9.2f}  {format_tokens(entry['tokens']):>8}  "
-              f"{entry['agents']:>6}  {entry['running']:>7}{bg_cell}")
+        q_cell = f"  {format_pp(entry.get('quota_pp', 0.0)):>9}" if quota is not None else ""
+        print(f"  {code:<{width}}  ${entry['cost']:>9.2f}  {format_tokens(entry['tokens']):>8}"
+              f"{q_cell}  {entry['agents']:>6}  {entry['running']:>7}{bg_cell}")
+    if quota is not None and quota.get("unattributed") is not None:
+        print(f"  {'unattributed':<{width}}  {'':>10}  {'':>8}  {format_pp(quota['unattributed']):>9}")
     total = sum(e["cost"] for _, e in rows)
-    print(f"  {'total':<{width}}  ${total:>9.2f}")
+    q_total = f"  {format_pp(sum(quota['codes'].values())):>9}" if quota is not None else ""
+    print(f"  {'total':<{width}}  ${total:>9.2f}  {'':>8}{q_total}")
+    if quota is not None:
+        rprint(f"\n  [dim]{quota['label'].strip()}: predicted points of the weekly subscription "
+               f"quota (estimate, model {quota['confidence']}; overcode usage model)[/dim]")
+
+
+def _quota_by_code(since=None, until=None) -> Optional[dict]:
+    """Predicted weekly-quota points per billing code, None for a non-subscriber.
+
+    ``since`` None: this week's, with the unattributed rest of the observed
+    weekly figure. Never raises (the spend report must print regardless).
+    """
+    import time
+
+    try:
+        from ..config import get_quota_config
+        from ..quota_engine import UsageStore, default_account, quota_by_code, quota_status
+
+        cfg = get_quota_config()
+        if not cfg["enabled"]:
+            return None
+        store = UsageStore()
+        account = default_account()
+        status = quota_status(store, account, cfg, now=time.time())
+        if status["latest"] is None:
+            return None
+        model = status["model"]
+        if since is None:
+            return {"label": "quota wk", "codes": status["codes"],
+                    "unattributed": status["unattributed"], "observed": status["observed"],
+                    "confidence": model.confidence}
+        codes = quota_by_code(store, model, since=since.timestamp(),
+                              until=until.timestamp() if until else None, account=account)
+        return {"label": "quota", "codes": codes, "unattributed": None,
+                "observed": None, "confidence": model.confidence}
+    except Exception:
+        return None

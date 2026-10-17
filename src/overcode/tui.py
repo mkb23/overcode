@@ -1227,7 +1227,10 @@ class SupervisorTUI(
             # Subscription usage is fleet-level, not per-agent: the widget
             # shows the user's own Claude limits, which stay true for a mixed
             # fleet as long as one agent is on a subscription-metered backend.
-            self._fleet_has_subscription_usage(list(agents.values())),
+            # The engine polls it since 0.6.1 (quota_engine); the TUI's own
+            # poll is the fallback for an engine that publishes none.
+            self._fleet_has_subscription_usage(list(agents.values()))
+            and not self.engine_link.fleet.get("usage"),
         )
 
     @work(thread=True, group="daemon_status")
