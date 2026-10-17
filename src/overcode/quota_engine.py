@@ -238,19 +238,35 @@ def _safe(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:80] or "default"
 
 
-def default_account() -> str:
-    """This machine's Claude login: its account uuid (first 12 characters)
-    from Claude Code's ``.claude.json``, else "default"."""
+def _oauth_account() -> dict:
+    """Claude Code's ``oauthAccount`` record from ``.claude.json`` (no secrets), or {}."""
     base = os.environ.get("CLAUDE_CONFIG_DIR")
     path = Path(base) / ".claude.json" if base else Path.home() / ".claude.json"
     try:
-        data = json.loads(path.read_text())
-        uuid = (data.get("oauthAccount") or {}).get("accountUuid")
-        if isinstance(uuid, str) and uuid:
-            return _safe(uuid[:12])
+        account = json.loads(path.read_text()).get("oauthAccount")
     except (OSError, ValueError, AttributeError):
-        pass
+        return {}
+    return account if isinstance(account, dict) else {}
+
+
+def default_account() -> str:
+    """This machine's Claude login: its account uuid (first 12 characters)
+    from Claude Code's ``.claude.json``, else "default"."""
+    uuid = _oauth_account().get("accountUuid")
+    if isinstance(uuid, str) and uuid:
+        return _safe(uuid[:12])
     return "default"
+
+
+def account_plan() -> Optional[str]:
+    """The plan from ``.claude.json``'s account record, when the credentials
+    don't say: seen on 2.1.302 as ``organizationType: "claude_max"`` and
+    ``organizationRateLimitTier: "default_claude_max_20x"``."""
+    account = _oauth_account()
+    tier = account.get("userRateLimitTier") or account.get("organizationRateLimitTier")
+    kind = account.get("organizationType")
+    kind = kind.removeprefix("claude_") if isinstance(kind, str) else None
+    return qm.plan_from_credentials(kind, tier if isinstance(tier, str) else None)
 
 
 class UsageStore:
@@ -460,7 +476,8 @@ def default_fetch() -> dict:
     creds = UsageMonitor.get_oauth_credentials()
     if not creds:
         return {"error": "no token", "no_token": True}
-    plan = qm.plan_from_credentials(creds.get("subscriptionType"), creds.get("rateLimitTier"))
+    plan = (qm.plan_from_credentials(creds.get("subscriptionType"), creds.get("rateLimitTier"))
+            or account_plan())
     data, error, retry = UsageMonitor.fetch_usage_json(creds["accessToken"])
     if error:
         return {"error": error, "retry_after": retry, "plan": plan,

@@ -285,3 +285,31 @@ class TestFitAndReports:
     def test_window_start(self):
         assert qe.window_start({"r7": R7}, T0) == R7 - qe.WEEK
         assert qe.window_start(None, T0) == T0 - qe.WEEK
+
+
+class TestAccountPlan:
+    """The plan from .claude.json's account record (2.1.302's field names)."""
+
+    def _write(self, tmp_path, monkeypatch, account):
+        import json
+        (tmp_path / ".claude.json").write_text(json.dumps({"oauthAccount": account}))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def test_max_20x_from_the_organisation_tier(self, tmp_path, monkeypatch):
+        from overcode import quota_engine
+        self._write(tmp_path, monkeypatch, {"organizationType": "claude_max",
+                                            "organizationRateLimitTier": "default_claude_max_20x",
+                                            "userRateLimitTier": None})
+        assert quota_engine.account_plan() == "max20x"
+
+    def test_a_user_tier_wins(self, tmp_path, monkeypatch):
+        from overcode import quota_engine
+        self._write(tmp_path, monkeypatch, {"organizationType": "claude_max",
+                                            "organizationRateLimitTier": "default_claude_max_20x",
+                                            "userRateLimitTier": "default_claude_max_5x"})
+        assert quota_engine.account_plan() == "max5x"
+
+    def test_no_record_is_unknown(self, tmp_path, monkeypatch):
+        from overcode import quota_engine
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+        assert quota_engine.account_plan() is None
