@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from .status_constants import emoji_or_ascii
+from .status_constants import WORKFLOW_ASCII, emoji_or_ascii
 from .tui_helpers import format_duration
 
 AUTO_COLLAPSE_ABOVE = 8
@@ -118,7 +118,7 @@ class Layout:
 
     def e(self, char: str) -> str:
         if char == MARKER_WORKFLOW and self.emoji_free:
-            return "Wf"  # as the 👥 cell's (🧩's own fallback is itself)
+            return WORKFLOW_ASCII  # as the SubAgents cell's (🧩's own fallback is itself)
         return emoji_or_ascii(char, self.emoji_free)
 
     # -- public ------------------------------------------------------------

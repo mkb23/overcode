@@ -593,16 +593,20 @@ relaunched (restart, revive), and they are left in place until then.
 A Claude agent hands work out inside its own session: subagents (in the
 background unless the call says otherwise), forks, workflows and in-process
 teammates. None of them is an overcode agent, but all of them report
-through the parent's hooks, so the parent's row carries a 👥 cell (DLG):
+through the parent's hooks, so the parent's row carries a 👥 cell (the
+SubAgents column, `SUBA`):
 
 ```
-👥 43 ▶15 🟠1 ✅27 ❌1 🧩1
+👥 ▶15 🟠1 ✅26 ❌1 🧩1
 ```
 
-the agents it delegated (live and finished), then ▶ working, 🟠 waiting
-for approval in the parent's pane, ✅ finished, ❌ failed or stopped, and
-🧩 workflow runs; counts that are zero are left out, and hovering the cell
-says what each stands for. An agent that never delegated shows `👥  -`.
+how many are ▶ working, 🟠 waiting for approval in the parent's pane, ⚪
+idle (teammates listening), ✅ finished, ❌ failed or stopped, and 🧩
+workflow runs; counts that are zero are left out, and hovering the cell
+gives the total and says what each stands for. An agent that never
+delegated shows `👥  -`; one without hook counts (no hooks, or a sister on
+an older overcode) shows the subagents its transcript files say are running
+(`👥 ▶2`).
 The monitor daemon computes the counts from the hook events; the TUI and
 `overcode list` only show them. While delegated work is in flight the
 parent is 🟡 ("Waiting on 2 background agents and 1 workflow"); it turns

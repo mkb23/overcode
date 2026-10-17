@@ -199,7 +199,7 @@ class TestOneDelta:
             await _settled(pilot)
             from overcode.tui_widgets.session_summary import SessionSummary
             lines = {row.session.name: row.render().plain for row in app.query(SessionSummary)}
-            assert "👥  3 ▶3" in lines["bravo"]
+            assert "👥 ▶3" in lines["bravo"]
             assert "👥  -" in lines["alpha"]  # the column shows once any agent delegates
             work = CountedWork(app, monkeypatch)
             engine.publish(_snapshot(bravo=dict(swarm_rollup=swarm(2, 1))))

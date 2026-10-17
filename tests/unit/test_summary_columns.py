@@ -5,7 +5,7 @@ from dataclasses import fields, replace
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
-from overcode.summary_columns import ALL, MED_PLUS, HIGH_PLUS, _tool_emojis, ColumnContext, FleetFlags, SUMMARY_COLUMNS, COLUMNS_BY_ID, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
+from overcode.summary_columns import ALL, MED_PLUS, HIGH_PLUS, _tool_emojis, ColumnContext, FleetFlags, SUMMARY_COLUMNS, COLUMNS_BY_ID, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
 from overcode.summary_groups import SUMMARY_GROUPS_BY_ID
 
 
@@ -855,19 +855,6 @@ class TestRenderMedianWorkTime:
 # Activity column render tests
 # ===========================================================================
 
-class TestRenderSubagentCount:
-    def test_zero_uses_dim_style(self):
-        ctx = _make_ctx(live_subagent_count=0)
-        result = render_subagent_count(ctx)
-        assert "dim" in result[0][1]
-
-    def test_nonzero_uses_bold_style(self):
-        ctx = _make_ctx(live_subagent_count=3)
-        result = render_subagent_count(ctx)
-        assert "bold" in result[0][1]
-        assert " 3" in result[0][0]
-
-
 class TestRenderBashCount:
     def test_zero_uses_dim_style(self):
         ctx = _make_ctx(background_bash_count=0)
@@ -1266,11 +1253,19 @@ class TestRenderWorkPlain:
 
 
 class TestRenderAgentsPlain:
-    def test_shows_counts(self):
+    def test_shows_background_bashes(self):
         ctx = _make_ctx(live_subagent_count=2, background_bash_count=3)
         result = render_agents_plain(ctx)
-        assert "🤿 2" in result
         assert "🐚 3" in result
+        assert "🤿" not in result  # subagents are the SubAgents column's, same label
+
+    def test_the_agents_line_carries_the_subagents_too(self):
+        ctx = _make_ctx(swarm_rollup={"total": 5, "running": 2, "ok": 3},
+                        background_bash_count=1)
+        lines = dict(render_cli_stats(ctx))
+        assert lines["Agents"] == "👥 ▶2 ✅3 (5 delegated)  🐚 1 background bashes"
+        lines = dict(render_cli_stats(_make_ctx(live_subagent_count=2)))
+        assert lines["Agents"].startswith("👥 ▶2 subagents running")
 
 
 class TestRenderRepoNamePlain:
@@ -1599,7 +1594,8 @@ class TestComputeFleetFlags:
         from types import SimpleNamespace
         from overcode.summary_columns import FleetRow
         row_fields = {k: kw.pop(k) for k in ("pr_number", "subtree_cost_usd", "window_burn",
-                                              "has_status_detail", "task_result", "has_swarm")
+                                              "has_status_detail", "task_result", "has_swarm",
+                                              "has_live_subagents")
                       if k in kw}
         session = SimpleNamespace(**{
             "cost_budget_usd": 0.0, "oversight_policy": "wait", "oversight_timeout_seconds": 0.0,
@@ -1633,6 +1629,7 @@ class TestComputeFleetFlags:
             "any_has_burn": self._row(window_burn=burn),
             "any_has_task_result": self._row(task_result="unreported"),
             "any_has_swarm": self._row(has_swarm=True),
+            "any_has_live_subagents": self._row(has_live_subagents=True),
         }
         assert set(cases) == _FLEET_FIELDS
         for name, row in cases.items():
@@ -1719,9 +1716,9 @@ class TestChildRollup:
 
     def test_non_zero_segments_only(self):
         rollup = {"working": 2, "unreported": 1, "success": 1, "failure": 1}
-        assert self._text(child_count=5, child_rollup=rollup) == " 👶 5 2▶ 1📭 1✅ 1❌"
+        assert self._text(child_count=5, child_rollup=rollup) == " 👶 5 ▶2 📭1 ✅1 ❌1"
         assert self._text(child_count=3, child_rollup={"working": 0, "unreported": 0,
-                                                       "success": 3, "failure": 0}) == " 👶 3 3✅"
+                                                       "success": 3, "failure": 0}) == " 👶 3 ✅3"
 
     def test_without_a_rollup_just_the_count(self):
         assert self._text(child_count=2) == " 👶 2"
@@ -1730,7 +1727,7 @@ class TestChildRollup:
     def test_ascii_mode(self):
         text = self._text(child_count=2, child_rollup={"working": 1, "success": 1},
                           emoji_free=True)
-        assert text == " Ch 2 1> 1ok"
+        assert text == " Ch 2 >1 ok1"
 
 
 class TestOversightCountdownAcrossTheAutumnChange:

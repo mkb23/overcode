@@ -87,8 +87,8 @@ class ViewControlMixin:
     # ── verbs ──────────────────────────────────────────────────────────
 
     def _resolve_column(self, name: str):
-        from ..summary_columns import SUMMARY_COLUMNS
-        key = name.strip().lower()
+        from ..summary_columns import SUMMARY_COLUMNS, canonical_column_id
+        key = canonical_column_id(name.strip().lower())
         for col in SUMMARY_COLUMNS:
             if key in (col.id.lower(), (col.name or "").lower(), (col.header or "").strip().lower()):
                 return col

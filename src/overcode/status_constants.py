@@ -160,7 +160,7 @@ EMOJI_ASCII = {
     "🧭": "P?",  # plan mode
     # Activity/metrics
     "🔔": "(!)",
-    "⏰": "AL",
+    "⏰": "@@",  # as the schedule_wakeup badge (was "AL": two forms in one column)
     "📚": "CW",
     "💓": "<3",
     "💰": "$$",
@@ -169,7 +169,6 @@ EMOJI_ASCII = {
     "⌚": "Md",  # median work time (was ⏱, text-default: an outline glyph)
     "🤖": "Ro",
     "👤": "Hu",
-    "🤿": "Su",
     "🐚": "Bg",
     "👶": "Ch",
     "🚜": "Jb",
@@ -207,6 +206,12 @@ EMOJI_ASCII = {
     "📥": "In",
     "👥": "Sa",
 }
+
+
+# A workflow run (🧩) in emoji-free mode: the SubAgents cell, the list's
+# workflow rows and the timeline strip. Not an EMOJI_ASCII entry, since 🧩
+# is also the unknown-skill emoji; not "Wf", which is WebFetch's (🌐).
+WORKFLOW_GLYPH, WORKFLOW_ASCII = "🧩", "Wk"
 
 
 def emoji_or_ascii(char: str, emoji_free: bool) -> str:

@@ -464,6 +464,7 @@ class SessionSummary(Static, can_focus=True):
             has_status_detail=bool(self.engine.get("status_detail")),
             task_result=self.task_result,
             has_swarm=self.swarm_rollup is not None,
+            has_live_subagents=max(self.live_subagent_count, self.file_subagent_count) > 0,
         )
 
     def watch_summary_detail(self, summary_detail: str) -> None:

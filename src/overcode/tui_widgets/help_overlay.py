@@ -220,7 +220,8 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
         return t
 
     indicators = [plain(e, d) for e, d in (
-        ("🔔", "Unvisited stall (bell)"), ("🤿", "Subagent count"),
+        ("🔔", "Unvisited stall (bell)"),
+        ("👥", "SubAgents: ▶ working 🟠 needs approval ⚪ idle ✅ finished ❌ failed 🧩 workflows"),
         ("🐚", "Background bash count"),
         ("👶", "Child agents, then ▶ working 📭 unreported ✅ success ❌ failure"),
         ("📋", "Standing orders active"), ("✓ ", "Standing orders complete"),

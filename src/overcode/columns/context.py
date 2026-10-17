@@ -48,6 +48,8 @@ class FleetFlags:
     any_has_burn: bool = False  # a non-zero burn rate (#174)
     any_has_task_result: bool = False  # a child with a result (the Result column)
     any_has_swarm: bool = False  # an agent that delegated work in its session (👥)
+    # Subagents seen running without a hook rollup (the SubAgents fallback)
+    any_has_live_subagents: bool = False
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class FleetRow:
     has_status_detail: bool = False
     task_result: Optional[str] = None  # the child's result kind, if any
     has_swarm: bool = False  # a 👥 rollup published for it
+    has_live_subagents: bool = False  # subagents running by the file / status-bar count
 
 
 def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
@@ -93,6 +96,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
         ),
         any_has_task_result=any(r.task_result for r in rows),
         any_has_swarm=any(r.has_swarm for r in rows),
+        any_has_live_subagents=any(r.has_live_subagents for r in rows),
     )
 
 

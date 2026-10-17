@@ -120,33 +120,38 @@ def hover_child_count(ctx: ColumnContext):
                               ("success", "✅", "reported success"),
                               ("failure", "❌", "reported failure or timed out")):
         if rollup.get(key):
-            rows.append((ctx.e(glyph), f"{rollup[key]} {words}"))
+            rows.append((ctx.e(glyph).rstrip(), f"{rollup[key]} {words}"))
     return _emoji_legend("Children", rows)
 
 
-def hover_swarm(ctx: ColumnContext):
-    """What the 👥 rollup's segments count."""
-    from .render_performance import swarm_workflow_glyph
+_SUBAGENT_WORDS = {"running": "working", "waiting": "waiting for approval in this pane",
+                   "idle": "idle teammates, listening", "ok": "finished",
+                   "failed": "failed or stopped"}
+
+
+def hover_subagents(ctx: ColumnContext):
+    """What the SubAgents cell's segments count, and the total it leaves out."""
+    from .render_performance import SUBAGENT_SEGMENTS, swarm_workflow_glyph
     rollup = ctx.swarm_rollup
     if not rollup:
-        return None
+        live = ctx.live_subagent_count
+        if live <= 0:
+            return None
+        return _emoji_legend("SubAgents", [(ctx.e("▶").rstrip(), f"{live} running")],
+                             "Seen from its transcript files: no hook counts for this agent")
     total = rollup.get("total") or 0
     rows = [(ctx.e("👥"), f"{total} agent{'' if total == 1 else 's'} delegated in this session "
                           "(subagents, forks, workflow agents, teammates)")]
-    for key, glyph, words in (("running", "▶", "working"),
-                              ("waiting", "🟠", "waiting for approval in this pane"),
-                              ("idle", "⚪", "idle teammates, listening"),
-                              ("ok", "✅", "finished"),
-                              ("failed", "❌", "failed or stopped")):
+    for key, glyph in SUBAGENT_SEGMENTS:
         if rollup.get(key):
-            rows.append((ctx.e(glyph).rstrip(), f"{rollup[key]} {words}"))
+            rows.append((ctx.e(glyph).rstrip(), f"{rollup[key]} {_SUBAGENT_WORDS[key]}"))
     runs = rollup.get("workflows") or 0
     if runs:
         running = rollup.get("workflows_running") or 0
         rows.append((swarm_workflow_glyph(ctx),
                      f"{runs} workflow run{'' if runs == 1 else 's'}"
                      + (f", {running} running" if running else "")))
-    return _emoji_legend("Delegated work", rows)
+    return _emoji_legend("SubAgents", rows)
 
 
 def hover_spend(ctx: ColumnContext):

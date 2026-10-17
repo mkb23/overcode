@@ -58,9 +58,9 @@ from .columns.render_context import (
     _backend_badge, render_backend, render_backend_plain,
 )
 from .columns.render_performance import (
-    render_median_work_time, render_cpu_pct, render_ram, render_subagent_count,
-    render_bash_count, render_child_count, render_job_count, render_swarm, render_work_plain,
-    render_agents_plain,
+    render_median_work_time, render_cpu_pct, render_ram, render_subagents,
+    render_subagents_plain, render_bash_count, render_child_count, render_job_count,
+    render_work_plain, render_agents_plain,
 )
 from .columns.render_supervision import (
     render_permission_mode, render_agent_teams, render_teams_plain, render_allowed_tools,
@@ -76,8 +76,8 @@ from .columns.hover import (
     hover_wrapper, hover_status_detail,
 )
 from .columns.registry import (
-    SUMMARY_COLUMNS, COLUMNS_BY_ID, resolve_column_visible, uniform_columns,
-    render_summary_cells, cell_segments, cell_text, render_cell, render_summary_line,
+    SUMMARY_COLUMNS, COLUMNS_BY_ID, COLUMN_ALIASES, canonical_column_id,
+    migrate_column_overrides, resolve_column_visible, uniform_columns, render_summary_cells, cell_segments, cell_text, render_cell, render_summary_line,
     render_cli_stats,
 )
 from .columns.layout import (
@@ -104,8 +104,8 @@ __all__ = [
     "render_model_plain", "EFFORT_LEVELS", "effort_short_name", "render_effort",
     "render_effort_plain", "render_provider", "render_provider_plain", "BACKEND_BADGES",
     "_backend_badge", "render_backend", "render_backend_plain", "render_median_work_time",
-    "render_cpu_pct", "render_ram", "render_subagent_count", "render_bash_count",
-    "render_child_count", "render_job_count", "render_swarm", "render_work_plain",
+    "render_cpu_pct", "render_ram", "render_subagents", "render_subagents_plain",
+    "render_bash_count", "render_child_count", "render_job_count", "render_work_plain",
     "render_agents_plain",
     "render_permission_mode", "render_agent_teams", "render_teams_plain",
     "render_allowed_tools", "render_loaded_skills", "render_skills_plain",
@@ -116,7 +116,8 @@ __all__ = [
     "render_agent_value", "render_mode_plain", "render_tools_plain", "render_heartbeat_plain",
     "render_orders_plain", "render_value_plain", "hover_loaded_skills",
     "hover_available_skills", "hover_skill_profile", "hover_allowed_tools", "hover_wrapper",
-    "hover_status_detail", "SUMMARY_COLUMNS", "COLUMNS_BY_ID", "resolve_column_visible",
+    "hover_status_detail", "SUMMARY_COLUMNS", "COLUMNS_BY_ID", "COLUMN_ALIASES",
+    "canonical_column_id", "migrate_column_overrides", "resolve_column_visible",
     "uniform_columns", "render_summary_cells", "cell_segments", "cell_text", "render_cell",
     "render_summary_line", "render_cli_stats", "column_at", "compute_column_widths",
     "pad_and_join_cells", "align_summary_rows", "render_header_cells",

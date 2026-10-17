@@ -48,9 +48,9 @@ spells it out:
 | 👥 | | A Claude subagent, fork or teammate working inside an agent's session | Read only |
 | 🧩 | | A Claude workflow run inside an agent's session | Read only |
 
-👥 and 🧩 rows aren't shown until you expand them. The DLG column rolls
-them up on the parent's row, e.g. `▸👥 43 ▶15 🟠1 ✅27 ❌1 🧩1`. To look
-inside:
+👥 and 🧩 rows aren't shown until you expand them. The SubAgents column
+(`SUBA`) rolls them up on the parent's row by state, e.g. `▸👥 ▶15 🟠1
+✅26 ❌1 🧩1` (hover it for the total). To look inside:
 
 - `→` on the parent's row opens its delegated work. Groups come first, and
   a workflow shows its phases. Press `→` again to go one level deeper: it
@@ -96,8 +96,10 @@ How a child's task went is in the Result column (RES), not in its light:
 
 Hover the cell to see the full reason; `overcode list` prints it after the
 activity. The 👶 column on the parent rolls its children up, e.g.
-`👶 5 2▶ 1📭 1✅ 1❌` (▶ means still working, and a ⌛ counts as a
-failure).
+`👶 5 ▶2 📭1 ✅1 ❌1` (▶ means still working, and a ⌛ counts as a
+failure). It reads like the SubAgents cell, glyph then count, but keeps the
+total in front: a child can be working again after it reported, and one
+waiting on you has no result yet, so the states don't add up to it.
 
 ### `overcode report`
 
@@ -256,7 +258,7 @@ in the dashboard and give you different controls:
 
 | Use | When | In the dashboard |
 |-----|------|------------------|
-| **A Claude subagent or workflow** (the Task/Agent tool, a workflow script) | Contained work inside the agent's own session that you don't need to see or steer: searches, reviews, fan-out over files | 👥 / 🧩 rows under the parent, rolled up in DLG; read only. Spend counts inside the parent's |
+| **A Claude subagent or workflow** (the Task/Agent tool, a workflow script) | Contained work inside the agent's own session that you don't need to see or steer: searches, reviews, fan-out over files | 👥 / 🧩 rows under the parent, rolled up in SubAgents; read only. Spend counts inside the parent's |
 | **A Claude background session** (`/bg`, `claude --bg`) | One-off Claude work that runs on its own, which you'll check on later | A 🌙 row under the agent it came from; attach, stop or remove it with Claude's own commands |
 | **An overcode child** (`overcode launch`) | You need another backend (opencode, codex, grok ...), a hard budget, its own billing, an oversight timeout, or a parent that has to know how it ended (`report`, `--follow`, exit codes) | A full agent row (KIND `child`) in its own tmux window: watch it, step in, send it instructions, kill or restart it |
 

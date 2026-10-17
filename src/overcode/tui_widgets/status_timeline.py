@@ -14,7 +14,7 @@ from rich.text import Text
 from .. import swarm_history
 from ..presence_logger import read_presence_history
 from ..settings import get_agent_history_path, get_swarm_history_path
-from ..status_constants import emoji_or_ascii
+from ..status_constants import WORKFLOW_ASCII, emoji_or_ascii
 from ..status_history import read_agent_status_history
 from ..config import get_timeline_config
 from ..tui_helpers import (
@@ -97,7 +97,7 @@ def swarm_strips(session_id: str, histories: Mapping[str, Mapping[str, list]],
 
 def _strip_label(marker: str, title: str, emoji_free: bool) -> str:
     if marker == "🧩" and emoji_free:
-        marker = "Wf"  # as the list's workflow rows
+        marker = WORKFLOW_ASCII  # as the list's workflow rows
     else:
         marker = emoji_or_ascii(marker, emoji_free)
     return f"└ {marker} {title}"

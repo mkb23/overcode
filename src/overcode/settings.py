@@ -807,6 +807,16 @@ class TUIPreferences:
                     for lvl in ("low", "med", "high", "full"):
                         col_cfg.setdefault(lvl, {}).update(preset)
 
+                # Migration: merged or renamed columns (swarm / subagent_count
+                # → subagents, 0.6.1) keep their overrides and sort
+                from .columns.registry import canonical_column_id, migrate_column_overrides
+                if isinstance(col_cfg, dict):
+                    for lvl, overrides in list(col_cfg.items()):
+                        col_cfg[lvl] = migrate_column_overrides(overrides)
+                sort_mode = kwargs.get("sort_mode")
+                if isinstance(sort_mode, str) and sort_mode.startswith("col:"):
+                    kwargs["sort_mode"] = "col:" + canonical_column_id(sort_mode[4:])
+
                 return cls(**kwargs)
         except (json.JSONDecodeError, IOError):
             return cls()

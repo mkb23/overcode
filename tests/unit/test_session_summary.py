@@ -168,11 +168,11 @@ class TestColumnVisible:
         assert widget.column_visible(uptime_col) is False
 
     def test_high_level_includes_subprocess_columns(self):
-        """High detail level should include HIGH_PLUS columns like subagent_count."""
+        """High detail level should include HIGH_PLUS columns like child_count."""
         from overcode.summary_columns import SUMMARY_COLUMNS
         widget = _make_bare_widget(summary_detail="high")
         widget.column_overrides = {}
-        sub_col = next(c for c in SUMMARY_COLUMNS if c.id == "subagent_count")
+        sub_col = next(c for c in SUMMARY_COLUMNS if c.id == "child_count")
         assert widget.column_visible(sub_col) is True
 
 

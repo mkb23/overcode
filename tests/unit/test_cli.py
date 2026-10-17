@@ -327,8 +327,7 @@ class TestShowCommandWithMocks:
         assert "active" in output
         assert "stalled" in output
         assert "60.0K" in output  # total tokens
-        assert "subagents" in output
-        assert "3 background bashes" in output
+        assert "3 background bashes" in output  # the Agents line, no subagents running
         assert "Δ3 files" in output
 
     def test_show_reads_the_agents_own_tmux_session(self, fleet):
@@ -2408,11 +2407,11 @@ class TestListExtended:
         assert result.exit_code == 0, result.output
         assert "❌ three integrati…" in result.output  # the column, cut
         assert "❌ three integration tests still fail on main" in result.output  # in full
-        assert "1❌" in result.output  # the parent's rollup
+        assert "❌1" in result.output  # the parent's rollup
 
     def test_list_shows_delegated_work_the_daemon_published(self, fleet):
-        """The 👥 cell is the engine's swarm_rollup; an agent without one
-        shows the placeholder."""
+        """The SubAgents cell is the engine's swarm_rollup, each state's
+        count and no total; an agent without one shows the placeholder."""
         fleet.add_with_history("lead")
         fleet.add_with_history("solo")
         rollup = {"total": 43, "running": 15, "waiting": 1, "idle": 0, "ok": 27,
@@ -2421,7 +2420,8 @@ class TestListExtended:
                       solo=dict(current_status="running"))
         result = runner.invoke(app, ["list", "--full"], env={"COLUMNS": "400"})
         assert result.exit_code == 0, result.output
-        assert "👥 43 ▶15 🟠1 ✅27 ❌1 🧩1" in result.output
+        assert "👥 ▶15 🟠1 ✅27 ❌1 🧩1" in result.output
+        assert "👥 43" not in result.output
         assert "👥  -" in result.output
 
     def test_list_filters_done_by_default(self, fleet):

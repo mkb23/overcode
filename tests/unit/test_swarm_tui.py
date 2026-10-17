@@ -143,6 +143,25 @@ class TestExpandCollapse:
             assert _rows(app) == []
             assert app.engine_link.virtual == {}
 
+    async def test_the_subagents_cell_shows_the_fold_and_right_turns_it(self, app, engine):
+        """The merged SubAgents column carries the ▸ that says → expands the
+        row, as DLG did; it turns ▾ once the rows are open."""
+        from overcode.tui_widgets.session_summary import SessionSummary
+
+        def bravo_line():
+            row = next(r for r in app.query(SessionSummary) if r.session.name == "bravo")
+            return row.render().plain
+
+        async with app.run_test() as pilot:
+            await _on_bravo(pilot)
+            assert "▸👥 ▶1 🟠1 ✅1 🧩1" in bravo_line()  # no total
+            await _expand(pilot, engine)
+            assert _rows(app)
+            assert "▾👥 ▶1 🟠1 ✅1 🧩1" in bravo_line()
+            await pilot.press("left")
+            await pilot.pause()
+            assert "▸👥" in bravo_line()
+
     async def test_an_agent_that_never_delegated_does_not_expand(self, app, engine):
         async with app.run_test() as pilot:
             await ready(pilot)

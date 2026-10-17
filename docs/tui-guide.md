@@ -25,9 +25,15 @@ The agent you last moved the highlight to is remembered the same way: quit and r
 
 A Claude agent can hand work out inside its own session: subagents
 (background by default), forks, workflows and teammates. None of them is an
-overcode agent; the DLG column rolls them up on the parent's row, e.g.
-`▸👥 43 ▶15 🟠1 ✅27 ❌1 🧩1` (total, working, waiting for approval,
-finished, failed, workflow runs).
+overcode agent; the SubAgents column (`SUBA`) rolls them up on the
+parent's row, e.g. `▸👥 ▶15 🟠1 ✅26 ❌1 🧩1`: how many are working,
+waiting for approval, idle (⚪, teammates listening), finished, failed, and
+workflow runs. Only non-zero counts show and there is no total; hover the
+cell for it. An agent with no hook counts (no hooks installed, or a sister
+on an older overcode) still shows the subagents its transcript files say are
+running, e.g. ` 👥 ▶2`, without the fold marker. The column appears once any
+agent delegates, and replaces 0.6.0's DLG and SUB columns: saved column
+settings naming `swarm` or `subagent_count` carry over to it.
 
 Press `→` on that row to expand it: the work appears as read-only rows right
 under the parent, and the fold marker turns to `▾`. Groups come first, never
@@ -340,7 +346,9 @@ How a child's task went is the Result column (RES), not the light:
 The cell is blank until a child has a result, and the reason is cut to fit;
 hover it for the full reason (`overcode list` prints it in full after the
 activity). The 👶 column rolls a parent's children up the same way, e.g.
-`👶 5 2▶ 1📭 1✅ 1❌` (only non-zero counts: ▶ still working).
+`👶 5 ▶2 📭1 ✅1 ❌1` (only non-zero counts: ▶ still working). Unlike
+SubAgents it keeps the total: the states overlap and don't cover every
+child.
 
 ### Mode column
 

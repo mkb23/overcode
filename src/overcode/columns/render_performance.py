@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from ..status_constants import WORKFLOW_ASCII, WORKFLOW_GLYPH
 from ..tui_helpers import format_duration
 from .context import ColumnContext, ColumnOutput
 
@@ -62,24 +63,24 @@ def render_ram(ctx: ColumnContext) -> ColumnOutput:
     return [(f" {_format_rss(rss)}", style)]
 
 
-def render_subagent_count(ctx: ColumnContext) -> ColumnOutput:
-    count = ctx.live_subagent_count
-    style = f"bold purple{ctx.bg}" if count > 0 else f"dim{ctx.bg}"
-    return [(f" {ctx.e('🤿')}{count:>2}", style)]
-
-
 def render_bash_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.background_bash_count
     style = f"bold yellow{ctx.bg}" if count > 0 else f"dim{ctx.bg}"
     return [(f" {ctx.e('🐚')}{count:>2}", style)]
 
 
-# The 👶 rollup's segments, in order: (rollup key, glyph); zero ones are left out
+# The 👶 rollup's segments after the total, in order: (rollup key, glyph);
+# zero ones are left out. The same order, and glyph-before-count, as the
+# SubAgents cell: still going, needs a look, succeeded, failed.
 _ROLLUP_SEGMENTS = (("working", "▶"), ("unreported", "📭"), ("success", "✅"), ("failure", "❌"))
 
 
 def render_child_count(ctx: ColumnContext) -> ColumnOutput:
-    """Children, then how they stand: " 👶 5 2▶ 1📭 1✅ 1❌" (non-zero only)."""
+    """Children, then how they stand: " 👶 5 ▶2 📭1 ✅1 ❌1" (non-zero only).
+
+    The total stays: the states overlap (a child can work again after it
+    reported) and miss some (a child waiting on you has no result yet).
+    """
     count = ctx.child_count
     if count == 0:
         return [(f" {ctx.e('👶')} 0", f"dim{ctx.bg}")]
@@ -89,44 +90,63 @@ def render_child_count(ctx: ColumnContext) -> ColumnOutput:
     for key, glyph in _ROLLUP_SEGMENTS:
         n = rollup.get(key) or 0
         if n:
-            text += f" {n}{ctx.e(glyph).rstrip()}"
+            text += f" {ctx.e(glyph).rstrip()}{n}"
     return [(text, style)]
 
 
-# The 👥 rollup's segments after the total, in order: (rollup key, glyph);
-# zero ones are left out. Workflow runs (🧩) come last.
-_SWARM_SEGMENTS = (("running", "▶"), ("waiting", "🟠"), ("ok", "✅"), ("failed", "❌"))
-
-# 🧩 is also the unknown-skill emoji, whose emoji-free form is the glyph
-# itself; workflows get their own letters here instead of an EMOJI_ASCII entry
-WORKFLOW_GLYPH, WORKFLOW_ASCII = "🧩", "Wf"
+# The SubAgents cell's segments, in order: (rollup key, glyph); zero ones
+# are left out. ▶ working, 🟠 waiting for approval (the light's glyph), ⚪
+# idle teammates (at rest, listening), ✅ finished, ❌ failed. Workflow
+# runs (🧩) come last. No total: the states partition it (the hover says it).
+SUBAGENT_SEGMENTS = (("running", "▶"), ("waiting", "🟠"), ("idle", "⚪"),
+                     ("ok", "✅"), ("failed", "❌"))
 
 
 def swarm_workflow_glyph(ctx: ColumnContext) -> str:
     return WORKFLOW_ASCII if ctx.emoji_free else ctx.e(WORKFLOW_GLYPH)
 
 
-def render_swarm(ctx: ColumnContext) -> ColumnOutput:
-    """Work the agent delegated in its session (subagents, workflows,
-    teammates): " 👥 43 ▶15 🟠1 ✅27 ❌1 🧩1", non-zero counts only.
+def render_subagents(ctx: ColumnContext) -> ColumnOutput:
+    """Work the agent delegated in its session (subagents, forks, workflow
+    agents, teammates), each state's count, non-zero only:
+    "▸👥 ▶15 🟠1 ✅27 ❌1 🧩1".
 
-    The engine publishes the counts (swarm_rollup); a row without any shows
-    " 👥  -", the same shape as a one-digit total.
+    The engine publishes the counts (swarm_rollup). Without them, a live
+    subagent count from the transcript files still shows (" 👥 ▶2", no
+    fold marker: there are no rows to expand). Nothing at all shows
+    " 👥  -", the same shape as " 👥 ▶1".
     """
     rollup = ctx.swarm_rollup
     if not rollup:
+        live = ctx.live_subagent_count
+        if live > 0:
+            return [(f" {ctx.e('👥')} {ctx.e('▶').rstrip()}{live}", f"bold magenta{ctx.bg}")]
         return [(f" {ctx.e('👥')} {'-':>2}", f"dim{ctx.bg}")]
-    # The fold marker in the leading space: → expands it into rows (phase 2)
+    # The fold marker in the leading space: → expands it into rows
     fold = ("▾" if ctx.swarm_expanded else "▸") if ctx.is_list_mode and not ctx.is_remote else " "
-    text = f"{fold}{ctx.e('👥')} {rollup.get('total') or 0:>2}"
-    for key, glyph in _SWARM_SEGMENTS:
-        n = rollup.get(key) or 0
-        if n:
-            text += f" {ctx.e(glyph).rstrip()}{n}"
+    text = f"{fold}{ctx.e('👥')}"
+    parts = [f"{ctx.e(glyph).rstrip()}{rollup[key]}"
+             for key, glyph in SUBAGENT_SEGMENTS if rollup.get(key)]
     if rollup.get("workflows"):
-        text += f" {swarm_workflow_glyph(ctx)}{rollup['workflows']}"
+        parts.append(f"{swarm_workflow_glyph(ctx)}{rollup['workflows']}")
+    # Every count zero can't happen (a rollup has some work), but an odd
+    # one from a sister keeps the placeholder's shape, fold marker and all
+    text += " " + " ".join(parts) if parts else f" {'-':>2}"
     active = rollup.get("running") or rollup.get("waiting")
     return [(text, f"bold magenta{ctx.bg}" if active else f"magenta{ctx.bg}")]
+
+
+def render_subagents_plain(ctx: ColumnContext) -> Optional[str]:
+    """The cell plus the total, for the CLI's Agents line (``overcode show``)."""
+    rollup = ctx.swarm_rollup
+    if not rollup:
+        live = ctx.live_subagent_count
+        return f"👥 ▶{live} subagents running" if live > 0 else None
+    parts = [f"{glyph}{rollup[key]}" for key, glyph in SUBAGENT_SEGMENTS if rollup.get(key)]
+    if rollup.get("workflows"):
+        parts.append(f"{WORKFLOW_GLYPH}{rollup['workflows']}")
+    total = rollup.get("total") or 0
+    return f"👥 {' '.join(parts)} ({total} delegated)"
 
 
 def render_job_count(ctx: ColumnContext) -> ColumnOutput:
@@ -146,4 +166,4 @@ def render_work_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_agents_plain(ctx: ColumnContext) -> Optional[str]:
-    return f"🤿 {ctx.live_subagent_count} subagents  🐚 {ctx.background_bash_count} background bashes"
+    return f"🐚 {ctx.background_bash_count} background bashes"

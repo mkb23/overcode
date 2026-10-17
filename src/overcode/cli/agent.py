@@ -822,6 +822,9 @@ def list_agents(
         return rollup if isinstance(rollup, dict) else None
 
     swarms = {sess.id: _swarm_rollup(sess) for sess, *_ in session_data}
+    # The SubAgents fallback without a rollup: subagents whose transcripts moved lately
+    live_subs = {sess.id: getattr(claude_stats, "live_subagent_count", 0) or 0
+                 for sess, _status, _activity, claude_stats, *_ in session_data}
 
     # Which fleet-gated columns show, by the same rule as the TUI
     fleet = compute_fleet_flags(
@@ -831,6 +834,7 @@ def list_agents(
             has_status_detail=_get_status_detail(sess) is not None,
             task_result=results[sess.id][0],
             has_swarm=swarms[sess.id] is not None,
+            has_live_subagents=live_subs[sess.id] > 0,
         )
         for sess, status, *_ in session_data
     )
@@ -862,7 +866,7 @@ def list_agents(
         ctx = build_cli_context(
             session=sess, stats=sess.stats,
             claude_stats=claude_stats, git_diff_stats=git_diff,
-            status=status, bg_bash_count=0, live_sub_count=0,
+            status=status, bg_bash_count=0, live_sub_count=live_subs[sess.id],
             git_untracked_count=git_untracked,
             in_session_mode=in_session_mode,
             fleet=fleet, child_count=child_count,

@@ -15,7 +15,7 @@ from .hover import (
     hover_skill_profile,
     hover_spend,
     hover_status_detail,
-    hover_swarm,
+    hover_subagents,
     hover_task_result,
     hover_wrapper,
 )
@@ -62,8 +62,8 @@ from .render_performance import (
     render_job_count,
     render_median_work_time,
     render_ram,
-    render_subagent_count,
-    render_swarm,
+    render_subagents,
+    render_subagents_plain,
     render_work_plain,
 )
 from .render_supervision import (
@@ -202,6 +202,16 @@ def _sort_oversight(ctx: ColumnContext) -> Optional[str]:
     return ctx.oversight_deadline or None
 
 
+def _sort_subagents(ctx: ColumnContext) -> Optional[tuple]:
+    """Most work in flight first, then most delegated; None if none at all."""
+    rollup = ctx.swarm_rollup
+    if rollup:
+        active = sum(rollup.get(k) or 0 for k in ("running", "waiting", "idle"))
+        return (active, rollup.get("total") or 0)
+    live = ctx.live_subagent_count
+    return (live, live) if live > 0 else None
+
+
 def _if_stats(fn: Callable[[ColumnContext], object]) -> Callable[[ColumnContext], object]:
     """Sort key that is None for backends reporting no stats (the column shows '-')."""
     return lambda ctx: fn(ctx) if ctx.claude_stats is not None else None
@@ -240,16 +250,18 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                               "❌ failure, ⌛ oversight timeout (hover for the full reason)",
                   sort_key=_sort_task_result,
                   hover=hover_task_result),
-    SummaryColumn(id="swarm", group="identity", detail_levels=ALL, render=render_swarm,
-                  label="Delegated",
-                  visible=lambda ctx: ctx.fleet.any_has_swarm,
-                  header="DLG", name="Delegated Work",
-                  description="Work the agent handed out in its own session (subagents, forks, "
-                              "workflow agents, teammates): total, ▶ working, 🟠 needs "
-                              "approval, ✅ finished, ❌ failed, 🧩 workflow runs",
-                  sort_key=lambda ctx: (ctx.swarm_rollup or {}).get("total"),
+    # Merged from DLG (swarm, the hook rollup) and SUB (subagent_count, the
+    # transcript-file count) in 0.6.1: the old ids alias to it (COLUMN_ALIASES).
+    # Left of the name, at every level: its ▸ says → expands the row.
+    SummaryColumn(id="subagents", group="identity", detail_levels=ALL, render=render_subagents,
+                  label="Agents", render_plain=render_subagents_plain,
+                  visible=lambda ctx: ctx.fleet.any_has_swarm or ctx.fleet.any_has_live_subagents,
+                  header="SUBA", name="SubAgents",
+                  description="Subagents, forks, teammates and workflows it ran in its session: "
+                              "▶ working, 🟠 approval, ⚪ idle, ✅ done, ❌ failed, 🧩 workflows (→ expands)",
+                  sort_key=_sort_subagents,
                   sort_desc=True,
-                  hover=hover_swarm),
+                  hover=hover_subagents),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand",
                   description="Fold marker for tree view"),
@@ -436,11 +448,6 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_desc=True),
 
     # Subprocesses group
-    SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_subagent_count,
-                  header="SUB", name="Subagent Count",
-                  description="Subagents running right now",
-                  sort_key=lambda ctx: ctx.live_subagent_count,
-                  sort_desc=True),
     SummaryColumn(id="bash_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_bash_count,
                   header="SH", name="Bash Count",
                   description="Background shell commands running right now",
@@ -546,6 +553,40 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
 ]
 
 COLUMNS_BY_ID: dict[str, SummaryColumn] = {c.id: c for c in SUMMARY_COLUMNS}
+
+# Column ids that were merged or renamed: old id -> the column that took it
+# over. Saved column overrides and sort modes naming one are migrated on load
+# (TUIPreferences.load), and view commands accept them.
+COLUMN_ALIASES: dict[str, str] = {
+    "swarm": "subagents",           # DLG, Delegated Work (0.6.1)
+    "subagent_count": "subagents",  # SUB, Subagent Count (0.6.1)
+}
+
+
+def canonical_column_id(column_id: str) -> str:
+    """The id a column goes by now (an alias resolved; anything else as is)."""
+    return COLUMN_ALIASES.get(column_id, column_id)
+
+
+def migrate_column_overrides(overrides: dict) -> dict:
+    """One level's {column id: shown?} with aliased ids renamed.
+
+    Two old ids meeting in one new column: shown wins, as either one on
+    meant the person wanted to see that work.
+    """
+    if not isinstance(overrides, dict) or not any(k in COLUMN_ALIASES for k in overrides):
+        return overrides
+    out: dict = {}
+    merged: dict = {}
+    for key, value in overrides.items():
+        if key in COLUMN_ALIASES:
+            merged.setdefault(COLUMN_ALIASES[key], []).append(value)
+        else:
+            out[key] = value
+    for key, values in merged.items():
+        if key not in out:  # an override of the new id itself stands
+            out[key] = any(v is True for v in values)
+    return out
 
 
 def resolve_column_visible(col: SummaryColumn, level: str, overrides: dict,
