@@ -16,7 +16,12 @@ carry its cumulative spend, like an agent's:
 * ``open`` — it spends again after a final (a finished session resumed) or
   its agent was rebilled: a new segment whose base is what the last one
   closed at, so nothing is counted twice (and a ``close`` row ends the old
-  code's segment on a rebill).
+  code's segment on a rebill);
+* ``correction`` — it reads lower than its segment was billed (a reader
+  fix: a session forked from a conversation no longer counts the history
+  it copied, ``claude_bg.BgSpend``): the segment is scaled down by a
+  ``ledger.correction_rows`` row, open or closed, never by a lower
+  cumulative row.
 
 What each session's ledger segment stands at is kept in
 ``ledger/claude_bg.json`` (seg, closed, base, last values, the code, which
@@ -86,6 +91,14 @@ def _moved(amounts: Mapping[str, float], last: Optional[Mapping[str, float]]) ->
         return True
     return any(abs(float(amounts.get(k, 0) or 0) - float(last.get(k, 0) or 0)) > 1e-9
                for k in _AMOUNTS)
+
+
+def _lowered(amounts: Mapping[str, float], last: Optional[Mapping[str, float]]) -> bool:
+    """Whether a session's spend reads lower than its ledger holds (a reader fix)."""
+    if not last:
+        return False
+    return (float(amounts.get("cost", 0) or 0) < float(last.get("cost", 0) or 0) - 1e-9
+            or int(amounts.get("tokens", 0) or 0) < int(last.get("tokens", 0) or 0))
 
 
 def _grew(amounts: Mapping[str, float], last: Optional[Mapping[str, float]]) -> bool:
@@ -281,6 +294,28 @@ class BgLedger:
         row["claude_bg"] = True
         return row
 
+    def _correction(self, before: dict, after: dict, entry: dict, now_dt: datetime) -> dict:
+        """The correction row restating ``entry``'s segment from ``before`` to ``after``.
+
+        ``ledger.correction_rows``: the segment's cumulative values and its
+        base are scaled by new/old; ``entry``'s base takes the scaled one.
+        """
+        base = entry.get("base") or {}
+        fields = {"billing_seg": int(entry.get("seg", 0) or 0),
+                  "billing_base_cost": float(base.get("cost", 0.0) or 0.0),
+                  "billing_base_tokens": int(base.get("tokens", 0) or 0),
+                  "billing_base_usage": None,
+                  "billing_code": entry.get("code") or after.get("billing_code")}
+        rows, new_base = ledger_mod.correction_rows(
+            dict(before, **fields), dict(after, **fields),
+            closed=bool(entry.get("closed")), now=now_dt)
+        row = rows[0]
+        row["px"] = None
+        row["claude_bg"] = True
+        entry["base"] = dict(base, cost=new_base["billing_base_cost"],
+                             tokens=new_base["billing_base_tokens"])
+        return row
+
     def _rows_for(self, record: dict, done: bool, entry: Optional[dict],
                   now: float, now_dt: datetime):
         """(rows to write, the new state entry or None) for one observed session."""
@@ -290,8 +325,17 @@ class BgLedger:
         if entry is None:
             entry = {"seg": 0, "closed": False, "base": dict.fromkeys(_AMOUNTS, 0),
                      "code": code, "last": None, "at": None}
+        previous = entry.get("record")
         entry = dict(entry, owner=self.owner, record=record)
         rows: List[dict] = []
+        if (_lowered(amounts, entry.get("last")) and isinstance(previous, dict)
+                and (entry.get("closed") or entry.get("code") == code)):
+            # Read lower than billed: a reader fix (a fork's copied history
+            # is no longer its spend). The segment is restated by a
+            # correction row, never by a lower cumulative one
+            rows.append(self._correction(previous, record, entry, now_dt))
+            entry.update(last=amounts, at=now)
+            return rows, entry
         if entry.get("closed"):
             if not _grew(amounts, entry.get("last")):
                 return rows, None  # still as it closed (a restart, a finished row on show)
