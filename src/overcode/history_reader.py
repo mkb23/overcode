@@ -23,11 +23,12 @@ import re
 import threading
 import time
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from . import conversation_spend, model_metadata
+from .clock import from_iso
 from .stat_gate import FileSignature, is_settled, stat_signature
 from .transcript_index import (
     COPY_WINDOW_SECONDS,
@@ -1448,12 +1449,13 @@ def get_session_stats(
     if not session.start_directory:
         return None
 
-    # Parse session start time for filtering.
-    # session.start_time is local time (naive), but Claude Code session files
-    # store timestamps in UTC.  Convert to UTC-naive for correct comparison.
+    # Parse session start time for filtering. Transcripts store UTC, and
+    # the readers key each message by its naive *local* time
+    # (transcript_index), so the filter is naive local too: a UTC-naive
+    # filter dropped the first hours west of UTC and let in the hours
+    # before the start east of it.
     try:
-        session_start_local = datetime.fromisoformat(session.start_time)
-        session_start = session_start_local.astimezone(timezone.utc).replace(tzinfo=None)
+        session_start = from_iso(session.start_time)
     except (ValueError, TypeError):
         return None
 
@@ -1682,8 +1684,7 @@ def legacy_session_reads(
     if not session.start_directory:
         return {}
     try:
-        start_local = datetime.fromisoformat(session.start_time)
-        since = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+        since = from_iso(session.start_time)  # naive local, as the message keys
     except (ValueError, TypeError):
         return {}
     hf = history_file or (
