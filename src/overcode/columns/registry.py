@@ -96,6 +96,21 @@ from .render_supervision import (
     render_wrapper,
     render_wrapper_plain,
 )
+from .render_virtual import (
+    hover_virtual_name,
+    hover_virtual_result,
+    render_virtual_cost,
+    render_virtual_expand,
+    render_virtual_kind,
+    render_virtual_model,
+    render_virtual_name,
+    render_virtual_result,
+    render_virtual_status,
+    render_virtual_subagents,
+    render_virtual_time,
+    render_virtual_tokens,
+    render_virtual_uptime,
+)
 from .render_time import (
     render_active_pct,
     render_running_time,
@@ -230,7 +245,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Status", render_plain=render_status_plain, name="Status",
                   description="What the agent is doing and whether it needs you: working, waiting "
                               "on something automatic, needs approval or input, at rest, unknown, gone",
-                  sort_key=lambda ctx: ctx.stats.current_state),
+                  sort_key=lambda ctx: ctx.stats.current_state,
+                  virtual_render=render_virtual_status),
     SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert,
                   name="Alert",
                   description="Flags an agent that stalled and you haven't looked at since",
@@ -240,7 +256,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="ST", name="Time in State",
                   description="How long the agent has been in its current status",
                   sort_key=lambda ctx: _age_seconds(ctx.status_changed_at),
-                  sort_desc=True),
+                  sort_desc=True,
+                  virtual_render=render_virtual_time),
     SummaryColumn(id="sleep_countdown", ticks=True, group="identity", detail_levels=ALL, render=render_sleep_countdown,
                   visible=lambda ctx: ctx.fleet.any_is_sleeping or ctx.fleet.any_has_status_detail,
                   header="DTL", name="Status Detail",
@@ -253,7 +270,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="A child agent's outcome: 📭 stopped without a report, ✅ success, "
                               "❌ failure, ⌛ oversight timeout (hover for the full reason)",
                   sort_key=_sort_task_result,
-                  hover=hover_task_result),
+                  hover=hover_task_result,
+                  virtual_render=render_virtual_result, virtual_hover=hover_virtual_result),
     # Merged from DLG (swarm, the hook rollup) and SUB (subagent_count, the
     # transcript-file count) in 0.6.1: the old ids alias to it (COLUMN_ALIASES).
     # Left of the name, at every level: its ▸ says → expands the row.
@@ -265,19 +283,23 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                               "▶ working, 🟠 approval, ⚪ idle, ✅ done, ❌ failed, 🧩 workflows (→ expands)",
                   sort_key=_sort_subagents,
                   sort_desc=True,
-                  hover=hover_subagents),
+                  hover=hover_subagents,
+                  virtual_render=render_virtual_subagents),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand",
-                  description="Fold marker for tree view"),
+                  description="Fold marker for tree view",
+                  virtual_render=render_virtual_expand),
     SummaryColumn(id="kind", group="identity", detail_levels=set(), render=render_kind,
                   label="Kind", header="KIND", name="Kind",
                   description="Agent, a child another agent launched, or bg: a 🌙 Claude "
                               "background session (→ shows delegated work: 👥, 🧩)",
-                  sort_key=lambda ctx: ctx.agent_kind, hide_when_uniform=True),
+                  sort_key=lambda ctx: ctx.agent_kind, hide_when_uniform=True,
+                  virtual_render=render_virtual_kind),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
                   header="NAME", name="Agent Name",
                   description="Agent name (tree connectors show parent/child in tree sort)",
-                  sort_key=lambda ctx: ctx.session.name.lower()),
+                  sort_key=lambda ctx: ctx.session.name.lower(),
+                  virtual_render=render_virtual_name, virtual_hover=hover_virtual_name),
     SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
                   label="Host", render_plain=render_host_plain, header="HST", name="Host",
                   description="Machine the agent runs on (shown when sister hosts are configured)",
@@ -319,7 +341,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Uptime", render_plain=render_uptime_plain, header="UPT", name="Uptime",
                   description="Time since the agent was launched",
                   sort_key=lambda ctx: _age_seconds(ctx.session.start_time),
-                  sort_desc=True),
+                  sort_desc=True,
+                  virtual_render=render_virtual_uptime),
     SummaryColumn(id="running_time", ticks=True, group="time", detail_levels=MED_PLUS, render=render_running_time,
                   header="RUN", name="Running Time",
                   description="Total time spent working (green) since launch",
@@ -349,7 +372,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Tokens", render_plain=render_token_count_plain, header="TOK", name="Token Count",
                   description="Total tokens used (input + output + cache)",
                   sort_key=_if_stats(lambda ctx: ctx.claude_stats.total_tokens),
-                  sort_desc=True, hover=hover_spend),
+                  sort_desc=True, hover=hover_spend,
+                  virtual_render=render_virtual_tokens),
     SummaryColumn(id="joules", group="llm_usage", detail_levels=set(), render=render_joules,
                   header="ENRG", name="Energy (Joules)",
                   description="Estimated energy: tokens x a guess at the model's GPU energy (config: energy)",
@@ -359,7 +383,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Cost", render_plain=render_cost_plain, header="$", name="Cost",
                   description="Estimated spend in dollars, from token usage and model pricing",
                   sort_key=_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd),
-                  sort_desc=True, hover=hover_spend),
+                  sort_desc=True, hover=hover_spend,
+                  virtual_render=render_virtual_cost),
     SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
                   visible=lambda ctx: ctx.fleet.any_has_budget, placeholder_width=7,
                   header="BDG", name="Budget",
@@ -416,7 +441,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   placeholder_width=8, header="MDL", name="Model",
                   description="Model the agent is running",
                   sort_key=_sort_model,
-                  hide_when_uniform=True),
+                  hide_when_uniform=True,
+                  virtual_render=render_virtual_model),
     SummaryColumn(id="effort", group="context", detail_levels=MED_PLUS, render=render_effort,
                   label="Effort", render_plain=render_effort_plain,
                   visible=lambda ctx: ctx.fleet.any_has_effort,
@@ -679,7 +705,17 @@ def render_summary_cells(
 
 def cell_segments(col: SummaryColumn, ctx: ColumnContext) -> list:
     """One column's (text, style) segments for one row, its placeholder
-    included; [] for an empty cell."""
+    included; [] for an empty cell.
+
+    A virtual row (``ctx.virtual``) renders through the column's
+    ``virtual_render`` only, never the agent renderer (which reads a real
+    session); [] there means "not applicable": the grid draws the column's
+    placeholder (render_virtual.placeholder). The fleet gate (``visible``)
+    is not asked: a subagent's model or result shows even when no agent's does.
+    """
+    if ctx.virtual is not None:
+        render = col.virtual_render
+        return (render(ctx) or []) if render is not None else []
     if col.visible is not None and not col.visible(ctx):
         segments = None
     else:

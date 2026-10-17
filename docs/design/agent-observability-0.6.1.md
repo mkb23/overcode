@@ -455,8 +455,10 @@ space becomes `▸` / `▾`); `j`/`k` walk them, `→`/`←` go a level in or ou
   state file. `SessionDaemonState.subagent_cost_usd` (default snapshot) is
   the delegated share of the agent's spend, for the $ hover.
 - **TUI** (`tui_actions/swarm.py`, `swarm_view.py`,
-  `tui_widgets/swarm_rows.py`): one `SwarmRows` widget per expanded parent,
-  mounted after its row, redrawn only when its lines change. The highlight
+  `tui_widgets/swarm_rows.py`, `columns/render_virtual.py`): one
+  `SwarmRows` widget per expanded parent, mounted after its row, its lines
+  drawn on the agent rows' column grid (9 below), redrawn only when they
+  change. The highlight
   on a virtual row is `app.swarm_cursor`; the parent's row keeps Textual
   focus and the split's pane. With it set, agent actions (send, kill,
   restart, rename, fork, sleep, …) are refused with a notice, through one
@@ -532,6 +534,42 @@ Choices where the design left room, or the data disagreed:
    already turns 🟠 and `b` finds the parent).
 8. **Teammates group by "team"**, one group per parent (Claude makes one
    implicit team per session, F11).
+9. **Rows on the grid** (owner, 2026-10-17; first built as free-text
+   lines). Virtual rows render through the summary columns and align cell
+   for cell with the agent rows. `swarm_view` still decides which lines
+   exist, their order and keys, but a `SwarmLine` now carries data (the
+   published row, kind marker, label, fold, SubAgents counts, summary,
+   tree connector), not text. `ColumnContext.for_virtual(line, parent)`
+   (`columns/render_virtual.py`) copies the parent's view settings (emoji,
+   $ mode, name width, fleet gates) and sets the row's own values,
+   clearing the parent's agent data; `cell_segments` sends a virtual
+   context to the column's `virtual_render` only (never the agent
+   renderer, which reads a real session), so every registered column
+   either fills a cell or yields its placeholder. Filled: status (the
+   light), ST and UPT (since `started_at`, ticking on the row clock; the
+   run time once finished, still), RES (`render_task_result`, result text
+   in the hover), SUBA (group, phase, done and `+k` counts, glyph then
+   count, no total, laid out as the agent's cell), KIND
+   (sub/fork/team/wf), NAME (`├─`/`└─` indented below the parent as tree
+   sort indents a child, marker, title), MDL, TOK, $. Placeholder: a dim
+   `-` at the right edge of the widest text in that column (`column_edges`,
+   worked out with the widths), blank where every cell is blank, so it
+   sits where a value would. The fleet gate (`visible`) is not asked for
+   a virtual row: a subagent's result or model shows even when no agent's
+   does (the column takes width only while one is on screen);
+   hide-when-uniform still applies. The summary column maps the `l` mode
+   (`virtual_summary`): ai_short what it does / its result, ai_long type ·
+   kind · phase then the same, orders its task (full title), last_command
+   its last tool, annotation and heartbeat `-`; structure lines show
+   their counts and phase progress in every mode. Widths and edges are
+   computed over agent and visible virtual rows
+   (`_recompute_cell_column_widths`), the NAME width grows for the
+   virtual titles up to the detail level's cap, and the agent rows repaint
+   only when that moved them. `SwarmRows` builds cells when the lines,
+   cursor, columns or the parent's settings change, pads when widths,
+   mode or width move, and on the 250 ms row clock redraws only live
+   members' durations; Textual repaints only when the text changed. A
+   member's detail line stays free text, starting at the NAME column.
 
 For Phase 3 (🛰 background sessions as ordinary agent views): the row
 class goes into the default snapshot's `agents`, not `virtual`, so extend
