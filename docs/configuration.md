@@ -103,6 +103,14 @@ children:
   preset: supervised              # default for children: supervised | balanced | autonomous | yours
   presets: {}                     # change a built-in or add your own
 
+# Claude subscription quota: the Q% column's estimate
+# See "Subscription Quota" below
+quota:
+  enabled: true                   # poll usage in the engine, show Q% for subscribers
+  calibration: false              # opt in: statusline samples from launched agents
+  # plan: max20x                  # detected from your Claude Code login when unset
+  # weekly_usd: 1550              # the prior's API-equivalent $ per week
+
 # Monitor daemon loop interval while nobody is watching
 # See "Unattended Low-Power Mode" below
 monitor_daemon:
@@ -462,6 +470,7 @@ session directories inside it (or beside it, when it is called `sessions`).
 ```
 ~/.overcode/
 ├── config.yaml      # User configuration
+├── usage/           # Subscription quota: readings, token stream, fitted model
 ├── presets.json     # Standing instruction presets
 └── presence_log.csv # User presence tracking (macOS)
 ```
@@ -1016,6 +1025,61 @@ is wrong. Conversations begun before the agent started, or resumed after
 the record, are not compared.
 
 The TUI shows costs based on these rates. Press `$` to toggle between token counts and dollar amounts.
+
+## Subscription Quota
+
+On a Claude subscription (Pro, Max, Team or Enterprise seats) the dollar
+figure is notional: what you use is a share of a 5-hour and a weekly
+window. Claude reports those only as whole percents, so overcode
+**estimates** each agent's share of the weekly window in percentage points
+with two decimals (`1.37pp`): the optional `Q%` column (press `$` until
+"weekly quota"), a `quota wk` column in `overcode billing`, and the Σ in the
+status bar in that mode. Hover a `Q%` cell for the agent's share of the
+current 5-hour window, the account's own percentages and how sure the
+model is. API-key, Bedrock and Vertex agents have no quota: the column
+stays hidden when no agent is on the subscription.
+
+```yaml
+quota:
+  enabled: true        # false: no polling, no Q% column
+  calibration: false   # true: statusline samples (below)
+  plan: max20x         # pro | max5x | max20x | team | team_premium | enterprise
+  weekly_usd: 1550     # the prior's weekly budget in API-equivalent dollars
+  weeks: 4             # history the fit uses (2–8)
+  poll_minutes: 5      # usage API poll, at least 5
+  breaks: [2026-05-06] # known limit changes: the fit never spans one
+```
+
+**How it works.** The monitor daemon polls Claude's usage endpoint once per
+account every 5 minutes (backing off when rate limited; the TUI no longer
+polls it itself) and keeps each reading in `~/.overcode/usage/<account>/`
+together with the tokens overcode's agents had spent since the weekly reset.
+It also writes every subscription agent's tokens (deduplicated per message,
+as the cost figures are) to `~/.overcode/usage/tokens/`, billed to the
+agent's code. An agent's estimate is its tokens since the reset, priced at
+Anthropic list prices per token type (input, output, 5-minute and 1-hour
+cache writes, cache reads), times a weight per type. Until fitted the
+weights are the price ratios scaled to your plan's weekly budget, with cache
+reads free (public measurements found them close to free); the plan comes
+from your Claude Code login, else `quota.plan`. Once readings accumulate the
+daemon fits the weights hourly to the observed weekly percentages, treating
+each whole-percent reading as an interval, and keeps them near the price
+ratios while data is thin. `overcode usage model` shows the result; the
+column is dim while unfitted. Usage the model cannot see (claude.ai chat,
+Cowork, Claude Code run outside overcode) is never spread over agents: it
+is the `unattributed` row of `overcode billing`. `overcode doctor` warns
+when the model predicts more than the account shows, or fits poorly.
+
+**Calibration (opt-in).** Polls every 5 minutes say only that the weekly
+figure was, say, 37% at that moment. With `quota.calibration: true`
+(`overcode usage calibration on`), the Claude agents overcode launches from
+then on run `overcode statusline` as their statusline: after each response
+it appends the rate-limit figures, the session's cost and its prompt-cache
+statistics to `~/.overcode/usage/statusline/<agent>.jsonl`, so the daemon
+sees the exact moment the figure ticks from 37% to 38%, which sharpens the
+fit. It then runs your own statusline command, if your project or user
+settings configure one, and prints its output, so your statusline looks the
+same. Nothing is added to an agent's settings while calibration is off.
 
 ## Model metadata (context windows and pricing)
 

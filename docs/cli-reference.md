@@ -309,6 +309,15 @@ Claude background sessions billed to a code (🌙 rows) are counted among its
 agents and, when there are any, in a `background` column (`"background"` in
 `--json`). See [Billing Codes](configuration.md#billing-codes).
 
+On a Claude subscription (Pro, Max, Team seats) a `quota wk` column shows
+each code's estimated share of the **weekly quota this week**, in percentage
+points (`1.37pp`), and an `unattributed` row holds the rest of the weekly
+figure the account shows (claude.ai chat, Cowork, Claude Code outside
+overcode). With `--since` / `--month` the column is `quota`: the period's
+points. It is an estimate from tokens (`overcode usage model`); `--json`
+carries `quota_pp` per code and a `quota` block. API-key and Bedrock users
+see no quota column.
+
 ### `overcode send`
 
 Send input to an agent.
@@ -509,6 +518,37 @@ overcode history <name> --files      # and whether its own files are kept (in a 
 ```
 
 `overcode show <name>` falls back to the archive for an agent no longer live.
+
+### `overcode usage`
+
+Claude subscription usage: the 5-hour and weekly windows, straight from the
+usage API.
+
+```bash
+overcode usage                      # 5h and 7d percentages, reset times
+overcode usage model                # the quota model behind the Q% column
+overcode usage model --json
+overcode usage model --refit        # fit now on the kept history (the engine refits hourly)
+overcode usage calibration          # show whether statusline calibration is on
+overcode usage calibration on       # opt in (agents launched from now on)
+overcode usage calibration off
+```
+
+Every source reports the weekly window in whole percents, so the per-agent
+figure (`Q%`, `1.37pp`) is predicted from tokens: each agent's tokens since
+the weekly reset, priced at Anthropic list prices per token type, times a
+weight per type fitted to the observed weekly percentages. `usage model`
+prints the fitted weights against the price-ratio prior (cache reads start
+at zero), their uncertainty, the implied weekly budget, the fit's quality
+(observations, statusline ticks, windows, RMSE, how many polls the model
+put in the right whole-percent cell), the 5-hour ratio, and this week's
+observed figure against what overcode's agents are predicted to have used.
+
+`calibration on` adds `overcode statusline` to the `--settings` of Claude
+agents overcode launches: it records each response's rate-limit figures
+(the exact moment the weekly figure ticks over) for the fit, then prints
+your own statusline if you configured one. Off by default; off, nothing is
+added. See [Subscription quota](configuration.md#subscription-quota).
 
 ---
 

@@ -824,8 +824,14 @@ class QuotaEngine:
 
     # -- the model ----------------------------------------------------------------
     def prior(self, cfg: Optional[Mapping] = None) -> qm.QuotaModel:
+        """The prior for the plan and budget in force (one object while they hold)."""
         cfg = cfg if cfg is not None else self.config()
-        return qm.prior_model(cfg.get("plan") or self.plan, cfg.get("weekly_usd"))
+        key = (cfg.get("plan") or self.plan, cfg.get("weekly_usd"))
+        cached = getattr(self, "_prior_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, qm.prior_model(*key))
+            self._prior_cache = cached
+        return cached[1]
 
     def current_model(self, cfg: Optional[Mapping] = None) -> qm.QuotaModel:
         prior = self.prior(cfg)
@@ -876,13 +882,14 @@ class QuotaEngine:
             self.views, self.fleet_usage = {}, None
             return
         model = self.current_model(cfg)
+        plan = self._plan()
         views: Dict[str, dict] = {}
         for session in sessions:
             if not counts_toward_quota(session):
                 continue
             sid = session.id
             key = (self._tokens_version, self._model_version, id(model),
-                   latest.get("w7"), latest.get("w5"), self._plan())
+                   latest.get("w7"), latest.get("w5"), plan)
             if self._view_keys.get(sid) == key and sid in self.views:
                 views[sid] = self.views[sid]
                 continue
@@ -899,7 +906,7 @@ class QuotaEngine:
         usage = {
             "w7": w7, "w5": latest.get("w5"), "r7": latest.get("r7"), "r5": latest.get("r5"),
             "w7f": latest.get("w7f"), "fetched_at": _t(latest), "src": latest.get("src"),
-            "plan": self._plan(), "conf": model.confidence,
+            "plan": plan, "conf": model.confidence,
             "pp_attributed": round(attributed, 2),
             "pp_unattributed": (round(w7 - attributed, 2) if isinstance(w7, (int, float)) else None),
             "error": self.last_error,

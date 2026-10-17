@@ -356,6 +356,129 @@ so west of UTC an agent's first |offset| hours of messages are not
 counted (verified with `TZ=America/Los_Angeles`: a message 20 minutes
 after the start reads as 0 tokens; London and Tokyo read it).
 
+## 8b. Phase B as built: the subscription quota model (2026-10-18)
+
+Owner decisions (2026-10-18): subscribers see **percentage points of the
+weekly quota, two decimals** (`1.37pp`) in a new optional column, per agent
+and per billing code, with a `$` cycler mode that shows only it and the
+5-hour figure in the hover; the statusline wrapper is allowed but optional,
+opt-in, for calibration only. This replaces §7's `3.1%w` cell and settles
+open questions 4 and 5 for subscribers. Billing modes / labels for Bedrock
+(the rest of §8's Phase B) are not part of this.
+
+**No finer ground truth exists.** Claude Code 2.1.302: the statusline's
+`rate_limits.seven_day.used_percentage` is an integer, `~/.claude.json`
+`cachedUsageUtilization` an integer, `/api/oauth/usage` whole percents, and
+the raw `anthropic-ratelimit-unified-7d-utilization` header (checked
+through a local proxy) a fraction with two decimals (`"0.05"`): whole
+percents again. §6.1's "fractional %" was wrong. So the two-decimal figure
+is a model's, and every observation is interval-censored.
+
+**Model** (`quota_model.py`, pure). `weekly pp = Σ_f θ_f · x_f`; features
+are list dollars per token type (`in`, `out`, `cw5m`, `cw1h`, `cr`; the
+long-context part at the long tier) plus `x:fable` (Fable's list dollars
+again, cache reads out: a premium beyond the price ratio). θ is points per
+list dollar. Prior: `100 / weekly budget` for the four non-read types,
+cache reads 0 (SemiAnalysis: 500M cache reads did not move the meter),
+no Fable premium; sd 50% of the base (cache reads 30%). Weekly budgets are
+config-overridable priors (`PLAN_WEEKLY_USD`: Pro $170, Max 5x $850, Max
+20x $1,550, Team $220 / premium $1,100); the plan comes from Claude Code's
+OAuth record (`subscriptionType`, `rateLimitTier`), else `quota.plan`.
+List prices are the price table's, never `model_pricing:` overrides or
+Bedrock rates: the meter is API-equivalent.
+
+**Calibration** (`quota_calibration.py`, pure). Observations are
+history lines (below); a poll reading k says `U ∈ [k, k+1)`, a statusline
+tick (k−1 → k with the previous sample ≤ 5 minutes earlier) says `U = k`
+(sd 0.1pp for the bracket). `U(t) = θ·x(t) + a_s`, `x` the fleet's
+cumulative features since the weekly reset, `a_s` a free level per segment
+(absorbing pre-tracking usage and the source's rounding convention, so
+only increments inform θ). EM: impute polls as truncated-normal means;
+solve the weighted least squares with segment levels profiled out, a
+Gaussian prior (shrinkage toward the price ratios) and θ ≥ 0 (coordinate
+descent on the normal equations); re-estimate σ; to convergence. Then
+robustness: an interval whose observed rise beats the predicted one by
+more than 2pp + 4 × the robust (MAD) spread is usage overcode cannot see,
+and the segment is split there (two rounds). Exclusions: no token totals;
+a window at ≥ 100% or after its usage credits moved; a plan change or a
+configured break (`quota.breaks`) starts a new window. Runs of equal
+readings are thinned to their first and last (lossless under a monotone
+prediction), so four weeks of 5-minute polls fit in under a second.
+Posterior sd from the inverse of the normal matrix. The 5-hour window is a
+single ratio (5-hour points per weekly point, ratio of summed rises within
+a 5-hour window, prior 8). On synthetic data (3 weeks, 5-minute polls,
+true weights 25–85% off the prior) the fit recovers the output and
+cache-write weights within 15%, cache reads near 0, and the Fable premium
+within 0.012.
+
+**Engine** (`quota_engine.py`, in the monitor daemon, every tick):
+
+- token stream `usage/tokens/<YYYY-MM>.jsonl`: each subscription agent's
+  (Claude Code backend, `web` provider) token rise by model since its mark,
+  from `SessionStats.conversations` (deduplicated per message id, forks'
+  copies excluded: the spend readers' own work), written at most once a
+  minute per agent with its billing code and account; marks persist
+  (`usage/marks-<tmux>.json`), so a restart books downtime tokens once; an
+  agent from before counting began is not back-billed;
+- polls `/api/oauth/usage` once per account (`quota.poll_minutes` ≥ 5, in
+  a thread, a lock across daemons, a fresh line another daemon wrote is
+  adopted, 429 backs off doubling to an hour and honours `Retry-After`);
+  history `usage/<account>/<YYYY-MM>.jsonl`: `t, src, w7, w5, r7, r5, w7f,
+  credits, surf, plan, x` with `x` the fleet's tokens since the weekly
+  reset (so the fit reads one file); `surf` (a surface breakdown, when the
+  response has one) makes the Claude Code surface the fit's target;
+- statusline samples (calibration on): writes a `statusline` line each time
+  the weekly figure changes, with `prev` and `dt`;
+- `SampleSource`: a finer source plugs in by yielding samples;
+- refits hourly when new observations arrived (thread), saves
+  `usage/<account>/model.json`; a saved fit against a different prior (plan
+  or budget changed) is not used;
+- publishes `SessionDaemonState.quota` = `{pp7d, pp5h, w7, w5, conf}`
+  (recomputed only when tokens, the model or the readings move; equal
+  values keep the same object, so a quiet fleet sends no deltas) and
+  `MonitorDaemonState.usage` (the reading, plan, confidence, attributed and
+  unattributed points). The TUI's own usage poll stays only as a fallback
+  for an engine that publishes none (§2 item 10).
+
+**Display.** Column `quota` (`Q%`, group llm_usage, off by default,
+gated on a fleet flag so it never shows without a subscription agent):
+`1.37pp`, `-` with the value's width, dim while the model is the prior;
+hover: weekly and 5-hour points, the account's readings, confidence,
+"estimate". `$` cycler: tokens → cost → joules → **quota** → all; old
+preferences (no `quota` key) match the preset they matched before. Status
+bar: Σ of the agents' points in quota mode; the Usage section reads the
+engine. `overcode billing`: `quota wk` (this week) or `quota` (a period)
+per code from the token stream at the current model, and an
+`unattributed` row (observed − Σ predicted, never spread). `overcode
+usage model [--json] [--refit]`, `overcode usage calibration on|off`.
+`overcode doctor`: prediction above observed by > max(2pp, 20%); RMSE >
+1.5pp or under half the polls in their cell; a fit older than two days
+while readings arrive.
+
+**Statusline** (`statusline_tap.py`, `overcode statusline`, fast path in
+`entrypoint`): appends `{t, sid, csid, model, rl, cost, pc}` (`pc`: any
+`*cache*` object, e.g. prompt-cache hits / misses / miss causes) when it
+differs from the last line; then runs the user's statusline (project
+`settings.local.json`, project `settings.json`, user `settings.json`;
+never itself) with the same stdin and prints its output; exit 0 always.
+`launch_setting` adds `statusLine` (keeping the user's `padding`) to an
+agent's `--settings` only with `quota.calibration: true`.
+
+Decided differently from §6–7 / left out:
+
+- §6.3's interval-split attribution (each interval's ΔU split by weighted
+  tokens) is not used: with whole-percent ΔU it is mostly 0 or 1. Agents
+  get model predictions; the residual is the unattributed row.
+- The ledger gains no `q7d` fields: the token stream *is* the quota
+  ledger, priced at report time, so a refit restates the week's split
+  (the estimate improves; nothing billed changes).
+- Amortised cost (§6.3.3) and credits-period billed $ are not built.
+- 🌙 background sessions and the summarizer/supervisor are not in the
+  token stream yet: their use lands in "unattributed".
+- An API-key user is recognised only by having no OAuth login; a
+  subscriber whose Claude Code agent was given an API key is counted as
+  subscription.
+
 ## 9. Open questions for the owner
 
 1. **Bedrock attribution:** is creating one application inference profile
