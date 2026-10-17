@@ -81,6 +81,7 @@ from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
+from .quota_engine import QuotaEngine, UsageStore
 from .child_lifecycle import CHILD_NOT_WORKING, OVERSIGHT_TIMEOUT_REASON, child_rollup, task_result
 from .engine_recorders import RecorderStore
 from .ledger import billing_code_of
@@ -313,6 +314,7 @@ class MonitorDaemon:
             # monitor_daemon.interval_unattended_seconds; read once).
             interval_unattended=get_monitor_daemon_config()["interval_unattended"],
             clock=clock,
+            quota=QuotaEngine(tmux_session),
         )
 
     @classmethod
@@ -327,6 +329,7 @@ class MonitorDaemon:
         tmux_session: str = "agents",
         clock: Optional[Clock] = None,
         claude_jobs_dir: Optional[Path] = None,
+        quota: Optional[QuotaEngine] = None,
     ) -> "MonitorDaemon":
         """A daemon whose files live in ``state_dir``, for tests.
 
@@ -339,6 +342,8 @@ class MonitorDaemon:
         here reads the environment's session directory. Claude background
         sessions are read from ``claude_jobs_dir`` (default: a directory
         under ``state_dir`` that does not exist), never ``~/.claude/jobs``.
+        Subscription usage is never fetched: ``quota`` defaults to an engine
+        on ``state_dir/usage`` with no login (a test passes its own fetch).
         """
         state_dir = Path(state_dir)
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -362,6 +367,10 @@ class MonitorDaemon:
             clock=clock,
             claude_jobs_dir=(Path(claude_jobs_dir) if claude_jobs_dir is not None
                              else state_dir / "claude-jobs"),
+            quota=quota if quota is not None else QuotaEngine(
+                tmux_session, store=UsageStore(state_dir / "usage"),
+                fetch=lambda: {"error": "no token", "no_token": True},
+                account=lambda: "test", threaded=False),
         )
         return daemon
 
@@ -384,6 +393,7 @@ class MonitorDaemon:
         detector_tmux: Optional["TmuxInterface"] = None,
         clock: Optional[Clock] = None,
         claude_jobs_dir: Optional[Path] = None,
+        quota: Optional[QuotaEngine] = None,
     ) -> None:
         """Every attribute the daemon has, from its resolved dependencies."""
         # Every time the daemon reads, wall and monotonic, comes from here;
@@ -525,6 +535,9 @@ class MonitorDaemon:
         # Transcript stats: tokens, cost, model, PR, session ids, and the
         # values views render beside the token columns
         self.stats_sync = StatsSync(session_manager=session_manager, log=log, clock=self.clock)
+        # Subscription quota (cost model Phase B): usage polling, the token
+        # stream, the fitted model and each agent's predicted weekly points
+        self.quota = quota
         # The process table, once per tick, for CPU / RSS and the sandbox probe
         self.process_probe = ProcessProbe()
 
@@ -1250,6 +1263,8 @@ class MonitorDaemon:
         if git is not None:
             state.git_diff, state.git_untracked = git
         state.burn = self._burn_by_session.get(session.id)
+        if self.quota is not None:
+            state.quota = self.quota.agent_view(session.id)
 
     def _sync_git(self, sessions: list, now: datetime) -> None:
         """Git diff/untracked per distinct directory, every GIT_SYNC_SECONDS while attended."""
@@ -1303,6 +1318,17 @@ class MonitorDaemon:
                     "energy_j": round(burn.energy_j, 1),
                 }
         self._burn_by_session = by_session
+
+    def _sync_quota(self, sessions: list, now: datetime) -> None:
+        """Subscription quota, every tick: cheap unless tokens moved or a poll is due.
+
+        Reads each agent with this tick's staged stats (``_pending.view``).
+        """
+        quota = self.quota
+        if quota is None:
+            return
+        quota.sync([self._pending.view(s) for s in sessions], now.timestamp())
+        self.state.usage = quota.fleet_usage
 
     def _start_engine_socket(self) -> None:
         """Serve engine.sock next to the state file; log and carry on if it can't."""
@@ -1432,6 +1458,7 @@ class MonitorDaemon:
         self._sync_process_resources(sessions, now)
         self._sync_git(sessions, now)
         self._sync_burn(sessions, now)
+        self._sync_quota(sessions, now)
         self._dispatch_heartbeats(sessions, now)
         newly_done: list = []
         try:
@@ -2251,6 +2278,12 @@ class MonitorDaemon:
                 self.recorder_store.save(force=True)
             except Exception as e:
                 self.log.warn(f"engine state not saved at shutdown: {e}")
+            # Tokens counted but not yet in the quota token stream
+            if self.quota is not None:
+                try:
+                    self.quota.flush(self.clock.wall().timestamp(), force=True)
+                except Exception as e:
+                    self.log.warn(f"quota token stream not flushed at shutdown: {e}")
             self.presence.stop()
             if self._engine is not None:
                 self._engine.stop()

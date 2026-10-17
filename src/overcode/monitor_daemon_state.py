@@ -225,6 +225,12 @@ class SessionDaemonState:
     # string: {"1.0": {"input_tokens", "output_tokens", ..., "cost_usd",
     # "energy_j"}}. Computed only while attended.
     burn: Optional[dict] = None
+    # Subscription quota (cost model Phase B, quota_engine): {"pp7d": its
+    # predicted points of the weekly quota this week, "pp5h": of the 5-hour
+    # window, "w7" / "w5": the account's observed %, "conf": the model's
+    # confidence}. None for an agent off the subscription (API key,
+    # Bedrock, another backend) or before the first usage reading.
+    quota: Optional[dict] = None
     live_colour: Optional[str] = None
     live_since: Optional[float] = None
     episode_colour: Optional[str] = None
@@ -357,6 +363,12 @@ class MonitorDaemonState:
     # still get every update over engine.sock; this says the file, which
     # the CLI and a restarted view read, is falling behind.
     state_file_error: Optional[str] = None
+
+    # The account's subscription usage, polled by the engine (quota_engine):
+    # {"w7", "w5", "r7", "r5", "w7f", "fetched_at", "src", "plan", "conf",
+    # "pp_attributed", "pp_unattributed", "error"}. None without a
+    # subscription login, or with quota.enabled off.
+    usage: Optional[dict] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
