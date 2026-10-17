@@ -54,6 +54,8 @@ DONE_KEEP = 200
 DONE_ROWS_DEFAULT = 50
 WORKFLOWS_KEEP = 50
 ASYNC_KEEP = 100
+# Background shells one subagent started that its entry remembers
+SHELLS_KEEP = 20
 
 # A subagent unheard from for this long is assumed gone, for hook state
 # written before Claude sent ``background_tasks`` (#507). Once a Stop or
@@ -255,6 +257,38 @@ def _add_workflow(swarm: dict, task_id: str, name=None, run_id=None, now=None) -
         _fold(swarm, "workflows", runs.pop(oldest).get("status") or RESULT_OK)
 
 
+def _running_ids(tasks, exclude: Optional[str] = None) -> set:
+    """The ids ``background_tasks`` lists as running."""
+    return {t["id"] for t in tasks if isinstance(t, dict) and t.get("id")
+            and t.get("id") != exclude and t.get("status", "running") == "running"}
+
+
+def _own_work_running(entry: dict, ids: set) -> bool:
+    """Whether a shell (or monitor) the agent started itself is still listed;
+    forgets the ones that are not."""
+    shells = [s for s in (entry.get("shells") or []) if s in ids]
+    if shells:
+        entry["shells"] = shells
+    else:
+        entry.pop("shells", None)
+    return bool(shells)
+
+
+def _note_own_shell(entry: dict, tool_name, response) -> None:
+    """A subagent's tool call that left work running in the background: a
+    Bash run with run_in_background, or moved there when it outlived its
+    timeout (``backgroundTaskId``), or a Monitor (``taskId``). Claude lists
+    that work under its own id in ``background_tasks`` (as a shell)."""
+    if not isinstance(response, dict):
+        return
+    task = response.get("backgroundTaskId")
+    if not task and tool_name == "Monitor":
+        task = response.get("taskId")
+    if isinstance(task, str) and task:
+        shells = [s for s in (entry.get("shells") or []) if s != task]
+        entry["shells"] = (shells + [task])[-SHELLS_KEEP:]
+
+
 def _note_async(swarm: dict, agent_id: str) -> None:
     ids = [a for a in (swarm.get("async") or []) if a != agent_id]
     ids.append(agent_id)
@@ -271,9 +305,8 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
     shows) only work that is always in the background is reconciled:
     workflows, teammates and background-launched subagents.
     """
-    running = [t for t in tasks if isinstance(t, dict) and t.get("id")
-               and t.get("id") != exclude and t.get("status", "running") == "running"]
-    ids = {t["id"] for t in running}
+    ids = _running_ids(tasks, exclude)
+    running = [t for t in tasks if isinstance(t, dict) and t.get("id") in ids]
     swarm["bg_at"] = now
 
     for t in running:
@@ -297,7 +330,12 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
             gone = (desc not in team_descs) if desc else not team_descs
         else:
             gone = agent_id not in ids and (turn_over or agent_id in async_ids)
-            # Claude lists the shell it waits on, not the agent itself
+            # Claude lists the shell it waits on, not the agent itself. Its
+            # own shells, when its tool calls named them; else any shell, for
+            # one an interim notification said waits on its own work
+            if _own_work_running(entry, ids) and gone:
+                entry["own_work"] = True
+                gone = False
             gone = gone and not (entry.get("own_work") and shells)
         if gone:
             _finish(subagents, swarm, agent_id, RESULT_OK, now)
@@ -328,7 +366,8 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
 # lost. The agent is running all the same, so it joins the map on that
 # event, not at the parent's next Stop, which a busy parent may not reach
 # for minutes. Claude's own helpers (the away summary, auto-compaction)
-# fire SubagentStop only, never a tool event.
+# fire SubagentStop only; a background agent's progress summary fires
+# PreToolUse, but with no agent_type, which every delegated agent's carry.
 _AT_WORK_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure",
                              "PermissionRequest"})
 
@@ -343,11 +382,17 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
     """The live map and swarm after one of the parent's agents' own events."""
     subagents, swarm = _copy(subagents, swarm)
     entry = subagents.get(agent_id)
-    if (entry is None and event in _AT_WORK_EVENTS
+    if (entry is None and event in _AT_WORK_EVENTS and data.get("agent_type")
             and agent_id not in (swarm.get("done") or {})):
         # Not one that finished: a resumed agent says so with SubagentStart,
-        # or the next background_tasks list puts it back
+        # or the next background_tasks list puts it back. A delegated
+        # agent's events always name its type; the progress summaries
+        # Claude forks off a long-running background agent (about every
+        # 30 s, 2.1.302, capture 14) fire PreToolUse under an id of their
+        # own with no type, for calls Claude refuses, and nothing else.
         entry = subagents[agent_id] = _new_entry(agent_id, data.get("agent_type"), swarm, now)
+    tasks = data.get("background_tasks")
+    tasks = tasks if isinstance(tasks, list) else None
     if event == "SubagentStart":
         agent_type = data.get("agent_type")
         (swarm.get("done") or {}).pop(agent_id, None)  # resumed: counted once
@@ -357,6 +402,8 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
             "started_at": (entry or {}).get("started_at", now),
             "last_seen": now,
         }
+        if (entry or {}).get("shells"):
+            subagents[agent_id]["shells"] = entry["shells"]
     elif event == "SubagentStop":
         run = workflow_run_of(data.get("agent_transcript_path"))
         if run and entry is not None:
@@ -365,6 +412,14 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
             # A teammate stops each time it goes idle; it is still listening
             entry.pop("waiting", None)
             entry.update(idle=True, last_seen=now)
+        elif (entry is not None and tasks is not None
+              and _own_work_running(entry, _running_ids(tasks))):
+            # It ended its turn with a shell of its own still running: Claude
+            # resumes it when that ends. The interim notification that says
+            # so reaches the hooks only once the parent takes it as a prompt,
+            # which a busy parent may not do for minutes (2.1.302, capture 13)
+            entry.pop("idle", None)
+            entry.update(own_work=True, last_seen=now)
         elif entry is not None or agent_id in (swarm.get("async") or []):
             if entry is None:
                 subagents[agent_id] = {"kind": agent_kind(agent_id, data.get("agent_type"), swarm)}
@@ -374,8 +429,7 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
         # SubagentStop with no SubagentStart and write no transcript: not
         # delegated work. A real agent whose start was lost is still seen
         # through its Agent call's response, or as async-launched.
-        tasks = data.get("background_tasks")
-        if isinstance(tasks, list):
+        if tasks is not None:
             _reconcile(subagents, swarm, tasks, now, turn_over=False, exclude=agent_id)
     elif event == "TeammateIdle":
         if entry is not None:
@@ -392,6 +446,8 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
             activity = tool_activity(data.get("tool_name"), data.get("tool_input"))
             if activity:
                 entry["activity"] = activity
+        elif event == "PostToolUse":
+            _note_own_shell(entry, data.get("tool_name"), data.get("tool_response"))
     _note_transcript(swarm, data)
     return subagents, swarm
 

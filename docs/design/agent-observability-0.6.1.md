@@ -124,6 +124,7 @@ SubagentStart ─▶ live ─(tool hooks refresh last_seen)─▶ SubagentStop �
 Agent PostToolUse(async_launched), or an unknown agent's own tool event ─▶ live
 done ─(SendMessage resumes it: SubagentStart again)─▶ live
 Stop.background_tasks lacks an id that we hold as live ─▶ done (reconciled; replaces the 1 h timer)
+SubagentStop or Stop while a shell/Monitor the agent started is still listed ─▶ live 🟡 (it resumes when that ends)
 parent SessionEnd ─▶ every live virtual row → done(killed)
 ```
 
@@ -882,5 +883,8 @@ reduced to record skeletons):
 | `07`–`09` | teams: print mode (no tools), in-process teammates (TeammateIdle), tmux teammate (own process, no hooks) |
 | `10-background-session` | `--bg` hooks, `agents --json` running, done, stopped and `--all`; jobs `state.json`; `logs` excerpt; stop/rm |
 | `11-interactive-session-registry` | `~/.claude/sessions/<pid>.json` status transitions idle→busy→waiting→busy→idle |
+| `12-background-subagent-own-shell` | 2.1.301: subagents background their own shell and end their turn; interim "waiting on its own background work" notifications |
+| `13-busy-parent-subagent-own-shell` | 2.1.302 via `overcode launch`: the same while the parent runs a 40 s command, so the interim notifications wait in its queue; the subagent's `backgroundTaskId` is still in its `SubagentStop`'s `background_tasks` |
+| `14-background-subagent-progress-summaries` | 2.1.302: a long-running background agent's progress summary (every ~30 s) fires `PreToolUse` under its own agent id with no `agent_type`, refused with "No tools needed for summary" |
 | `spend-reconciliation.txt` | naive vs dedup vs `cost-state` for 9 runs |
 | `_harness/` | the logger, runners and inspectors used (the hook logger is `hooklog.py`) |
