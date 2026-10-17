@@ -321,11 +321,33 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
         }
 
 
+# A subagent's own events that show it at work. One from an agent the map
+# has never seen means its SubagentStart never arrived: the parent's CLI was
+# launched by an overcode that did not register SubagentStart yet (a CLI
+# keeps the hook set it started with until it restarts), or the start was
+# lost. The agent is running all the same, so it joins the map on that
+# event, not at the parent's next Stop, which a busy parent may not reach
+# for minutes. Claude's own helpers (the away summary, auto-compaction)
+# fire SubagentStop only, never a tool event.
+_AT_WORK_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure",
+                             "PermissionRequest"})
+
+
+def _new_entry(agent_id: str, agent_type: Optional[str], swarm: dict, now: float) -> dict:
+    return {"type": agent_type, "kind": agent_kind(agent_id, agent_type, swarm),
+            "started_at": now, "last_seen": now}
+
+
 def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
                          data: dict, now: float) -> Tuple[dict, dict]:
     """The live map and swarm after one of the parent's agents' own events."""
     subagents, swarm = _copy(subagents, swarm)
     entry = subagents.get(agent_id)
+    if (entry is None and event in _AT_WORK_EVENTS
+            and agent_id not in (swarm.get("done") or {})):
+        # Not one that finished: a resumed agent says so with SubagentStart,
+        # or the next background_tasks list puts it back
+        entry = subagents[agent_id] = _new_entry(agent_id, data.get("agent_type"), swarm, now)
     if event == "SubagentStart":
         agent_type = data.get("agent_type")
         (swarm.get("done") or {}).pop(agent_id, None)  # resumed: counted once
@@ -383,6 +405,12 @@ def _on_agent_call(subagents: dict, swarm: dict, tool_input, response, now: floa
     status = response.get("status")
     if status == "async_launched":
         _note_async(swarm, agent_id)
+        if agent_id not in subagents and agent_id not in (swarm.get("done") or {}):
+            # Running from the moment the call returns. Its SubagentStart
+            # may land just after, or never (a CLI launched before overcode
+            # registered it), and its first tool call can be seconds away.
+            agent_type = tool_input.get("subagent_type") if isinstance(tool_input, dict) else None
+            subagents[agent_id] = _new_entry(agent_id, agent_type, swarm, now)
     elif status == "teammate_spawned":
         desc = tool_input.get("description") if isinstance(tool_input, dict) else None
         name = response.get("name") or (tool_input or {}).get("name")

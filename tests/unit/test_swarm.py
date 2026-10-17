@@ -17,11 +17,15 @@ from overcode import swarm
 from overcode.episodes import EpisodeRecorder
 from overcode.hook_handler import _obligation_kind, _update_obligations
 from tests.status_replay import (
-    GREEN, ORANGE, RED, YELLOW,
+    GREEN, ORANGE, RED, REGISTERED_EVENTS, YELLOW,
     Scenario, capture_steps, ev, mismatches, replay, timeline,
 )
 
 pytestmark = pytest.mark.unit
+
+# The Claude hooks overcode registered before SubagentStart/SubagentStop (#507)
+# and TeammateIdle (0.6.1)
+OLDER_HOOKS = REGISTERED_EVENTS - {"SubagentStart", "SubagentStop", "TeammateIdle"}
 
 
 def _rollup(**counts):
@@ -157,6 +161,32 @@ class TestLifecycle:
     def test_never_delegated_is_none(self):
         assert swarm.rollup({"event": "Stop"}, 1.0) is None
         assert swarm.rollup(None, 1.0) is None
+
+    def test_a_background_launch_is_running_as_soon_as_the_call_returns(self):
+        """The Agent call's response names the agent: it counts from then,
+        whether its SubagentStart comes next, much later, or never."""
+        subs, sw = _parent({}, {}, "PostToolUse", "Agent", {"subagent_type": "fork"}, now=1.0,
+                           tool_response={"status": "async_launched", "agentId": "a1"})
+        assert swarm.rollup(_state(subs, sw), 1.0) == _rollup(total=1, running=1)
+        assert subs["a1"]["kind"] == "fork"
+        subs, sw = _sub(subs, sw, "SubagentStart", "a1", 1.5, agent_type="fork")
+        assert subs["a1"]["started_at"] == 1.0  # one agent, from its launch
+        assert swarm.rollup(_state(subs, sw), 1.5) == _rollup(total=1, running=1)
+
+    def test_a_relaunch_report_for_a_finished_agent_is_not_counted_again(self):
+        subs, sw = _sub({}, {}, "SubagentStart", "a1")
+        subs, sw = _sub(subs, sw, "SubagentStop", "a1", 2.0)
+        subs, sw = _parent(subs, sw, "PostToolUse", "Agent", {}, now=3.0,
+                           tool_response={"status": "async_launched", "agentId": "a1"})
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, ok=1)
+
+    def test_a_subagent_never_seen_starting_counts_from_its_first_tool_call(self):
+        subs, sw = _sub({}, {}, "PreToolUse", "a1", 2.0, agent_type="Explore",
+                        tool_name="Grep", tool_input={"pattern": "x"})
+        assert swarm.rollup(_state(subs, sw), 2.0) == _rollup(total=1, running=1)
+        # The parent's turn ends and Claude no longer lists it: finished
+        subs, sw = _parent(subs, sw, "Stop", now=5.0, background_tasks=[])
+        assert swarm.rollup(_state(subs, sw), 5.0) == _rollup(total=1, ok=1)
 
 
 class TestReconcile:
@@ -420,6 +450,45 @@ class TestCaptures:
         for prev, cur in zip(samples, samples[1:]):
             if not any(prev.t < t <= cur.t for t in times):
                 assert prev.rollup == cur.rollup, (prev.t, cur.t)
+
+
+def _first_running(samples):
+    return next((s.t for s in samples if s.rollup and s.rollup.get("running")), None)
+
+
+def _event_times(steps, event, tool=None):
+    return [s.t for s in steps if s.payload.get("hook_event_name") == event
+            and not s.payload.get("agent_id") and (tool is None or s.payload.get("tool_name") == tool)]
+
+
+class TestAnOlderLaunch:
+    """A Claude CLI keeps the hooks it was launched with until it restarts.
+    One launched before overcode registered SubagentStart/SubagentStop
+    (seen live: a parent from Sep 27 showed its two background agents
+    under 🤿 at once and under 👥 only at its next Stop, about a minute
+    later) still shows them as soon as their launch is known."""
+
+    @pytest.mark.parametrize("name", ["03-background-subagent-with-SendMessage",
+                                      "04-fork", "12-background-subagent-own-shell"])
+    def test_a_background_agent_shows_when_its_call_returns(self, name, tmp_path):
+        steps = capture_steps(name)
+        launched = _event_times(steps, "PostToolUse", "Agent")[0]
+        parent_stop = _event_times(steps, "Stop")[0]
+        sc = Scenario(name, steps=steps, expect=[(0.0, parent_stop + 1, GREEN)],
+                      registered=OLDER_HOOKS)
+        first = _first_running(replay(sc, tmp_path))
+        assert first is not None and first - launched <= 0.25 < parent_stop - first
+
+    def test_a_foreground_agent_shows_from_its_first_tool_call(self, tmp_path):
+        name = "02-foreground-subagent"
+        steps = capture_steps(name)
+        first_call = min(s.t for s in steps if s.payload.get("agent_id")
+                         and s.payload.get("hook_event_name") == "PreToolUse")
+        returned = _event_times(steps, "PostToolUse", "Agent")[0]
+        sc = Scenario(name, steps=steps, expect=[(0.0, 7.0, GREEN)], registered=OLDER_HOOKS)
+        samples = replay(sc, tmp_path)
+        assert first_call <= _first_running(samples) <= first_call + 0.25 < returned
+        assert _at(samples, 5.75).rollup == _rollup(total=1, ok=1)
 
 
 # ---------------------------------------------------------------------------

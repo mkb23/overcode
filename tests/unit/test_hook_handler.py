@@ -180,9 +180,21 @@ class TestApplySubagentEvent:
         assert s["subagents"]["a1"]["last_seen"] == 130.0
         assert s["event"] == "Stop" and "tool_name" not in s
 
-    def test_events_from_an_unknown_subagent_add_nothing(self):
-        s = _apply_subagent_event(self.PARENT, "PostToolUse", "zz", {}, 130.0)
-        assert s == self.PARENT
+    def test_a_tool_event_from_an_unknown_subagent_adds_it_running(self):
+        """Its SubagentStart never came (a CLI launched before overcode
+        registered it): its first tool call shows it, not the parent's Stop."""
+        s = _apply_subagent_event(self.PARENT, "PreToolUse", "zz",
+                                  {"agent_type": "Explore", "tool_name": "Grep"}, 130.0)
+        assert s["subagents"] == {"zz": {"type": "Explore", "kind": "subagent",
+                                         "started_at": 130.0, "last_seen": 130.0,
+                                         "activity": "Grep"}}
+        assert s["event"] == "Stop" and s["timestamp"] == 100.0 and "tool_name" not in s
+
+    def test_a_late_tool_event_from_a_finished_subagent_adds_nothing(self):
+        s = _apply_subagent_event(self.PARENT, "SubagentStart", "a1", {}, 110.0)
+        s = _apply_subagent_event(s, "SubagentStop", "a1", {}, 120.0)
+        after = _apply_subagent_event(s, "PostToolUse", "a1", {}, 130.0)
+        assert "subagents" not in after and after["swarm"] == s["swarm"]
 
     def test_permission_surfaces_on_the_parent_then_restores_it(self):
         s = _apply_subagent_event(self.PARENT, "SubagentStart", "a1", {}, 110.0)
