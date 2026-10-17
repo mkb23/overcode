@@ -2817,13 +2817,23 @@ class TestLaunchPresets:
         assert result.exit_code == 0, result.output
         assert fleet.get("child").cost_budget_usd == 1.0
 
-    def test_unknown_preset_warns_and_launches_with_the_default(self, fleet):
+    def test_unknown_preset_refuses_to_launch(self, fleet):
+        """A typo in --preset exits non-zero, lists the valid names, launches nothing."""
+        self._write_config("children:\n  presets:\n    overnight:\n      budget: 5\n")
         fleet.add("dad")
         result = self._child("--preset", "autonomus")
-        assert result.exit_code == 0, result.output
-        assert "unknown preset 'autonomus'" in result.output
-        assert "Preset: supervised" in result.output
-        assert fleet.get("child") is not None
+        output = " ".join(strip_ansi(result.output).split())  # rich wraps long lines
+        assert result.exit_code == 1, output
+        assert "Unknown preset 'autonomus'" in output
+        assert "supervised, balanced, autonomous, overnight" in output
+        assert fleet.get("child") is None
+
+    def test_unknown_preset_refuses_a_top_level_launch_too(self, fleet):
+        result = runner.invoke(app, ["launch", "--name", "solo", "--directory", "/tmp",
+                                     "--preset", "nope"])
+        assert result.exit_code == 1, result.output
+        assert "Unknown preset 'nope'" in strip_ansi(result.output)
+        assert fleet.get("solo") is None
 
     def test_bad_config_warns_never_crashes(self, fleet):
         self._write_config("children:\n  preset: nope\n  presets:\n    x: fast\n")
@@ -2855,6 +2865,46 @@ class TestLaunchPresets:
         output = strip_ansi(runner.invoke(app, ["launch", "--help"]).output)
         assert "--preset" in output
         assert "--archive-after" in output
+
+
+class TestNormalPermissions:
+    """launch/fork --normal-permissions: normal mode under a bypass parent, the rest inherited."""
+
+    def test_child_of_a_bypass_parent_runs_normal(self, fleet):
+        fleet.add("dad", permissiveness_mode="bypass", model="opus", provider="bedrock")
+        result = runner.invoke(app, ["launch", "--name", "kid", "--directory", "/tmp",
+                                     "--parent", "dad", "--normal-permissions"])
+        assert result.exit_code == 0, result.output
+        assert "Permissions: normal" in result.output
+        kid = fleet.get("kid")
+        assert kid.permissiveness_mode == "normal"
+        assert (kid.model, kid.provider) == ("opus", "bedrock")
+
+    def test_without_it_the_child_inherits_bypass(self, fleet):
+        fleet.add("dad", permissiveness_mode="bypass")
+        result = runner.invoke(app, ["launch", "--name", "kid", "--directory", "/tmp",
+                                     "--parent", "dad"])
+        assert result.exit_code == 0, result.output
+        assert fleet.get("kid").permissiveness_mode == "bypass"
+
+    @pytest.mark.parametrize("flag", ["--bypass-permissions", "--skip-permissions"])
+    def test_conflicts_with_permission_flags(self, fleet, flag):
+        result = runner.invoke(app, ["launch", "--name", "solo", "--directory", "/tmp",
+                                     "--normal-permissions", flag])
+        assert result.exit_code == 1
+        assert "--normal-permissions cannot be combined" in strip_ansi(result.output)
+        assert fleet.get("solo") is None
+
+    def test_fork_normal_permissions(self, fleet):
+        fleet.add("src", permissiveness_mode="bypass", active_agent_session_id="sess-1")
+        result = runner.invoke(app, ["fork", "src", "-n", "side", "--normal-permissions"])
+        assert result.exit_code == 0, result.output
+        assert fleet.get("side").permissiveness_mode == "normal"
+
+    def test_help_lists_the_flag(self):
+        for command in ("launch", "fork"):
+            output = strip_ansi(runner.invoke(app, [command, "--help"]).output)
+            assert "--normal-permissions" in output
 
 
 class TestConfigPresets:

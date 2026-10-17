@@ -38,7 +38,7 @@ from .backends.shell import SHELL_BACKEND
 from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
-from .launch_settings import LaunchArgs, resolve_launch_settings
+from .launch_settings import NORMAL_PERMISSIONS_CONFLICT, LaunchArgs, resolve_launch_settings
 from .ledger import billing_code_of, billing_lookup, inherited_billing_code
 from .dependency_check import require_tmux, require_agent_cli
 from .exceptions import (
@@ -352,6 +352,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         initial_prompt: Optional[str] = None,
         skip_permissions: bool = False,
         dangerously_skip_permissions: bool = False,
+        normal_permissions: bool = False,
         parent_name: Optional[str] = None,
         allowed_tools: Optional[str] = None,
         extra_cli_args: Optional[List[str]] = None,
@@ -377,6 +378,9 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             skip_permissions: If True, use --permission-mode dontAsk
             dangerously_skip_permissions: If True, use --dangerously-skip-permissions
                 (for testing only - bypasses folder trust dialog)
+            normal_permissions: If True, run in normal permission mode even
+                under a bypass or permissive parent (everything else is still
+                inherited). Excludes the two flags above.
             parent_name: Optional parent agent name for hierarchy (#244).
                 If not set, auto-detects from OVERCODE_SESSION_NAME env var.
             allowed_tools: Comma-separated tool list for --allowedTools
@@ -413,6 +417,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             require_tmux()
         except (InvalidSessionNameError, TmuxNotFoundError) as e:
             raise LaunchError(str(e)) from e
+        if normal_permissions and (skip_permissions or dangerously_skip_permissions):
+            raise LaunchError(NORMAL_PERMISSIONS_CONFLICT)
 
         # Auto-detect parent from env var if not explicitly set (#244)
         parent_session = None
@@ -459,6 +465,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                 backend=backend, provider=provider, model=model, wrapper=wrapper,
                 agent_teams=agent_teams, skip_permissions=skip_permissions,
                 dangerously_skip_permissions=dangerously_skip_permissions,
+                normal_permissions=normal_permissions,
                 skill_profile=skill_profile,
                 inherit_parent_settings=inherit_parent_settings,
             ),
@@ -651,6 +658,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         name: str,
         source_session: Session,
         initial_prompt: Optional[str] = None,
+        normal_permissions: bool = False,
     ) -> Session:
         """Launch a forked agent from an existing session's context.
 
@@ -666,6 +674,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             name: Name for the forked agent
             source_session: The session to fork from (must have active_agent_session_id)
             initial_prompt: Optional prompt to send after the fork starts
+            normal_permissions: Run the fork in normal permission mode instead
+                of the source's (everything else is still inherited)
 
         Returns:
             The new Session, or the existing one if an agent called ``name``
@@ -725,7 +735,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         if window_name is None:
             raise LaunchError(f"failed to create tmux window '{name}'", "fork")
 
-        perm_mode = source_session.permissiveness_mode or "normal"
+        perm_mode = "normal" if normal_permissions else (
+            source_session.permissiveness_mode or "normal")
 
         # Persist the forked Session with all inherited launch-time state
         # populated. The shared helper below then renders the shell line.

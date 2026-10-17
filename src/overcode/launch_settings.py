@@ -15,6 +15,8 @@ Precedence, per setting:
   config default (provider only) > ``"web"`` / the CLI's own default.
 - wrapper: explicit > parent > config default.
 - agent_teams, permission mode: explicit > parent > off / ``"normal"``.
+  ``normal_permissions`` asks for normal mode explicitly: the parent's
+  mode is not inherited, everything else still is.
 - skill profile: explicit > parent > the folder's pinned profile > config
   default; ``"none"`` at any step means no profile.
 
@@ -29,6 +31,9 @@ from typing import Any, Callable, Mapping, Optional
 from .backends import DEFAULT_BACKEND
 from .skill_library import NO_PROFILE
 
+NORMAL_PERMISSIONS_CONFLICT = (
+    "--normal-permissions cannot be combined with --bypass-permissions or --skip-permissions")
+
 
 @dataclass(frozen=True)
 class LaunchArgs:
@@ -41,6 +46,7 @@ class LaunchArgs:
     agent_teams: bool = False
     skip_permissions: bool = False
     dangerously_skip_permissions: bool = False
+    normal_permissions: bool = False  # explicit normal mode; excludes the two above
     skill_profile: Optional[str] = None
     inherit_parent_settings: bool = True
 
@@ -76,8 +82,15 @@ def resolve_launch_settings(
         defaults: ``config.get_new_agent_defaults()``.
         folder_profile: the skill profile pinned to the agent's folder;
             only called when neither the caller nor the parent names one.
+
+    Raises:
+        ValueError: ``normal_permissions`` together with a permissive or
+            bypass flag.
     """
     from .overagent import OVERAGENT_BACKEND
+
+    if args.normal_permissions and (args.skip_permissions or args.dangerously_skip_permissions):
+        raise ValueError(NORMAL_PERMISSIONS_CONFLICT)
 
     backend = args.backend
     provider = args.provider
@@ -110,7 +123,7 @@ def resolve_launch_settings(
             wrapper = parent.wrapper
         if not agent_teams:
             agent_teams = parent.agent_teams
-        if not skip_permissions and not dangerously_skip:
+        if not skip_permissions and not dangerously_skip and not args.normal_permissions:
             if parent.permissiveness_mode == "bypass":
                 dangerously_skip = True
             elif parent.permissiveness_mode == "permissive":

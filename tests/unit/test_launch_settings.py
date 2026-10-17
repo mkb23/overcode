@@ -75,6 +75,16 @@ CASES = [
      LaunchArgs(), parent(backend="overagent"), {"backend": "codex"}, None,
      plan(backend="codex", provider="bedrock", model="opus", wrapper="devcontainer",
           agent_teams=True, permissiveness_mode="bypass", skill_profile="web")),
+    ("normal_permissions keeps everything but a bypass parent's mode",
+     LaunchArgs(normal_permissions=True), parent(), {}, None,
+     plan(backend="claude-code", provider="bedrock", model="opus", wrapper="devcontainer",
+          agent_teams=True, permissiveness_mode="normal", skill_profile="web")),
+    ("normal_permissions under a permissive parent",
+     LaunchArgs(normal_permissions=True), parent(permissiveness_mode="permissive"), {}, None,
+     plan(backend="claude-code", provider="bedrock", model="opus", wrapper="devcontainer",
+          agent_teams=True, permissiveness_mode="normal", skill_profile="web")),
+    ("normal_permissions on a top-level agent is plain normal",
+     LaunchArgs(normal_permissions=True), None, {}, None, plan()),
     ("no inheritance when opted out",
      LaunchArgs(inherit_parent_settings=False), parent(), {}, None, plan()),
     ("folder pin applies when caller and parent name no profile",
@@ -97,6 +107,12 @@ CASES = [
 def test_resolve_launch_settings(args, parent_session, defaults, folder, expected):
     assert resolve_launch_settings(args, parent_session, defaults,
                                    folder_profile=lambda: folder) == expected
+
+
+@pytest.mark.parametrize("flag", ["skip_permissions", "dangerously_skip_permissions"])
+def test_normal_permissions_excludes_the_permission_flags(flag):
+    with pytest.raises(ValueError, match="--normal-permissions cannot be combined"):
+        resolve_launch_settings(LaunchArgs(normal_permissions=True, **{flag: True}), None, {})
 
 
 def test_the_folder_pin_is_read_only_when_needed():

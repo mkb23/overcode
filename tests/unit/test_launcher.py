@@ -1562,6 +1562,31 @@ class TestParentSettingsInheritance:
         )
         assert child.permissiveness_mode == "permissive"
 
+    @pytest.mark.parametrize("parent_flag", ["dangerously_skip_permissions", "skip_permissions"])
+    def test_normal_permissions_drops_only_the_permission_mode(self, tmp_path, parent_flag):
+        """--normal-permissions: normal mode under a bypass/permissive parent, the rest inherited."""
+        launcher, mock_tmux = self._make_launcher(tmp_path)
+
+        launcher.launch(name="parent", provider="bedrock", model="sonnet", agent_teams=True,
+                        **{parent_flag: True})
+        child = launcher.launch(name="child", parent_name="parent", normal_permissions=True)
+        assert child.permissiveness_mode == "normal"
+        assert (child.provider, child.model, child.agent_teams) == ("bedrock", "sonnet", True)
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        child_cmd = [c for c in sent_commands if "OVERCODE_SESSION_NAME=child" in c]
+        assert child_cmd
+        assert all("--dangerously-skip-permissions" not in c and "dontAsk" not in c
+                   for c in child_cmd)
+        assert any("--model sonnet" in c for c in child_cmd)
+
+    @pytest.mark.parametrize("flag", ["dangerously_skip_permissions", "skip_permissions"])
+    def test_normal_permissions_conflicts_with_permission_flags(self, tmp_path, flag):
+        launcher, _ = self._make_launcher(tmp_path)
+        with pytest.raises(LaunchError, match="--normal-permissions cannot be combined"):
+            launcher.launch(name="solo", normal_permissions=True, **{flag: True})
+        assert launcher.sessions.get_session_by_name("solo") is None
+
     def test_child_inherits_agent_teams(self, tmp_path):
         launcher, _ = self._make_launcher(tmp_path)
 
@@ -2025,6 +2050,26 @@ class TestLaunchFork:
         sent_commands = [k[2] for k in mock_tmux.sent_keys]
         fork_cmd = [c for c in sent_commands if "--fork-session" in c][0]
         assert "--dangerously-skip-permissions" in fork_cmd
+
+    def test_fork_normal_permissions(self, tmp_path):
+        """normal_permissions forks a bypass source into normal mode."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
+
+        source = launcher.launch(name="source", dangerously_skip_permissions=True, model="opus")
+        session_manager.set_active_agent_session_id(source.id, "sess-123")
+        source = session_manager.get_session(source.id)
+
+        forked = launcher.launch_fork(name="fork-normal", source_session=source,
+                                      normal_permissions=True)
+        assert forked.permissiveness_mode == "normal"
+        assert forked.model == "opus"
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        fork_cmd = [c for c in sent_commands if "--fork-session" in c][0]
+        assert "--dangerously-skip-permissions" not in fork_cmd
 
     def test_fork_requires_active_session_id(self, tmp_path):
         """Fork fails if source has no active_agent_session_id.
