@@ -188,6 +188,15 @@ class TestLifecycle:
         subs, sw = _parent(subs, sw, "Stop", now=5.0, background_tasks=[])
         assert swarm.rollup(_state(subs, sw), 5.0) == _rollup(total=1, ok=1)
 
+    def test_a_progress_summary_fork_is_not_delegated_work(self):
+        """2.1.302 (capture 14): Claude forks a summary of a long-running
+        background agent about every 30 s; it fires PreToolUse under an id
+        of its own, with no agent_type, for a call Claude refuses."""
+        subs, sw = _sub({}, {}, "PreToolUse", "a9", 2.0, tool_name="Bash",
+                        tool_input={"command": "sleep 60"})
+        assert subs == {}
+        assert swarm.rollup(_state(subs, sw), 2.0) is None
+
 
 class TestReconcile:
     """``background_tasks`` on Stop / SubagentStop is Claude's own in-flight list."""
@@ -511,6 +520,18 @@ class TestCaptures:
         state = _at(samples, 30.0).swarm_state
         assert {e.get("own_work") for e in state["subagents"].values()} == {True}
         assert _at(samples, 72.0).rollup == _rollup(total=2, ok=2)
+
+    def test_progress_summaries_of_a_long_running_agent_are_not_counted(self, tmp_path):
+        """2.1.302: 30 s into each subagent's 60 s foreground command,
+        Claude's progress-summary fork of it fires a PreToolUse under a new
+        agent id with no agent_type. Counted as two more agents before."""
+        name = "14-background-subagent-progress-summaries"
+        steps = capture_steps(name)
+        samples = replay(Scenario(name, steps=steps, expect=[(0.0, 144.0, GREEN)], end=144.0),
+                         tmp_path)
+        assert {s.rollup["total"] for s in samples if s.rollup} == {1, 2}
+        assert _at(samples, 50.0).rollup == _rollup(total=2, running=2)
+        assert _at(samples, 74.0).rollup == _rollup(total=2, ok=2)
 
     def test_a_team_waits_on_working_teammates_not_idle_ones(self, tmp_path):
         sc = _capture("08-team-in-process",

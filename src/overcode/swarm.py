@@ -366,7 +366,8 @@ def _reconcile(subagents: dict, swarm: dict, tasks, now: float,
 # lost. The agent is running all the same, so it joins the map on that
 # event, not at the parent's next Stop, which a busy parent may not reach
 # for minutes. Claude's own helpers (the away summary, auto-compaction)
-# fire SubagentStop only, never a tool event.
+# fire SubagentStop only; a background agent's progress summary fires
+# PreToolUse, but with no agent_type, which every delegated agent's carry.
 _AT_WORK_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure",
                              "PermissionRequest"})
 
@@ -381,10 +382,14 @@ def apply_subagent_event(subagents, swarm, event: str, agent_id: str,
     """The live map and swarm after one of the parent's agents' own events."""
     subagents, swarm = _copy(subagents, swarm)
     entry = subagents.get(agent_id)
-    if (entry is None and event in _AT_WORK_EVENTS
+    if (entry is None and event in _AT_WORK_EVENTS and data.get("agent_type")
             and agent_id not in (swarm.get("done") or {})):
         # Not one that finished: a resumed agent says so with SubagentStart,
-        # or the next background_tasks list puts it back
+        # or the next background_tasks list puts it back. A delegated
+        # agent's events always name its type; the progress summaries
+        # Claude forks off a long-running background agent (about every
+        # 30 s, 2.1.302, capture 14) fire PreToolUse under an id of their
+        # own with no type, for calls Claude refuses, and nothing else.
         entry = subagents[agent_id] = _new_entry(agent_id, data.get("agent_type"), swarm, now)
     tasks = data.get("background_tasks")
     tasks = tasks if isinstance(tasks, list) else None
