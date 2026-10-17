@@ -712,6 +712,23 @@ agents and in a `background` column (`"background"` in `--json`; totals and
 period reports alike). The 🌙 row's own $ moves at the stats cadence (5 s
 watched / 60 s not) and holds still between reads (TestLive).
 
+*Forked sessions count only what they add* (2026-10-17, Claude Code
+2.1.302, live). `claude --bg --resume X` appends to X's transcript under
+X's id (the agent's own conversation: skipped, as above), but
+`--fork-session`, and `/bg` from an interactive session, write a new
+conversation whose transcript starts with a copy of X's whole history:
+the same `message.id`s, timestamps and usage. Read alone, that copy was
+billed again under the 🌙 row. Now `BgSpend` reads a session against its
+*fork origins* (`claude_bg.fork_origins`: the agent's own conversations,
+the job's `resumeSessionId`, and the agent's 🌙 sessions created before
+it, each the transcript of that id beside its own) and the copied prefix
+contributes nothing (`TranscriptRegistry.fork_prefix`, below in the cost
+model note). A segment billed before the fix (the copy included) reads
+lower on its next pass: the ledger gets a `correction` row for it
+(`ledger.correction_rows`, open or closed segment), never a lower
+cumulative row. The feature had not shipped, so no historic bg rows exist
+outside development machines.
+
 **3. Worktree placement** (`claude_bg.repo_of`, `_by_repo`; owner: pick a
 behaviour, revise with experience). A session whose `cwd` is a git worktree
 outside every agent's directory nests under the agent working in the same

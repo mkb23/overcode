@@ -304,6 +304,58 @@ Decided differently from §4 / left out:
   cadence, not a price cadence).
 - The doctor check compares list prices, not the Bedrock bill.
 
+### Forks count their copied history once (2026-10-17)
+
+Claude Code 2.1.302, checked live: `claude --bg --resume X "..."` keeps
+X's id and appends to its transcript; `--resume X --fork-session`
+(`/branch`, `/bg` from an interactive session, `overcode fork`) writes a
+new conversation that starts with a copy of X's history, keeping X's
+`message.id`s, timestamps and usage. Phase 0's dedup by message id worked
+within one conversation and its subagents only, so the copy was billed
+twice:
+
+- by a 🌙 background session forked from its agent (`claude_bg.read_spend`
+  read its whole transcript) — the main case;
+- by an agent with a fork among its own conversations (`/branch`, or
+  `/resume` then fork): each conversation was read on its own;
+- by an `overcode fork` child: its reader's `since` (the child's start)
+  hides the parent's messages only where it works: it compares UTC-naive
+  `since` with local-naive message times, so east of UTC the hour(s)
+  before the fork were counted by both (and west of UTC, see the note
+  below, the child's own first hours are dropped).
+
+Mechanism (Claude reader version 3): a forked conversation's copied
+history is the run of its first records (time order) that an *earlier*
+conversation holds; that prefix is taken off its totals
+(`read_tree_stats(..., earlier=)`, `TranscriptRegistry.fork_prefix`,
+`TranscriptIndex.prefix_usage`). Earlier means: for an agent, its
+conversations that began before (first history entry,
+`conversation_order`) plus its parent's (`overcode fork`;
+`StatsSync.fork_sources`, an archived parent's from its record's
+conversation keys); for a 🌙 session, its agent's conversations, the one
+it resumed and the agent's 🌙 sessions created before it. First seen
+owns: the original keeps its messages, the fork's prefix contributes 0.
+Incremental: a conversation whose first message no earlier one holds is
+not a fork (one lookup, remembered); a fork's prefix is found once, ended
+by its first message of its own, and remembered until its index is
+rebuilt; a settled answer costs a dictionary lookup per read.
+
+History: entries read at version 2 are replaced by the next read
+(`conversation_spend`), which books a ledger `correction` for the drop;
+archived agents are restated once by `spend_recompute` (marker
+`.spend_rv3`). Known gaps: if the original transcript is pruned (Claude's
+`cleanupPeriodDays`) while the fork survives, a daemon restart reads the
+fork whole again and its entry grows back; the burn-rate window does not
+dedup across conversations (copies keep their old timestamps, so they fall
+outside it unless forked within the window); codex/opencode/grok forks are
+not covered (opencode and grok bill per session from their own charge).
+
+Found on the way, not fixed here: `get_session_stats` builds `since` as
+UTC-naive while transcript times are local-naive (`parse_message_time`),
+so west of UTC an agent's first |offset| hours of messages are not
+counted (verified with `TZ=America/Los_Angeles`: a message 20 minutes
+after the start reads as 0 tokens; London and Tokyo read it).
+
 ## 9. Open questions for the owner
 
 1. **Bedrock attribution:** is creating one application inference profile
