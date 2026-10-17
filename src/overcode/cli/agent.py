@@ -73,13 +73,19 @@ def _resolve_child_settings(preset: Optional[str], is_child: bool, on_stuck: Opt
     """A launch's preset and its settings, explicit flags first (child_presets).
 
     Returns (preset or None, oversight policy, timeout seconds, archive
-    delay seconds or None, budget). Exits on an invalid flag; an unknown
-    preset or a bad config entry only warns.
+    delay seconds or None, budget). Exits on an invalid flag, including a
+    ``--preset`` that names no preset; a bad config entry only warns.
     """
     chosen = None
     if preset is not None or is_child:
-        from ..child_presets import resolve_preset
-        chosen, warnings = resolve_preset(preset, is_child=is_child)
+        from ..child_presets import UnknownPresetError, resolve_preset
+        try:
+            chosen, warnings = resolve_preset(preset, is_child=is_child)
+        except UnknownPresetError as e:
+            for warning in e.warnings:
+                rprint(f"[yellow]Warning:[/yellow] {warning}")
+            rprint(f"[red]Error: Unknown preset '{e.name}'. Use: {', '.join(e.known)}[/red]")
+            raise typer.Exit(code=1)
         for warning in warnings:
             rprint(f"[yellow]Warning:[/yellow] {warning}")
 

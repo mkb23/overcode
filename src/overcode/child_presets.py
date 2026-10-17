@@ -25,8 +25,11 @@ Config format in ~/.overcode/config.yaml::
           description: Long unattended runs
 
 A field a preset leaves out takes the built-in of the same name's value,
-else ``supervised``'s. Unknown preset names, unknown keys and unreadable
-values are warned about and ignored; nothing here raises.
+else ``supervised``'s. In config, unknown preset names, unknown keys and
+unreadable values are warned about and ignored; reading config never
+raises. A ``--preset`` typed on the command line is different: an unknown
+name raises ``UnknownPresetError``, so the launch is refused rather than
+run under a policy nobody asked for.
 """
 
 from dataclasses import dataclass, replace
@@ -228,22 +231,31 @@ def load_presets(section: Any = None) -> Tuple[Dict[str, ChildPreset], str, List
     return presets, default, warnings
 
 
+class UnknownPresetError(ValueError):
+    """``--preset`` names no preset; carries the known names and config warnings."""
+
+    def __init__(self, name: str, known: List[str], warnings: List[str]):
+        self.name = name
+        self.known = known
+        self.warnings = warnings
+        super().__init__(f"unknown preset '{name}' (known: {', '.join(known)})")
+
+
 def resolve_preset(name: Optional[str], *, is_child: bool,
                    section: Any = None) -> Tuple[Optional[ChildPreset], List[str]]:
-    """The preset a launch uses, and warnings to show.
+    """The preset a launch uses, and config warnings to show.
 
-    ``name`` is ``--preset``'s value: an unknown one is warned about and
-    the default used instead. Without one, a child gets the default preset
-    and a top-level agent none (presets are about children).
+    ``name`` is ``--preset``'s value: an unknown one raises
+    ``UnknownPresetError`` (a typo on the command line refuses the launch).
+    Without one, a child gets the default preset and a top-level agent none
+    (presets are about children).
     """
     presets, default, warnings = load_presets(section)
     if name is None:
         return (presets[default] if is_child else None), warnings
     key = name.strip()
     if key not in presets:
-        warnings.append(f"unknown preset '{name}' (known: {', '.join(presets)}) "
-                        f"— using {default}")
-        key = default
+        raise UnknownPresetError(name, list(presets), warnings)
     return presets[key], warnings
 
 

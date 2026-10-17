@@ -668,9 +668,11 @@ A DURATION is `30s`, `5m`, `1h`, `2d` or a number of seconds. A field a
 preset leaves out takes the value of the built-in with the same name, or
 `supervised`'s for a new preset. Explicit launch flags (`--on-stuck`,
 `--oversight-timeout`, `--archive-after`, `--budget`) always win over the
-preset. An unknown preset name (on the command line or as `children.preset`),
-an unknown key or an unreadable value is reported as a warning at launch
-and ignored; the launch goes ahead with the default. `overcode config
+preset. In config.yaml, an unknown preset name (as `children.preset`), an
+unknown key or an unreadable value is reported as a warning at launch and
+ignored; the launch goes ahead with the default. On the command line it is
+different: `--preset` with a name that doesn't exist refuses to launch and
+lists the valid names. `overcode config
 presets` lists the presets in effect and the warnings. See
 [Child Agents](children.md) for how oversight works.
 

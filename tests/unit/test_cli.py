@@ -2817,13 +2817,23 @@ class TestLaunchPresets:
         assert result.exit_code == 0, result.output
         assert fleet.get("child").cost_budget_usd == 1.0
 
-    def test_unknown_preset_warns_and_launches_with_the_default(self, fleet):
+    def test_unknown_preset_refuses_to_launch(self, fleet):
+        """A typo in --preset exits non-zero, lists the valid names, launches nothing."""
+        self._write_config("children:\n  presets:\n    overnight:\n      budget: 5\n")
         fleet.add("dad")
         result = self._child("--preset", "autonomus")
-        assert result.exit_code == 0, result.output
-        assert "unknown preset 'autonomus'" in result.output
-        assert "Preset: supervised" in result.output
-        assert fleet.get("child") is not None
+        output = " ".join(strip_ansi(result.output).split())  # rich wraps long lines
+        assert result.exit_code == 1, output
+        assert "Unknown preset 'autonomus'" in output
+        assert "supervised, balanced, autonomous, overnight" in output
+        assert fleet.get("child") is None
+
+    def test_unknown_preset_refuses_a_top_level_launch_too(self, fleet):
+        result = runner.invoke(app, ["launch", "--name", "solo", "--directory", "/tmp",
+                                     "--preset", "nope"])
+        assert result.exit_code == 1, result.output
+        assert "Unknown preset 'nope'" in strip_ansi(result.output)
+        assert fleet.get("solo") is None
 
     def test_bad_config_warns_never_crashes(self, fleet):
         self._write_config("children:\n  preset: nope\n  presets:\n    x: fast\n")

@@ -178,8 +178,10 @@ overcode config presets    # the presets in effect, and which one is the default
   `--archive-after`, `--budget`) overrides the preset's value.
 - A top-level agent gets a preset only if you name one with `--preset`.
   Oversight only ever applies to children.
-- If you name a preset that doesn't exist, overcode warns and launches with
-  the default preset. It never refuses to launch.
+- If you name a preset that doesn't exist with `--preset`, overcode refuses
+  to launch: it exits `1`, lists the valid names and starts nothing. A bad
+  name in config.yaml (`children.preset`) only warns, and children get
+  `supervised` instead.
 - You can change the built-in presets or add your own in config.yaml; see
   [Configuration: Children Presets](configuration.md#children-presets).
   For example:

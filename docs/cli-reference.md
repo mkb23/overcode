@@ -24,7 +24,7 @@ overcode launch --name <name> [options]
 | `--follow` | `-f` | Stream child output, block until report or timeout |
 | `--on-stuck` | | Policy when child stops without reporting: `wait` (default), `fail` (a follower marks it done and exits 1 at once), `timeout:DURATION` (the daemon marks it done with ⌛ after DURATION) |
 | `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
-| `--preset` | | Children preset: `supervised` (the default for children), `balanced`, `autonomous`, or one of yours from config.yaml. Sets the oversight policy, archive delay and a default budget; explicit flags override it. An unknown name warns and uses the default. See [Child Agents: Presets](children.md#presets) |
+| `--preset` | | Children preset: `supervised` (the default for children), `balanced`, `autonomous`, or one of yours from config.yaml. Sets the oversight policy, archive delay and a default budget; explicit flags override it. An unknown name refuses to launch (exit 1) and lists the valid names. See [Child Agents: Presets](children.md#presets) |
 | `--archive-after` | | How long a done child keeps its window before the daemon closes it: a duration (`10m`, `24h`) or `never`. Default `1h` (or the preset's) |
 | `--allowed-tools` | | Comma-separated tools to allow (e.g., `Read,Glob,Grep,Edit`). Claude Code only — maps to `--allowedTools`; ignored for opencode, which has no such flag |
 | `--backend-arg` | | Extra agent-CLI flag (repeatable). Each value is a space-separated flag+value string. `--claude-arg` is a deprecated alias |

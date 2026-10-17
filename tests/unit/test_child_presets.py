@@ -9,6 +9,7 @@ from overcode.child_presets import (
     BUILTIN_PRESETS,
     DEFAULT_ARCHIVE_AFTER_SECONDS,
     DEFAULT_PRESET,
+    UnknownPresetError,
     archive_after_of,
     describe,
     format_duration,
@@ -181,10 +182,22 @@ class TestResolvePreset:
         preset, _ = resolve_preset("autonomous", is_child=False, section={})
         assert preset.name == "autonomous"
 
-    def test_unknown_name_warns_and_uses_the_default(self):
-        preset, warnings = resolve_preset("autonomus", is_child=True, section={"preset": "balanced"})
+    def test_unknown_name_raises_with_the_known_names(self):
+        """A typo on the command line refuses the launch (config typos only warn)."""
+        section = {"preset": "balanced", "presets": {"mine": {"budget": 1}, "x": "fast"}}
+        with pytest.raises(UnknownPresetError) as info:
+            resolve_preset("autonomus", is_child=True, section=section)
+        err = info.value
+        assert err.name == "autonomus"
+        assert err.known == ["supervised", "balanced", "autonomous", "mine"]
+        assert "unknown preset 'autonomus'" in str(err)
+        # Config warnings travel with the error so the CLI can still show them
+        assert any("children.presets.x" in w for w in err.warnings)
+
+    def test_unknown_configured_default_still_only_warns(self):
+        preset, warnings = resolve_preset("balanced", is_child=True, section={"preset": "nope"})
         assert preset.name == "balanced"
-        assert any("unknown preset 'autonomus'" in w and "using balanced" in w for w in warnings)
+        assert any("unknown preset 'nope'" in w for w in warnings)
 
 
 class TestArchiveAfter:
