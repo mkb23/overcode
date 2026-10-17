@@ -242,6 +242,14 @@ def launch(
             help="Bypass all permission checks (--dangerously-skip-permissions)",
         ),
     ] = False,
+    normal_permissions: Annotated[
+        bool,
+        typer.Option(
+            "--normal-permissions",
+            help="Run in normal permission mode even under a bypass or permissive parent "
+                 "(still inherits everything else)",
+        ),
+    ] = False,
     parent: Annotated[
         Optional[str],
         typer.Option("--parent", help="Parent agent name for hierarchy (#244)"),
@@ -365,6 +373,11 @@ def launch(
     if claude_args:
         backend_args = list(backend_args or []) + list(claude_args)
 
+    if normal_permissions and (bypass_permissions or skip_permissions):
+        from ..launch_settings import NORMAL_PERMISSIONS_CONFLICT
+        rprint(f"[red]Error: {NORMAL_PERMISSIONS_CONFLICT}[/red]")
+        raise typer.Exit(code=1)
+
     # Remote launch via sister
     if sister:
         from ..config import get_sister_by_name
@@ -449,6 +462,7 @@ def launch(
             initial_prompt=prompt,
             skip_permissions=skip_permissions,
             dangerously_skip_permissions=bypass_permissions,
+            normal_permissions=normal_permissions,
             parent_name=parent,
             allowed_tools=allowed_tools,
             extra_cli_args=backend_args,
@@ -493,6 +507,8 @@ def launch(
             rprint(f"  Backend: {session_backend_name(result)}")
         if result.model and not model:
             rprint(f"  Model: {result.model} (inherited)")
+        if normal_permissions:
+            rprint("  Permissions: normal")
         if budget is not None and budget > 0:
             rprint(f"  Budget: ${budget:.2f}")
         if chosen_preset is not None:
@@ -520,6 +536,13 @@ def fork(
     prompt: Annotated[
         Optional[str], typer.Option("--prompt", "-p", help="Initial prompt to send to the fork")
     ] = None,
+    normal_permissions: Annotated[
+        bool,
+        typer.Option(
+            "--normal-permissions",
+            help="Run the fork in normal permission mode instead of the source's",
+        ),
+    ] = False,
     session: SessionOption = "agents",
 ):
     """Fork an agent, creating a child with the source's conversation context.
@@ -527,12 +550,13 @@ def fork(
     Uses the backend's fork gesture (Claude Code: --resume --fork-session;
     opencode: --session --fork) to branch the conversation history into a new
     independent agent. The forked agent inherits the source's directory,
-    permissions, agent persona, and CLI flags.
+    permissions (unless --normal-permissions), agent persona, and CLI flags.
 
     Examples:
         overcode fork my-agent                          # Fork as my-agent-fork
         overcode fork my-agent -n side-analysis         # Fork with custom name
         overcode fork my-agent -p "analyze test failures"  # Fork with initial prompt
+        overcode fork my-agent --normal-permissions     # Fork a bypass agent, prompts on
     """
     from ..session_manager import SessionManager
     from ..backends import BackendCapability, get_backend, supports
@@ -566,6 +590,7 @@ def fork(
             name=fork_name,
             source_session=source_session,
             initial_prompt=prompt,
+            normal_permissions=normal_permissions,
         )
     except LaunchError as e:
         print(e)

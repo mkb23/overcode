@@ -227,19 +227,27 @@ Unless you pass a flag for a setting, a child takes these from its parent:
 | Backend (`-B`) | Yes, except from the overagent (its children are ordinary agents) |
 | Model, provider | Only when the child runs on the parent's backend; a codex child of a Claude parent gets codex's default model |
 | Wrapper, agent teams | Yes |
-| Permission mode | Yes: a child of a bypass parent runs in bypass, and a child of a permissive parent runs permissive |
+| Permission mode | Yes: a child of a bypass parent runs in bypass, and a child of a permissive parent runs permissive. `--normal-permissions` opts out of this one setting |
 | Skill profile | Yes, then the folder's pinned profile, then `new_agent_defaults` |
 | Billing code | Always, even with `--no-inherit` |
 
 The order is: explicit flag, then parent, then `new_agent_defaults` in
 config.yaml, then the built-in default.
 
-**Permission mode deserves care.** There is no flag that asks for normal
-mode explicitly. A child launched without `--bypass-permissions` under a
-bypass parent still runs in **bypass**, because it inherits the parent's
-mode. To get a normal-mode child under a bypass parent, launch it with
-`--no-inherit`. That skips every parent setting except the billing code,
-so add back any you want (`-m`, `--wrapper`, `-B` ...).
+**Permission mode deserves care.** A child launched without
+`--bypass-permissions` under a bypass parent still runs in **bypass**,
+because it inherits the parent's mode. To get a normal-mode child under a
+bypass or permissive parent, launch it with `--normal-permissions`: its
+permission prompts come back, and it still inherits everything else
+(backend, model, provider, wrapper, skill profile, billing code).
+`--normal-permissions` can't be combined with `--bypass-permissions` or
+`--skip-permissions`; overcode refuses the launch. `overcode fork
+--normal-permissions` does the same for a fork, which otherwise takes its
+source's mode.
+
+`--no-inherit` also gives a normal-mode child, but it skips every parent
+setting except the billing code, so you'd have to add back the ones you
+want (`-m`, `--wrapper`, `-B` ...).
 
 ## Which tool when
 

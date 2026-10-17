@@ -68,7 +68,7 @@ Children inherit your permission mode, model, provider and wrapper, and
 always your billing code. Add `--bypass-permissions` only when the user wants
 unattended work; otherwise the child's permission prompts wait for the user, or
 for you (see below). If you run in bypass mode, your children do too unless you
-pass `--no-inherit` (which drops every inherited setting).
+pass `--normal-permissions` (normal mode, everything else still inherited).
 
 Other options:
 - `-B opencode` (or `codex`, `grok`, ...) launches a different agent CLI.

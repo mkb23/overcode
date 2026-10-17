@@ -19,6 +19,7 @@ overcode launch --name <name> [options]
 | `--prompt` | `-p` | Initial prompt to send to the agent |
 | `--skip-permissions` | | Auto-deny permission prompts |
 | `--bypass-permissions` | | Bypass all permission checks (dangerous) |
+| `--normal-permissions` | | Run in normal permission mode even under a bypass or permissive parent; every other setting is still inherited. Can't be combined with `--bypass-permissions` or `--skip-permissions` |
 | `--parent` | | Name of parent agent (auto-detected if launched from within an agent) |
 | `--no-parent` | | Launch top-level instead of as the calling agent's child. Only the overagent may use it from inside an agent, for agents you will drive yourself (a guard against accidents, not a sandbox) |
 | `--follow` | `-f` | Stream child output, block until report or timeout |
@@ -36,7 +37,7 @@ overcode launch --name <name> [options]
 | `--billing-code` | | Bill this agent's spend to this code (default: its name). A child always takes its parent's. See [Billing Codes](configuration.md#billing-codes) |
 | `--session` | | Tmux session name (default: `agents`) |
 
-**Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only. Permission mode is inherited too, and there is no flag for "normal": a child of a bypass parent launched without any permission flag runs in bypass. Use `--no-inherit` for a normal-mode child. A child's billing code always comes from its parent, even with `--no-inherit`.
+**Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only. Permission mode is inherited too: a child of a bypass parent launched without any permission flag runs in bypass. Use `--normal-permissions` for a normal-mode child that keeps the rest of the parent's settings (`--no-inherit` also gives normal mode, but drops everything else too). A child's billing code always comes from its parent, even with `--no-inherit`.
 
 **Children presets:** a child launched without `--preset` gets the default preset (`supervised` unless `children.preset` in config.yaml says otherwise), which is overcode's behaviour before presets. A top-level agent gets one only when named. `overcode config presets` lists them.
 
