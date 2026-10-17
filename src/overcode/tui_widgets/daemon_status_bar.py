@@ -478,7 +478,7 @@ class DaemonStatusBar(Static):
                        and isinstance(s.quota.get("pp7d"), (int, float))]
                 if pps:
                     content.append(" │ ", style="dim")
-                    content.append(f"Σ{format_pp(sum(pps))} wk", style="magenta")
+                    content.append(f"Σ{format_pp(sum(pps))} wk", style="orange1")
             else:
                 total_tokens = sum(s.input_tokens + s.output_tokens for s in local_sessions)
                 for sister in reachable_sisters:

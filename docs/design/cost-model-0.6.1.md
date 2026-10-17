@@ -359,7 +359,7 @@ after the start reads as 0 tokens; London and Tokyo read it).
 ## 8b. Phase B as built: the subscription quota model (2026-10-18)
 
 Owner decisions (2026-10-18): subscribers see **percentage points of the
-weekly quota, two decimals** (`1.37pp`) in a new optional column, per agent
+weekly quota, two decimals** (`1.37%`) in a new optional column, per agent
 and per billing code, with a `$` cycler mode that shows only it and the
 5-hour figure in the hover; the statusline wrapper is allowed but optional,
 opt-in, for calibration only. This replaces §7's `3.1%w` cell and settles
@@ -442,7 +442,7 @@ within 0.012.
 
 **Display.** Column `quota` (`Q%`, group llm_usage, off by default,
 gated on a fleet flag so it never shows without a subscription agent):
-`1.37pp`, `-` with the value's width, dim while the model is the prior;
+`1.37%`, `-` with the value's width, orange like tokens and cost, not bold while the model is the prior;
 hover: weekly and 5-hour points, the account's readings, confidence,
 "estimate". `$` cycler: tokens → cost → joules → **quota** → all; old
 preferences (no `quota` key) match the preset they matched before. Status

@@ -302,7 +302,7 @@ agent's name. A bad `billing:` entry is skipped and the dialog says so.
 On a Claude subscription, `$` has a **weekly quota** mode that hides the
 token, dollar and energy columns and shows the `Q%` column: each agent's
 estimated share of the weekly quota this week, in percentage points with
-two decimals (`1.37pp`; `-` for an agent off the subscription). It is a
+two decimals (`1.37%`; `-` for an agent off the subscription). It is a
 prediction from the agent's tokens, because Claude reports the window only
 in whole percents; the cell is dim until the model has been fitted to your
 account. Hover it for the agent's share of the current 5-hour window, the

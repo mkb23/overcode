@@ -1036,7 +1036,7 @@ On a Claude subscription (Pro, Max, Team or Enterprise seats) the dollar
 figure is notional: what you use is a share of a 5-hour and a weekly
 window. Claude reports those only as whole percents, so overcode
 **estimates** each agent's share of the weekly window in percentage points
-with two decimals (`1.37pp`): the optional `Q%` column (press `$` until
+with two decimals (`1.37%`): the optional `Q%` column (press `$` until
 "weekly quota"), a `quota wk` column in `overcode billing`, and the Σ in the
 status bar in that mode. Hover a `Q%` cell for the agent's share of the
 current 5-hour window, the account's own percentages and how sure the

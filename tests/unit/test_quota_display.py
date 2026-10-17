@@ -32,7 +32,15 @@ class TestColumn:
 
     def test_two_decimals_in_points(self):
         text = _text(self.col.render(_ctx({"pp7d": 1.3749, "conf": "low"})))
-        assert text.strip() == "1.37pp"
+        assert text.strip() == "1.37%"
+
+    def test_orange_like_tokens_cost_and_energy(self):
+        fitted = self.col.render(_ctx({"pp7d": 1.0, "conf": "low"}))
+        prior = self.col.render(_ctx({"pp7d": 1.0, "conf": "prior"}))
+        empty = self.col.render(_ctx(None))
+        assert fitted[0][1].startswith("bold orange1")
+        assert prior[0][1].startswith("orange1")
+        assert empty[0][1].startswith("dim orange1")
 
     def test_placeholder_has_the_value_s_width(self):
         widths = {cell_len(_text(self.col.render(_ctx(q))))
@@ -58,14 +66,14 @@ class TestColumn:
         assert self.col.header == "Q%" and self.col.description
 
     def test_plain_and_sort(self):
-        assert self.col.render_plain(_ctx({"pp7d": 2.5})) == "2.50pp wk"
+        assert self.col.render_plain(_ctx({"pp7d": 2.5})) == "2.50% wk"
         assert self.col.render_plain(_ctx(None)) is None
         assert self.col.sort_key(_ctx({"pp7d": 2.5})) == 2.5
 
     def test_hover_has_weekly_five_hour_and_confidence(self):
         text = self.col.hover(_ctx({"pp7d": 1.37, "pp5h": 9.1, "w7": 37, "w5": 12, "conf": "prior"})).plain
-        assert "1.37pp of the weekly quota" in text
-        assert "9.10pp of the current 5-hour window" in text
+        assert "1.37% of the weekly quota" in text
+        assert "9.10% of the current 5-hour window" in text
         assert "weekly 37%" in text and "5-hour 12%" in text
         assert "estimate" in text.lower() and "not fitted yet" in text
         assert self.col.hover(_ctx(None)) is None
@@ -155,8 +163,8 @@ class TestBilling:
         from overcode.cli import app
         out = CliRunner().invoke(app, ["billing"]).output
         assert "quota wk" in out
-        assert "1.00pp" in out and "0.50pp" in out
-        assert "unattributed" in out and "8.50pp" in out
+        assert "1.00%" in out and "0.50%" in out
+        assert "unattributed" in out and "8.50%" in out
         data = json.loads(CliRunner().invoke(app, ["billing", "--json"]).output)
         assert data["codes"]["client-a"]["quota_pp"] == pytest.approx(1.0, abs=0.01)
         assert data["quota"]["unattributed"] == pytest.approx(8.5, abs=0.02)
@@ -175,7 +183,7 @@ class TestUsageModelCommand:
         out = CliRunner().invoke(app, ["usage", "model"]).output
         assert "prior only" in out and "max20x" in out
         assert "cw1h" in out and "x:fable" in out
-        assert "unattributed 8.50pp" in out
+        assert "unattributed 8.50%" in out
         data = json.loads(CliRunner().invoke(app, ["usage", "model", "--json"]).output)
         assert data["confidence"] == "prior"
         assert data["codes"]["client-b"] == pytest.approx(0.5, abs=0.01)

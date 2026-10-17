@@ -311,7 +311,7 @@ agents and, when there are any, in a `background` column (`"background"` in
 
 On a Claude subscription (Pro, Max, Team seats) a `quota wk` column shows
 each code's estimated share of the **weekly quota this week**, in percentage
-points (`1.37pp`), and an `unattributed` row holds the rest of the weekly
+points (`1.37%`), and an `unattributed` row holds the rest of the weekly
 figure the account shows (claude.ai chat, Cowork, Claude Code outside
 overcode). With `--since` / `--month` the column is `quota`: the period's
 points. It is an estimate from tokens (`overcode usage model`); `--json`
@@ -535,7 +535,7 @@ overcode usage calibration off
 ```
 
 Every source reports the weekly window in whole percents, so the per-agent
-figure (`Q%`, `1.37pp`) is predicted from tokens: each agent's tokens since
+figure (`Q%`, `1.37%`) is predicted from tokens: each agent's tokens since
 the weekly reset, priced at Anthropic list prices per token type, times a
 weight per type fitted to the observed weekly percentages. `usage model`
 prints the fitted weights against the price-ratio prior (cache reads start

@@ -258,10 +258,10 @@ def prior_model(plan: Optional[str] = None, weekly_usd: Optional[float] = None) 
 
 
 def format_pp(pp: Optional[float]) -> str:
-    """``1.37pp``: two decimals under 100, one above."""
+    """``1.37%``: two decimals under 100, one above (points of the quota)."""
     if pp is None or not math.isfinite(pp):
         return "-"
-    return f"{pp:.2f}pp" if abs(pp) < 100 else f"{pp:.1f}pp"
+    return f"{pp:.2f}%" if abs(pp) < 100 else f"{pp:.1f}%"
 
 
 def _num(value) -> float:

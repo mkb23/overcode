@@ -167,8 +167,8 @@ def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     return format_cost(cost)
 
 
-# The quota cell's width (" 12.34pp"): the "-" placeholder is padded to it
-QUOTA_W = 8
+# The quota cell's width (" 12.34%"): the "-" placeholder is padded to it
+QUOTA_W = 7
 
 
 def quota_pp(ctx: ColumnContext) -> Optional[float]:
@@ -179,17 +179,18 @@ def quota_pp(ctx: ColumnContext) -> Optional[float]:
 
 
 def render_quota(ctx: ColumnContext) -> ColumnOutput:
-    """Share of the weekly subscription quota this week, in points (``1.37pp``; an estimate).
+    """Share of the weekly subscription quota this week, in points (``1.37%``; an estimate).
 
-    Dim while the model is only its prior (not yet fitted to this account).
+    Orange like the token, cost and energy cells; not bold while the model
+    is only its prior (not yet fitted to this account).
     """
     from ..quota_model import format_pp
 
     pp = quota_pp(ctx)
     if pp is None:
-        return [("-".rjust(QUOTA_W), f"dim magenta{ctx.bg}")]
+        return [("-".rjust(QUOTA_W), f"dim orange1{ctx.bg}")]
     prior = (ctx.quota or {}).get("conf") == "prior"
-    style = "magenta" if prior else "bold magenta"
+    style = "orange1" if prior else "bold orange1"
     return [(format_pp(pp).rjust(QUOTA_W), f"{style}{ctx.bg}")]
 
 

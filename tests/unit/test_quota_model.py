@@ -83,8 +83,8 @@ class TestModel:
         assert QuotaModel.from_dict({"nonsense": 1}) is None
 
     def test_format_pp_two_decimals(self):
-        assert format_pp(1.3749) == "1.37pp"
-        assert format_pp(123.45) == "123.5pp"
+        assert format_pp(1.3749) == "1.37%"
+        assert format_pp(123.45) == "123.5%"
         assert format_pp(None) == "-"
 
     def test_add_tokens(self):

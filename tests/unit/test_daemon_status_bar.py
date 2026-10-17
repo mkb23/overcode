@@ -378,7 +378,7 @@ class TestDaemonStatusBarRenderSpinStats:
         state = _make_monitor_state(sessions=[s1, s2], usage={"w7": 37.0, "w5": 12.0})
         widget = _make_bare_status_bar(monitor_state=state, show_cost="quota")
         plain = widget.render().plain
-        assert "Σ1.75pp wk" in plain
+        assert "Σ1.75% wk" in plain
         # The engine's usage reading feeds the Usage section
         assert "7d:" in plain and "37%" in plain
 
