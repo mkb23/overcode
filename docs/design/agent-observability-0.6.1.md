@@ -121,6 +121,7 @@ bucket for under a second.
 SubagentStart ─▶ live ─(tool hooks refresh last_seen)─▶ SubagentStop ─▶ done
                    │                                          │
                    └── PermissionRequest(agent_id) ─▶ 🟠 ────┘
+Agent PostToolUse(async_launched), or an unknown agent's own tool event ─▶ live
 done ─(SendMessage resumes it: SubagentStart again)─▶ live
 Stop.background_tasks lacks an id that we hold as live ─▶ done (reconciled; replaces the 1 h timer)
 parent SessionEnd ─▶ every live virtual row → done(killed)

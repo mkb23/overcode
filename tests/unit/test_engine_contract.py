@@ -189,3 +189,28 @@ def test_background_session_spend_moves_at_the_stats_cadence():
 
     source = inspect.getsource(MonitorDaemon._refresh_claude_bg)
     assert "STATS_SYNC_ATTENDED_SECONDS" in source and "STATS_SYNC_UNATTENDED_SECONDS" in source
+
+
+@pytest.mark.parametrize("hooks", ["current", "older"])
+def test_a_launched_subagent_reaches_the_rollup_within_one_wake_scan(hooks, tmp_path):
+    """A subagent counts under 👥 from the first hook event that names it
+    (its Agent call's async_launched response, or its SubagentStart), so it
+    reaches views within one wake scan of its launch, like any other
+    hook-driven state. "older": a CLI launched before overcode registered
+    SubagentStart/SubagentStop, whose agents used to wait for the parent's
+    next Stop (a busy parent: about a minute)."""
+    from overcode.engine_wake import WAKE_SCAN_ATTENDED_SECONDS
+    from tests.status_replay import REGISTERED_EVENTS, Scenario, capture_steps, replay
+
+    name = "12-background-subagent-own-shell"
+    steps = capture_steps(name)
+    named = min(s.t for s in steps if s.payload.get("hook_event_name") == "SubagentStart"
+                or (s.payload.get("hook_event_name") == "PostToolUse"
+                    and s.payload.get("tool_name") == "Agent"))
+    registered = None if hooks == "current" else (
+        REGISTERED_EVENTS - {"SubagentStart", "SubagentStop", "TeammateIdle"})
+    scenario = Scenario(name, steps=steps, expect=[(0.0, named + 3.0, "green")],
+                        registered=registered)
+    samples = replay(scenario, tmp_path, cadence=WAKE_SCAN_ATTENDED_SECONDS)
+    first = next(s.t for s in samples if s.rollup and s.rollup.get("running"))
+    assert first - named <= WAKE_SCAN_ATTENDED_SECONDS

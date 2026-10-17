@@ -256,6 +256,11 @@ class Scenario:
     # The fleet's detection mode ("hooks" or "polling"); a backend without
     # HOOK_EVENTS is always polled whatever this says.
     fleet_mode: str = "hooks"
+    # The Claude hook events the agent's CLI was launched with (default:
+    # what overcode registers today). A CLI keeps the set it started with
+    # until it restarts, so an agent launched by an older overcode lacks
+    # the newer events (SubagentStart, SubagentStop, TeammateIdle).
+    registered: Optional[frozenset] = None
 
     def __post_init__(self) -> None:
         if not self.end:
@@ -323,8 +328,10 @@ class _Tmux:
         return "\n".join(out)
 
 
-def _delivered(payload: dict, backend: str = "claude-code") -> bool:
-    """Whether ``backend`` calls the hook for ``payload`` at all."""
+def _delivered(payload: dict, backend: str = "claude-code",
+               registered: Optional[frozenset] = None) -> bool:
+    """Whether ``backend`` calls the hook for ``payload`` at all
+    (``registered``: the Claude events its CLI was launched with)."""
     if backend == "codex":
         return payload["hook_event_name"] in CODEX_EVENTS
     if backend == "grok":
@@ -338,7 +345,7 @@ def _delivered(payload: dict, backend: str = "claude-code") -> bool:
         return payload.get("source") in RESET_SOURCES
     if event == "Notification":
         return payload.get("notification_type") == hook_handler.CLAUDE_NOTIFICATION_MATCHER
-    return event in REGISTERED_EVENTS
+    return event in (REGISTERED_EVENTS if registered is None else registered)
 
 
 def node_available() -> bool:
@@ -468,7 +475,8 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
                     _apply_write(state_dir, step.write)
                 elif step.hermes is not None:
                     _deliver_hermes(*step.hermes)
-                elif step.payload is not None and _delivered(step.payload, scenario.backend):
+                elif step.payload is not None and _delivered(
+                        step.payload, scenario.backend, scenario.registered):
                     _deliver(step.payload, scenario.backend)
                     tmux.hear(step.payload)
                 i += 1
