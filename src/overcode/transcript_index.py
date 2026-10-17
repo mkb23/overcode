@@ -85,6 +85,7 @@ import os
 import threading
 from array import array
 from collections import OrderedDict
+from itertools import compress, count
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -139,6 +140,12 @@ HEAD_IDS = 8
 # copy keeps the original line's timestamp, and a message's lines are
 # written within its own streaming time (``TranscriptIndex.holds``).
 COPY_WINDOW_SECONDS = 3600
+
+# Generations are unique across indexes, so one evicted and recreated for
+# the same path never matches a position remembered for the old one
+_GENERATIONS = count(1)
+# Records checked per round when walking a fork's copied prefix
+FORK_STEP = 64
 
 _provider_from_message_id: Optional[Callable[[Optional[str]], Optional[str]]] = None
 
@@ -458,6 +465,9 @@ class TranscriptIndex:
         self._seen_sig: Optional[FileSignature] = None
         self._trusted = False
         self._missing = False
+        # Bumped whenever the records start over (a rebuild): positions a
+        # caller remembers (``message_ids``, ``prefix_usage``) are stale then
+        self.generation = 0
         self._reset_parse()
 
     # ── parse state ───────────────────────────────────────────────────
@@ -469,7 +479,10 @@ class TranscriptIndex:
         self._keys = array("q")
         self._values = [array("q") for _ in _TOKEN_KEYS]
         self._ids = array("q")
+        # Whether each record was a long-context request (``prefix_usage``)
+        self._longs = array("b")
         self._grand = [0] * _N
+        self.generation = next(_GENERATIONS)
         # Recently seen message ids (hash -> None), newest last
         self._recent: "OrderedDict[int, None]" = OrderedDict()
         # The file's first HEAD_IDS messages: [hash, key, usage list + long flag]
@@ -608,6 +621,7 @@ class TranscriptIndex:
                 values[i][pos] = usage[i]
                 grand[i] += delta[i]
             self._recent.move_to_end(h)
+            self._longs[pos] = 1 if event[11] else 0
             at = self._head_at.get(h)
             if at is not None:
                 self._head[at][2] = list(usage) + [event[11]]
@@ -617,12 +631,14 @@ class TranscriptIndex:
             for i in range(_N):
                 values[i].append(usage[i])
             ids.append(h)
+            self._longs.append(1 if event[11] else 0)
         else:
             pos = bisect.bisect_right(keys, key)
             keys.insert(pos, key)
             for i in range(_N):
                 values[i].insert(pos, usage[i])
             ids.insert(pos, h)
+            self._longs.insert(pos, 1 if event[11] else 0)
         for i in range(_N):
             grand[i] += usage[i]
         if h:
@@ -730,6 +746,35 @@ class TranscriptIndex:
                 return None
             return self._keys[0], self._keys[-1]
 
+    def message_ids(self, start: int = 0) -> Tuple[int, List[Tuple[int, int]]]:
+        """(generation, [(id hash, key), ...]) of the committed records from position ``start``.
+
+        Records are in key (time) order; no refresh. A conversation that
+        forked another copies the other's messages first, so its first
+        records are the copies (``history_reader.fork_prefix``).
+        """
+        with self._lock:
+            if self._missing:
+                return self.generation, []
+            keys, ids = self._keys, self._ids
+            return self.generation, list(zip(ids[start:], keys[start:]))
+
+    def prefix_usage(self, n: int, since_key: Optional[int] = None) -> Tuple[int, ...]:
+        """The usage of the first ``n`` records (key order) dated at or after ``since_key``.
+
+        The five counters, then their long-context part (``LONG_KEYS``):
+        what a fork's copied prefix adds to ``stats`` (no refresh).
+        """
+        with self._lock:
+            n = min(n, len(self._keys))
+            lo = 0 if since_key is None else bisect.bisect_left(self._keys, since_key)
+            if n <= lo:
+                return (0,) * (2 * _N)
+            longs = self._longs[lo:n]
+            totals = [sum(v[lo:n]) for v in self._values]
+            parts = [sum(compress(v[lo:n], longs)) for v in self._values]
+            return tuple(totals + parts)
+
     def holds(self, messages: Sequence[Tuple[int, int]], refresh: bool = True) -> Set[int]:
         """Those of ``messages`` (id hash, key of a copy) this file holds the original of.
 
@@ -762,6 +807,9 @@ class TranscriptRegistry:
         self._records = 0
         self.max_indexes = max_indexes
         self.max_records = max_records
+        # path -> [generation, records checked, copied prefix length, done,
+        #          the earlier conversations it was checked against]
+        self._forks: "OrderedDict[str, list]" = OrderedDict()
 
     def get(self, path) -> TranscriptIndex:
         """The index for ``path`` (created empty on first use); marks it most recently used."""
@@ -815,7 +863,68 @@ class TranscriptRegistry:
     def record_count(self) -> int:
         return self._records
 
+    def fork_prefix(self, path, earlier: Sequence) -> int:
+        """How many of ``path``'s first records (time order) are copies from ``earlier`` files.
+
+        A Claude conversation forked from another (``--fork-session``,
+        ``/branch``, ``/bg``) starts with a copy of the other's history:
+        the same message ids, timestamps and usage. Those messages were
+        spent by the conversation they came from, so the fork's own spend
+        starts after them. ``earlier`` are the conversations ``path`` may
+        have been forked from (they came first: the original is never
+        among the later ones). The copied prefix ends at the first record
+        no earlier file holds (``TranscriptIndex.holds``).
+
+        Incremental: a file whose first message no earlier file holds is
+        not a fork, and a fork's prefix ends once it has a message of its
+        own; both are remembered until the file is rebuilt (or ``earlier``
+        changes), so a settled answer costs a lookup. Uses the index as
+        last read (the caller has just read ``path``).
+        """
+        key = os.fspath(path)
+        sources = tuple(os.fspath(p) for p in earlier if os.fspath(p) != key)
+        if not sources:
+            return 0
+        index = self.get(key)
+        with self._lock:
+            state = self._forks.get(key)
+            if state is not None:
+                self._forks.move_to_end(key)
+        if state is None or state[0] != index.generation or state[4] != sources:
+            state = [index.generation, 0, 0, False, sources]
+        if not state[3]:
+            generation, records = index.message_ids(state[1])
+            if generation != state[0]:
+                state = [generation, 0, 0, False, sources]
+                generation, records = index.message_ids(0)
+            originals = [self.get(p) for p in sources if os.path.exists(p)]
+            while records and not state[3]:
+                # The first record alone first: most files are not forks
+                size = 1 if state[1] == 0 else FORK_STEP
+                step, records = records[:size], records[size:]
+                held: Set[int] = set()
+                for original in originals:
+                    held |= original.holds([m for m in step if m[0] not in held])
+                for h, _key in step:
+                    if h in held:
+                        state[2] += 1
+                    else:
+                        state[3] = True  # its own message: the prefix has ended
+                        break
+                state[1] += len(step)
+            for original in originals:
+                self._account(original)
+        with self._lock:
+            self._forks[key] = state
+            while len(self._forks) > self.max_indexes:
+                self._forks.popitem(last=False)
+        return state[2]
+
+    def prefix_usage(self, path, n: int, since_key: Optional[int] = None) -> Tuple[int, ...]:
+        return self.get(path).prefix_usage(n, since_key)
+
     def clear(self) -> None:
         with self._lock:
             self._indexes.clear()
+            self._forks.clear()
             self._records = 0

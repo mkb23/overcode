@@ -11,7 +11,7 @@ from datetime import datetime
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.history_reader import get_interactions_for_session, get_session_ids_for_session, HistoryEntry
+from overcode.history_reader import CLAUDE_READER_VERSION, get_interactions_for_session, get_session_ids_for_session, HistoryEntry
 from overcode.session_manager import Session, SessionStats
 
 
@@ -1683,9 +1683,9 @@ class TestPerConversation:
                                   projects_path=project_dir.parent)
         assert stats.per_conversation == {
             "session-a": {"in": 500, "out": 50, "cw": 0, "cr": 0, "model": "claude-opus-4-1",
-                          "rv": 2},
+                          "rv": CLAUDE_READER_VERSION},
             "session-b": {"in": 100, "out": 50, "cw": 0, "cr": 0, "model": "claude-haiku-4-5",
-                          "rv": 2},
+                          "rv": CLAUDE_READER_VERSION},
         }
 
     def test_a_subagent_is_its_own_conversation_at_its_own_model(self, tmp_path):
@@ -1704,9 +1704,9 @@ class TestPerConversation:
         stats = get_session_stats(session, history_path=history_file,
                                   projects_path=project_dir.parent)
         assert stats.per_conversation["session-a"] == {
-            "in": 500, "out": 50, "cw": 0, "cr": 0, "model": "claude-opus-4-1", "rv": 2}
+            "in": 500, "out": 50, "cw": 0, "cr": 0, "model": "claude-opus-4-1", "rv": CLAUDE_READER_VERSION}
         assert stats.per_conversation["session-a/agent-x1"] == {
-            "in": 7000, "out": 70, "cw": 0, "cr": 0, "model": "claude-haiku-4-5", "rv": 2}
+            "in": 7000, "out": 70, "cw": 0, "cr": 0, "model": "claude-haiku-4-5", "rv": CLAUDE_READER_VERSION}
         assert stats.input_tokens == 500 + 100 + 7000
 
     def test_a_pruned_transcript_is_left_out_not_read_as_zero(self, tmp_path):

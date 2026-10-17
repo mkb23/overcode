@@ -24,7 +24,7 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from . import conversation_spend, model_metadata
@@ -1212,9 +1212,12 @@ def read_token_usage_from_session_file(
 # The version of what this reader reports per conversation
 # (``conversation_spend``): 2 counts each message once by ``message.id``
 # across the conversation and all its subagents (workflow agents included)
-# and splits 1-hour cache writes out. An entry read by an older version is
-# replaced by the next read of its transcript, not max'd with it.
-CLAUDE_READER_VERSION = 2
+# and splits 1-hour cache writes out; 3 also leaves out the history a
+# conversation copied when it was forked from an earlier one (``/branch``,
+# ``--fork-session``: the copy keeps the original message ids). An entry
+# read by an older version is replaced by the next read of its transcript,
+# not max'd with it.
+CLAUDE_READER_VERSION = 3
 
 # How deep under ``<session>/subagents/`` agent transcripts are looked for
 # (workflow agents sit at ``subagents/workflows/<run id>/agent-*.jsonl``)
@@ -1349,6 +1352,7 @@ def read_tree_stats(
     files: List[Path],
     since: Optional[datetime] = None,
     transcripts: Optional[TranscriptRegistry] = None,
+    earlier: Sequence[Path] = (),
 ) -> List[Tuple[dict, List[float]]]:
     """``read_session_file_stats`` of each of a conversation's files, each message once.
 
@@ -1356,21 +1360,48 @@ def read_tree_stats(
     (``subagent_files``); a message one file copied from another counts
     in the file it first appeared in (``_tree_copies``). Within a file
     each message counts once already (``transcript_index``).
+
+    ``earlier`` are the conversations this one may have been forked from
+    (the same agent's earlier ones, its parent's; a background session's
+    agent's): a fork's copy of their history is theirs, not its own, and
+    is taken off its transcript's totals (``TranscriptRegistry.fork_prefix``).
     """
     registry = transcripts if transcripts is not None else _transcripts
     if since is not None and getattr(since, "tzinfo", None) is not None:
         return [_read_session_file_stats_full(path, since) for path in files]
     results = [registry.stats(path, since) for path in files]
     copies = _tree_copies(files, registry, refreshed=True)
+    since_key = None if since is None else datetime_key(since)
     if copies:
-        since_key = None if since is None else datetime_key(since)
         for i, messages in copies.items():
             totals = dict(results[i][0])
             for key, usage in messages:
                 if since_key is None or key >= since_key:
                     _take_off(totals, usage)
             results[i] = (totals, results[i][1])
+    if earlier and files:
+        copied = registry.fork_prefix(files[0], earlier)
+        if copied:
+            totals = dict(results[0][0])
+            _take_off_prefix(totals, registry.prefix_usage(files[0], copied, since_key))
+            results[0] = (totals, results[0][1])
     return results
+
+
+def _take_off_prefix(totals: dict, usage: Tuple[int, ...]) -> None:
+    """Take a fork's copied prefix (``TranscriptIndex.prefix_usage``) off its totals."""
+    for name, value in zip(_USAGE_KEYS + LONG_KEYS, usage):
+        if name in totals:
+            totals[name] = max(0, totals[name] - value)
+
+
+def conversation_order(interactions: Sequence["HistoryEntry"]) -> List[str]:
+    """An agent's conversation ids in the order they began (first history entry).
+
+    A fork begins after the conversation it was forked from, so the
+    original always comes first (``read_tree_stats``'s ``earlier``).
+    """
+    return list(dict.fromkeys(e.session_id for e in interactions if e.session_id))
 
 
 def get_session_stats(
@@ -1379,6 +1410,7 @@ def get_session_stats(
     projects_path: Path = CLAUDE_PROJECTS_PATH,
     history_file: Optional["HistoryFile"] = None,
     transcripts: Optional[TranscriptRegistry] = None,
+    fork_sources: Sequence[str] = (),
 ) -> Optional[AgentSessionStats]:
     """Get comprehensive stats for an overcode session.
 
@@ -1394,7 +1426,11 @@ def get_session_stats(
 
     Each conversation is read with all its subagents (``subagents/**``,
     workflow agents included), each message once (``read_tree_stats``),
-    and reported per conversation at ``CLAUDE_READER_VERSION``.
+    and reported per conversation at ``CLAUDE_READER_VERSION``. A
+    conversation forked from one that began before it (the agent's own,
+    in the order they began, ``conversation_order``) or from one of
+    ``fork_sources`` (its parent's conversations: ``overcode fork``) does
+    not count the history it copied (``read_tree_stats``'s ``earlier``).
 
     Args:
         session: The overcode Session
@@ -1403,6 +1439,8 @@ def get_session_stats(
         history_file: Optional HistoryFile for cached access (avoids re-parsing)
         transcripts: the transcript indexes to read through (default: the
             module's; a one-off pass over old records passes its own)
+        fork_sources: other agents' conversation ids this agent's may
+            have been forked from (its parent's)
 
     Returns:
         AgentSessionStats if session has start_directory, None otherwise
@@ -1432,11 +1470,14 @@ def get_session_stats(
     # Claude Code may store session files under a different project path
     # than start_directory (e.g., when the directory doesn't exist or Claude
     # chooses a different project root).
-    session_ids = {e.session_id for e in interactions if e.session_id}
+    session_ids = conversation_order(interactions)
     sid_to_project: Dict[str, str] = {}
     for e in interactions:
         if e.session_id and e.project:
             sid_to_project[e.session_id] = e.project
+    # The transcripts read so far, in the order the conversations began:
+    # the ones a later conversation may have been forked from
+    began_before: List[Path] = []
 
     # Active session ID for context window after /clear (#116)
     active_session_id = getattr(session, 'active_agent_session_id', None)
@@ -1490,8 +1531,12 @@ def get_session_stats(
         encoded = encode_project_path(actual_project)
         subagents_dir = projects_path / encoded / sid / "subagents"
         subs = subagent_files(subagents_dir)
+        earlier = [session_file.parent / f"{cid}.jsonl" for cid in fork_sources
+                   if isinstance(cid, str) and cid and cid != sid] + began_before
         reads = read_tree_stats([session_file, *subs], since=session_start,
-                                transcripts=transcripts)
+                                transcripts=transcripts, earlier=earlier)
+        if transcript_exists:
+            began_before.append(session_file)
         usage, work_times = reads[0]
         total_input += usage["input_tokens"]
         total_output += usage["output_tokens"]

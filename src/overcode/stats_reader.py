@@ -139,6 +139,8 @@ class ClaudeStatsReader:
     """
 
     backend_name = "claude-code"
+    # get_stats takes ``fork_sources`` (the parent's conversations)
+    reads_forks = True
 
     # Per overcode session: the inputs the last discovery scan saw and its
     # answer. The scan is O(history.jsonl) and runs every 10 s for each
@@ -150,13 +152,14 @@ class ClaudeStatsReader:
         self._discovery_memo: Dict[str, Tuple[tuple, DiscoveredSessionIds]] = {}
 
     def get_stats(
-        self, session: Any, *, history_file: Any = None
+        self, session: Any, *, history_file: Any = None, fork_sources: Sequence[str] = ()
     ) -> Optional[AgentSessionStats]:
         from .history_reader import get_session_stats
 
+        extra = {"fork_sources": list(fork_sources)} if fork_sources else {}
         if history_file is not None:
-            return get_session_stats(session, history_file=history_file)
-        return get_session_stats(session)
+            return get_session_stats(session, history_file=history_file, **extra)
+        return get_session_stats(session, **extra)
 
     @staticmethod
     def _own_hook_ids(session: Any) -> List[str]:
