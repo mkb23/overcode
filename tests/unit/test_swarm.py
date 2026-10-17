@@ -239,6 +239,71 @@ class TestReconcile:
         subs, sw = _parent({}, {}, "UserPromptSubmit", prompt=prompt)
         assert swarm.rollup(_state(subs, sw), 1.0) is None
 
+    @staticmethod
+    def _launched_with(response, tool="Bash"):
+        subs, sw = _parent({}, {}, "PostToolUse", "Agent", {},
+                           tool_response={"status": "async_launched", "agentId": "a1"})
+        subs, sw = _sub(subs, sw, "SubagentStart", "a1", 1.0, agent_type="general-purpose")
+        return _sub(subs, sw, "PostToolUse", "a1", 1.5, agent_type="general-purpose",
+                    tool_name=tool, tool_response=response)
+
+    @pytest.mark.parametrize("tool, response", [
+        ("Bash", {"stdout": "", "backgroundTaskId": "b1"}),                      # run_in_background
+        ("Bash", {"stdout": "", "backgroundTaskId": "b1", "timedOutAfterMs": 15000}),  # outlived its timeout
+        ("Monitor", {"taskId": "b1", "timeoutMs": 120000, "persistent": False}),
+    ])
+    def test_a_stop_with_its_own_shell_still_running_is_not_the_end(self, tool, response):
+        """2.1.302 (capture 13): the agent ends its turn with a shell of its
+        own going, and Claude resumes it when the shell ends. The interim
+        notification saying so waits in a busy parent's queue; the
+        SubagentStop already lists the shell."""
+        subs, sw = self._launched_with(response, tool)
+        subs, sw = _sub(subs, sw, "SubagentStop", "a1", 2.0, background_tasks=[
+            {"id": "a1", "type": "subagent", "status": "running"},
+            {"id": "b1", "type": "shell", "status": "running"}])
+        assert swarm.rollup(_state(subs, sw), 2.0) == _rollup(total=1, running=1)
+        assert swarm.member_light(subs["a1"]) == swarm.LIGHT_YELLOW
+        assert swarm.in_flight(_state(subs, sw), 2.0) == (1, 0)
+        # The parent's Stop lists only the shell: still waiting on it
+        subs, sw = _parent(subs, sw, "Stop", now=3.0, background_tasks=[
+            {"id": "b1", "type": "shell", "status": "running"}])
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
+        # The shell ends; the agent resumes, replies and stops for good
+        subs, sw = _sub(subs, sw, "SubagentStart", "a1", 60.0, agent_type="general-purpose")
+        assert swarm.member_light(subs["a1"]) == swarm.LIGHT_GREEN
+        subs, sw = _sub(subs, sw, "SubagentStop", "a1", 61.0, background_tasks=[
+            {"id": "a1", "type": "subagent", "status": "running"}])
+        assert swarm.rollup(_state(subs, sw), 61.0) == _rollup(total=1, ok=1)
+
+    def test_a_shell_it_started_that_already_ended_does_not_hold_it(self):
+        subs, sw = self._launched_with({"backgroundTaskId": "b1"})
+        subs, sw = _sub(subs, sw, "SubagentStop", "a1", 2.0, background_tasks=[
+            {"id": "a1", "type": "subagent", "status": "running"}])
+        assert swarm.rollup(_state(subs, sw), 2.0) == _rollup(total=1, ok=1)
+
+    def test_another_agent_s_shell_does_not_hold_it(self):
+        subs, sw = self._launched_with({"backgroundTaskId": "b1"})
+        subs, sw = _parent(subs, sw, "PostToolUse", "Agent", {},
+                           tool_response={"status": "async_launched", "agentId": "a2"})
+        subs, sw = _sub(subs, sw, "SubagentStop", "a2", 2.0, background_tasks=[
+            {"id": "a1", "type": "subagent", "status": "running"},
+            {"id": "a2", "type": "subagent", "status": "running"},
+            {"id": "b1", "type": "shell", "status": "running"}])
+        assert set(subs) == {"a1"}
+        assert "own_work" not in subs["a1"]  # still at work, not waiting
+        assert swarm.rollup(_state(subs, sw), 2.0) == _rollup(total=2, running=1, ok=1)
+
+    def test_with_the_older_hook_set_the_parent_s_stop_keeps_it_for_its_shell(self):
+        """No SubagentStop: the parent's Stop no longer lists the agent, only
+        its shell, and the interim notification has not come yet."""
+        subs, sw = self._launched_with({"backgroundTaskId": "b1"})
+        subs, sw = _parent(subs, sw, "Stop", now=3.0, background_tasks=[
+            {"id": "b1", "type": "shell", "status": "running"}])
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
+        assert swarm.member_light(subs["a1"]) == swarm.LIGHT_YELLOW
+        subs, sw = _parent(subs, sw, "Stop", now=60.0, background_tasks=[])
+        assert swarm.rollup(_state(subs, sw), 60.0) == _rollup(total=1, ok=1)
+
     def test_another_agent_s_stop_leaves_a_foreground_one_alone(self):
         """Two foreground agents in parallel (07): the first one's
         SubagentStop lists neither, and the second is still working."""
@@ -429,6 +494,24 @@ class TestCaptures:
         assert _at(samples, 80.0).rollup == _rollup(total=2, running=1, ok=1)
         assert _at(samples, 107.0).rollup == _rollup(total=2, ok=2)
 
+    def test_a_busy_parent_s_subagents_waiting_on_their_shells_are_running(self, tmp_path):
+        """2.1.302, through a real overcode launch: each subagent backgrounds
+        its sleep 60 (one after Claude refused it in the foreground) and ends
+        its turn at 9.5 s while the parent runs a 40 s command of its own.
+        The interim notifications wait in the parent's queue until 46 s.
+        Seen live as ✅ 2 from 13 s to 50 s while both sleeps ran."""
+        name = "13-busy-parent-subagent-own-shell"
+        sc = _capture(name, [(0.25, 48.5, GREEN), (48.75, 67.75, YELLOW),
+                             (72.0, 121.0, RED)], 121.0)
+        samples = replay(sc, tmp_path)
+        _check(sc, samples)
+        for s in samples:
+            if 4.5 <= s.t <= 68.0:  # launched until the sleeps end
+                assert s.rollup == _rollup(total=2, running=2), (s.t, timeline(samples))
+        state = _at(samples, 30.0).swarm_state
+        assert {e.get("own_work") for e in state["subagents"].values()} == {True}
+        assert _at(samples, 72.0).rollup == _rollup(total=2, ok=2)
+
     def test_a_team_waits_on_working_teammates_not_idle_ones(self, tmp_path):
         sc = _capture("08-team-in-process",
                       [(91.25, 92.25, YELLOW), (98.75, 150.0, RED)], 150.0)
@@ -439,7 +522,8 @@ class TestCaptures:
 
     @pytest.mark.parametrize("name", ["03-background-subagent-with-SendMessage",
                                       "06-workflow-slow-live-watch", "08-team-in-process",
-                                      "12-background-subagent-own-shell"])
+                                      "12-background-subagent-own-shell",
+                                      "13-busy-parent-subagent-own-shell"])
     def test_the_rollup_moves_only_when_an_event_lands(self, name, tmp_path):
         """No countdowns: between two events every sample shows the same counts."""
         steps = capture_steps(name)
@@ -469,7 +553,8 @@ class TestAnOlderLaunch:
     later) still shows them as soon as their launch is known."""
 
     @pytest.mark.parametrize("name", ["03-background-subagent-with-SendMessage",
-                                      "04-fork", "12-background-subagent-own-shell"])
+                                      "04-fork", "12-background-subagent-own-shell",
+                                      "13-busy-parent-subagent-own-shell"])
     def test_a_background_agent_shows_when_its_call_returns(self, name, tmp_path):
         steps = capture_steps(name)
         launched = _event_times(steps, "PostToolUse", "Agent")[0]

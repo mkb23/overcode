@@ -10,5 +10,6 @@
  "09-team-tmux-teammate": "09-team-tmux-teammate (interactive, AGENT_TEAMS=1)",
  "10-background-session": "10-background-session (claude --bg)",
  "11-interactive-session-registry": "11-interactive-session-registry",
- "12-background-subagent-own-shell": "12-background-subagent-own-shell (2.1.301: each subagent backgrounds its own shell and ends its turn)"
+ "12-background-subagent-own-shell": "12-background-subagent-own-shell (2.1.301: each subagent backgrounds its own shell and ends its turn)",
+ "13-busy-parent-subagent-own-shell": "13-busy-parent-subagent-own-shell (2.1.302, via overcode launch: both subagents background their sleep and end their turn while the parent runs a 40 s command; the interim notifications wait in the parent's queue until its turn ends)"
 }
