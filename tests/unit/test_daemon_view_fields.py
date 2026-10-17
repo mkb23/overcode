@@ -62,6 +62,33 @@ class TestAQuietFleetPublishesNothing:
         delta = diff(snaps[0], snaps[1])
         assert delta.empty, (delta.set, delta.fleet_set)
 
+    def test_quota_publishes_and_holds_still(self, env):
+        """With a subscription reading, every Claude agent gets a quota view and
+        the fleet its usage; quiet ticks still publish nothing (quota_engine)."""
+        from overcode.engine_protocol import diff
+        from overcode.quota_engine import QuotaEngine, UsageStore
+
+        daemon, detector, sessions, clock = _fleet(env, n=2)
+        r7 = clock.now.timestamp() + 86400
+        daemon.quota = QuotaEngine(
+            "agents", store=UsageStore(env / "usage"), account=lambda: "acct",
+            fetch=lambda: {"line": {"w7": 12.0, "w5": 3.0, "r7": r7, "r5": r7 - 80000},
+                           "plan": "pro"},
+            config=lambda: {"enabled": True, "calibration": False, "plan": None,
+                            "weekly_usd": None, "weeks": 4, "poll_minutes": 5.0, "breaks": []},
+            threaded=False)
+        with clock.installed():
+            run_ticks(daemon, detector, clock, 4)
+            first = daemon.state.to_engine_snapshot(clock.now.timestamp())
+            run_ticks(daemon, detector, clock, 6)
+            second = daemon.state.to_engine_snapshot(clock.now.timestamp())
+        assert first.fleet["usage"]["w7"] == 12.0 and first.fleet["usage"]["plan"] == "pro"
+        for s in sessions:
+            assert first.agents[s.id]["quota"]["w7"] == 12.0
+            assert first.agents[s.id]["quota"]["conf"] == "prior"
+        delta = diff(first, second)
+        assert delta.empty, (delta.set, delta.fleet_set)
+
     def test_the_growing_accumulators_are_not_published(self, env):
         daemon, detector, _, clock = _fleet(env, n=1)
         with clock.installed():

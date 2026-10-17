@@ -167,6 +167,35 @@ def hover_spend(ctx: ColumnContext):
     return _emoji_legend("Spend", rows, "Delegated work is inside the total; never add it again.")
 
 
+_CONFIDENCE = {
+    "prior": "not fitted yet: list-price ratios and the plan's weekly budget",
+    "low": "fitted on little data",
+    "medium": "fitted",
+    "high": "fitted, tight",
+}
+
+
+def hover_quota(ctx: ColumnContext):
+    """The quota estimate: this agent's weekly and 5-hour points, the account's readings."""
+    from ..quota_model import format_pp
+
+    q = ctx.quota
+    if not isinstance(q, dict) or q.get("pp7d") is None:
+        return None
+    rows = [("7d", f"{format_pp(q.get('pp7d'))} of the weekly quota this week")]
+    if q.get("pp5h") is not None:
+        rows.append(("5h", f"{format_pp(q.get('pp5h'))} of the current 5-hour window"))
+    w7, w5 = q.get("w7"), q.get("w5")
+    if isinstance(w7, (int, float)):
+        five = f", 5-hour {w5:.0f}%" if isinstance(w5, (int, float)) else ""
+        rows.append(("Σ", f"account: weekly {w7:.0f}% used{five} (all surfaces)"))
+    conf = q.get("conf") or "prior"
+    rows.append(("±", f"model {conf}: {_CONFIDENCE.get(conf, conf)}"))
+    return _emoji_legend("Quota (estimate)", rows,
+                         "Predicted from tokens; the meter itself shows whole percents. "
+                         "overcode usage model")
+
+
 def hover_status_detail(ctx: ColumnContext):
     detail = ctx.status_detail
     if detail is None or not detail.badges:

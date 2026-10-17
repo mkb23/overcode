@@ -19,6 +19,7 @@ from . import skills  # noqa: F401
 from . import skill_profiles  # noqa: F401
 from . import perms  # noqa: F401
 from . import monitoring  # noqa: F401
+from . import quota  # noqa: F401
 from . import daemon  # noqa: F401
 from . import sister  # noqa: F401
 from . import config  # noqa: F401

@@ -87,10 +87,10 @@ AGENT_FILES = {
     "heartbeat": "heartbeat_{}.last",
 }
 
-# Directory names that are never a tmux session's: the archive and the
-# ledger sit among the session directories when they cannot go one level
-# up (see ``data_dir_for``).
-RESERVED_DIR_NAMES = frozenset({"archive", "ledger"})
+# Directory names that are never a tmux session's: the archive, the
+# ledger and the subscription usage data sit among the session directories
+# when they cannot go one level up (see ``data_dir_for``).
+RESERVED_DIR_NAMES = frozenset({"archive", "ledger", "usage"})
 
 
 class RealStateRefused(RuntimeError):
@@ -350,3 +350,9 @@ def ledger_month_path(month: str, registry_dir: "Path | None" = None) -> Path:
 def ledger_totals_path(registry_dir: "Path | None" = None) -> Path:
     """The ledger's running totals per billing code."""
     return ledger_dir(registry_dir) / "totals.json"
+
+
+def usage_dir(registry_dir: "Path | None" = None) -> Path:
+    """Subscription quota data (``quota_engine``): usage history per account,
+    the token stream, the fitted model and statusline samples."""
+    return data_dir_for(registry_dir or sessions_registry_dir()) / "usage"

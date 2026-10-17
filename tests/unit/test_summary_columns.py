@@ -1595,7 +1595,8 @@ class TestComputeFleetFlags:
         from overcode.summary_columns import FleetRow
         row_fields = {k: kw.pop(k) for k in ("pr_number", "subtree_cost_usd", "window_burn",
                                               "has_status_detail", "task_result", "has_swarm",
-                                              "has_live_subagents")
+                                              "has_live_subagents",
+                                              "has_quota")
                       if k in kw}
         session = SimpleNamespace(**{
             "cost_budget_usd": 0.0, "oversight_policy": "wait", "oversight_timeout_seconds": 0.0,
@@ -1630,6 +1631,7 @@ class TestComputeFleetFlags:
             "any_has_task_result": self._row(task_result="unreported"),
             "any_has_swarm": self._row(has_swarm=True),
             "any_has_live_subagents": self._row(has_live_subagents=True),
+            "any_has_quota": self._row(has_quota=True),
         }
         assert set(cases) == _FLEET_FIELDS
         for name, row in cases.items():

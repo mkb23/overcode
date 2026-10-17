@@ -31,6 +31,12 @@ def main() -> None:
 
             handle_hook_event(argv[2] if len(argv) == 3 else None)
             return
+    # The calibration statusline runs after every assistant message, like a hook
+    if argv == ["statusline"]:
+        from .statusline_tap import main as statusline_main
+
+        statusline_main()
+        return
 
     from .cli import main as cli_main
 

@@ -107,7 +107,7 @@ def _detection_state(app: Any) -> StateView:
 
 
 def _cost_state(app: Any) -> StateView:
-    options = ("tokens", "cost", "joules", "all")
+    options = ("tokens", "cost", "joules", "quota", "all")
     try:
         level = app.SUMMARY_LEVELS[app.summary_level_index]
         idx = app._match_cost_preset(app._prefs.column_config.get(level, {}))
@@ -262,7 +262,7 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("choose_sort", "Sort agents by…", "Display", "order column", state=_sort_state),
     _C("reverse_sort", "Reverse sort", "Display", "order direction ascending descending flip",
        state=_sort_direction_state),
-    _C("toggle_cost_display", "Cost units", "Display", "tokens dollars joules energy money",
+    _C("toggle_cost_display", "Cost units", "Display", "tokens dollars joules energy money quota subscription",
        state=_cost_state),
     _C("cycle_timeline_hours", "Timeline scope", "Display", "hours range window",
        state=lambda app: _cycle(tuple(f"{h}h" for h in app.TIMELINE_PRESETS),

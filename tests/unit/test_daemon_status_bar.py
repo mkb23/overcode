@@ -369,6 +369,19 @@ class TestDaemonStatusBarRenderSpinStats:
         plain = result.plain
         assert "$" in plain or "1.5" in plain
 
+    def test_spin_stats_show_quota_mode(self):
+        """The $ cycler's quota mode sums the agents' weekly-quota estimates."""
+        s1 = _make_session_state(session_id="s1", name="a1", current_status="running",
+                                 quota={"pp7d": 1.25})
+        s2 = _make_session_state(session_id="s2", name="a2", current_status="running",
+                                 quota={"pp7d": 0.5})
+        state = _make_monitor_state(sessions=[s1, s2], usage={"w7": 37.0, "w5": 12.0})
+        widget = _make_bare_status_bar(monitor_state=state, show_cost="quota")
+        plain = widget.render().plain
+        assert "Σ1.75pp wk" in plain
+        # The engine's usage reading feeds the Usage section
+        assert "7d:" in plain and "37%" in plain
+
     def test_spin_stats_show_token_mode(self):
         s1 = _make_session_state(
             session_id="s1", name="agent-1", current_status="running",

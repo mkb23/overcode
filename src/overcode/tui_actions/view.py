@@ -453,23 +453,29 @@ class ViewActionsMixin:
             severity="information"
         )
 
-    # $ key presets: each entry is (label, {column_id: visible, ...}, status_bar_mode)
+    # $ key presets: each entry is (label, {column_id: visible, ...}, status_bar_mode).
+    # "quota" shows only the subscription quota estimate (Q%); its column
+    # hides itself for a fleet with no subscription agent.
     _COST_PRESETS = [
         ("Showing token counts", {
             "token_count": True, "cost": False, "joules": False,
-            "budget": False, "subtree_cost": False,
+            "budget": False, "subtree_cost": False, "quota": False,
         }, "tokens"),
         ("Showing cost/budget", {
             "token_count": False, "cost": True, "joules": False,
-            "budget": True, "subtree_cost": True,
+            "budget": True, "subtree_cost": True, "quota": False,
         }, "cost"),
         ("Showing energy (joules)", {
             "token_count": False, "cost": False, "joules": True,
-            "budget": False, "subtree_cost": True,
+            "budget": False, "subtree_cost": True, "quota": False,
         }, "joules"),
+        ("Showing weekly quota (pp, estimate)", {
+            "token_count": False, "cost": False, "joules": False,
+            "budget": False, "subtree_cost": False, "quota": True,
+        }, "quota"),
         ("Showing tokens + cost + joules", {
             "token_count": True, "cost": True, "joules": True,
-            "budget": True, "subtree_cost": True,
+            "budget": True, "subtree_cost": True, "quota": False,
         }, "cost"),
     ]
 
@@ -516,11 +522,11 @@ class ViewActionsMixin:
         self._recompute_cell_column_widths()
         self.notify(label, severity="information")
 
-    _COST_PRESET_KEYS = ("token_count", "cost", "joules")
-
-    _COST_PRESET_KEYS = ("token_count", "cost", "joules")
-    # Default visibility when no override exists (matches detail_levels defaults)
-    _COST_COLUMN_DEFAULTS = {"token_count": True, "cost": False, "joules": False}
+    _COST_PRESET_KEYS = ("token_count", "cost", "joules", "quota")
+    # Default visibility when no override exists (matches detail_levels
+    # defaults). Preferences saved before the quota preset have no "quota"
+    # key: it reads as off, so they match the preset they matched before.
+    _COST_COLUMN_DEFAULTS = {"token_count": True, "cost": False, "joules": False, "quota": False}
 
     def _match_cost_preset(self, overrides: dict) -> int:
         """Find which preset best matches the current overrides. Returns index."""

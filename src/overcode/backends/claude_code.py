@@ -183,6 +183,12 @@ class ClaudeCodeBackend(AgentBackendBase):
         # for this session only; the profile's own skills load as a plugin.
         if spec.hidden_skills:
             settings["skillOverrides"] = {name: "off" for name in spec.hidden_skills}
+        # Quota calibration (opt-in, quota.calibration): the statusline
+        # samples rate limits and chains the user's own statusline
+        from ..statusline_tap import launch_setting
+        status_line = launch_setting(overcode_bin)
+        if status_line is not None:
+            settings["statusLine"] = status_line
         cmd.extend(["--settings", json.dumps(settings)])
         if spec.skill_dir:
             cmd.extend(["--plugin-dir", spec.skill_dir])

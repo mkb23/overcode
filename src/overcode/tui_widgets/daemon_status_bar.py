@@ -79,6 +79,29 @@ def read_local_state(
     )
 
 
+def _iso_utc(epoch) -> Optional[str]:
+    if not isinstance(epoch, (int, float)):
+        return None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def engine_usage_snapshot(usage):
+    """The engine's published subscription usage (MonitorDaemonState.usage) as
+    a UsageSnapshot for the Usage section; None when it published none."""
+    if not isinstance(usage, dict) or not isinstance(usage.get("w7"), (int, float)):
+        return None
+    from ..usage_monitor import UsageSnapshot
+    fetched = usage.get("fetched_at")
+    return UsageSnapshot(
+        five_hour_pct=float(usage.get("w5") or 0.0),
+        seven_day_pct=float(usage["w7"]),
+        five_hour_resets_at=_iso_utc(usage.get("r5")),
+        seven_day_resets_at=_iso_utc(usage.get("r7")),
+        fetched_at=(datetime.fromtimestamp(fetched) if isinstance(fetched, (int, float))
+                    else datetime.now()),
+    )
+
+
 class DaemonStatusBar(Static):
     """Widget displaying daemon status.
 
@@ -196,8 +219,9 @@ class DaemonStatusBar(Static):
     def _render_bar(self) -> Text:
         content = Text()
 
-        # Usage section (prepended before Monitor)
-        snap = self._usage_snapshot
+        # Usage section (prepended before Monitor): the engine's reading,
+        # else the TUI's own poll (an engine that publishes none)
+        snap = engine_usage_snapshot(getattr(self.monitor_state, "usage", None)) or self._usage_snapshot
         if snap is not None:
             content.append("Usage: ", style="bold")
             if snap.error:
@@ -445,6 +469,16 @@ class DaemonStatusBar(Static):
                     content.append(
                         f"Σ⚡{format_joules(total_energy).strip()}", style="orange1",
                     )
+            elif self.show_cost == "quota":
+                # The fleet's predicted share of the weekly quota (the engine's
+                # per-agent estimates; sisters bill other accounts)
+                from ..quota_model import format_pp
+                pps = [s.quota.get("pp7d") for s in local_sessions
+                       if isinstance(getattr(s, "quota", None), dict)
+                       and isinstance(s.quota.get("pp7d"), (int, float))]
+                if pps:
+                    content.append(" │ ", style="dim")
+                    content.append(f"Σ{format_pp(sum(pps))} wk", style="magenta")
             else:
                 total_tokens = sum(s.input_tokens + s.output_tokens for s in local_sessions)
                 for sister in reachable_sisters:

@@ -826,6 +826,16 @@ def list_agents(
     live_subs = {sess.id: getattr(claude_stats, "live_subagent_count", 0) or 0
                  for sess, _status, _activity, claude_stats, *_ in session_data}
 
+    # Each agent's subscription quota estimate (the Q% column): the daemon's
+    def _quota(sess):
+        if not use_daemon:
+            return None
+        ds = daemon_state.get_session_by_name(sess.name)
+        quota = getattr(ds, "quota", None) if ds is not None else None
+        return quota if isinstance(quota, dict) else None
+
+    quotas = {sess.id: _quota(sess) for sess, *_ in session_data}
+
     # Which fleet-gated columns show, by the same rule as the TUI
     fleet = compute_fleet_flags(
         FleetRow(
@@ -835,6 +845,7 @@ def list_agents(
             task_result=results[sess.id][0],
             has_swarm=swarms[sess.id] is not None,
             has_live_subagents=live_subs[sess.id] > 0,
+            has_quota=quotas[sess.id] is not None,
         )
         for sess, status, *_ in session_data
     )
@@ -885,6 +896,7 @@ def list_agents(
             task_reason=results[sess.id][1],
             child_rollup=child_rollup(children.get(sess.id, ())),
             swarm_rollup=swarms[sess.id],
+            quota=quotas[sess.id],
         )
         ctx.status_color = f"bold {status_color}"
         ctx.show_cost = "joules" if joules else ("cost" if cost else "tokens")

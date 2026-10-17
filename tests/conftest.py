@@ -17,6 +17,11 @@ from pathlib import Path
 # enabled=True or a temp directory explicitly.
 os.environ["OVERCODE_ACTIVITY"] = "0"
 
+# Tests never read the developer's Claude login (the macOS keychain is not
+# behind HOME) nor call the subscription usage API: the engine's quota poll
+# (quota_engine.default_fetch) answers "no token". Tests pass their own fetch.
+os.environ["OVERCODE_NO_USAGE_FETCH"] = "1"
+
 # Tests never touch the live fleet: the real ~/.overcode, the user's tmux
 # server, or the agent this pytest happens to run inside. Isolation is on
 # by default for every test and every subprocess it starts, not opt-in per

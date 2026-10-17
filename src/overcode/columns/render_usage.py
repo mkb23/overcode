@@ -167,6 +167,39 @@ def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     return format_cost(cost)
 
 
+# The quota cell's width (" 12.34pp"): the "-" placeholder is padded to it
+QUOTA_W = 8
+
+
+def quota_pp(ctx: ColumnContext) -> Optional[float]:
+    """The agent's predicted points of the weekly quota this week, None without one."""
+    q = ctx.quota
+    pp = q.get("pp7d") if isinstance(q, dict) else None
+    return float(pp) if isinstance(pp, (int, float)) and not isinstance(pp, bool) else None
+
+
+def render_quota(ctx: ColumnContext) -> ColumnOutput:
+    """Share of the weekly subscription quota this week, in points (``1.37pp``; an estimate).
+
+    Dim while the model is only its prior (not yet fitted to this account).
+    """
+    from ..quota_model import format_pp
+
+    pp = quota_pp(ctx)
+    if pp is None:
+        return [("-".rjust(QUOTA_W), f"dim magenta{ctx.bg}")]
+    prior = (ctx.quota or {}).get("conf") == "prior"
+    style = "magenta" if prior else "bold magenta"
+    return [(format_pp(pp).rjust(QUOTA_W), f"{style}{ctx.bg}")]
+
+
+def render_quota_plain(ctx: ColumnContext) -> Optional[str]:
+    from ..quota_model import format_pp
+
+    pp = quota_pp(ctx)
+    return None if pp is None else f"{format_pp(pp)} wk"
+
+
 # The billing-code cell's width: a code is cut to it (… marks the cut) and
 # the "-" placeholder is padded to it, so the column holds still.
 BILLING_CODE_W = 12

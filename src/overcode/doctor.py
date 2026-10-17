@@ -802,6 +802,52 @@ def pricing_config_findings(config: dict) -> List[str]:
             f"net: false (a list price)"]
 
 
+# The quota model's prediction may fall short of the observed weekly figure
+# (usage outside overcode is unattributed) but should not exceed it by more
+# than this many points, or this share of the observed figure
+QUOTA_DRIFT_PP = 2.0
+QUOTA_DRIFT_SHARE = 0.2
+QUOTA_RMSE_PP = 1.5
+QUOTA_STALE_FIT_SECONDS = 2 * 86400
+
+
+def quota_findings(status: Optional[dict], now: float) -> List[str]:
+    """Warnings about the subscription quota model (``quota_engine.quota_status``).
+
+    - drift: the model predicts more of the weekly quota for overcode's
+      agents than the account used in all (the weights are too high);
+    - a poor fit (RMSE past ``QUOTA_RMSE_PP``, or under half the polls
+      inside their whole-percent cell);
+    - a fit older than two days while readings keep arriving (the engine
+      is not refitting).
+    """
+    if not status or status.get("latest") is None:
+        return []
+    findings = []
+    model = status["model"]
+    observed, attributed = status.get("observed"), status.get("attributed") or 0.0
+    if isinstance(observed, (int, float)):
+        excess = attributed - observed
+        if excess > max(QUOTA_DRIFT_PP, QUOTA_DRIFT_SHARE * observed):
+            findings.append(
+                f"quota model: overcode's agents are predicted at {attributed:.2f}pp of the "
+                f"weekly quota this week but the account shows {observed:.0f}% in all; the "
+                f"weights are too high (overcode usage model --refit; check quota.plan)")
+    if model.fitted:
+        if (model.rmse_pp or 0) > QUOTA_RMSE_PP or (model.coverage is not None and model.coverage < 0.5):
+            findings.append(
+                f"quota model: poor fit (RMSE {model.rmse_pp}pp, "
+                f"{(model.coverage or 0):.0%} of polls in their cell): usage outside overcode, or "
+                f"a limit change (quota.breaks)")
+        last = (status["latest"] or {}).get("t")
+        if (isinstance(last, (int, float)) and model.fitted_at
+                and last - model.fitted_at > QUOTA_STALE_FIT_SECONDS):
+            findings.append("quota model: last fitted "
+                            f"{(now - model.fitted_at) / 86400:.0f} days ago though readings "
+                            "keep arriving; is the monitor daemon running?")
+    return findings
+
+
 def storage_findings(report: dict, *, terminated_grace_seconds: float = 0.0) -> List[str]:
     """Warnings about a ``storage_report``: agents/ far above the live count, and why."""
     findings = []

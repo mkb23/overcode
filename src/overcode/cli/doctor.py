@@ -238,6 +238,22 @@ def doctor(
     except Exception:
         pass
 
+    # Global: the subscription quota model drifts from what the account shows
+    try:
+        import time as _time
+        from rich.markup import escape
+        from ..config import get_quota_config
+        from ..doctor import quota_findings
+        from ..quota_engine import UsageStore, default_account, quota_status
+        cfg = get_quota_config()
+        if cfg["enabled"]:
+            now = _time.time()
+            status = quota_status(UsageStore(), default_account(), cfg, now=now)
+            for finding in quota_findings(status, now):
+                rprint(f"[yellow]⚠[/yellow] {escape(finding)}")
+    except Exception:
+        pass
+
     # Global: the models.dev catalog behind CTX%/pricing is stale (#473).
     try:
         from ..model_metadata import staleness_findings

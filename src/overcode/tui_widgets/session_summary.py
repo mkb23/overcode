@@ -465,6 +465,7 @@ class SessionSummary(Static, can_focus=True):
             task_result=self.task_result,
             has_swarm=self.swarm_rollup is not None,
             has_live_subagents=max(self.live_subagent_count, self.file_subagent_count) > 0,
+            has_quota=isinstance(self.engine.get("quota"), dict),
         )
 
     def watch_summary_detail(self, summary_detail: str) -> None:
@@ -585,6 +586,7 @@ class SessionSummary(Static, can_focus=True):
             swarm_rollup=self.swarm_rollup,
             swarm_expanded=self.swarm_expanded,
             subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
+            quota=self.engine.get("quota") if self.engine else None,
             status_changed_at=self._status_changed_at,
             max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),

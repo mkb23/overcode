@@ -209,7 +209,7 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 | `s` | Cycle summary detail: low → med → high → full |
 | `l` | Cycle summary content: AI short → AI long → orders → annotation → heartbeat |
 | `S` | Sort by any column or tree order (picker; choosing the current sort reverses it) |
-| `$` | Cycle cost display (tokens / dollars / energy: joules, with the burn rate in watts) |
+| `$` | Cycle cost display (tokens / dollars / energy: joules, with the burn rate in watts / weekly quota on a subscription) |
 | `C` | Open column configuration |
 | `L` | Toggle column headers |
 | `M` | Toggle monochrome mode |
@@ -296,6 +296,23 @@ billing:
 The Billing column (BILL; hidden below full detail, shown by
 `overcode list`) shows each agent's code, dim while it is still the
 agent's name. A bad `billing:` entry is skipped and the dialog says so.
+
+### Weekly quota (subscriptions)
+
+On a Claude subscription, `$` has a **weekly quota** mode that hides the
+token, dollar and energy columns and shows the `Q%` column: each agent's
+estimated share of the weekly quota this week, in percentage points with
+two decimals (`1.37pp`; `-` for an agent off the subscription). It is a
+prediction from the agent's tokens, because Claude reports the window only
+in whole percents; the cell is dim until the model has been fitted to your
+account. Hover it for the agent's share of the current 5-hour window, the
+account's own weekly and 5-hour percentages and the model's confidence. In
+this mode the status bar's Σ sums the agents' points; the Usage section
+shows the account's percentages as the engine last read them. The column
+can also be switched on in the column configurator (`C`), and never shows
+for a fleet with no subscription agent. See
+[Subscription Quota](configuration.md#subscription-quota) and
+`overcode usage model`.
 
 ## Command Bar
 

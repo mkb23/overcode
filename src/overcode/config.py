@@ -979,6 +979,102 @@ def get_monitor_daemon_config() -> dict:
     return {"interval_unattended": interval}
 
 
+QUOTA_PLANS = ("pro", "max5x", "max20x", "max", "team", "team_premium", "enterprise")
+_QUOTA_KEYS = ("enabled", "calibration", "plan", "weekly_usd", "weeks", "poll_minutes", "breaks")
+
+
+def get_quota_config() -> dict:
+    """The subscription quota model (cost model Phase B).
+
+    Config format in ~/.overcode/config.yaml:
+        quota:
+          enabled: true        # poll subscription usage in the engine; the Q% column
+          calibration: false   # opt in: statusline samples from agents overcode launches
+          plan: max20x         # pro | max5x | max20x | team | team_premium | enterprise
+                               # (detected from Claude Code's login when unset)
+          weekly_usd: 1550     # the prior's API-equivalent $ per week (else the plan's)
+          weeks: 4             # history the calibration fits (2-8)
+          poll_minutes: 5      # usage API poll (at least 5)
+          breaks: [2026-05-06] # known limit changes: a window never spans one
+
+    Unknown keys and values of the wrong shape are ignored with a warning;
+    this never raises.
+
+    Returns:
+        Dict with ``enabled``, ``calibration`` (bools), ``plan`` (str or
+        None), ``weekly_usd`` (float or None), ``weeks`` (int),
+        ``poll_minutes`` (float), ``breaks`` (epoch seconds) and
+        ``warnings``.
+    """
+    warnings: List[str] = []
+    cfg = _get_config_value("quota", {})
+    if not isinstance(cfg, dict):
+        warnings.append("quota: should be a mapping — ignored")
+        cfg = {}
+    for key in cfg:
+        if key not in _QUOTA_KEYS:
+            warnings.append(f"quota: unknown key '{key}' — ignored")
+    plan = cfg.get("plan")
+    if plan is not None and plan not in QUOTA_PLANS:
+        warnings.append(f"quota.plan: {plan!r} is not one of {', '.join(QUOTA_PLANS)} — ignored")
+        plan = None
+    usd = cfg.get("weekly_usd")
+    if usd is not None and (isinstance(usd, bool) or not isinstance(usd, (int, float)) or usd <= 0):
+        warnings.append("quota.weekly_usd: should be a positive number — ignored")
+        usd = None
+    try:
+        weeks = int(cfg.get("weeks", 4))
+    except (TypeError, ValueError):
+        weeks = 4
+    poll = _non_negative(cfg.get("poll_minutes", 5), 5.0)
+    breaks, bad = _quota_breaks(cfg.get("breaks"))
+    warnings.extend(bad)
+    return {
+        "enabled": cfg.get("enabled", True) is not False,
+        "calibration": cfg.get("calibration", False) is True,
+        "plan": plan,
+        "weekly_usd": float(usd) if usd is not None else None,
+        "weeks": min(max(weeks, 2), 8),
+        "poll_minutes": max(5.0, poll),
+        "breaks": breaks,
+        "warnings": warnings,
+    }
+
+
+def _quota_breaks(raw) -> Tuple[List[float], List[str]]:
+    """``quota.breaks`` as epoch seconds (local midnight of each date), and warnings."""
+    from datetime import date, datetime
+
+    if raw is None:
+        return [], []
+    if not isinstance(raw, list):
+        return [], ["quota.breaks: should be a list of dates — ignored"]
+    out: List[float] = []
+    warnings: List[str] = []
+    for item in raw:
+        try:
+            if isinstance(item, datetime):
+                out.append(item.timestamp())
+            elif isinstance(item, date):
+                out.append(datetime(item.year, item.month, item.day).timestamp())
+            else:
+                out.append(datetime.fromisoformat(str(item)).timestamp())
+        except (TypeError, ValueError, OverflowError):
+            warnings.append(f"quota.breaks: {item!r} is not a date — ignored")
+    return out, warnings
+
+
+def set_quota_calibration(on: bool) -> None:
+    """Turn the statusline calibration samples on or off in config.yaml."""
+    config = load_config()
+    quota = config.get("quota")
+    if not isinstance(quota, dict):
+        quota = {}
+    quota["calibration"] = bool(on)
+    config["quota"] = quota
+    save_config(config)
+
+
 def get_sisters_config() -> List[dict]:
     """Get sister instance configuration for cross-machine monitoring.
 
