@@ -19,7 +19,8 @@ T0 = 1_800_000_000.0
 
 
 def _ctx(quota, any_has_quota=True):
-    return SimpleNamespace(quota=quota, bg="", fleet=FleetFlags(any_has_quota=any_has_quota),
+    return SimpleNamespace(quota=quota, bg="", virtual=None,
+                           fleet=FleetFlags(any_has_quota=any_has_quota),
                            e=lambda c: c)
 
 
