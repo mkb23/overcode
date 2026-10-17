@@ -404,8 +404,11 @@ class SupervisorTUI(
         self.max_repo_width: int = 10
         self.max_branch_width: int = 10
         self.max_name_width: int = 10
+        self._session_name_width: int = 10  # the agents' longest name
         self.all_names_match_repos: bool = False
         self.column_widths: list = []  # Per-cell column widths for alignment
+        # Per column, where its widest text ends: a virtual row's "-" placeholder
+        self.column_edges: list = []
         # {column id: value} for columns every row shows the same value in —
         # hidden, with the value noted in the header row (uniform_columns)
         self.uniform_columns: dict = {}
@@ -1075,6 +1078,7 @@ class SupervisorTUI(
             self._request_focused_capture(widget.session.id if window else None, window)
         for row in self.query(SessionSummary):
             row.refresh_if_changed()
+        self._tick_swarm_rows()
         self._notifier.flush()
         # Proactive focus recovery: if focus was lost or landed on a
         # non-interactive widget (e.g. a click on the preview pane), restore
@@ -1508,9 +1512,13 @@ class SupervisorTUI(
         old = (self.max_name_width, self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
         sessions = list(sessions)
         if sessions:
-            self.max_name_width = max(
+            self._session_name_width = max(
                 (len(s.name) for s in sessions), default=8
             )
+            # Expanded delegated-work rows' names (connector, marker, title)
+            # share the NAME column, up to the same detail-level cap
+            self.max_name_width = max(self._session_name_width,
+                                      getattr(self, "_swarm_name_width", 0))
             self.max_repo_width = max(
                 (len(s.repo_name or "n/a") for s in sessions), default=5
             )
@@ -1521,6 +1529,7 @@ class SupervisorTUI(
                 s.name == s.repo_name for s in sessions if s.repo_name
             )
         else:
+            self._session_name_width = 10
             self.max_name_width = 10
             self.max_repo_width = 10
             self.max_branch_width = 10
@@ -1546,6 +1555,7 @@ class SupervisorTUI(
         """
         if not force and not self._column_widths_dirty:
             return
+        from .columns.render_virtual import column_edges
         from .summary_columns import compute_column_widths
         widgets = list(self.query(SessionSummary))
         if not widgets:
@@ -1557,8 +1567,12 @@ class SupervisorTUI(
             cells = w.row_cells()
             all_cells.append(cells)
             w._cell_widths = [cell_len(c.plain) for c in cells]
+        # Expanded parents' delegated-work rows share the grid (render_virtual)
+        all_cells.extend(self._swarm_cells())
         self.column_widths = compute_column_widths(all_cells)
+        self.column_edges = column_edges(all_cells)
         self._column_widths_dirty = False
+        self._paint_swarm_rows()
         # Update column headers if visible
         self._update_column_headers()
 

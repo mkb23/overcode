@@ -43,15 +43,17 @@ class TestGroups:
     def test_a_small_group_opens_with_every_member(self):
         lines = swarm_view.layout("p", _workflow(3))
         assert _kinds(lines) == ["group", "member", "member", "member"]
-        assert "🧩 review ▾ 3 agents" in lines[0].text
+        group = lines[0]
+        assert (group.marker, group.label, group.fold) == ("🧩", "review", "▾")
+        assert group.counts == (("running", 3),) and group.summary == "3 agents"
 
     def test_above_eight_members_a_group_shows_its_top_three_needs_you(self):
         lines = swarm_view.layout("p", _workflow(12, orange={7}))
         assert _kinds(lines) == ["group", "member", "member", "member", "more"]
-        assert "▸ 12 agents" in lines[0].text
+        assert lines[0].fold == "▸" and lines[0].summary == "12 agents"
         assert lines[1].key == "p/wf/wf/w7"  # 🟠 first
         assert [ln.key for ln in lines[2:4]] == ["p/wf/wf/w0", "p/wf/wf/w1"]  # then 🟢 oldest
-        assert "+9 more" in lines[4].text
+        assert lines[4].label == "+9 more" and lines[4].counts == (("more", 9),)
 
     def test_a_group_the_person_closed_shows_nothing_below(self):
         lines = swarm_view.layout("p", _workflow(3), opened={"p/wf/wf": False})
@@ -60,11 +62,16 @@ class TestGroups:
 
     def test_finished_members_fold_into_a_done_line(self):
         lines = swarm_view.layout("p", _workflow(2, done=4))
-        assert lines[-1].kind == "done" and "4 done" in lines[-1].text
+        assert lines[-1].kind == "done" and lines[-1].counts == (("ok", 4),)
 
-    def test_emoji_free(self):
-        lines = swarm_view.layout("p", _workflow(1, orange={0}), emoji_free=True)
-        assert "🧩" not in "".join(ln.text for ln in lines)
+    def test_emoji_free_markers(self):
+        assert swarm_view.marker_glyph("🧩", emoji_free=True) == "Wk"
+        assert swarm_view.marker_glyph("👥", emoji_free=True) == "Sa"
+        assert swarm_view.light_glyph({"light": "orange"}, emoji_free=True)[0] == "[A]"
+
+    def test_tree_connectors_are_indented_below_the_parent(self):
+        lines = swarm_view.layout("p", _workflow(2, done=1), base_depth=1)
+        assert [ln.connector for ln in lines] == ["  └─", "    ├─", "    ├─", "    └─"]
 
 
 class TestPhases:
@@ -95,7 +102,8 @@ class TestDoneLine:
         rows, _ = swarm.virtual_rows("p", _loose(1, 5), 100.0, 30)
         lines = swarm_view.layout("p", rows)
         assert _kinds(lines) == ["group", "member", "done"]
-        assert lines[-1].text.endswith("✅ 4 done · ❌ 1 ▸")
+        assert (lines[-1].label, lines[-1].fold) == ("done", "▸")
+        assert lines[-1].counts == (("ok", 4), ("failed", 1))
         assert lines[-1].key == "p/sa/done" == swarm_view.done_key("p/sa")
 
     def test_open_it_lists_what_the_engine_published_newest_first_then_older(self):
@@ -103,7 +111,7 @@ class TestDoneLine:
                                      done_open={"p/sa"}, done_limit=3)
         lines = swarm_view.layout("p", rows, opened={"p/sa/done": True})
         assert _kinds(lines) == ["group", "member", "done", "member", "member", "member", "older"]
-        assert lines[2].text.endswith("▾")
+        assert lines[2].fold == "▾"
         assert [ln.key for ln in lines[3:6]] == ["p/sa/d4", "p/sa/d3", "p/sa/d2"]
         assert all(ln.owner == "p/sa/done" and ln.depth == 3 for ln in lines[3:7])
         assert "+2 older" in lines[6].text

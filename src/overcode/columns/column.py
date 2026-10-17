@@ -70,6 +70,11 @@ class SummaryColumn:
     # duration or countdown). The TUI's 250 ms row clock redraws only these
     # cells; every other cell is rebuilt only when the row's inputs change.
     ticks: bool = False
+    # A delegated-work row's cell (ctx.virtual set, columns.render_virtual);
+    # None = the column does not apply to one and shows its placeholder (a
+    # dim "-" where the agents' cells have text). ``virtual_hover`` is its popup.
+    virtual_render: Optional[Callable[[ColumnContext], ColumnOutput]] = None
+    virtual_hover: Optional[Callable[[ColumnContext], Optional["Text"]]] = None  # noqa: F821
 
     def __post_init__(self):
         if self.render_plain is None:

@@ -36,25 +36,47 @@ agent delegates, and replaces 0.6.0's DLG and SUB columns: saved column
 settings naming `swarm` or `subagent_count` carry over to it.
 
 Press `→` on that row to expand it: the work appears as read-only rows right
-under the parent, and the fold marker turns to `▾`. Groups come first, never
-a flat list:
+under the parent, and the fold marker turns to `▾`. The rows sit on the same
+column grid as the agent rows, cell for cell (here at low detail, trimmed on
+the right):
 
 ```
-└ 🟠 🧩 review ▾ 40 agents  phase Verify 18/30   12🟢 3🟡 1🟠 24✅   ($3.95)
-    ✔ Find  10/10
-    ▶ Verify  18/30  ▸
-      · 🟠 👥 verify-api-auth  needs approval in the parent's pane
-      · 🟢 👥 verify-cache-ttl  Read src/overcode/cache.py
-      · +13 more  (→ to open)
-└ 🟢 👥 agents ▾ 3 agents   1🟢 2✅   ($0.15)
-    · 🟢 👥 map engine  Grep TickContext
-    · ✅ 2 done ▸
+🟢    4.2m             ▾👥 ▶1 🟠1 ✅1 🧩1→ bravo                 Δ -   Σ  1.5K 📚 41%   Op4.6 │ 💬 refactoring the engine
+🟠       -     -       ▾🧩 🟠1 ✅1         ├─🧩 review             -         -      -       -  │ 2 agents · phase Find 1/1
+ -       -     -       ▾   ▶1                ├─▶ Verify            -         -      -       -  │ phase Verify 0/1
+🟠     20s     -                        -      └─👥 verify-1       -         -      -       -  │ 💬 needs approval in the parent's pane
+ -       -     -       ▸   ✅1               ├─✔ Find              -         -      -       -  │ phase Find 1/1
+ -       -     -       ▸   ✅1               └─done                -         -      -       -  │
+🟢       -     -       ▾👥 ▶1 ❌1          └─👥 agents             -         -      -       -  │ 2 agents
+🟢     30s     -                        -    ├─👥 map the engine   -   Σ 15.3K      -   Hk4.5  │ 💬 Read src/engine.py
+❌     45s  ❌ failed                   -    ├─👥 a2               -         -      -       -  │ 💬 failed · ran 45s
+ -       -     -       ▸   ❌1               └─done                -         -      -       -  │
 ```
 
+Groups come first, never a flat list: one line per workflow run (🧩), then
+the team, then loose subagents (👥 agents).
+
+- Each row fills the columns it has a value for: its light, time in state
+  (since it started; its run time once finished), RES (✅ / ❌, hover for
+  the result text), SubAgents (a group's, phase's or done line's counts,
+  glyph then count, as on the agent's row), KIND, NAME (tree connector,
+  marker, title), MDL, TOK, $ and uptime. Every other column shows a dim
+  `-` where its values end, so nothing of the parent's (repo, branch, diff,
+  context, mode, …) is repeated. The NAME column widens for the titles as
+  it would for a longer agent name. MDL still hides while every agent runs
+  the same model.
+- The summary column follows `l`. A member shows, per mode: **AI short**
+  what it is doing (its last tool call, or "needs approval in the parent's
+  pane", "idle, listening", "waiting on its own background work"; once
+  finished, its result and run time); **AI context** its agent type, kind
+  and phase, then the same; **standing orders** its task as given (the full
+  title); **last command** its last tool call; **annotation** and
+  **heartbeat** `-`. A group, phase or summary line shows its agent count
+  and phase progress in every mode.
 - A row's kind is its marker: no marker for an overcode agent, 👥 for a
   subagent, fork or teammate, 🧩 for a workflow run. The KIND column
   (hidden by default; switch it on with `C`) spells out agent / child for
-  fleet rows.
+  fleet rows, and sub / fork / team / wf for delegated work.
 - A group (or a workflow phase) with more than 8 members opens collapsed and
   shows its top three "needs you" members (🟠 first, then 🟢 oldest first)
   and `+k more`.
@@ -62,8 +84,8 @@ a flat list:
   parent keeps focus, so the pane below stays on the parent: a virtual row
   has no terminal of its own.
 - `→` goes one level in: opens a group or phase, then moves into it; on a
-  member it opens a detail line (model, type, phase, start time, tokens,
-  cost, last tool, result). `←` closes what the highlight is on, or goes up a
+  member it opens a detail line under the NAME column (model, type, phase,
+  start time, tokens, cost, last tool, result). `←` closes what the highlight is on, or goes up a
   level; on the agent's own row it collapses the whole thing.
 - Virtual rows are read only. With the highlight on one, the agent keys
   (send, kill, restart, rename, …) say so and do nothing; `Enter` moves to
@@ -72,7 +94,7 @@ a flat list:
   its group's done line (`observability.finished_row_seconds` in
   config.yaml). Subagents never ring the bell: their permission prompt
   already turns the parent 🟠.
-- `→` on the `✅ n done ▸` line opens it: the group's finished members,
+- `→` on a `done ▸` line (its counts, e.g. `✅25 ❌1`, in SubAgents) opens it: the group's finished members,
   newest first, at most 50 (`observability.done_rows`), then `+k older`
   for the rest. While it is open they are listed there and nowhere else.
   `←` closes it. The engine builds those rows only while a done line is

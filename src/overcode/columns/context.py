@@ -214,6 +214,21 @@ class ColumnContext:
     # status_constants.effective_permission_mode.
     in_session_mode: str = ""
 
+    # A delegated-work row drawn on the grid (a swarm_view.SwarmLine), None
+    # for an agent's own row. Its cells come from each column's
+    # ``virtual_render`` (columns.render_virtual); a column without one
+    # shows its placeholder. Built by ColumnContext.for_virtual.
+    virtual: Optional[object] = None
+
+    @classmethod
+    def for_virtual(cls, line, parent: "ColumnContext", selected: bool = False) -> "ColumnContext":
+        """The context for one virtual row (a subagent, a group, a phase, a
+        summary line) under the agent ``parent`` draws: the parent's view
+        settings (emoji, $ mode, name width, fleet gates), the row's own
+        values, and nothing of the parent's agent data."""
+        from .render_virtual import virtual_context
+        return virtual_context(line, parent, selected)
+
     @property
     def agent_kind(self) -> str:
         """The KIND column (agent-observability §4.0): an overcode agent,

@@ -105,6 +105,7 @@ class ViewActionsMixin:
         # Update all session widgets
         for widget in self.query(SessionSummary):
             widget.summary_content_mode = self.summary_content_mode
+        self._paint_swarm_rows()  # delegated-work rows map the mode too (render_virtual)
 
         mode_names = {
             "ai_short": "AI Summary (short)",

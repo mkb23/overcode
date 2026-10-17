@@ -76,6 +76,8 @@ class SwarmMixin:
         # The virtual row under the highlight (None: the agent's own row)
         self.swarm_cursor: Optional[str] = None
         self._swarm_lines: Dict[str, List[SwarmLine]] = {}
+        # The SwarmRows widget under each expanded parent (by parent id)
+        self._swarm_widgets: Dict[str, Any] = {}
         self._swarm_reported: Optional[frozenset] = None
 
     def _load_swarm_prefs(self) -> None:
@@ -111,21 +113,14 @@ class SwarmMixin:
     def _swarm_virtual(self) -> dict:
         return getattr(self.engine_link, "virtual", None) or {}
 
-    def _swarm_show_kind(self) -> bool:
-        from ..summary_columns import COLUMNS_BY_ID
-
-        widget = self._get_focused_widget()
-        col = COLUMNS_BY_ID.get("kind")
-        return bool(widget is not None and col is not None and widget.column_visible(col))
-
-    def _swarm_layout_of(self, parent_id: str) -> swarm_view.Layout:
+    def _swarm_layout_of(self, parent_id: str, base_depth: int = 0) -> swarm_view.Layout:
         return swarm_view.Layout(parent_id, self._swarm_virtual(), self.swarm_opened,
                                  self.swarm_details, emoji_free=self.emoji_free,
-                                 show_kind=self._swarm_show_kind(),
-                                 needs_you=self.swarm_detail == "needs_you")
+                                 needs_you=self.swarm_detail == "needs_you",
+                                 base_depth=base_depth)
 
-    def _swarm_layout(self, parent_id: str) -> List[SwarmLine]:
-        return self._swarm_layout_of(parent_id).build()
+    def _swarm_layout(self, parent_id: str, base_depth: int = 0) -> List[SwarmLine]:
+        return self._swarm_layout_of(parent_id, base_depth).build()
 
     # ── which parents are expanded ────────────────────────────────────
 
@@ -198,7 +193,12 @@ class SwarmMixin:
     # ── the rows under each expanded parent ──────────────────────────
 
     def _sync_swarm_rows(self) -> None:
-        """Put each expanded parent's lines right under its row; drop the rest."""
+        """Put each expanded parent's lines right under its row; drop the rest.
+
+        The lines render on the agent rows' column grid: when their cells
+        changed, the aligned widths are worked out again over agent and
+        virtual rows (and the agent rows repaint if that moved them).
+        """
         self._sync_timeline_fold()  # the timeline's density rows fold in step (phase 4)
         from textual.containers import ScrollableContainer
         from textual.css.query import NoMatches
@@ -213,10 +213,13 @@ class SwarmMixin:
         parents = {w.session.id: w for w in self.query(SessionSummary)
                    if w.session.id in self.swarm_expanded and w.display}
         existing = {w.parent_id: w for w in self.query(SwarmRows)}
+        regrid = False
         for pid, widget in existing.items():
             if pid not in parents:
                 widget.remove()
                 self._swarm_lines.pop(pid, None)
+                regrid = True
+        self._swarm_widgets = {}
         for widget in self.query(SessionSummary):
             expanded = widget.session.id in parents
             if widget.swarm_expanded != expanded:
@@ -225,12 +228,13 @@ class SwarmMixin:
         focused = self._get_focused_widget()
         focused_id = focused.session.id if focused is not None else None
         for pid, parent in parents.items():
-            lines = self._swarm_layout(pid)
+            lines = self._swarm_layout(pid, getattr(parent, "tree_depth", 0) or 0)
             self._swarm_lines[pid] = lines
             rows = existing.get(pid)
             if rows is None:
                 rows = SwarmRows(pid)
                 container.mount(rows, after=parent)
+                regrid = True
             else:
                 children = list(container.children)
                 try:
@@ -238,13 +242,70 @@ class SwarmMixin:
                         container.move_child(rows, after=parent)
                 except ValueError:
                     pass
+            self._swarm_widgets[pid] = rows
             cursor = self.swarm_cursor if pid == focused_id else None
             if cursor is not None and swarm_view.line_for(lines, cursor) is None:
                 # Its row went away (finished and folded): back to the parent
                 cursor = self.swarm_cursor = None
-            rows.show(lines, cursor)
+            rows.set_lines(lines, cursor, parent)
         if self.swarm_cursor is not None and focused_id not in parents:
             self.swarm_cursor = None
+        self._fit_swarm_names()
+        for rows in self._swarm_widgets.values():
+            regrid = rows.build_cells() or regrid
+        if regrid:
+            old = list(self.column_widths)
+            self._column_widths_dirty = True
+            self._recompute_cell_column_widths()
+            if self.column_widths != old:
+                for widget in self.query(SessionSummary):
+                    widget.refresh_if_changed()
+        self._paint_swarm_rows()
+
+    def _fit_swarm_names(self) -> None:
+        """Widen the NAME column for the virtual rows' names (connector,
+        marker, title), as for a longer agent name; the detail level's cap
+        still applies (SessionSummary)."""
+        from rich.cells import cell_len
+
+        width = 0
+        for lines in (self._swarm_lines.get(pid) or [] for pid in self._swarm_widgets):
+            for ln in lines:
+                if ln.kind != "detail":
+                    width = max(width, cell_len(ln.connector) + (3 if ln.marker else 0)
+                                + cell_len(ln.label))
+        if width == getattr(self, "_swarm_name_width", 0):
+            return
+        self._swarm_name_width = width
+        name_width = max(getattr(self, "_session_name_width", self.max_name_width), width)
+        if name_width != self.max_name_width:
+            self.max_name_width = name_width
+            self._column_widths_dirty = True
+
+    def _swarm_row_widgets(self) -> list:
+        return list(getattr(self, "_swarm_widgets", {}).values())
+
+    def _swarm_cells(self) -> list:
+        """Every expanded parent's virtual rows' cells, built now (for the widths)."""
+        out = []
+        for rows in self._swarm_row_widgets():
+            rows.build_cells()
+            out.extend(rows.measure())
+        return out
+
+    def _paint_swarm_rows(self) -> None:
+        """Pad the virtual rows to the aligned widths (a no-op when unchanged)."""
+        widths = self.column_widths
+        edges = getattr(self, "column_edges", [])
+        mode = getattr(self, "summary_content_mode", "ai_short")
+        width = self.size.width
+        for rows in self._swarm_row_widgets():
+            rows.paint(widths, edges, mode, width)
+
+    def _tick_swarm_rows(self) -> None:
+        """The row clock: live members' durations."""
+        for rows in self._swarm_row_widgets():
+            rows.tick()
 
     def _swarm_scroll_to_cursor(self) -> None:
         from textual.geometry import Region

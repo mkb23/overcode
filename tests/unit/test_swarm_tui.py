@@ -301,6 +301,6 @@ def test_timestamps_in_detail_lines_hold_still():
     rows, _ = swarm.virtual_rows("p", _hook_state(), NOW, 30)
     a = swarm_view.layout("p", rows, details={"p/sa/a1"})
     b = swarm_view.layout("p", rows, details={"p/sa/a1"})
-    assert [ln.segments for ln in a] == [ln.segments for ln in b]
+    assert a == b
     detail = next(ln for ln in a if ln.kind == "detail").text
     assert datetime.fromtimestamp(NOW - 30).strftime("%H:%M:%S") in detail
