@@ -21,7 +21,7 @@ import pytest
 
 from overcode import conversation_spend as spend
 from overcode import history_reader
-from overcode.history_reader import HistoryFile, encode_project_path
+from overcode.history_reader import CLAUDE_READER_VERSION, HistoryFile, encode_project_path
 from overcode.ledger import CORRECTION
 from overcode.session_manager import PendingUpdates, SessionManager
 from overcode.spend_recompute import (
@@ -136,7 +136,7 @@ def test_an_archived_agent_with_transcripts_is_restated(sm, tmp_path):
             stats["cache_read_tokens"]) == (want["inputTokens"], want["outputTokens"],
                                             want["cacheCreationInputTokens"],
                                             want["cacheReadInputTokens"])
-    assert all(e["rv"] == 2 for e in stats["conversations"].values())
+    assert all(e["rv"] == CLAUDE_READER_VERSION for e in stats["conversations"].values())
     assert sum(1 for _ in sm.iter_archived_records()) == lines_before
     [row] = [r for r in sm.ledger.iter_rows() if r.get("kind") == CORRECTION]
     assert row["closing"] is True and row["sid"] == agent

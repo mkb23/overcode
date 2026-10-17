@@ -38,6 +38,19 @@ class StatsSync:
         self.last_commands: Dict[str, str] = {}  # session_id → last user prompt
         # Last pr-link PR number seen per session id (see sync_pr)
         self.transcript_prs: Dict[str, int] = {}
+        # Archived parents' conversations, by parent id (an archive record
+        # never changes; looked up once): see fork_sources
+        self._archived_parents: Dict[str, list] = {}
+
+    def fork_sources(self, session) -> list:
+        """The conversations ``session``'s may have been forked from: its parent's.
+
+        ``overcode fork`` starts a child whose conversation is a copy of
+        its parent's (``--resume <id> --fork-session``): that history was
+        the parent's spend, so the child's reader leaves it out
+        (``history_reader.get_session_stats``).
+        """
+        return parent_conversations(session, self.session_manager, self._archived_parents)
 
     def sync_session_id(self, session) -> None:
         """Detect and bind Claude session IDs (#116, #373).
@@ -183,7 +196,9 @@ class StatsSync:
             # Session ID detection also runs here for the first sync
             self.sync_session_id(session)
 
-            stats = reader.get_stats(session)
+            sources = self.fork_sources(session) if getattr(reader, "reads_forks", False) else []
+            stats = (reader.get_stats(session, fork_sources=sources)  # type: ignore[call-arg]
+                     if sources else reader.get_stats(session))
             self.note_stats_view(session, stats)
             if stats is None:
                 return
@@ -396,4 +411,38 @@ def _owned_conversations(session) -> list:
     active = getattr(session, "active_agent_session_id", None)
     if isinstance(active, str) and active and active not in ids:
         ids.append(active)
+    return ids
+
+
+def parent_conversations(session, session_manager, archived: Optional[Dict[str, list]] = None
+                         ) -> list:
+    """The conversation ids of ``session``'s parent (live, else archived); [] for a root.
+
+    ``archived`` remembers archived parents' answers (a record never changes).
+    """
+    parent_id = getattr(session, "parent_session_id", None)
+    if not isinstance(parent_id, str) or not parent_id or session_manager is None:
+        return []
+    try:
+        parent = session_manager.get_session(parent_id)
+    except Exception:
+        parent = None
+    if parent is not None:
+        return _owned_conversations(parent)
+    if archived is not None and parent_id in archived:
+        return archived[parent_id]
+    ids: list = []
+    try:
+        record = session_manager.newest_archived_records([parent_id]).get(parent_id)
+    except Exception:
+        record = None
+    if isinstance(record, dict):
+        # An archive record keeps no ids, but its spend is kept by
+        # conversation: those (not a subagent's, not a pseudo entry) are its
+        stats = record.get("stats")
+        held = stats.get("conversations") if isinstance(stats, dict) else None
+        ids = [cid for cid in (held if isinstance(held, dict) else ())
+               if isinstance(cid, str) and cid and "/" not in cid and not cid.startswith("_")]
+    if archived is not None:
+        archived[parent_id] = ids
     return ids

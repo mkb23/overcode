@@ -525,20 +525,29 @@ def build_rows(
 # ── Spend ──────────────────────────────────────────────────────────────
 
 
+# Background sessions whose fork origins are remembered (oldest dropped first)
+_ORIGINS_KEPT = 1024
+
+
 @dataclass
 class BgSpend:
     """Each live background session's tokens and cost, from its own transcript.
 
     A background session is its own conversation (§3.5): it counts once,
     under its own row, deduplicated like an agent's (``read_tree_stats``
-    over the transcript and its subagents). Read at the stats cadence while
-    the session is live, once more when it finishes, then frozen until it
-    runs again (a finished session resumed).
+    over the transcript and its subagents). One forked from a conversation
+    (``/bg``, ``--resume <id> --fork-session``) starts with a copy of that
+    conversation's history, which its agent (or the session it came from)
+    spent: that copy is left out (``origins``). Read at the stats cadence
+    while the session is live, once more when it finishes, then frozen
+    until it runs again (a finished session resumed).
     """
 
     values: Dict[str, dict] = field(default_factory=dict)  # session id -> spend
     _read_at: Dict[str, float] = field(default_factory=dict)
     _frozen: set = field(default_factory=set)
+    # session id -> the transcripts it may have been forked from, as last read
+    origins: Dict[str, Tuple[Path, ...]] = field(default_factory=dict)
     reads: int = 0
 
     def due(self, sid: str, now: float, every: float, finished: bool) -> bool:
@@ -547,15 +556,19 @@ class BgSpend:
         last = self._read_at.get(sid)
         return last is None or finished or now - last >= every
 
-    def sync(self, rows_jobs: Iterable[Tuple[str, dict, bool]], now: float, every: float) -> bool:
+    def sync(self, rows_jobs: Iterable[Tuple], now: float, every: float) -> bool:
         """Read the sessions whose turn it is; True if any value changed.
 
-        ``rows_jobs`` is (session id, job, finished) for each published row.
+        ``rows_jobs`` is (session id, job, finished[, origins]) for each
+        published row: ``origins`` the transcripts it may have been forked
+        from (``fork_origins``).
         """
         changed = False
         live = set()
-        for sid, job, finished in rows_jobs:
+        for sid, job, finished, *rest in rows_jobs:
             live.add(sid)
+            if rest:
+                self.origins[sid] = tuple(rest[0])
             if not finished and sid in self._frozen:
                 self._frozen.discard(sid)  # a finished session resumed: it spends again
                 self._read_at.pop(sid, None)
@@ -564,7 +577,7 @@ class BgSpend:
             self._read_at[sid] = now
             if finished:
                 self._frozen.add(sid)
-            value = read_spend(job)
+            value = read_spend(job, self.origins.get(sid, ()))
             self.reads += 1
             if value is not None and value != self.values.get(sid):
                 self.values[sid] = value
@@ -573,11 +586,41 @@ class BgSpend:
             self._read_at.pop(sid, None)
             self.values.pop(sid, None)
             self._frozen.discard(sid)
+        # Origins outlive the row: the ledger's last read of a session whose
+        # row went (``ClaudeBgSource.read_spend_of``) leaves the copy out too
+        while len(self.origins) > _ORIGINS_KEPT:
+            self.origins.pop(next(iter(self.origins)))
         return changed
 
 
-def read_spend(job: Mapping[str, Any]) -> Optional[dict]:
-    """Tokens and cost of a background session's conversation, or None (no transcript)."""
+def fork_origins(job: Mapping[str, Any], parent: Optional[FleetAgent],
+                 earlier_sessions: Iterable[str] = ()) -> Tuple[Path, ...]:
+    """The transcripts a background session may have been forked from.
+
+    Its agent's own conversations, the conversation it resumed
+    (``resumeSessionId``) and the agent's background sessions created
+    before it (``earlier_sessions``): each the transcript of that id
+    beside its own (Claude keeps a directory's conversations together).
+    """
+    path = transcript_path(job)
+    if path is None:
+        return ()
+    sid = job.get("sessionId")
+    ids: List[str] = sorted(parent.conversations) if parent is not None else []
+    resumed = job.get("resumeSessionId")
+    if isinstance(resumed, str) and resumed:
+        ids.append(resumed)
+    ids.extend(earlier_sessions)
+    return tuple(path.with_name(f"{cid}.jsonl") for cid in dict.fromkeys(ids)
+                 if isinstance(cid, str) and cid and cid != sid)
+
+
+def read_spend(job: Mapping[str, Any], origins: Iterable[Path] = ()) -> Optional[dict]:
+    """Tokens and cost of a background session's conversation, or None (no transcript).
+
+    ``origins`` are the transcripts it may have been forked from
+    (``fork_origins``): the history it copied from them is not its spend.
+    """
     path = transcript_path(job)
     if path is None or not path.exists():
         return None
@@ -587,7 +630,7 @@ def read_spend(job: Mapping[str, Any]) -> Optional[dict]:
         from .settings import get_model_pricing, get_user_config
 
         files = [path] + subagent_files(path.with_suffix("") / "subagents")
-        results = read_tree_stats(files)
+        results = read_tree_stats(files, earlier=list(origins))
     except Exception:
         return None
     config = get_user_config()
@@ -670,7 +713,7 @@ class ClaudeBgSource:
         sid = rid[len(ID_PREFIX):] if rid.startswith(ID_PREFIX) else rid
         for job in self.scanner.jobs.values():
             if isinstance(job, dict) and job.get("sessionId") == sid:
-                return read_spend(job)
+                return read_spend(job, self.spend.origins.get(sid, ()))
         return None
 
     def set_agents(self, agents: Iterable[FleetAgent]) -> None:
@@ -703,16 +746,36 @@ class ClaudeBgSource:
         keep = self.keep_seconds()
         rows, deadline = build_rows(self.scanner.jobs, self.agents, wall_now, keep,
                                     self._since, self.spend.values)
-        jobs_by_sid = {(job or {}).get("sessionId"): job for job in self.scanner.jobs.values()
-                       if isinstance(job, dict)}
-        wanted = [(row.state.claude_bg["session_id"],
-                   jobs_by_sid.get(row.state.claude_bg["session_id"]) or {},
-                   row.light.ended_at is not None) for row in rows]
+        jobs_by_sid = {job.get("sessionId"): job for job in self.scanner.jobs.values()
+                       if isinstance(job, dict) and isinstance(job.get("sessionId"), str)}
+        wanted = row_reads(rows, jobs_by_sid, self.agents)
         if self.spend.sync(wanted, wall_now, stats_every):
             rows, deadline = build_rows(self.scanner.jobs, self.agents, wall_now, keep,
                                         self._since, self.spend.values)
         self.builds += 1
         self.rows, self.deadline = rows, deadline
+
+
+def row_reads(rows: Iterable[BgRow], jobs_by_sid: Mapping[Any, dict],
+              agents: Iterable[FleetAgent]) -> List[Tuple[str, dict, bool, Tuple[Path, ...]]]:
+    """(session id, job, finished, fork origins) of each row, for ``BgSpend.sync``.
+
+    A row's origins are its agent's conversations and the rows under the
+    same agent created before it (``fork_origins``).
+    """
+    by_id = {a.id: a for a in agents}
+    rows = sorted(rows, key=lambda r: (r.started_at or 0.0, r.state.claude_bg["session_id"]))
+    before: Dict[Optional[str], List[str]] = {}
+    out = []
+    for row in rows:
+        info = row.state.claude_bg
+        sid, parent_id = info["session_id"], info.get("parent_id")
+        job = jobs_by_sid.get(sid) or {}
+        siblings = before.setdefault(parent_id, [])
+        out.append((sid, job, row.light.ended_at is not None,
+                    fork_origins(job, by_id.get(parent_id), siblings)))
+        siblings.append(sid)
+    return out
 
 
 def fleet_agents(sessions: Iterable[Any], foreign_of=None) -> List[FleetAgent]:

@@ -2,7 +2,9 @@
 
 Claude reader version 2 (``history_reader.CLAUDE_READER_VERSION``) counts
 each message once across a conversation and all its subagents, workflow
-agents included, and prices 1-hour cache writes at their own rate. A live
+agents included, and prices 1-hour cache writes at their own rate;
+version 3 leaves out the history a forked conversation copied from an
+earlier one (its parent's, for an ``overcode fork`` child). A live
 agent's spend is restated by its next stats sync (``conversation_spend``:
 an entry read by an older version is replaced). An archived agent is never
 synced again, so this pass does it for the archive: every archived Claude
@@ -40,7 +42,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from . import conversation_spend as spend
 from .clock import stamp
@@ -117,13 +119,15 @@ def needs_restating(record: dict) -> bool:
 
 def restate(record: dict, *, ledger, now: datetime, transcripts=None,
             history_file=None, projects_path: Optional[Path] = None,
+            fork_sources: Sequence[str] = (),
             ) -> Optional[Tuple[dict, List[dict]]]:
     """``(restated record, ledger rows)`` for one archive record; None if nothing changes.
 
     Reads the agent's transcripts at the current reader version (through
     ``transcripts``, a registry of its own so a pass does not evict the
     live agents' indexes); the record is unchanged when none is there.
-    ``history_file`` and ``projects_path`` default to Claude's own.
+    ``history_file`` and ``projects_path`` default to Claude's own;
+    ``fork_sources`` are its parent's conversations (``overcode fork``).
     """
     from . import ledger as ledger_mod
     from .daemon_stats_sync import _owned_conversations, spend_pricing
@@ -136,7 +140,7 @@ def restate(record: dict, *, ledger, now: datetime, transcripts=None,
         return None
     projects = projects_path if projects_path is not None else history_reader.CLAUDE_PROJECTS_PATH
     stats = get_session_stats(session, projects_path=projects, history_file=history_file,
-                              transcripts=transcripts)
+                              transcripts=transcripts, fork_sources=fork_sources)
     reads = getattr(stats, "per_conversation", None)
     if not reads:
         return None
@@ -206,6 +210,14 @@ def _rewrite_month(session_manager, month: str, replacements: Dict[bytes, bytes]
     return changed
 
 
+class _Parent:
+    """An archive record as ``parent_conversations`` asks it: its parent's id."""
+
+    def __init__(self, record: dict) -> None:
+        parent = record.get("parent_session_id")
+        self.parent_session_id = parent if isinstance(parent, str) else None
+
+
 def _load_cursor(session_manager) -> Dict[str, Any]:
     try:
         cursor = json.loads(cursor_path(session_manager).read_text())
@@ -259,6 +271,7 @@ def recompute_archived_spend(session_manager, *, batch: int = BATCH,
 def _walk(session_manager, ledger, counts: Dict[str, int], *, batch: int, time_budget: float,
           now: Optional[datetime], transcripts, history_file,
           projects_path: Optional[Path]) -> Dict[str, int]:
+    from .daemon_stats_sync import parent_conversations
     from .session_archive import _complete_lines
     from .transcript_index import TranscriptRegistry
 
@@ -266,6 +279,7 @@ def _walk(session_manager, ledger, counts: Dict[str, int], *, batch: int, time_b
     registry = transcripts if transcripts is not None else TranscriptRegistry(max_indexes=64)
     started = time.monotonic()
     cursor = _load_cursor(session_manager)
+    parents: Dict[str, list] = {}  # archived parents' conversations, looked up once
     for month, path in session_manager.archive_months():
         if month < cursor["month"]:
             continue
@@ -293,8 +307,10 @@ def _walk(session_manager, ledger, counts: Dict[str, int], *, batch: int, time_b
                 continue
             counts["examined"] += 1
             try:
+                sources = parent_conversations(_Parent(record), session_manager, parents)
                 result = restate(record, ledger=ledger, now=now, transcripts=registry,
-                                 history_file=history_file, projects_path=projects_path)
+                                 history_file=history_file, projects_path=projects_path,
+                                 fork_sources=sources)
             except Exception as e:
                 logger.warning("spend of archived %s not restated: %s", record.get("id"), e)
                 continue
