@@ -153,9 +153,16 @@ class TestOneDelta:
     async def test_one_activity_delta_is_one_apply_of_one_row(self, app, engine, monkeypatch):
         async with app.run_test() as pilot:
             await _settled(pilot)
+            # At full detail the summary runs past the row's edge, where a
+            # change repaints nothing; at med it is on screen
+            app._set_summary_level("med")
+            await pilot.pause()
             work = CountedWork(app, monkeypatch)
             engine.publish(_snapshot(bravo=dict(current_activity="Reading files")))
             await pilot.pause()
+            bravo = next(w for w in app._get_widgets_in_session_order()
+                         if w.session.name == "bravo")
+            assert "Reading files" in bravo.render().plain
             assert work.applies == {"bravo": 1}
             assert work.repaints == [["bravo"]]
             assert work.full_builds() == {"bravo": 1}

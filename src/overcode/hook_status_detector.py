@@ -951,6 +951,9 @@ class HookStatusDetector:
         # been seen in the pane (#507). Nothing fires when it is answered,
         # so the dialog going away is the signal.
         self._permission_prompt_seen: Dict[str, float] = {}
+        # When a subagent's own background shell exited (swarm.settle_own_work)
+        from .swarm_files import ShellEnds
+        self.shell_ended = ShellEnds()
 
         # The session directory the hook handler writes into (paths.agent_path)
         self._state_dir = state_dir if state_dir is not None else session_dir(tmux_session)
@@ -1168,6 +1171,7 @@ class HookStatusDetector:
             self._loaded_skills[session.name].update(persisted_skills)
 
         self._last_hook_at[session.name] = float(hook_state["timestamp"])
+        hook_state = swarm.settle_own_work(hook_state, self.shell_ended)
         rollup = swarm.rollup(hook_state, now)
         if rollup is not None:
             self._swarm_rollups[session.name] = rollup

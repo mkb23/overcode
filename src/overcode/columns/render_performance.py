@@ -95,10 +95,13 @@ def render_child_count(ctx: ColumnContext) -> ColumnOutput:
 
 
 # The SubAgents cell's segments, in order: (rollup key, glyph); zero ones
-# are left out. ▶ working, 🟠 waiting for approval (the light's glyph), ⚪
-# idle teammates (at rest, listening), ✅ finished, ❌ failed. Workflow
-# runs (🧩) come last. No total: the states partition it (the hover says it).
-SUBAGENT_SEGMENTS = (("running", "▶"), ("waiting", "🟠"), ("idle", "⚪"),
+# are left out. ▶ working, 🟡 waiting on a background shell of its own
+# (its row's light), 🟠 waiting for approval (the light's glyph), ⚪ idle
+# teammates (at rest, listening), ✅ finished, ❌ failed: the same glyphs
+# and order as the summary lines under it (swarm_view.COUNT_GLYPHS).
+# Workflow runs (🧩) come last. No total: the states partition it (the
+# hover says it).
+SUBAGENT_SEGMENTS = (("running", "▶"), ("yellow", "🟡"), ("waiting", "🟠"), ("idle", "⚪"),
                      ("ok", "✅"), ("failed", "❌"))
 
 
@@ -109,7 +112,7 @@ def swarm_workflow_glyph(ctx: ColumnContext) -> str:
 def render_subagents(ctx: ColumnContext) -> ColumnOutput:
     """Work the agent delegated in its session (subagents, forks, workflow
     agents, teammates), each state's count, non-zero only:
-    "▸👥 ▶15 🟠1 ✅27 ❌1 🧩1".
+    "▸👥 ▶15 🟡2 🟠1 ✅27 ❌1 🧩1".
 
     The engine publishes the counts (swarm_rollup). Without them, a live
     subagent count from the transcript files still shows (" 👥 ▶2", no

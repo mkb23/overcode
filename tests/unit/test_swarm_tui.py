@@ -126,8 +126,9 @@ class TestExpandCollapse:
                          if w.session.name == "bravo")
             assert children.index(rows[0]) == children.index(bravo) + 1
             texts = _texts(app)
-            assert any("🧩 review" in t for t in texts)          # the workflow group
-            assert any("👥 agents" in t for t in texts)          # loose subagents
+            # Flat: the members themselves, no group lines
+            assert not any("👥 agents" in t for t in texts)
+            assert any(t.lstrip("├└─ ").startswith("🧩 ") for t in texts)  # a workflow agent
             assert any("👥 Explore" in t and "Read src/engine.py" in t for t in texts)
             assert any("needs approval" in t for t in texts)
             assert bravo.swarm_expanded
@@ -203,8 +204,8 @@ class TestCursor:
             assert "Explore" in detail[0].text
             await pilot.press("left")
             assert not [ln for ln in _rows(app)[0].lines if ln.kind == "detail"]
-            await pilot.press("left")  # up to its group
-            assert app.swarm_cursor == "id-bravo/sa"
+            await pilot.press("left")  # up to the agent's own row
+            assert app.swarm_cursor is None
 
     async def test_a_virtual_row_is_read_only(self, app, engine, monkeypatch):
         killed, sent = [], []

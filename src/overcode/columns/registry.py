@@ -45,6 +45,7 @@ from .render_git import (
 )
 from .render_identity import (
     render_agent_name,
+    render_agent_type,
     render_expand_icon,
     render_kind,
     render_host,
@@ -101,14 +102,17 @@ from .render_virtual import (
     hover_virtual_result,
     render_virtual_cost,
     render_virtual_expand,
+    render_virtual_billing,
     render_virtual_kind,
     render_virtual_model,
+    render_virtual_quota,
     render_virtual_name,
     render_virtual_result,
     render_virtual_status,
     render_virtual_subagents,
     render_virtual_time,
     render_virtual_tokens,
+    render_virtual_type,
     render_virtual_uptime,
 )
 from .render_time import (
@@ -225,7 +229,7 @@ def _sort_subagents(ctx: ColumnContext) -> Optional[tuple]:
     """Most work in flight first, then most delegated; None if none at all."""
     rollup = ctx.swarm_rollup
     if rollup:
-        active = sum(rollup.get(k) or 0 for k in ("running", "waiting", "idle"))
+        active = sum(rollup.get(k) or 0 for k in ("running", "yellow", "waiting", "idle"))
         return (active, rollup.get("total") or 0)
     live = ctx.live_subagent_count
     return (live, live) if live > 0 else None
@@ -280,7 +284,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   visible=lambda ctx: ctx.fleet.any_has_swarm or ctx.fleet.any_has_live_subagents,
                   header="SUBA", name="SubAgents",
                   description="Subagents, forks, teammates and workflows it ran in its session: "
-                              "▶ working, 🟠 approval, ⚪ idle, ✅ done, ❌ failed, 🧩 workflows (→ expands)",
+                              "▶ working, 🟡 on its own background work, 🟠 approval, ⚪ idle, "
+                              "✅ done, ❌ failed, 🧩 workflows (→ expands)",
                   sort_key=_sort_subagents,
                   sort_desc=True,
                   hover=hover_subagents,
@@ -300,6 +305,15 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Agent name (tree connectors show parent/child in tree sort)",
                   sort_key=lambda ctx: ctx.session.name.lower(),
                   virtual_render=render_virtual_name, virtual_hover=hover_virtual_name),
+    # An expanded agent's delegated agents of two or more types: each
+    # one's type (subagent type, fork, workflow and phase, teammate); the
+    # agent rows show their own kind. No width otherwise (FleetFlags).
+    SummaryColumn(id="agent_type", group="identity", detail_levels=ALL, render=render_agent_type,
+                  header="TYPE", name="Agent Type",
+                  description="Delegated agents' type (general-purpose, Explore, fork, a "
+                              "workflow and its phase, teammate): shown while the expanded "
+                              "rows hold two or more types",
+                  virtual_render=render_virtual_type),
     SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
                   label="Host", render_plain=render_host_plain, header="HST", name="Host",
                   description="Machine the agent runs on (shown when sister hosts are configured)",
@@ -408,7 +422,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Estimated share of the weekly subscription quota this week, "
                               "in percentage points (hover: 5-hour window, model confidence)",
                   sort_key=quota_pp,
-                  sort_desc=True, hover=hover_quota),
+                  sort_desc=True, hover=hover_quota,
+                  virtual_render=render_virtual_quota),
     # Hidden below full detail; `overcode list` (full) shows it.
     SummaryColumn(id="billing_code", group="llm_usage", detail_levels={"full"},
                   render=render_billing_code, label="Billing",
@@ -416,7 +431,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Billing code new spend goes to (dim: the agent's own name); "
                               "set it from the palette, / then 'billing'",
                   sort_key=lambda ctx: _billing_code(ctx) or None,
-                  hide_when_uniform=True),
+                  hide_when_uniform=True,
+                  virtual_render=render_virtual_billing),
     # Burn rate over the timeline window (#174). Hidden until at least one
     # agent has window-scoped activity, so the column doesn't take width
     # when burn data isn't being computed (TUI not running, no recent tokens).

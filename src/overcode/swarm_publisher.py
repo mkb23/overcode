@@ -14,10 +14,11 @@ state the detector just read), and between ticks when:
 * a watched workflow journal moved (one stat per live run of an expanded
   parent, at the wake scan's cadence: phase progress within a second).
 
-A subscription is ``<parent id>`` (that parent's rows) or ``<group key>/done``
-(a group whose ``✅ n done`` line the view opened: its most recently
-finished members too, ``observability.done_rows`` of them). Finished members
-past their ``finished_row_seconds`` cost nothing until a done line opens.
+A subscription is ``<parent id>`` (that parent's rows), ``<parent id>/done``
+(the agent's done line, which the TUI opened: its most recently finished
+members across every group, ``observability.done_rows`` of them) or
+``<group key>/done`` (one group's). Finished members past their
+``finished_row_seconds`` cost nothing until a done line opens.
 
 Rows hold absolute times and counts, so a quiet swarm builds the same rows
 and the engine's diff sends nothing.
@@ -53,7 +54,8 @@ DONE_SUFFIX = "/done"
 def split_subscriptions(subs: Iterable[str]) -> Tuple[frozenset, Dict[str, set]]:
     """``(parents, {parent: groups whose done line is open})`` from a view's
     subscriptions: ``<parent id>`` for its rows, ``<group key>/done`` for a
-    group's finished members (a group key starts ``<parent id>/``)."""
+    group's finished members (a group key starts ``<parent id>/``), and
+    ``<parent id>/done`` for all of them (the parent id itself in the set)."""
     parents = set()
     done: Dict[str, set] = {}
     for sub in subs:
@@ -78,6 +80,7 @@ class SwarmPublisher:
         done_limit: Callable[[], int] = done_rows,
         files: Optional[SwarmFiles] = None,
         clock: Callable[[], float] = time.time,
+        quota_of: Optional[Callable[[dict], Optional[float]]] = None,
     ) -> None:
         self.swarm_state = swarm_state          # agent name -> hook state (or None)
         self.conversations = conversations      # agent id -> spend per conversation
@@ -85,6 +88,7 @@ class SwarmPublisher:
         self.done_limit = done_limit
         self.files = files if files is not None else SwarmFiles()
         self.clock = clock
+        self.quota_of = quota_of                # spend entries -> weekly quota points
         self.subscribed: frozenset = frozenset()
         self.deadline: Optional[float] = None
         self.builds = 0  # parents built (tests: count the work)
@@ -115,7 +119,8 @@ class SwarmPublisher:
             details = self.files.details(sw.get("transcript"))
             rows, deadline = swarm.virtual_rows(sid, hook_state, now, keep, details,
                                                 self.conversations(sid),
-                                                done_open.get(sid, ()), limit)
+                                                done_open.get(sid, ()), limit,
+                                                quota_of=self.quota_of)
             self.builds += 1
             out.update(rows)
             journals |= details.journal_paths

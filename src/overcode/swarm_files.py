@@ -139,3 +139,94 @@ class Details:
         path = os.path.join(self.base, "subagents", "workflows", run_id, "journal.jsonl")
         self.journal_paths.add(path)
         return self.files.journal(path)
+
+
+# ---------------------------------------------------------------------------
+# A subagent's own background shells
+# ---------------------------------------------------------------------------
+#
+# A subagent that ends its turn with a shell of its own running stays 🟡
+# (swarm: own_work) until a hook says otherwise. Claude normally resumes it
+# when the shell ends, and its next SubagentStop settles it; one it does not
+# resume (a /clear left it behind, 2.1.302) fires nothing more, and the row
+# stayed 🟡 until the parent's next Stop, hours later when it sat idle.
+# Claude writes each shell's output to
+# ``<tmp>/claude-<uid>/<project>/<session>/tasks/<id>.output`` and ends it
+# with ``[exited with code N]`` when the shell exits: that line is the end.
+
+SHELL_EXIT_MARK = b"[exited with code "
+SHELL_TAIL_BYTES = 256
+SHELL_CACHE_MAX = 2000
+
+
+def claude_tmp_root() -> str:
+    """Where Claude keeps its task output (``CLAUDE_CODE_TMPDIR`` or /tmp)."""
+    base = os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp"
+    return os.path.join(base, f"claude-{os.getuid()}")
+
+
+class ShellEnds:
+    """When a background shell exited (its output file's mtime), or None
+    while it runs or its file is not found. One stat per running shell per
+    call, a read only when the file moved; an ended shell is remembered."""
+
+    def __init__(self, root: Optional[str] = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.root = root
+        self.clock = clock
+        self._paths: Dict[str, str] = {}
+        self._missing: Dict[str, float] = {}
+        self._seen: Dict[str, Tuple[int, int]] = {}
+        self._ended: Dict[str, float] = {}
+        self.reads = 0
+
+    def _path(self, shell_id: str) -> Optional[str]:
+        path = self._paths.get(shell_id)
+        if path is not None:
+            return path
+        now = self.clock()
+        missed = self._missing.get(shell_id)
+        if missed is not None and now - missed < META_RETRY_SECONDS:
+            return None
+        import glob
+        root = self.root or claude_tmp_root()
+        found = glob.glob(os.path.join(glob.escape(root), "*", "*", "tasks",
+                                       glob.escape(shell_id) + ".output"))
+        if not found:
+            if len(self._missing) >= SHELL_CACHE_MAX:
+                self._missing.clear()
+            self._missing[shell_id] = now
+            return None
+        self._missing.pop(shell_id, None)
+        if len(self._paths) >= SHELL_CACHE_MAX:
+            self._paths.clear()
+        self._paths[shell_id] = found[0]
+        return found[0]
+
+    def __call__(self, shell_id: str) -> Optional[float]:
+        if shell_id in self._ended:
+            return self._ended[shell_id]
+        path = self._path(shell_id)
+        if path is None:
+            return None
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        sig = (st.st_mtime_ns, st.st_size)
+        if self._seen.get(shell_id) == sig:
+            return None
+        self._seen[shell_id] = sig
+        try:
+            with open(path, "rb") as f:
+                self.reads += 1
+                f.seek(max(0, st.st_size - SHELL_TAIL_BYTES))
+                tail = f.read()
+        except OSError:
+            return None
+        if SHELL_EXIT_MARK not in tail:
+            return None
+        if len(self._ended) >= SHELL_CACHE_MAX:
+            self._ended.clear()
+        self._ended[shell_id] = st.st_mtime
+        return st.st_mtime

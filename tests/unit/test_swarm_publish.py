@@ -87,7 +87,7 @@ class TestSubscriptions:
         daemon._engine.subs = frozenset({"s1"})
         daemon._publish_state(daemon.state.sessions, save=False)
         rows = _virtual(daemon)
-        assert set(rows) == {"s1/sa", "s1/sa/a1", "s1/sa/a2"}
+        assert set(rows) == {"s1/sa", "s1/sa/a1", "s1/sa/a2", "s1/all"}
         assert daemon.swarm_publisher.builds == 1
 
     def test_rows_never_reach_the_state_file(self, daemon, tmp_path):

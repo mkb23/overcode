@@ -44,6 +44,13 @@ add an entry when something bites.
   session was passed, else `NullSplit`, whose methods do nothing. Unit tests
   build the app without one, so they never touch tmux. Put new tmux side
   effects on the split object, not behind ad-hoc `in_split` checks.
+- Pilot tests at 420 columns prove nothing about layout: nothing crops
+  there. A new table widget or row kind must pass the layout matrix
+  (`tests/unit/test_layout_matrix.py`, `assert_layout_invariants` in
+  `tests/tui_harness.py`): one screen row per line, nothing past the
+  content edge, every row's cells on the header's grid, at 120-260 columns
+  and every detail level and content mode. `OVERCODE_LAYOUT_SHOTS=<dir>`
+  saves SVGs of each state to look at.
 - The preview pane is only for sister agents and jobs view.
 - Timer cadences in `tui_timers.py` `TIMER_INTERVALS` are the product's freshness
   contract. Fix CPU by doing the work cheaper, never by polling slower.

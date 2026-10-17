@@ -124,7 +124,8 @@ def hover_child_count(ctx: ColumnContext):
     return _emoji_legend("Children", rows)
 
 
-_SUBAGENT_WORDS = {"running": "working", "waiting": "waiting for approval in this pane",
+_SUBAGENT_WORDS = {"running": "working", "yellow": "waiting on background work of their own",
+                   "waiting": "waiting for approval in this pane",
                    "idle": "idle teammates, listening", "ok": "finished",
                    "failed": "failed or stopped"}
 

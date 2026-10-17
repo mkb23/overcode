@@ -1,7 +1,7 @@
 """Delegated-work rows on the column grid (0.6.1 observability, phase 2).
 
-An expanded parent's subagents, workflow groups, phases and summary lines
-(``swarm_view.SwarmLine``) render through the same columns as agent rows,
+An expanded parent's delegated agents and its summary lines ("+k more",
+"done": ``swarm_view.SwarmLine``) render through the same columns as agent rows,
 so they line up cell for cell. ``ColumnContext.for_virtual`` builds a
 row's context from the parent's (view settings only) and the row the
 engine published; a column with a ``virtual_render`` (below) fills its
@@ -11,9 +11,12 @@ cells are blank, so the "-" sits where a value would (``placeholder``).
 
 What a subagent fills: status (its light), time in state and uptime (since
 it started, from the published start; its run time once finished), RES
-(✅ / ❌, the result text in the hover), SUBA (a group's, phase's or summary
-line's counts), KIND, NAME (tree connector, kind marker, title), MDL, TOK
-and $. The summary column (``l``) maps by mode (``virtual_summary``).
+(✅ / ❌, the result text in the hover), SUBA (a summary line's counts),
+KIND, NAME (tree connector, kind marker, title), TYPE (its agent type, when
+the members on screen are of two or more), MDL (its own model, or the
+parent's dim when it inherits it), TOK, $ and Q% (its own spend, from its
+transcript), BILL (the parent's code: its spend is billed there). The
+summary column (``l``) maps by mode (``virtual_summary``).
 
 Nothing here is published as a countdown: durations are worked out from
 absolute times as the agent rows' are, and only on the row clock.
@@ -34,11 +37,10 @@ from ..swarm_view import (
 from ..tui_helpers import format_cost, format_duration, format_tokens
 from .context import ColumnContext, ColumnOutput
 
-# The lines that are one agent or a group of them (the rest are structure)
-_LIT = ("member", "group")
+# The lines that are one agent (the rest are summaries)
+_LIT = ("member",)
 # KIND column words (5 cells, as "agent" / "child")
 KIND_SHORT = {"subagent": "sub", "fork": "fork", "teammate": "team", "workflow": "wf"}
-GROUP_KIND_SHORT = {"workflow": "wf", "team": "team", "agents": "sub"}
 
 # The clock the durations read (tests move it)
 _now = time.time
@@ -53,11 +55,13 @@ def virtual_context(line: SwarmLine, parent: ColumnContext, selected: bool = Fal
     row = line.row if line.kind in _LIT else {}
     symbol, style = light_glyph(row, parent.emoji_free) if row else ("", "")
     result = row.get("result") if row.get("light") == "done" else None
+    # No model of its own: it runs on the parent's (drawn dim)
+    model = (row.get("model") or parent.model or "") if row else ""
     return replace(
         parent,
         virtual=line, bg="", has_focus=selected, is_list_mode=True, is_unvisited_stalled=False,
         status_symbol=symbol, status_color=f"bold {style}".strip(), status="",
-        display_name=line.label, model=row.get("model") or "", effort="",
+        display_name=line.label, model=model, effort="",
         claude_stats=None, git_diff_stats=None, git_untracked_count=None,
         status_changed_at=None, status_detail=None, sleep_wake_estimate=None,
         task_result=(RESULT_FAILURE if result == "failed" else RESULT_SUCCESS) if result else None,
@@ -156,34 +160,21 @@ def _count_text(ctx: ColumnContext, key: str, n: int) -> str:
 
 
 def render_virtual_subagents(ctx: ColumnContext) -> ColumnOutput:
-    """SUBA: a group's, phase's or summary line's counts, glyph then count,
-    no total, laid out as the agent's cell ("▾🧩 ▶3 🟠1 ✅25")."""
+    """SUBA: a summary line's counts, glyph then count, no total, laid out
+    as the agent's cell ("▸   ✅25 ❌1")."""
     line = _line(ctx)
     if not line.counts:
         return None
-    slot = cell_len(ctx.e("👥"))
-    if line.kind == "group":
-        marker = marker_glyph(line.marker, ctx.emoji_free)
-        marker = set_cell_size(marker, slot) if cell_len(marker) != slot else marker
-    else:
-        marker = " " * slot
+    marker = " " * cell_len(ctx.e("👥"))
     text = f"{line.fold or ' '}{marker} " + " ".join(_count_text(ctx, k, n) for k, n in line.counts)
-    keys = dict(line.counts)
-    if line.kind in ("done", "more", "older"):
-        style = "dim magenta"
-    else:
-        style = "bold magenta" if keys.get("running") or keys.get("waiting") else "magenta"
-    return [(text, style)]
+    return [(text, "dim magenta")]
 
 
 def render_virtual_kind(ctx: ColumnContext) -> ColumnOutput:
     line = _line(ctx)
-    if line.kind == "member":
-        word = KIND_SHORT.get(line.row.get("kind"), "sub")
-    elif line.kind == "group":
-        word = GROUP_KIND_SHORT.get(line.row.get("kind"), "group")
-    else:
+    if line.kind != "member":
         return None
+    word = KIND_SHORT.get(line.row.get("kind"), "sub")
     return [(f"{word:<5}", "dim")]
 
 
@@ -211,10 +202,6 @@ def render_virtual_name(ctx: ColumnContext) -> ColumnOutput:
     done = line.row.get("light") == "done"
     if line.kind == "member":
         label_style, marker_style = ("dim", "dim") if done else ("bold", "magenta")
-    elif line.kind == "group":
-        label_style, marker_style = "bold", "bold"
-    elif line.kind == "phase":
-        label_style, marker_style = "cyan", ""
     else:
         label_style, marker_style = "dim", ""
     segs = [(line.connector, "dim")]
@@ -234,10 +221,43 @@ def hover_virtual_name(ctx: ColumnContext):
 
 
 def render_virtual_model(ctx: ColumnContext) -> ColumnOutput:
+    """MDL: its own model; the parent's, dim, when it inherits it."""
     if not ctx.model:
         return None
     from .render_context import render_model
-    return render_model(ctx)
+    segments = render_model(ctx)
+    if _lit_row(ctx).get("model_inherited"):
+        return [(text, "dim") for text, _ in segments]
+    return segments
+
+
+def render_virtual_type(ctx: ColumnContext) -> ColumnOutput:
+    """TYPE: what kind of agent the member is (``swarm_view.type_label``),
+    only while the members on screen are of two or more types."""
+    line = _line(ctx)
+    if not ctx.fleet.swarm_types_shown or line.kind != "member" or not line.type_label:
+        return None
+    done = line.row.get("light") == "done"
+    return [(f" {line.type_label}", "dim" if done else "cyan")]
+
+
+def render_virtual_quota(ctx: ColumnContext) -> ColumnOutput:
+    """Q%: the member's points of the weekly quota (its whole run)."""
+    pp = _lit_row(ctx).get("quota_pp")
+    if not isinstance(pp, (int, float)) or isinstance(pp, bool):
+        return None
+    from ..quota_model import format_pp
+    from .render_usage import QUOTA_W
+    prior = (ctx.quota or {}).get("conf") == "prior"
+    return [(format_pp(pp).rjust(QUOTA_W), "orange1" if prior else "bold orange1")]
+
+
+def render_virtual_billing(ctx: ColumnContext) -> ColumnOutput:
+    """BILL: the parent's code, dim (a member's spend is billed with it)."""
+    if not _lit_row(ctx):
+        return None
+    from .render_usage import render_billing_code
+    return [(text, "dim") for text, _ in render_billing_code(ctx)]
 
 
 def render_virtual_tokens(ctx: ColumnContext) -> ColumnOutput:
@@ -293,8 +313,7 @@ def virtual_summary(line: SwarmLine, mode: str, emoji_free: bool = False) -> Tup
       orders        🎯 its task as given (the full title)
       last_command  ⌨ its last tool call
       annotation, heartbeat: "-" (a subagent has neither)
-    A group, phase or summary line shows its own text (agent count, phase
-    progress) in every mode.
+    A summary line ("+k more") shows its own text in every mode.
     """
     e = lambda c: emoji_or_ascii(c, emoji_free)  # noqa: E731
     if line.kind != "member":

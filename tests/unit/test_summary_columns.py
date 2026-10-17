@@ -1633,7 +1633,8 @@ class TestComputeFleetFlags:
             "any_has_live_subagents": self._row(has_live_subagents=True),
             "any_has_quota": self._row(has_quota=True),
         }
-        assert set(cases) == _FLEET_FIELDS
+        # swarm_types_shown comes from the TUI's expanded lines, never from rows
+        assert set(cases) == _FLEET_FIELDS - {"swarm_types_shown"}
         for name, row in cases.items():
             flags = compute_fleet_flags([self._row(), row])
             assert flags == FleetFlags(**{name: True}), name

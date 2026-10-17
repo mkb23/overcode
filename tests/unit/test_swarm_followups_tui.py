@@ -1,7 +1,8 @@
 """Delegated work, the owner's follow-ups to phase 2 (agent-observability-0.6.1).
 
-* the ``✅ n done`` line opens: the engine lists the group's most recent
-  finished members only while it is open (subscription ``<group>/done``);
+* the agent's one ``✅ n done`` line opens: the engine lists its most
+  recent finished members (every group's) only while it is open
+  (subscription ``<id>/done``);
 * what is open survives a TUI restart (``tui_preferences.json``);
 * ``X`` expands or collapses everything, ``f`` cycles the swarm-detail rule
   (off → groups → needs-you), and ← / → also fold children in tree sort.
@@ -118,79 +119,86 @@ def _saved(app):
 
 
 @pytest.mark.asyncio
-class TestDoneLine:
-    async def test_right_on_the_done_line_opens_it_and_left_closes_it(self, app, engine):
+class TestNoDoneLine:
+    async def test_finished_members_are_the_agent_s_count_not_a_line(self, app, engine):
+        """Owner, 2026-10-18: the done line repeated the SubAgents cell."""
         async with app.run_test() as pilot:
             await _start(pilot)
             await _press(pilot, engine, "right")
             assert engine.swarm_subscriptions == {"id-bravo"}
             assert "id-bravo/sa/old5" not in engine.snapshot.virtual  # folded: not paid for
-            app.swarm_cursor = "id-bravo/sa/done"
-            app._sync_swarm_rows()
-            await _press(pilot, engine, "right")
-            assert engine.swarm_subscriptions == {"id-bravo", "id-bravo/sa/done"}
-            keys = _keys(app)
-            at = keys.index("id-bravo/sa/done")
-            # Newest first, the fresh one moved under the line
-            assert keys[at + 1:] == ["id-bravo/sa/fresh"] + [f"id-bravo/sa/old{i}"
-                                                             for i in range(5, -1, -1)]
-            assert keys.count("id-bravo/sa/fresh") == 1
-            await _press(pilot, engine, "left")
-            assert engine.swarm_subscriptions == {"id-bravo"}
-            assert "id-bravo/sa/old5" not in engine.snapshot.virtual
-            assert _keys(app)[-1] == "id-bravo/sa/done"
+            assert _keys(app) == ["id-bravo/sa/a1", "id-bravo/sa/fresh"]
 
-    async def test_the_cutoff_shows_older_ones_as_a_count(self, make_tui):
-        engine = Engine(limit=3)
-        app = make_tui(three_agents(), engine=engine, size=(200, 40))
+
+def _many(n=12):
+    """``n`` live general-purpose subagents, one type, nothing finished."""
+    live = {f"a{i:02d}": {"kind": "subagent", "type": "general-purpose",
+                          "started_at": NOW - 100 + i} for i in range(n)}
+    return {"event": "Stop", "timestamp": NOW, "subagents": live,
+            "swarm": {"bg_at": NOW, "done": {}}}
+
+
+@pytest.mark.asyncio
+class TestLargeList:
+    async def test_more_than_eight_collapse_to_the_top_three_and_more_opens_them(self, app,
+                                                                                engine):
+        engine.states["bravo"] = _many()
         async with app.run_test() as pilot:
             await _start(pilot)
             await _press(pilot, engine, "right")
-            app.swarm_cursor = "id-bravo/sa/done"
+            assert _keys(app) == ["id-bravo/sa/a00", "id-bravo/sa/a01", "id-bravo/sa/a02",
+                                  "id-bravo/+more"]
+            assert "+9 more" in _lines(app)[-1].text
+            # One type on screen: the TYPE column takes no width
+            assert not app.swarm_types_shown and not app.fleet.swarm_types_shown
+            app.swarm_cursor = "id-bravo/+more"
             app._sync_swarm_rows()
             await _press(pilot, engine, "right")
-            lines = _lines(app)
-            under = [ln for ln in lines if ln.owner == "id-bravo/sa/done"]
-            assert [ln.key for ln in under] == ["id-bravo/sa/fresh", "id-bravo/sa/old5",
-                                                "id-bravo/sa/old4", "id-bravo/sa/done/+older"]
-            assert "+4 older" in under[-1].text
-            # j walks into the listed members; ← from one goes back to the line
-            await pilot.press("j")
-            assert app.swarm_cursor == "id-bravo/sa/fresh"
-            await pilot.press("left")
-            assert app.swarm_cursor == "id-bravo/sa/done"
+            assert len(_keys(app)) == 12
+            assert app.swarm_opened == {"id-bravo/members": True}
+            assert _saved(app).swarm_opened == {"id-bravo/members": True}
+            # ← back on the agent and ← again: collapsed; it reopens compact
+            app.swarm_cursor = None
+            await _press(pilot, engine, "left")
+            assert app.swarm_expanded == set() and app.swarm_opened == {}
+            await _press(pilot, engine, "right")
+            assert _keys(app)[-1] == "id-bravo/+more"
 
 
 @pytest.mark.asyncio
 class TestRestart:
     async def test_expansion_and_open_lines_survive_a_restart(self, make_tui):
         engine = Engine()
+        engine.states["bravo"] = _many()
         first = make_tui(three_agents(), engine=engine, size=(200, 40))
         async with first.run_test() as pilot:
             await _start(pilot)
             await _press(pilot, engine, "right")
-            first.swarm_cursor = "id-bravo/sa/done"
+            first.swarm_cursor = "id-bravo/+more"
             first._sync_swarm_rows()
             await _press(pilot, engine, "right")
         saved = _saved(first)
         assert saved.swarm_expanded == {"id-bravo": True}
-        assert saved.swarm_opened == {"id-bravo/sa/done": True}
+        assert saved.swarm_opened == {"id-bravo/members": True}
 
         engine = Engine()
+        engine.states["bravo"] = _many()
         second = make_tui(three_agents(), engine=engine, size=(200, 40))
         async with second.run_test() as pilot:
             await ready(pilot)
             second.engine.client.visible = True
             await _settle(pilot, engine)
             assert second.swarm_expanded == {"id-bravo"}
-            assert engine.client.swarm == {"id-bravo", "id-bravo/sa/done"}
-            assert "id-bravo/sa/old0" in _keys(second)
+            assert engine.client.swarm == {"id-bravo"}
+            assert len(_keys(second)) == 12
 
     async def test_stale_and_odd_saved_values_are_dropped(self, make_tui):
         prefs = TUIPreferences()
         prefs.swarm_detail = "everything"            # not a mode
         prefs.swarm_expanded = {"id-bravo": True, "id-gone": True, "id-charlie": "yes"}
-        prefs.swarm_opened = {"id-gone/sa/done": True, "id-bravo/sa": False, "x": True}
+        # Keys of earlier layouts (a group, any done line) are dropped
+        prefs.swarm_opened = {"id-gone/done": True, "id-bravo/sa": False, "x": True,
+                              "id-bravo/sa/done": True, "id-bravo/wf/r/ph/0": True}
         prefs.save("test")
         engine = Engine()
         app = make_tui(three_agents(), engine=engine, size=(200, 40))
@@ -199,11 +207,13 @@ class TestRestart:
             await _settle(pilot, engine)
             assert app.swarm_detail == "off"
             assert app.swarm_expanded == {"id-bravo"}
-            assert _keys(app) == ["id-bravo/sa"]          # closed, as saved
-            await _press(pilot, engine, "right", "right")  # into it, open it: saved, pruned
+            assert app.swarm_opened == {}  # done lines are gone, every kind of them
+            assert engine.client.swarm == {"id-bravo"}
+            assert _keys(app) == ["id-bravo/sa/a1", "id-bravo/sa/fresh"]
+            app._save_swarm_prefs()  # the next save prunes the gone agent
         saved = _saved(app)
         assert saved.swarm_expanded == {"id-bravo": True}
-        assert saved.swarm_opened == {"id-bravo/sa": True}
+        assert saved.swarm_opened == {}
 
     async def test_an_old_preferences_file_still_loads(self, tui_state_dir):
         import json

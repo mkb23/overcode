@@ -118,7 +118,11 @@ class TestRows:
             teammates={"aalice-1234abcd": {"name": "alice"}})
         rows, deadline = swarm.virtual_rows("P", state, 10.0, 30)
         assert deadline is None
-        assert set(rows) == {"P/sa", "P/sa/a1", "P/tm", "P/tm/alice", "P/wf/wf_1", "P/wf/wf_1/w1"}
+        assert set(rows) == {"P/sa", "P/sa/a1", "P/tm", "P/tm/alice", "P/wf/wf_1", "P/wf/wf_1/w1",
+                             "P/all"}
+        # The agent's counts across every group (its one done line)
+        assert rows["P/all"] == {"parent": "P", "row": "summary",
+                                 "counts": {"running": 1, "waiting": 1, "idle": 1}}
         assert [rows[k]["order"] for k in ("P/wf/wf_1", "P/tm", "P/sa")] == [0, 1000, 2000]
         assert rows["P/sa/a1"]["light"] == "green" and rows["P/sa/a1"]["title"] == "Explore"
         assert rows["P/tm/alice"]["light"] == "idle"
@@ -166,6 +170,73 @@ class TestRows:
         assert rows["P/wf/wf_1"]["cost_usd"] == 1.25
         assert swarm.subagent_cost(conversations) == 1.75
         assert swarm.subagent_cost({"sid": {"cost": 4.0}}) is None
+
+    def test_a_background_subagent_s_spend_model_and_quota(self):
+        """A background (or worktree-isolated) subagent's transcript is
+        ``<sid>/subagents/agent-<id>.jsonl``: its entry ``<sid>/agent-<id>``
+        gives its tokens, $, the model it ran on and its quota points."""
+        state = _state({"a1": {"kind": "subagent", "type": "general-purpose",
+                               "started_at": 1.0, "own_work": True}})
+        conversations = {"sid": {"cost": 4.0, "model": "claude-opus-4-6"},
+                         "sid/agent-a1": {"cost": 5.6, "in": 100, "out": 900, "cr": 9000,
+                                          "model": "claude-opus-4-6"}}
+        seen = []
+
+        def quota_of(entries):
+            seen.append(sorted(entries))
+            return 0.42
+
+        rows, _ = swarm.virtual_rows("P", state, 0.0, 30, conversations=conversations,
+                                     quota_of=quota_of)
+        row = rows["P/sa/a1"]
+        assert row["light"] == "yellow"
+        assert (row["tokens"], row["cost_usd"], row["quota_pp"]) == (10000, 5.6, 0.42)
+        assert seen == [["sid/agent-a1"]]
+        # No model on the call: it inherits the parent's (what it ran on, dim)
+        assert row["model"] == "claude-opus-4-6" and row["model_inherited"] is True
+
+    def test_before_its_spend_is_read_it_still_says_it_inherits(self):
+        state = _state({"a1": {"kind": "subagent", "started_at": 1.0}})
+        rows, _ = swarm.virtual_rows("P", state, 0.0, 30, conversations={},
+                                     quota_of=lambda e: 1.0)
+        row = rows["P/sa/a1"]
+        assert "model" not in row and row["model_inherited"] is True
+        assert "tokens" not in row and "quota_pp" not in row
+
+    def test_a_workflow_agent_carries_its_workflow_and_phase(self):
+        class Journal:
+            def meta(self, agent_id, run_id):
+                return None
+
+            def journal(self, run_id):
+                return [{"type": "started", "agentId": "w1", "label": "v", "phase": "Verify"}]
+
+        state = _state({"w1": {"kind": "workflow", "started_at": 1.0}},
+                       workflows={"t1": {"status": "running", "name": "review-060",
+                                         "run_id": "wf_1"}})
+        rows, _ = swarm.virtual_rows("P", state, 0.0, 30, Journal())
+        row = rows["P/wf/wf_1/w1"]
+        assert (row["workflow"], row["phase_title"]) == ("review-060", "Verify")
+
+    def test_the_agent_level_done_line_lists_across_groups_up_to_the_cutoff(self):
+        done = {f"a{i}": {"kind": "subagent", "result": "ok", "ended_at": 10.0 + i}
+                for i in range(3)}
+        done.update({f"w{i}": {"kind": "workflow", "result": "ok", "ended_at": 20.0 + i,
+                               "run": "wf_1"} for i in range(3)})
+        state = _state(done=done, workflows={"t1": {"status": "ok", "run_id": "wf_1",
+                                                    "ended_at": 5.0}})
+        closed, _ = swarm.virtual_rows("P", state, 100.0, 30)
+        assert not any(r.get("row") == "member" for r in closed.values())
+        assert closed["P/all"]["counts"] == {"ok": 6}
+        rows, _ = swarm.virtual_rows("P", state, 100.0, 30, done_open={"P"}, done_limit=4)
+        members = sorted(k for k, r in rows.items() if r.get("row") == "member")
+        assert members == ["P/sa/a2", "P/wf/wf_1/w0", "P/wf/wf_1/w1", "P/wf/wf_1/w2"]
+
+    def test_folded_history_counts_in_the_agent_s_done_line(self):
+        state = _state({"a1": {"kind": "subagent"}})
+        state["swarm"]["folded"] = {"agents_ok": 7, "agents_failed": 2}
+        rows, _ = swarm.virtual_rows("P", state, 0.0, 30)
+        assert rows["P/all"]["counts"] == {"running": 1, "ok": 7, "failed": 2}
 
     def test_meta_files_name_the_members(self, tmp_path):
         base = tmp_path / "sid"

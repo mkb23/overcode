@@ -571,6 +571,66 @@ Choices where the design left room, or the data disagreed:
    mode or width move, and on the 250 ms row clock redraws only live
    members' durations; Textual repaints only when the text changed. A
    member's detail line stays free text, starting at the NAME column.
+10. **Flat, with a TYPE column** (owner, 2026-10-17; first built with
+    group and phase header lines, which 2–9 above describe). "The second
+    line adds nothing to the top line": the agent's row already sums up
+    its delegated work, so `swarm_view.Layout` now lists the members
+    themselves at depth 1 under it, from every group: live first (🟠,
+    then by `started_at`), then members still within their 30 s, then
+    **one done line per agent** (`<id>/done`, its counts from the
+    engine's new `<id>/all` summary row: every group's ✅ / ❌ plus the
+    folded history). The engine still publishes group and phase rows
+    (swarm_history and the timeline read them); the TUI draws none.
+    - **TYPE** (`agent_type`, after NAME): each member's type
+      (`swarm_view.type_label`): the subagent type, `fork`, `teammate`
+      (no team name is in the hook data), or the workflow's name with
+      its phase when that fits in 22 cells (`review-060 · Verify`; else
+      the phase leads the short summary). A new column rather than
+      KIND: KIND is hidden by default, fixed at five cells and means
+      agent / child / bg; TYPE needs free width and its own visibility
+      rule. It shows only while the expanded member lines on screen hold
+      two or more types: the TUI works that out from its lines
+      (`swarm_view.types_of`) and carries it to every row as
+      `FleetFlags.swarm_types_shown` (never set by
+      `compute_fleet_flags`, so `overcode list` never shows it); agent
+      rows then show their own kind, dim. Off, every cell is empty and
+      the column has no width.
+    - **Auto-collapse at the agent level**: more than
+      `AUTO_COLLAPSE_ABOVE` (8) live members show the top three "needs
+      you" (🟠, 🟢, 🟡, ⚪, oldest first) and `+k more`; `→` on it sets
+      `<id>/members` in `swarm_opened` (saved); collapsing the agent
+      clears it. `needs_you` lists only the 🟠 members (plus `+k more`).
+    - **Done line across groups**: the TUI subscribes `<id>/done`
+      (`split_subscriptions` gives the parent itself as the "group"); the
+      builder then lists the most recent finished members of every group,
+      a finished run's agents included, `done_rows` in all.
+    - **Saved state**: `swarm_opened` keeps only `<id>/done` and
+      `<id>/members`; the group, phase and per-group done keys an earlier
+      build saved are dropped on load (and so never subscribed).
+    - **Member cells filled**: MDL is the member's own model (meta
+      `model`), else the model its transcript names, flagged
+      `model_inherited` when the call set none (inherit): drawn dim, and
+      the parent's model when nothing is read yet. TOK and $ were already
+      published (the parent's per-conversation spend has an entry per
+      subagent, `<sid>/agent-<id>`, background and worktree-isolated ones
+      included); the owner's screenshot showed `-` because that view has
+      TOK and $ switched off and Q% on, which had no virtual cell. Q% now
+      has one (`quota_pp`: the member's spend entries through the quota
+      engine's current model, `QuotaEngine.conversation_pp`, its whole
+      run; None without a subscription), and BILL shows the parent's
+      code, dim.
+    - **🟡 in the rollup**: `swarm.rollup` counts members waiting on their
+      own background work as `yellow` instead of `running`, so the agent's
+      SubAgents cell reads `🟡2` as its member rows' lights do (glyph
+      order ▶ 🟡 🟠 ⚪ ✅ ❌ 🧩, the summary lines' too). The `groups` rule
+      and the sort key count it as live.
+
+11. **No done line** (owner, 2026-10-18: "the done row isn't serving us
+    usefully"). It repeated the agent's own SubAgents ✅/❌ counts and
+    cost a line. A finished member keeps its row for
+    `finished_row_seconds`, then is only those counts. The TUI no longer
+    subscribes `<id>/done` or saves a done key (old ones are dropped on
+    load); the engine still answers that subscription, unused.
 
 For Phase 3 (🛰 background sessions as ordinary agent views): the row
 class goes into the default snapshot's `agents`, not `virtual`, so extend

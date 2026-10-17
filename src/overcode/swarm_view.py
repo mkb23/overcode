@@ -4,22 +4,28 @@ docs/design/agent-observability-0.6.1.md §4.1–§4.2, phase 2. The engine
 publishes each row's state (``swarm.virtual_rows``); this module only
 decides which lines exist under the parent's row, in what order, and what
 each one carries for the column grid (``columns.render_virtual`` draws
-the cells, ``tui_widgets.swarm_rows`` aligns them with the agent rows):
+the cells, ``tui_widgets.swarm_rows`` aligns them with the agent rows).
 
-* groups before agents: one line per workflow run (🧩), then the team,
-  then loose subagents (👥 agents); an agent appears only inside its group;
-* a group with more than ``AUTO_COLLAPSE_ABOVE`` members opens collapsed
-  and shows its top 3 "needs you" members (🟠 first, then 🟢 oldest
-  first) and "+k more"; a group the person collapsed shows nothing;
-* an open workflow shows its phases ("▶ Verify", 18/30 done), each opening
-  on its own (by default the ones with live members, up to the same size);
-* finished members fold into one "done" line per group (✅ 25 ❌ 1 in the
-  SubAgents cell); that line opens (``<group>/done`` in ``opened``) to list
-  them, newest first, as many as the engine published
-  (``observability.done_rows``), then "+k older"; while it is open they
-  show there and nowhere else;
-* ``needs_you`` (the swarm-detail cycle's last step) opens by default only
-  the groups and phases where a member waits on the person (🟠);
+Flat: no group or phase lines. The parent's row already says what its
+delegated work adds up to (the SubAgents cell), so the lines under it are
+its members themselves, one level down:
+
+* live members first: 🟠 (needs approval) first, then the rest by start
+  time, oldest first; then members that finished moments ago (newest
+  first), for as long as the engine keeps them
+  (``observability.finished_row_seconds``);
+* what kind of agent each member is (subagent type, ``fork``, the
+  workflow's name and phase, ``teammate``) is its ``type_label``, drawn in
+  the TYPE column when the members on screen are of two or more types;
+* more than ``AUTO_COLLAPSE_ABOVE`` live members: the top
+  ``NEEDS_YOU_TOP`` "needs you" (🟠 first, then 🟢, 🟡, ⚪, oldest first)
+  and "+k more"; → on it opens the full list (``members_key`` in
+  ``opened``);
+* after that a finished member is only a count in the parent's
+  SubAgents cell (✅ 25 ❌ 1): no "done" line (owner, 2026-10-18: it
+  repeated that cell and cost a line);
+* ``needs_you`` (the swarm-detail cycle's last step) lists only the 🟠
+  members until the person opens the rest;
 * → on a member opens its read-only detail line.
 
 Each line gets a tree connector (``├─`` / ``└─``) indented one level below
@@ -35,11 +41,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
+from rich.cells import cell_len
+
 from .status_constants import WORKFLOW_ASCII, emoji_or_ascii
 from .tui_helpers import format_duration
 
 AUTO_COLLAPSE_ABOVE = 8
 NEEDS_YOU_TOP = 3
+# The TYPE cell's widest label: a workflow's phase goes there only if it fits
+TYPE_MAX = 22
 
 MARKER_SUBAGENT = "👥"
 MARKER_WORKFLOW = "🧩"
@@ -64,16 +74,16 @@ Counts = Tuple[Tuple[str, int], ...]
 
 @dataclass
 class SwarmLine:
-    """One line under the parent: a row (``key``) or a summary of some.
+    """One line under the parent: a member (``key``) or a summary of some.
 
     It carries data, not text: the grid renders its cells
     (``columns.render_virtual``). ``row`` is the published virtual row for
-    a group, phase or member line ({} for the summary lines).
+    a member line ({} for the summary lines).
     """
 
     key: str            # the virtual row, or a synthetic key for a summary line
-    owner: str          # the row ← moves back to (a group, a phase, or "" for the parent)
-    kind: str           # "group" | "phase" | "member" | "detail" | "more" | "done" | "older"
+    owner: str          # the line ← moves back to ("" for the parent's row)
+    kind: str           # "member" | "detail" | "more"
     depth: int
     row: dict = field(default_factory=dict)
     marker: str = ""    # the NAME cell's kind marker (👥 / 🧩), "" for none
@@ -82,16 +92,17 @@ class SwarmLine:
     counts: Counts = ()  # the SubAgents cell: (COUNT_GLYPHS key, n), non-zero only
     summary: str = ""   # the summary column (a member: what it is doing); a detail line's text
     context: str = ""   # a member's agent type and phase (the long summary's lead)
+    type_label: str = ""  # a member's type, for the TYPE column
     connector: str = ""  # tree connector and indent, set once every line is known
 
     @property
     def text(self) -> str:
         """The line as plain words (tests, logs): the NAME cell's text,
-        its counts and its summary."""
+        its type, its counts and its summary."""
         head = self.connector + (f"{self.marker} " if self.marker else "") + self.label
         counts = " ".join(f"{dict(COUNT_GLYPHS)[k]}{n}" for k, n in self.counts)
         return "  ".join(p for p in (head + (f" {self.fold}" if self.fold else ""),
-                                     counts, self.summary) if p)
+                                     self.type_label, counts, self.summary) if p)
 
 
 def rows_of(parent: str, virtual: Mapping[str, dict]) -> Dict[str, dict]:
@@ -99,32 +110,32 @@ def rows_of(parent: str, virtual: Mapping[str, dict]) -> Dict[str, dict]:
 
 
 DONE_SUFFIX = "/done"
+MEMBERS_SUFFIX = "/members"
 
 
-def done_key(group: str) -> str:
-    """The done line's key (also the engine subscription for its members)."""
-    return group + DONE_SUFFIX
+def done_key(parent: str) -> str:
+    """The agent's done line's key (also the engine subscription for its
+    finished members)."""
+    return parent + DONE_SUFFIX
 
 
-def _members(rows: Dict[str, dict], group: str, phase: Optional[str] = None,
-             any_phase: bool = False, live_only: bool = False) -> List[Tuple[str, dict]]:
-    out = [(k, r) for k, r in rows.items() if r.get("row") == "member" and r.get("group") == group
-           and (any_phase or r.get("phase") == phase)
-           and not (live_only and r.get("light") == "done")]
-    out.sort(key=lambda kr: (kr[1].get("light") == "done", kr[1].get("started_at") or 0, kr[0]))
-    return out
+def members_key(parent: str) -> str:
+    """Opened: every live member listed, however many."""
+    return parent + MEMBERS_SUFFIX
+
+
+_NEEDS_YOU_ORDER = {"orange": 0, "green": 1, "yellow": 2, "idle": 3}
 
 
 def needs_you(members: Iterable[Tuple[str, dict]], top: int = NEEDS_YOU_TOP) -> List[Tuple[str, dict]]:
-    """The members to show for a collapsed group: 🟠 first, then 🟢 oldest first."""
-    order = {"orange": 0, "green": 1}
-    live = [kr for kr in members if kr[1].get("light") in order]
-    live.sort(key=lambda kr: (order[kr[1]["light"]], kr[1].get("started_at") or 0, kr[0]))
+    """The members a collapsed list shows: 🟠 first, then 🟢, 🟡, ⚪, oldest first."""
+    live = [kr for kr in members if kr[1].get("light") in _NEEDS_YOU_ORDER]
+    live.sort(key=lambda kr: (_NEEDS_YOU_ORDER[kr[1]["light"]], kr[1].get("started_at") or 0, kr[0]))
     return live[:top]
 
 
 def light_glyph(row: dict, emoji_free: bool = False) -> Tuple[str, str]:
-    """A group's or member's light: (glyph, style); a finished one's result."""
+    """A member's light: (glyph, style); a finished one's result."""
     if row.get("light") == "done":
         glyph, style = DONE_GLYPHS.get(row.get("result") or "ok", DONE_GLYPHS["ok"])
     else:
@@ -137,6 +148,25 @@ def marker_glyph(marker: str, emoji_free: bool = False) -> str:
     if marker == MARKER_WORKFLOW and emoji_free:
         return WORKFLOW_ASCII
     return emoji_or_ascii(marker, emoji_free)
+
+
+def type_label(row: dict) -> Tuple[str, bool]:
+    """What kind of agent a member is, for the TYPE column, and whether its
+    workflow phase is in it: the subagent type (``general-purpose``,
+    ``Explore``…), ``fork``, ``teammate``, or the workflow's name with its
+    phase when that fits (``review-060 · Verify``)."""
+    kind = row.get("kind")
+    if kind == "workflow":
+        name = str(row.get("workflow") or "workflow")
+        phase = row.get("phase_title")
+        if phase:
+            both = f"{name} · {phase}"
+            if cell_len(both) <= TYPE_MAX:
+                return both, True
+        return name, False
+    if kind in ("fork", "teammate"):
+        return kind, False
+    return str(row.get("agent_type") or "subagent"), False
 
 
 def what(row: dict) -> str:
@@ -154,6 +184,14 @@ def what(row: dict) -> str:
     if light == "yellow":
         return "waiting on its own background work"
     return row.get("activity") or ""
+
+
+def _live_order(kr: Tuple[str, dict]):
+    return (kr[1].get("light") != "orange", kr[1].get("started_at") or 0, kr[0])
+
+
+def _ended_order(kr: Tuple[str, dict]):
+    return (kr[1].get("ended_at") or 0, kr[0])
 
 
 class Layout:
@@ -175,33 +213,44 @@ class Layout:
     # -- public ------------------------------------------------------------
 
     def build(self) -> List[SwarmLine]:
-        groups = sorted(((k, r) for k, r in self.rows.items() if r.get("row") == "group"),
-                        key=lambda kr: (kr[1].get("order", 0), kr[0]))
-        for gkey, group in groups:
-            self._group(gkey, group)
+        members = [(k, r) for k, r in self.rows.items() if r.get("row") == "member"]
+        live = sorted((kr for kr in members if kr[1].get("light") != "done"), key=_live_order)
+        finished = sorted((kr for kr in members if kr[1].get("light") == "done"),
+                          key=_ended_order, reverse=True)
+        top = self._collapsed(live)
+        for mkey, member in (top if top is not None else live):
+            self._member(mkey, member, "", 1)
+        if top is not None:
+            rest = len(live) - len(top)
+            self._add(SwarmLine(f"{self.parent}/+more", "", "more", 1,
+                                label=f"+{rest} more", counts=(("more", rest),),
+                                summary="→ to open"))
+        else:
+            # Finished moments ago (the engine keeps them a while): still here
+            for mkey, member in finished:
+                self._member(mkey, member, "", 1)
         self._connect()
         return self.lines
 
     def is_open(self, key: str) -> bool:
-        """Whether a group, phase or done line is open (the person's choice,
-        else its size; a done line only when opened; in ``needs_you``, only
-        where a member is 🟠)."""
-        if key in self.opened:
-            return self.opened[key]
-        if key.endswith(DONE_SUFFIX):
-            return False
-        row = self.rows.get(key) or {}
-        if row.get("row") == "phase":
-            members = _members(self.rows, row.get("group"), key)
-            live = any(r.get("light") != "done" for _, r in members)
-            if self.needs_you:
-                return any(r.get("light") == "orange" for _, r in members)
-            return live and len(members) <= AUTO_COLLAPSE_ABOVE
-        if self.needs_you:
-            return bool((row.get("counts") or {}).get("waiting"))
-        return len(_members(self.rows, key, any_phase=True)) <= AUTO_COLLAPSE_ABOVE
+        """Whether the full member list is open (the person's choice;
+        it is not by default)."""
+        return bool(self.opened.get(key))
 
     # -- lines --------------------------------------------------------------
+
+    def _collapsed(self, live: List[Tuple[str, dict]]) -> Optional[List[Tuple[str, dict]]]:
+        """The live members a collapsed list shows, or None: all of them."""
+        if self.is_open(members_key(self.parent)):
+            return None
+        if self.needs_you:
+            orange = [kr for kr in live if kr[1].get("light") == "orange"]
+            if orange and len(orange) < len(live):
+                return orange
+        if len(live) > AUTO_COLLAPSE_ABOVE:
+            top = needs_you(live)
+            return top if top else None
+        return None
 
     def _add(self, line: SwarmLine) -> None:
         self.lines.append(line)
@@ -224,78 +273,32 @@ class Layout:
     def _counts(counts: Mapping[str, int]) -> Counts:
         return tuple((k, counts[k]) for k, _ in COUNT_GLYPHS if counts.get(k))
 
-    def _group(self, gkey: str, group: dict) -> None:
-        workflow = group.get("kind") == "workflow"
-        members = _members(self.rows, gkey, any_phase=True)
-        opened = self.is_open(gkey)
-        n = group.get("agents") or len(members) or sum((group.get("counts") or {}).values())
-        summary = f"{n} agent{'' if n == 1 else 's'}"
-        if group.get("phase"):
-            summary += (f" · phase {group['phase']} {group.get('phase_done', 0)}/"
-                        f"{group.get('phase_started', 0)}")
-        self._add(SwarmLine(gkey, "", "group", 1, row=group,
-                            marker=MARKER_WORKFLOW if workflow else MARKER_SUBAGENT,
-                            label=str(group.get("title") or group.get("kind")),
-                            fold="▾" if opened else "▸",
-                            counts=self._counts(group.get("counts") or {}), summary=summary))
-        if not opened:
-            if gkey not in self.opened:  # auto-collapsed: the top "needs you"
-                self._needs_you(gkey, members, 2)
-            return
-        phases = sorted(((k, r) for k, r in self.rows.items()
-                         if r.get("row") == "phase" and r.get("group") == gkey),
-                        key=lambda kr: (kr[1].get("order", 0), kr[0]))
-        done_open = self.is_open(done_key(gkey))
-        for pkey, phase in phases:
-            self._phase(gkey, pkey, phase, live_only=done_open)
-        for mkey, member in _members(self.rows, gkey, None, live_only=done_open):
-            self._member(mkey, member, gkey, 2)
-        self._done(gkey, group, 2, done_open)
-
-    def _phase(self, gkey: str, pkey: str, phase: dict, live_only: bool = False) -> None:
-        members = _members(self.rows, gkey, pkey, live_only=live_only)
-        started, done = phase.get("started", 0), phase.get("done", 0)
-        live = any(r.get("light") != "done" for _, r in members)
-        mark = "▶" if live or (started > done) else ("✔" if started and done >= started else "·")
-        opened = self.is_open(pkey)
-        self._add(SwarmLine(pkey, gkey, "phase", 2, row=phase,
-                            label=f"{mark} {phase.get('title')}",
-                            fold=("▾" if opened else "▸") if members else "",
-                            counts=self._counts({"running": max(0, started - done), "ok": done}),
-                            summary=f"phase {phase.get('title')} {done}/{started}"))
-        if opened:
-            for mkey, member in members:
-                self._member(mkey, member, pkey, 3)
-        elif pkey not in self.opened:
-            self._needs_you(pkey, members, 3)
-
-    def _needs_you(self, owner: str, members, depth: int) -> None:
-        top = needs_you(members)
-        for mkey, member in top:
-            self._member(mkey, member, owner, depth)
-        rest = len(members) - len(top)
-        if top and rest > 0:
-            self._add(SwarmLine(f"{owner}/+more", owner, "more", depth,
-                                label=f"+{rest} more", counts=(("more", rest),),
-                                summary="→ to open"))
-
     def _member(self, mkey: str, row: dict, owner: str, depth: int) -> None:
-        context = [p for p in (row.get("agent_type"), KIND_WORDS.get(row.get("kind"))) if p]
-        phase = self.rows.get(row.get("phase") or "") or {}
-        if phase.get("title"):
-            context.append(f"phase {phase['title']}")
-        self._add(SwarmLine(mkey, owner, "member", depth, row=row, marker=MARKER_SUBAGENT,
+        label, phase_shown = type_label(row)
+        context = [p for p in (row.get("workflow") or row.get("agent_type"),
+                               KIND_WORDS.get(row.get("kind"))) if p]
+        phase = row.get("phase_title")
+        if phase:
+            context.append(f"phase {phase}")
+        summary = what(row)
+        if phase and not phase_shown and row.get("light") != "done":
+            summary = f"{phase} · {summary}" if summary else str(phase)
+        workflow = row.get("kind") == "workflow"
+        self._add(SwarmLine(mkey, owner, "member", depth, row=row,
+                            marker=MARKER_WORKFLOW if workflow else MARKER_SUBAGENT,
                             label=str(row.get("title") or mkey.rsplit("/", 1)[-1]),
-                            summary=what(row), context=" · ".join(context)))
+                            summary=summary, context=" · ".join(context), type_label=label))
         if mkey in self.details:
             self._detail(mkey, row, depth + 1)
 
     def _detail(self, mkey: str, row: dict, depth: int) -> None:
-        parts = [p for p in (row.get("model"), row.get("agent_type"),
+        model = row.get("model")
+        if model and row.get("model_inherited"):
+            model = f"{model} (inherited)"
+        parts = [p for p in (model, row.get("workflow") or row.get("agent_type"),
                              KIND_WORDS.get(row.get("kind"))) if p]
-        phase = self.rows.get(row.get("phase") or "") or {}
-        if phase.get("title"):
-            parts.append(f"phase {phase['title']}")
+        if row.get("phase_title"):
+            parts.append(f"phase {row['phase_title']}")
         started = row.get("started_at")
         if isinstance(started, (int, float)):
             parts.append(f"since {datetime.fromtimestamp(started).strftime('%H:%M:%S')}")
@@ -312,27 +315,10 @@ class Layout:
         text = " · ".join(parts) + f"   last: {last}   result: {result}"
         self._add(SwarmLine(f"{mkey}/detail", mkey, "detail", depth, summary=text))
 
-    def _done(self, gkey: str, group: dict, depth: int, opened: bool = False) -> None:
-        counts = group.get("counts") or {}
-        ok, failed = counts.get("ok", 0), counts.get("failed", 0)
-        if not ok and not failed:
-            return
-        key = done_key(gkey)
-        self._add(SwarmLine(key, gkey, "done", depth, label="done", fold="▾" if opened else "▸",
-                            counts=self._counts({"ok": ok, "failed": failed})))
-        if not opened:
-            return
-        # Newest first: what the engine published (its most recent ``done_rows``)
-        finished = [(k, r) for k, r in self.rows.items() if r.get("row") == "member"
-                    and r.get("group") == gkey and r.get("light") == "done"]
-        finished.sort(key=lambda kr: (kr[1].get("ended_at") or 0, kr[0]), reverse=True)
-        for mkey, member in finished:
-            self._member(mkey, member, key, depth + 1)
-        older = ok + failed - len(finished)
-        if older > 0:
-            self._add(SwarmLine(f"{key}/+older", key, "older", depth + 1,
-                                label=f"+{older} older" if finished else f"{older} finished",
-                                counts=(("more", older),)))
+
+def types_of(lines: Iterable[SwarmLine]) -> Set[str]:
+    """The distinct types of the member lines (the TYPE column shows at two)."""
+    return {ln.type_label for ln in lines if ln.kind == "member"}
 
 
 def _ran(row: dict) -> Optional[str]:

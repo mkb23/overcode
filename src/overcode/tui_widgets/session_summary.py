@@ -631,8 +631,7 @@ class SessionSummary(Static, can_focus=True):
         """Render the collapsed content area after the | separator."""
         s = ctx.session
         content.append(" │ ", style=f"bold dim{ctx.bg}")
-        current_len = len(content.plain)
-        remaining = max(20, term_width - current_len - 2)
+        remaining = max(20, term_width - cell_len(content.plain))
 
         text, style_cat = get_summary_content_text(
             mode=self.summary_content_mode,
@@ -674,11 +673,15 @@ class SessionSummary(Static, can_focus=True):
                 getattr(app, 'has_sisters', False), getattr(app, 'local_hostname', ''))
 
     def _row_width(self) -> int:
-        """The width the line fills: the row's own (the app's before layout)."""
-        width = self.outer_size.width or self.app.size.width
+        """The width the line fills: the row's content width, inside its
+        padding (the app's, less the padding, before layout)."""
+        width = self.content_size.width
         if not width:
-            import shutil
-            width = shutil.get_terminal_size().columns
+            width = self.app.size.width
+            if not width:
+                import shutil
+                width = shutil.get_terminal_size().columns
+            width = max(0, width - 2)
         return width
 
     def _current_row(self, tick: bool = True) -> _BuiltRow:
@@ -758,10 +761,14 @@ class SessionSummary(Static, can_focus=True):
                 content.append_text(cell)
 
         self._render_content_area(content, ctx, width)
-        # Pad to fill the row
-        current_len = len(content.plain)
-        if current_len < width:
-            content.append(" " * (width - current_len), style=ctx.bg)
+        # Fill the row, and crop it at the edge: a line longer than the row
+        # would wrap at a word boundary and lose the end that fitted
+        used = cell_len(content.plain)
+        if used < width:
+            content.append(" " * (width - used), style=ctx.bg)
+        elif used > width:
+            content.truncate(width, overflow="crop")
+        content.no_wrap = True
         return content
 
     def _render_row(self) -> Text:

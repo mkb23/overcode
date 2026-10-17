@@ -1,21 +1,27 @@
 """→ / ←: a parent's delegated work as read-only rows (0.6.1 observability, phase 2).
 
 docs/design/agent-observability-0.6.1.md §4. The engine publishes an
-expanded parent's virtual rows (subagents, workflow groups with their
-phases, teammates) when this view subscribes to ``swarm:<id>``; the
-subscription is the set of parents expanded here, plus ``<group>/done`` for
-each group whose done line is open (its finished members). The rows are
-drawn by a ``SwarmRows`` widget right under the parent's row, laid out by
-``swarm_view``. The highlight can move onto them (``swarm_cursor``) while
-the parent's row keeps Textual focus, so the split's bottom pane stays on
-the parent: a virtual row has no pane of its own.
+expanded parent's virtual rows (its subagents, forks, workflow agents and
+teammates) when this view subscribes to ``swarm:<id>``; the subscription
+is the set of parents expanded here, plus ``<id>/done`` for each whose
+done line is open (its finished members, across every group). The rows
+are drawn by a ``SwarmRows`` widget right under the parent's row, laid out
+flat by ``swarm_view`` (members, then the one done line). The highlight
+can move onto them (``swarm_cursor``) while the parent's row keeps Textual
+focus, so the split's bottom pane stays on the parent: a virtual row has
+no pane of its own.
 
 Which parents are expanded: the swarm-detail cycle (``f``) sets a standing
 rule (``off``: none; ``groups``: every agent with delegated work in
-flight; ``needs-you``: every agent with a 🟠 member, opening only the
-groups that have one), and → / ← / ``X`` override it per parent. The
-rule, the overrides and every open group, phase or done line persist in
-``tui_preferences.json``.
+flight; ``needs-you``: every agent with a 🟠 member, listing only those
+until the rest are opened), and → / ← / ``X`` override it per parent. The
+rule, the overrides, open done lines and opened "+k more" lists persist in
+``tui_preferences.json`` (keys ``<id>/done`` and ``<id>/members``; the
+group and phase keys of earlier builds are dropped on load).
+
+The TYPE column (each member's agent type) earns its width only while the
+members on screen are of two or more types: ``swarm_types_shown``, carried
+to every row in ``FleetFlags``.
 
 Virtual rows are read only. With the cursor on one, the actions that act
 on "the focused agent" (send keys, kill, restart, rename, …) refuse with a
@@ -57,6 +63,15 @@ def _parent_of(key: str) -> str:
     return key.split("/", 1)[0]
 
 
+def _open_key(key: Any) -> bool:
+    """A key ``swarm_opened`` keeps: ``<id>/members``. The group, phase and
+    done keys of earlier layouts (0.6.1 betas) mean nothing now and are
+    dropped."""
+    if not isinstance(key, str) or key.count("/") != 1:
+        return False
+    return key.endswith(swarm_view.MEMBERS_SUFFIX)
+
+
 class SwarmMixin:
     """Expand/collapse delegated work into virtual rows; move through them."""
 
@@ -68,9 +83,11 @@ class SwarmMixin:
         # Parents whose delegated work shows as rows (the rule plus the
         # overrides, over the agents on screen): the engine subscription
         self.swarm_expanded: Set[str] = set()
-        # Groups, phases and done lines the person opened (True) or closed
-        # (False); the rest follow their size (swarm_view.AUTO_COLLAPSE_ABOVE)
+        # Done lines (<id>/done) and "+k more" lists (<id>/members) the
+        # person opened; the rest are closed (swarm_view.AUTO_COLLAPSE_ABOVE)
         self.swarm_opened: Dict[str, bool] = {}
+        # The members on screen are of two or more types: the TYPE column shows
+        self.swarm_types_shown: bool = False
         # Members whose detail line is open
         self.swarm_details: Set[str] = set()
         # The virtual row under the highlight (None: the agent's own row)
@@ -91,7 +108,7 @@ class SwarmMixin:
             if isinstance(manual, dict) else {}
         opened = getattr(prefs, "swarm_opened", None)
         self.swarm_opened = {k: v for k, v in opened.items()
-                             if isinstance(k, str) and "/" in k and isinstance(v, bool)} \
+                             if _open_key(k) and isinstance(v, bool)} \
             if isinstance(opened, dict) else {}
 
     def _save_swarm_prefs(self) -> None:
@@ -131,8 +148,8 @@ class SwarmMixin:
             return False
         if self.swarm_detail == "needs_you":
             return bool(rollup.get("waiting"))
-        return bool(rollup.get("running") or rollup.get("waiting") or rollup.get("idle")
-                    or rollup.get("workflows_running"))
+        return bool(rollup.get("running") or rollup.get("yellow") or rollup.get("waiting")
+                    or rollup.get("idle") or rollup.get("workflows_running"))
 
     def _swarm_wanted(self) -> Set[str]:
         from ..tui_widgets import SessionSummary
@@ -148,11 +165,8 @@ class SwarmMixin:
         return out
 
     def _swarm_subscription(self) -> frozenset:
-        """What the engine is asked for: the expanded parents, and the open
-        done lines under them."""
-        done = {k for k, v in self.swarm_opened.items()
-                if v and k.endswith(swarm_view.DONE_SUFFIX) and _parent_of(k) in self.swarm_expanded}
-        return frozenset(self.swarm_expanded | done)
+        """What the engine is asked for: the expanded parents."""
+        return frozenset(self.swarm_expanded)
 
     def _report_swarm(self) -> None:
         subs = self._swarm_subscription()
@@ -251,13 +265,22 @@ class SwarmMixin:
         if self.swarm_cursor is not None and focused_id not in parents:
             self.swarm_cursor = None
         self._fit_swarm_names()
+        # TYPE earns its width at two or more member types on screen; every
+        # row (agent and virtual) reads the switch from its FleetFlags
+        types = swarm_view.types_of(ln for pid in self._swarm_widgets
+                                    for ln in self._swarm_lines.get(pid) or ())
+        flipped = (len(types) >= 2) != self.swarm_types_shown
+        if flipped:
+            self.swarm_types_shown = not self.swarm_types_shown
+            self._update_fleet_flags()
+            regrid = True
         for rows in self._swarm_widgets.values():
             regrid = rows.build_cells() or regrid
         if regrid:
             old = list(self.column_widths)
             self._column_widths_dirty = True
             self._recompute_cell_column_widths()
-            if self.column_widths != old:
+            if flipped or self.column_widths != old:
                 for widget in self.query(SessionSummary):
                     widget.refresh_if_changed()
         self._paint_swarm_rows()
@@ -373,15 +396,8 @@ class SwarmMixin:
         line = swarm_view.line_for(self._swarm_lines.get(pid) or [], self.swarm_cursor)
         if line is None:
             return
-        if line.kind in ("group", "phase", "done"):
-            if not self._swarm_layout_of(pid).is_open(line.key):
-                self.swarm_opened[line.key] = True
-            else:
-                nxt, inside = swarm_view.step(self._swarm_lines[pid], line.key, 1)
-                if inside and nxt is not None:
-                    self.swarm_cursor = nxt
-        elif line.kind == "more":
-            self.swarm_opened[line.owner] = True
+        if line.kind == "more":
+            self.swarm_opened[swarm_view.members_key(pid)] = True
         elif line.kind == "member":
             self.swarm_details.add(line.key)
         self._swarm_changed()
@@ -397,6 +413,8 @@ class SwarmMixin:
         if self.swarm_cursor is None:
             if pid in self.swarm_expanded:
                 self._swarm_set(widget, False)
+                # A long list opens compact again next time
+                self.swarm_opened.pop(swarm_view.members_key(pid), None)
                 self._swarm_changed()
             elif self._tree_children(pid) and pid not in self.collapsed_parents:
                 self._fold_children(pid, True)
@@ -408,8 +426,6 @@ class SwarmMixin:
             self.swarm_cursor = None
         elif line.kind == "member" and line.key in self.swarm_details:
             self.swarm_details.discard(line.key)
-        elif line.kind in ("group", "phase", "done") and self._swarm_layout_of(pid).is_open(line.key):
-            self.swarm_opened[line.key] = False
         else:
             self.swarm_cursor = line.owner or None
         self._swarm_changed()
@@ -462,8 +478,8 @@ class SwarmMixin:
             self.update_timeline()
 
     def action_cycle_swarm_detail(self) -> None:
-        """f: off → groups → needs-you. Starts afresh: per-agent and
-        per-group choices are dropped, so the rule decides."""
+        """f: off → groups → needs-you, at the agent level. Starts afresh:
+        per-agent choices and opened lists are dropped, so the rule decides."""
         i = SWARM_DETAIL_MODES.index(self.swarm_detail) if self.swarm_detail in SWARM_DETAIL_MODES else -1
         self.swarm_detail = SWARM_DETAIL_MODES[(i + 1) % len(SWARM_DETAIL_MODES)]
         self.swarm_manual.clear()

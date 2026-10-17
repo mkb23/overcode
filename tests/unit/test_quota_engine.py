@@ -160,6 +160,18 @@ class TestPublishing:
         assert views[0]["w7"] == 10.0 and views[0]["conf"] == "prior"
         assert usage["plan"] == "max20x"
 
+    def test_a_subagent_s_points_from_its_own_entries(self, tmp_path):
+        """A delegated agent's row (swarm virtual rows) states its share:
+        its spend entries through the same model as its parent's view."""
+        eng = _engine(tmp_path)
+        assert eng.conversation_pp({"s/agent-x": {"out": 1000, "model": "claude-opus-x"}}) is None
+        eng.sync([_agent("a", 0)], T0 + 20)
+        eng.sync([_agent("a", 300_000)], T0 + 100)
+        whole = eng.agent_view("a")["pp7d"]
+        half = eng.conversation_pp({"s/agent-x": {"out": 150_000, "model": "claude-opus-x"}})
+        assert half == pytest.approx(whole / 2, abs=0.02)
+        assert eng.conversation_pp({}) is None
+
     def test_view_holds_still_when_nothing_moves(self, tmp_path):
         eng = _engine(tmp_path)
         eng.sync([_agent("a", 0)], T0 + 20)

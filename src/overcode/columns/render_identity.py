@@ -169,6 +169,14 @@ def render_kind(ctx: ColumnContext) -> ColumnOutput:
     return [(f"{ctx.agent_kind:<5}", f"dim{ctx.bg}")]
 
 
+def render_agent_type(ctx: ColumnContext) -> ColumnOutput:
+    """TYPE on an agent row: its own kind (dim), only while the expanded
+    delegated rows show their types (``FleetFlags.swarm_types_shown``)."""
+    if not ctx.fleet.swarm_types_shown:
+        return None
+    return [(f" {ctx.agent_kind}", f"dim{ctx.bg}")]
+
+
 def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
     if ctx.has_focus:
         return [("→ ", ctx.status_color)]

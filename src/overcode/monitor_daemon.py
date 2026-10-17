@@ -459,7 +459,8 @@ class MonitorDaemon:
         # Expanded parents' delegated work, row by row (agent-observability
         # §6.2): built only for parents a visible view subscribed to
         self.swarm_publisher = SwarmPublisher(
-            self._swarm_state, self._conversations, clock=self.clock.time)
+            self._swarm_state, self._conversations, clock=self.clock.time,
+            quota_of=self._member_quota)
         # Claude background sessions under the fleet's directories (phase 3):
         # adopted rows, published as agent views to the views only
         self.claude_bg = ClaudeBgSource(claude_jobs_dir)
@@ -624,6 +625,11 @@ class MonitorDaemon:
     def _conversations(self, session_id: str) -> Optional[dict]:
         session = self.session_manager.sessions_by_id().get(session_id)
         return getattr(getattr(session, "stats", None), "conversations", None)
+
+    def _member_quota(self, entries: dict) -> Optional[float]:
+        """A delegated agent's points of the weekly quota, from its spend entries."""
+        quota = getattr(self, "quota", None)
+        return quota.conversation_pp(entries) if quota is not None else None
 
     def _swarm_subscriptions(self) -> frozenset:
         engine = self._engine

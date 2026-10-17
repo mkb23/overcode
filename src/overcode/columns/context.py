@@ -51,6 +51,9 @@ class FleetFlags:
     # Subagents seen running without a hook rollup (the SubAgents fallback)
     any_has_live_subagents: bool = False
     any_has_quota: bool = False  # a subscription agent with a quota estimate (Q%)
+    # The expanded delegated rows hold two or more agent types (TYPE): set
+    # by the TUI from its swarm lines, never by compute_fleet_flags
+    swarm_types_shown: bool = False
 
 
 @dataclass(frozen=True)

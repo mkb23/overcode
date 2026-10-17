@@ -1302,6 +1302,31 @@ class TestBackgroundWork:
         assert activity == "Waiting on 1 background agent"
         assert detector.get_status_detail("a1").color == STATUS_COLOR_YELLOW
 
+    def test_a_subagent_whose_own_shells_exited_no_longer_holds_the_stop(self, tmp_path):
+        """Claude did not resume it when its shells ended, so no hook came:
+        the shells' output files say they exited (seen live: 🟡 for 2 h)."""
+        state_dir = tmp_path / "agents"
+        now = time.time()
+        self._write(state_dir, {
+            "event": "Stop", "timestamp": now - 600, "swarm": {"bg_at": now - 600},
+            "subagents": {"x": {"type": "general-purpose", "started_at": now - 900,
+                                "last_seen": now - 600, "own_work": True,
+                                "shells": ["bshell01"]}},
+        })
+        tasks = tmp_path / "claude-tmp" / "-proj" / "sess" / "tasks"
+        tasks.mkdir(parents=True)
+        tmux = MagicMock()
+        tmux.capture_pane.return_value = "⏺ Done.\n❯ \n  ⏵⏵ bypass permissions on"
+        detector = HookStatusDetector("agents", tmux=tmux, state_dir=state_dir)
+        from overcode.swarm_files import ShellEnds
+        detector.shell_ended = ShellEnds(root=str(tmp_path / "claude-tmp"))
+        (tasks / "bshell01.output").write_text("running\n")
+        assert detector.detect_status(self._session())[1] == "Waiting on 1 background agent"
+        (tasks / "bshell01.output").write_text("running\n\n[exited with code 0]\n")
+        status, activity, _ = detector.detect_status(self._session())
+        assert status != STATUS_BUSY_SLEEPING and "background agent" not in activity
+        assert detector.get_swarm_rollup("a1")["ok"] == 1
+
     def test_detect_status_lifts_a_stop_with_background_shells(self, tmp_path):
         state_dir = tmp_path / "agents"
         self._write(state_dir, {"event": "Stop", "timestamp": time.time() - 30})

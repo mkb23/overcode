@@ -898,6 +898,7 @@ class QuotaEngine:
         if latest is None or self.no_token:
             self.views, self.fleet_usage = {}, None
             return
+        self._cfg = cfg
         model = self.current_model(cfg)
         plan = self._plan()
         views: Dict[str, dict] = {}
@@ -933,6 +934,18 @@ class QuotaEngine:
 
     def agent_view(self, session_id: str) -> Optional[dict]:
         return self.views.get(session_id)
+
+    def conversation_pp(self, entries: Mapping) -> Optional[float]:
+        """Points of the weekly quota some conversation entries spent (a
+        subagent's, its whole run), None while no agent has a quota view."""
+        if not self.views or not isinstance(entries, Mapping):
+            return None
+        from types import SimpleNamespace
+        toks = tokens_by_model(SimpleNamespace(conversations=entries))
+        if not toks:
+            return None
+        model = self.current_model(getattr(self, "_cfg", None))
+        return round(model.predict_tokens(toks, self.price_fn), 2)
 
 
 def _epoch_local(value: Any) -> Optional[float]:

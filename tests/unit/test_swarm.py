@@ -29,7 +29,7 @@ OLDER_HOOKS = REGISTERED_EVENTS - {"SubagentStart", "SubagentStop", "TeammateIdl
 
 
 def _rollup(**counts):
-    base = {"total": 0, "running": 0, "waiting": 0, "idle": 0, "ok": 0, "failed": 0,
+    base = {"total": 0, "running": 0, "yellow": 0, "waiting": 0, "idle": 0, "ok": 0, "failed": 0,
             "workflows": 0, "workflows_running": 0}
     base.update(counts)
     return base
@@ -236,7 +236,7 @@ class TestReconcile:
             f"<task-notification><task-id>a1</task-id><status>completed</status>{note}"))
         subs, sw = _parent(subs, sw, "Stop", now=3.0, background_tasks=[
             {"id": "b1", "type": "shell", "status": "running"}])
-        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, yellow=1)
         assert swarm.in_flight(_state(subs, sw), 3.0) == (1, 0)
         # No shell left: whatever it waited on is over
         subs, sw = _parent(subs, sw, "Stop", now=60.0, background_tasks=[])
@@ -270,13 +270,13 @@ class TestReconcile:
         subs, sw = _sub(subs, sw, "SubagentStop", "a1", 2.0, background_tasks=[
             {"id": "a1", "type": "subagent", "status": "running"},
             {"id": "b1", "type": "shell", "status": "running"}])
-        assert swarm.rollup(_state(subs, sw), 2.0) == _rollup(total=1, running=1)
+        assert swarm.rollup(_state(subs, sw), 2.0) == _rollup(total=1, yellow=1)
         assert swarm.member_light(subs["a1"]) == swarm.LIGHT_YELLOW
         assert swarm.in_flight(_state(subs, sw), 2.0) == (1, 0)
         # The parent's Stop lists only the shell: still waiting on it
         subs, sw = _parent(subs, sw, "Stop", now=3.0, background_tasks=[
             {"id": "b1", "type": "shell", "status": "running"}])
-        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, yellow=1)
         # The shell ends; the agent resumes, replies and stops for good
         subs, sw = _sub(subs, sw, "SubagentStart", "a1", 60.0, agent_type="general-purpose")
         assert swarm.member_light(subs["a1"]) == swarm.LIGHT_GREEN
@@ -308,7 +308,7 @@ class TestReconcile:
         subs, sw = self._launched_with({"backgroundTaskId": "b1"})
         subs, sw = _parent(subs, sw, "Stop", now=3.0, background_tasks=[
             {"id": "b1", "type": "shell", "status": "running"}])
-        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, running=1)
+        assert swarm.rollup(_state(subs, sw), 3.0) == _rollup(total=1, yellow=1)
         assert swarm.member_light(subs["a1"]) == swarm.LIGHT_YELLOW
         subs, sw = _parent(subs, sw, "Stop", now=60.0, background_tasks=[])
         assert swarm.rollup(_state(subs, sw), 60.0) == _rollup(total=1, ok=1)
@@ -387,6 +387,98 @@ class TestNoTimerOnceTheListIsKnown:
         assert swarm.in_flight(state, 100.0) == (1, 0)
         assert swarm.in_flight(state, 4000.0) == (0, 0)
         assert swarm.rollup(state, 4000.0) == _rollup(total=1, ok=1)
+
+
+class TestSettleOwnWork:
+    """A subagent left waiting on its own shells that Claude never resumes
+    (a /clear left it behind, 2.1.302) fires no more hooks: the daemon sees
+    its shells' output end and counts it done (seen live: 🟡 for 2 h)."""
+
+    def _waiting(self, last_seen=100.0):
+        subs = {"a1": {"type": "general-purpose", "kind": "subagent", "started_at": 10.0,
+                       "last_seen": last_seen, "own_work": True, "shells": ["s1", "s2"]},
+                "a2": {"kind": "subagent", "started_at": 20.0, "last_seen": 150.0}}
+        return _state(subs, {"bg_at": 100.0, "async": ["a1"]})
+
+    def test_done_once_every_shell_has_exited(self):
+        state = self._waiting()
+        settled = swarm.settle_own_work(state, {"s1": 140.0, "s2": 160.0}.get)
+        assert list(settled["subagents"]) == ["a2"]
+        assert settled["swarm"]["done"]["a1"] == {
+            "kind": "subagent", "result": "ok", "ended_at": 160.0,
+            "type": "general-purpose", "started_at": 10.0}
+        assert swarm.rollup(settled, 200.0) == _rollup(total=2, running=1, ok=1)
+        assert "own_work" in state["subagents"]["a1"]  # the hook state is not touched
+
+    def test_running_while_one_shell_runs_or_is_not_found(self):
+        state = self._waiting()
+        assert swarm.settle_own_work(state, {"s1": 140.0}.get) is state
+
+    def test_a_resumed_agent_is_left_to_its_own_stop(self):
+        state = self._waiting(last_seen=170.0)
+        assert swarm.settle_own_work(state, {"s1": 140.0, "s2": 160.0}.get) is state
+
+    def test_only_agents_waiting_on_their_own_shells(self):
+        state = self._waiting()
+        state["subagents"]["a1"].pop("own_work")
+        assert swarm.settle_own_work(state, lambda s: 1.0) is state
+        assert swarm.settle_own_work({"event": "Stop", "timestamp": 0.0}, lambda s: 1.0)
+
+
+class TestOwnShellsEnded:
+    def test_another_parent_shell_does_not_hold_an_agent_whose_own_shells_ended(self):
+        """Seen live: the agent's two pytest shells ended, and a gh-run poller
+        the parent had left running for 2 days kept it 🟡 at every Stop."""
+        subs = {"a1": {"kind": "subagent", "started_at": 0.0, "last_seen": 10.0,
+                       "own_work": True, "shells": ["s1", "s2"]}}
+        sw = {"bg_at": 10.0, "async": ["a1"]}
+        poller = {"id": "bpoll", "type": "shell", "status": "running"}
+        subs, sw = _parent(subs, sw, "Stop", now=20.0, background_tasks=[poller])
+        assert "a1" not in subs and sw["done"]["a1"]["result"] == "ok"
+
+    def test_an_agent_with_a_shell_still_running_stays(self):
+        subs = {"a1": {"kind": "subagent", "started_at": 0.0, "last_seen": 10.0,
+                       "own_work": True, "shells": ["s1", "s2"]}}
+        sw = {"bg_at": 10.0, "async": ["a1"]}
+        tasks = [{"id": "s2", "type": "shell", "status": "running"}]
+        subs, sw = _parent(subs, sw, "Stop", now=20.0, background_tasks=tasks)
+        assert subs["a1"]["own_work"] and subs["a1"]["shells"] == ["s2"]
+
+
+class TestShellEnds:
+    def _write(self, root, shell_id, text):
+        tasks = root / "-proj" / "sess" / "tasks"
+        tasks.mkdir(parents=True, exist_ok=True)
+        path = tasks / f"{shell_id}.output"
+        path.write_text(text)
+        return path
+
+    def test_an_exited_shell_ends_at_its_file_s_mtime(self, tmp_path):
+        from overcode.swarm_files import ShellEnds
+        path = self._write(tmp_path, "s1", "ok\n\n[exited with code 0]\n")
+        ends = ShellEnds(root=str(tmp_path))
+        assert ends("s1") == path.stat().st_mtime
+        assert ends("s1") == path.stat().st_mtime and ends.reads == 1  # remembered
+
+    def test_a_running_shell_is_read_again_only_when_its_file_moves(self, tmp_path):
+        import os
+        from overcode.swarm_files import ShellEnds
+        path = self._write(tmp_path, "s1", "running...\n")
+        ends = ShellEnds(root=str(tmp_path))
+        assert ends("s1") is None and ends("s1") is None and ends.reads == 1
+        path.write_text("running...\nmore\n\n[exited with code 1]\n")
+        os.utime(path, (1000.0, 1000.0))
+        assert ends("s1") == 1000.0
+
+    def test_a_missing_file_is_looked_for_again_after_a_while(self, tmp_path):
+        from overcode.swarm_files import META_RETRY_SECONDS, ShellEnds
+        clock = [0.0]
+        ends = ShellEnds(root=str(tmp_path), clock=lambda: clock[0])
+        assert ends("s1") is None
+        self._write(tmp_path, "s1", "[exited with code 0]\n")
+        assert ends("s1") is None  # not looked for yet
+        clock[0] += META_RETRY_SECONDS
+        assert ends("s1") is not None
 
 
 class TestRollupHoldsStill:
@@ -499,8 +591,8 @@ class TestCaptures:
                       110.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
-        assert _at(samples, 40.0).rollup == _rollup(total=2, running=2)
-        assert _at(samples, 80.0).rollup == _rollup(total=2, running=1, ok=1)
+        assert _at(samples, 40.0).rollup == _rollup(total=2, yellow=2)
+        assert _at(samples, 80.0).rollup == _rollup(total=2, yellow=1, ok=1)
         assert _at(samples, 107.0).rollup == _rollup(total=2, ok=2)
 
     def test_a_busy_parent_s_subagents_waiting_on_their_shells_are_running(self, tmp_path):
@@ -516,7 +608,9 @@ class TestCaptures:
         _check(sc, samples)
         for s in samples:
             if 4.5 <= s.t <= 68.0:  # launched until the sleeps end
-                assert s.rollup == _rollup(total=2, running=2), (s.t, timeline(samples))
+                # working (▶), then waiting on their own shells (🟡): live throughout
+                live = {k: s.rollup[k] for k in ("running", "yellow")}
+                assert sum(live.values()) == 2 and s.rollup["ok"] == 0, (s.t, timeline(samples))
         state = _at(samples, 30.0).swarm_state
         assert {e.get("own_work") for e in state["subagents"].values()} == {True}
         assert _at(samples, 72.0).rollup == _rollup(total=2, ok=2)

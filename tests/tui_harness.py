@@ -290,3 +290,172 @@ class CountedWork:
 
 NO_WORK = {"applies": {}, "refreshes": {}, "composes": {}, "repaints": [],
            "bar_builds": 0, "full_builds": {}}
+
+
+# ---------------------------------------------------------------------------
+# Layout invariants
+# ---------------------------------------------------------------------------
+
+def _cells_of(plain: str) -> list:
+    """``plain`` as one entry per screen cell: a wide character is itself
+    then "" (its second cell)."""
+    from rich.cells import cell_len
+
+    out = []
+    for ch in plain:
+        out.append(ch)
+        out.extend([""] * (cell_len(ch) - 1))
+    return out
+
+
+def _crop(plain: str, start: int, width: int) -> str:
+    """The cells ``start`` to ``start + width`` of ``plain``; a wide
+    character cut by either edge shows as a space, as on screen."""
+    cells = _cells_of(plain)[start:start + width]
+    if cells and cells[0] == "":
+        cells[0] = " "
+    if cells and start + len(cells) < len(_cells_of(plain)) and cells[-1] != "" \
+            and _cells_of(plain)[start + len(cells)] == "":
+        cells[-1] = " "
+    return "".join(cells)
+
+
+def _at(plain: str, x: int) -> str:
+    """``plain`` from cell offset ``x`` on."""
+    return "".join(_cells_of(plain)[x:]) if x < len(_cells_of(plain)) else ""
+
+
+def _on_screen(widget) -> list:
+    """The widget's lines as painted, inside its padding."""
+    from textual.geometry import Region
+
+    size = widget.outer_size
+    left = widget.styles.padding.left
+    strips = widget.render_lines(Region(0, 0, size.width, size.height))
+    return [_crop("".join(seg.text for seg in strip), left, widget.content_size.width)
+            for strip in strips]
+
+
+def _check_painted(widget, lines: list, what: str) -> None:
+    """What is on screen is each line cropped at the content edge: nothing
+    wrapped onto a hidden second row, and no word-wrap dropped the end of
+    a line that fitted."""
+    width = widget.content_size.width
+    painted = _on_screen(widget)
+    assert len(painted) >= len(lines), f"{what}: {len(painted)} rows painted for {len(lines)} lines"
+    for i, line in enumerate(lines):
+        want = _crop(line, 0, width)
+        assert painted[i].rstrip() == want.rstrip(), (
+            f"{what} line {i}: painted\n  {painted[i]!r}\nexpected\n  {want!r}")
+
+
+def _check_cells(line: str, cells: list, widths: list, width: int, what: str) -> None:
+    """Each non-empty cell starts at its column's x (the sum of the widths
+    before it), up to the edge of the row."""
+    x = 0
+    for j, cell in enumerate(cells):
+        if cell.strip() and x < width:
+            want = _crop(cell, 0, width - x)
+            got = _crop(_at(line, x), 0, cell_len_(want))
+            assert got == want, f"{what} column {j} at x={x}: {got!r} != {want!r}"
+        x += widths[j] if j < len(widths) else 0
+
+
+def cell_len_(text: str) -> int:
+    from rich.cells import cell_len
+
+    return cell_len(text)
+
+
+def assert_layout_invariants(app) -> None:
+    """The agent table is laid out as designed, at whatever width and detail.
+
+    - every agent row (``SessionSummary``) is exactly one screen row high,
+      and every ``SwarmRows`` is exactly as high as its lines;
+    - no line (agent row, virtual row, column header) runs past its widget's
+      content width, and what is painted is that line, cropped at the edge
+      (a line that wraps either shifts every row below or, on a one-row
+      widget, loses its end at a word boundary);
+    - the rows stack with no gap and no overlap;
+    - the header's labels, the agent rows' cells and the virtual rows' cells
+      start at the same x offsets: the sums of ``app.column_widths``, and the
+      summary bar " │ " is at the same x on every row that reaches it.
+
+    The header never widens a column: a label longer than its column is cut
+    to the column's width (``render_header_cells``), so a label is checked
+    as cut.
+    """
+    from overcode.summary_columns import COLUMNS_BY_ID
+    from overcode.tui_widgets import ColumnHeader, SessionSummary
+    from overcode.tui_widgets.swarm_rows import SwarmRows
+
+    agents = [w for w in app.query(SessionSummary) if w.display]
+    swarms = [w for w in app.query(SwarmRows) if w.display]
+    widths = list(app.column_widths)
+    ids = [c.id for c in agents[0].visible_columns()] if agents else []
+    assert not agents or len(widths) == len(ids), (widths, ids)
+
+    bars = set()
+    for row in agents:
+        what = f"agent row {row.session.name}"
+        assert row.outer_size.height == 1, f"{what}: {row.outer_size.height} rows high"
+        assert [c.id for c in row.visible_columns()] == ids, f"{what}: other columns"
+        width = row.content_size.width
+        line = row.render().plain
+        assert "\n" not in line, f"{what}: more than one line"
+        assert cell_len_(line) <= width, f"{what}: {cell_len_(line)} cells in {width}"
+        _check_painted(row, [line], what)
+        _check_cells(line, [c.plain for c in row.row_cells()], widths, width, what)
+        if " │ " in line:
+            bar = cell_len_(line[:line.index(" │ ")])
+            if bar + 3 <= width:
+                bars.add(bar)
+
+    for rows in swarms:
+        what = f"virtual rows of {rows.parent_id}"
+        lines = rows._shown.plain.split("\n") if rows._shown is not None else []
+        assert len(lines) == len(rows.lines), f"{what}: {len(lines)} painted, {len(rows.lines)} lines"
+        assert rows.outer_size.height == len(rows.lines), (
+            f"{what}: {rows.outer_size.height} rows high for {len(rows.lines)} lines")
+        width = rows.content_size.width
+        for i, line in enumerate(lines):
+            assert cell_len_(line) <= width, f"{what} line {i}: {cell_len_(line)} cells in {width}"
+        _check_painted(rows, lines, what)
+        for i, (line, cells) in enumerate(zip(lines, rows._cells)):
+            if cells is None:
+                continue  # a detail line: free text from the NAME column
+            assert [c.id for c in rows._columns] == ids, f"{what}: other columns"
+            _check_cells(line, ["".join(t for t, _ in segs) for segs in cells], widths,
+                         width, f"{what} line {i}")
+            if " │ " in line:
+                bar = cell_len_(line[:line.index(" │ ")])
+                if bar + 3 <= width:
+                    bars.add(bar)
+    assert len(bars) <= 1, f"the summary bar is at different x on different rows: {sorted(bars)}"
+
+    # Stacked: each row starts where the one above ends
+    stack = sorted(agents + swarms, key=lambda w: w.virtual_region.y)
+    for above, below in zip(stack, stack[1:]):
+        assert below.virtual_region.y == above.virtual_region.y + above.outer_size.height, (
+            f"{type(below).__name__} at y={below.virtual_region.y} under "
+            f"{type(above).__name__} at y={above.virtual_region.y} h={above.outer_size.height}")
+
+    header = app.query_one("#column-headers", ColumnHeader)
+    if header.display and getattr(app, "tui_mode", "") != "jobs":
+        what = "column header"
+        rendered = header.render()
+        assert hasattr(rendered, "plain"), f"{what}: not a Text"
+        line = rendered.plain
+        width = header.content_size.width
+        assert header.outer_size.height == 1, f"{what}: {header.outer_size.height} rows high"
+        assert "\n" not in line and cell_len_(line) <= width, (
+            f"{what}: {cell_len_(line)} cells in {width}")
+        _check_painted(header, [line], what)
+        assert header.column_ids == ids and header.column_widths == widths, what
+        labels = []
+        for cid, w in zip(ids, widths):
+            label = " " + COLUMNS_BY_ID[cid].header if COLUMNS_BY_ID[cid].header else ""
+            if cid == header.sort_column:
+                label = label.rstrip("▲▼")
+            labels.append(_crop(label, 0, max(0, w - (cid == header.sort_column))))
+        _check_cells(line, labels, widths, width, what)

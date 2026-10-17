@@ -26,8 +26,9 @@ The agent you last moved the highlight to is remembered the same way: quit and r
 A Claude agent can hand work out inside its own session: subagents
 (background by default), forks, workflows and teammates. None of them is an
 overcode agent; the SubAgents column (`SUBA`) rolls them up on the
-parent's row, e.g. `▸👥 ▶15 🟠1 ✅26 ❌1 🧩1`: how many are working,
-waiting for approval, idle (⚪, teammates listening), finished, failed, and
+parent's row, e.g. `▸👥 ▶15 🟡2 🟠1 ✅26 ❌1 🧩1`: how many are working (▶),
+waiting on background work of their own (🟡, as on their rows), waiting for
+approval (🟠), idle (⚪, teammates listening), finished, failed, and
 workflow runs. Only non-zero counts show and there is no total; hover the
 cell for it. An agent with no hook counts (no hooks installed, or a sister
 on an older overcode) still shows the subagents its transcript files say are
@@ -35,82 +36,94 @@ running, e.g. ` 👥 ▶2`, without the fold marker. The column appears once any
 agent delegates, and replaces 0.6.0's DLG and SUB columns: saved column
 settings naming `swarm` or `subagent_count` carry over to it.
 
-Press `→` on that row to expand it: the work appears as read-only rows right
-under the parent, and the fold marker turns to `▾`. The rows sit on the same
-column grid as the agent rows, cell for cell (here at low detail, trimmed on
-the right):
+Press `→` on that row to expand it: its delegated agents appear as
+read-only rows right under it, and the fold marker turns to `▾`. The rows
+sit on the same column grid as the agent rows, cell for cell (trimmed
+here to status, time, SubAgents, NAME, TYPE, TOK, $ and MDL):
 
 ```
-🟢    4.2m             ▾👥 ▶1 🟠1 ✅1 🧩1→ bravo                 Δ -   Σ  1.5K 📚 41%   Op4.6 │ 💬 refactoring the engine
-🟠       -     -       ▾🧩 🟠1 ✅1         ├─🧩 review             -         -      -       -  │ 2 agents · phase Find 1/1
- -       -     -       ▾   ▶1                ├─▶ Verify            -         -      -       -  │ phase Verify 0/1
-🟠     20s     -                        -      └─👥 verify-1       -         -      -       -  │ 💬 needs approval in the parent's pane
- -       -     -       ▸   ✅1               ├─✔ Find              -         -      -       -  │ phase Find 1/1
- -       -     -       ▸   ✅1               └─done                -         -      -       -  │
-🟢       -     -       ▾👥 ▶1 ❌1          └─👥 agents             -         -      -       -  │ 2 agents
-🟢     30s     -                        -    ├─👥 map the engine   -   Σ 15.3K      -   Hk4.5  │ 💬 Read src/engine.py
-❌     45s  ❌ failed                   -    ├─👥 a2               -         -      -       -  │ 💬 failed · ran 45s
- -       -     -       ▸   ❌1               └─done                -         -      -       -  │
+🟢 10.0d ▾👥 ▶1 🟡1 🟠1 ✅6 ❌1 🧩1→ bravo                   agent               Σ  1.5K  $0.50  Op4.6 │ 💬 bravo working
+🟠   20s                          -  ├─🧩 verify-1           review-060 · Verify Σ  9.0K  $1.25  Op4.6 │ 💬 needs approval in the parent's pane
+🟡  5.0m                          -  ├─👥 Fix the done glyph general-purpose     Σ940.3K  $2.10  Op4.6 │ 💬 waiting on its own background work
+🟢   30s                          -  └─👥 map the engine     Explore             Σ 15.3K  $0.50  Hk4.5 │ 💬 Read src/engine.py
 ```
 
-Groups come first, never a flat list: one line per workflow run (🧩), then
-the team, then loose subagents (👥 agents).
+No group or phase lines: the agent's row already sums up its delegated
+work, so the lines under it are the agents themselves, and what has
+finished is its ✅/❌ counts. With one type of agent the TYPE column
+takes no width at all:
 
+```
+🟢 10.0d ▾👥 🟡2 ✅15              → charlie              Σ  1.5K  $0.50  Op4.6 │ 💬 charlie working
+🟡  1.4h                          -  ├─👥 general-purpose  Σ 13.1M  $5.60  Op4.6 │ 💬 waiting on its own background work
+🟡  1.2h                          -  └─👥 general-purpose  Σ 16.1M  $6.90  Op4.6 │ 💬 waiting on its own background work
+```
+
+- Live agents come first: 🟠 (waiting for your approval in the parent's
+  pane) at the top, then the rest by when they started, oldest first.
+  One that finished moments ago stays a while (below).
+- TYPE says what kind of agent each is: its subagent type
+  (`general-purpose`, `Explore`, …), `fork`, `teammate`, or the
+  workflow's name with its phase when that fits (`review-060 · Verify`;
+  otherwise the phase leads the summary text). It shows only while the
+  expanded rows on screen hold two or more types; agent rows then show
+  their own kind (agent / child / bg), dim.
 - Each row fills the columns it has a value for: its light, time in state
   (since it started; its run time once finished), RES (✅ / ❌, hover for
-  the result text), SubAgents (a group's, phase's or done line's counts,
-  glyph then count, as on the agent's row), KIND, NAME (tree connector,
-  marker, title), MDL, TOK, $ and uptime. Every other column shows a dim
-  `-` where its values end, so nothing of the parent's (repo, branch, diff,
-  context, mode, …) is repeated. The NAME column widens for the titles as
-  it would for a longer agent name. MDL still hides while every agent runs
-  the same model.
+  the result text), NAME (tree connector, 👥 or 🧩 for a workflow agent,
+  title), TYPE, MDL, TOK, $, Q% and uptime. TOK, $ and Q% are its own
+  spend, read from its transcript at the stats cadence (Q% is its whole
+  run's points of the weekly quota, with a subscription). MDL is its own
+  model, or the parent's drawn dim when it inherits it. BILL shows the
+  parent's code, dim: its spend is billed there. Every other column shows
+  a dim `-` where its values end, so nothing of the parent's (repo,
+  branch, diff, context, mode, …) is repeated. The NAME column widens for
+  the titles as it would for a longer agent name. MDL still hides while
+  every agent runs the same model.
 - The summary column follows `l`. A member shows, per mode: **AI short**
   what it is doing (its last tool call, or "needs approval in the parent's
   pane", "idle, listening", "waiting on its own background work"; once
   finished, its result and run time); **AI context** its agent type, kind
   and phase, then the same; **standing orders** its task as given (the full
   title); **last command** its last tool call; **annotation** and
-  **heartbeat** `-`. A group, phase or summary line shows its agent count
-  and phase progress in every mode.
-- A row's kind is its marker: no marker for an overcode agent, 👥 for a
-  subagent, fork or teammate, 🧩 for a workflow run. The KIND column
-  (hidden by default; switch it on with `C`) spells out agent / child for
-  fleet rows, and sub / fork / team / wf for delegated work.
-- A group (or a workflow phase) with more than 8 members opens collapsed and
-  shows its top three "needs you" members (🟠 first, then 🟢 oldest first)
-  and `+k more`.
+  **heartbeat** `-`. A summary line (`+k more`) shows its own text in every
+  mode.
+- The KIND column (hidden by default; switch it on with `C`) spells out
+  agent / child for fleet rows, and sub / fork / team / wf for delegated
+  work.
+- More than 8 live agents under one parent: it opens with its top three
+  "needs you" (🟠 first, then 🟢, 🟡, ⚪, oldest first) and `+k more`;
+  `→` on that line lists them all. Collapsing the agent (`←` on its row)
+  makes the list compact again for next time.
 - `j`/`k` move the highlight through the rows and on to the next agent. The
   parent keeps focus, so the pane below stays on the parent: a virtual row
   has no terminal of its own.
-- `→` goes one level in: opens a group or phase, then moves into it; on a
-  member it opens a detail line under the NAME column (model, type, phase,
-  start time, tokens, cost, last tool, result). `←` closes what the highlight is on, or goes up a
-  level; on the agent's own row it collapses the whole thing.
+- `→` on a member opens a detail line under the NAME column (model, type,
+  phase, start time, tokens, cost, last tool, result). `←` closes what the
+  highlight is on, or goes back to the agent's row; on the agent's own row
+  it collapses the whole thing.
 - Virtual rows are read only. With the highlight on one, the agent keys
   (send, kill, restart, rename, …) say so and do nothing; `Enter` moves to
   the parent's pane, where a subagent's permission prompt is answered.
-- A finished member stays (dimmed, ✅/❌) for 30 seconds, then folds into
-  its group's done line (`observability.finished_row_seconds` in
-  config.yaml). Subagents never ring the bell: their permission prompt
-  already turns the parent 🟠.
-- `→` on a `done ▸` line (its counts, e.g. `✅25 ❌1`, in SubAgents) opens it: the group's finished members,
-  newest first, at most 50 (`observability.done_rows`), then `+k older`
-  for the rest. While it is open they are listed there and nowhere else.
-  `←` closes it. The engine builds those rows only while a done line is
-  open.
+- A finished member stays (dimmed, ✅/❌) for 30 seconds, then is only a
+  count in the agent's SubAgents cell
+  (`observability.finished_row_seconds` in config.yaml).
+  Subagents never ring the bell: their permission prompt already turns
+  the parent 🟠.
 - `f` cycles which agents' delegated work opens by itself: **off** (the
   default: only what you open with `→`), **groups** (every agent with
   delegated work in flight; it closes again when the work is done) and
-  **needs you** (only agents with a subagent waiting for approval, and
-  only the groups that hold one). `→` / `←` on an agent still override
-  the rule for that agent; `f` starts afresh, dropping those choices.
+  **needs you** (only agents with a subagent waiting for approval, listing
+  just those until you open `+k more`). `→` / `←` on an agent still
+  override the rule for that agent; `f` starts afresh, dropping those
+  choices.
 - `X` expands every agent that has delegated work (and, in tree sort,
   unfolds every parent's children); with something open, it collapses
   everything instead. It does not change the `f` rule.
-- What is open (agents, groups, phases, done lines, and the `f` rule) is
-  remembered in `tui_preferences.json`, so it comes back after restarting
-  the TUI. Entries for agents that are gone are dropped.
+- What is open (agents, opened `+k more` lists, and the `f`
+  rule) is remembered in `tui_preferences.json`, so it comes back after
+  restarting the TUI. Entries for agents that are gone are dropped, and so
+  are the group, phase and done-line entries earlier 0.6.1 builds saved.
 - Hover the parent's tokens or $ cell for its spend split: its own turns
   and its delegated work (which is inside the total, never added again).
 - Only expanded parents cost anything: the engine reads the subagents'

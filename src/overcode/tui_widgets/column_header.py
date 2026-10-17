@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.message import Message
@@ -52,6 +53,22 @@ class ColumnHeader(Static):
         self.sort_descending = sort_descending
         if self._hover is not None:
             self._show_tooltip(self._hover, force=True)
+
+    def render(self):
+        """The header line, cropped at the content edge: the labels run as
+        far as the rows' cells do (past the edge at high detail), and a
+        longer line would wrap at a word boundary and drop the labels at
+        the end that fitted. Drawn from the content at the current width,
+        so a resize re-crops it."""
+        content = self.content
+        width = self.content_size.width
+        if isinstance(content, Text) and width:
+            line = content.copy()
+            line.no_wrap = True
+            if cell_len(line.plain) > width:
+                line.truncate(width, overflow="crop")
+            return line
+        return super().render()
 
     def column_at_event(self, event: events.MouseEvent) -> Optional[str]:
         offset = event.get_content_offset(self)

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.widgets import Static
@@ -54,6 +53,9 @@ class SwarmRows(Static, can_focus=False):
         padding: 0 1;
         margin: 0;
         background: $surface;
+        overflow: hidden;
+        text-wrap: nowrap;
+        text-overflow: clip;
     }
     """
 
@@ -123,7 +125,9 @@ class SwarmRows(Static, can_focus=False):
 
     def _paint(self) -> bool:
         widths, edges, mode, width = self._paint_args
-        width = self.outer_size.width or width
+        # The content width (inside the padding): a line never runs past it,
+        # so no line wraps and shifts the rows below (agent rows crop the same way)
+        width = self.content_size.width or max(0, width - 2)
         text = Text(no_wrap=True, overflow="crop")
         ids = [c.id for c in self._columns]
         name_x = sum(widths[:ids.index("agent_name")]) if "agent_name" in ids and widths else 0
@@ -146,14 +150,9 @@ class SwarmRows(Static, can_focus=False):
                     for t in texts:
                         row.append_text(t)
                 row.append(" │ ", style="bold dim")
-                remaining = max(20, width - cell_len(row.plain) - 2)
                 words, style = virtual_summary(line, mode, emoji_free)
-                if cell_len(words) > remaining:
-                    words = words[:max(0, remaining - 1)] + "…"
                 row.append(words, style=style)
-            used = cell_len(row.plain)
-            if used < width:
-                row.append(" " * (width - used))
+            row.truncate(width, overflow="crop", pad=True)
             text.append_text(row)
         self.display = bool(self.lines)
         if self._shown is not None and text == self._shown:

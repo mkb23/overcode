@@ -1,6 +1,6 @@
 """Delegated-work rows on the agent column grid (0.6.1 observability, phase 2).
 
-An expanded parent's subagents, groups, phases and summary lines render
+An expanded parent's delegated agents and summary lines render
 through the summary columns (``ColumnContext.for_virtual``,
 ``columns.render_virtual``) and are padded to the same aligned widths as
 the agent rows, so every cell lines up; a column that does not apply shows
@@ -246,38 +246,79 @@ def _char_index(plain: str, x: int) -> int:
     return len(plain)
 
 
-class TestStructureLines:
+class TestFlatLines:
     @pytest.mark.asyncio
-    async def test_groups_phases_and_the_done_line_are_on_the_grid(self, app, engine):
+    async def test_members_sit_right_under_the_agent_and_nothing_else(self, app, engine):
         async with app.run_test() as pilot:
             rows = await _open(pilot, engine)
-            wf = "id-bravo/wf/wf_1"
-            assert _cell(rows, wf, "subagents") == "▾🧩 🟠1 ✅1"
-            assert "🧩 review" in _cell(rows, wf, "agent_name")
-            _, group = _line(rows, wf)
-            assert "2 agents · phase Find 1/1" in group  # its phase progress, summary column
-            phase = next(ln for ln in rows.lines if ln.kind == "phase" and "Verify" in ln.label)
-            assert _cell(rows, phase.key, "subagents").split() == ["▾", "▶1"]
-            _, ptext = _line(rows, phase.key)
-            assert "phase Verify 0/1" in ptext
-            sa = "id-bravo/sa"
-            assert _cell(rows, sa, "subagents") == "▾👥 ▶1 ❌1"
-            done = next(ln for ln in rows.lines if ln.key == "id-bravo/sa/done")
-            assert _cell(rows, done.key, "subagents").split() == ["▸", "❌1"]
-            wf_done = next(ln for ln in rows.lines if ln.key == "id-bravo/wf/wf_1/done")
-            assert _cell(rows, wf_done.key, "subagents").split() == ["▸", "✅1"]
-            assert "done" in _cell(rows, done.key, "agent_name")
+            keys = [ln.key for ln in rows.lines]
+            # No group, phase or done lines: 🟠 first, then by start; finished just now.
+            # The finished count is the agent's own SubAgents cell
+            assert keys == ["id-bravo/wf/wf_1/w1", "id-bravo/sa/a1",
+                            "id-bravo/wf/wf_1/w2", "id-bravo/sa/a2"]
+            assert {ln.depth for ln in rows.lines} == {1}
+            assert rows.lines[-1].connector.endswith("└─")
+            assert "🧩 verify-1" in _cell(rows, "id-bravo/wf/wf_1/w1", "agent_name")
 
-    def test_a_large_group_s_more_line_counts_in_suba(self):
-        rows = {"p/sa": {"parent": "p", "row": "group", "kind": "agents", "title": "agents",
-                         "counts": {"running": 12}, "light": "green"}}
-        rows.update({f"p/sa/a{i}": {"parent": "p", "row": "member", "group": "p/sa",
-                                    "kind": "subagent", "light": "green", "started_at": float(i)}
-                     for i in range(12)})
+    @pytest.mark.asyncio
+    async def test_the_type_column_shows_each_member_s_type(self, app, engine):
+        async with app.run_test() as pilot:
+            rows = await _open(pilot, engine)
+            assert app.swarm_types_shown and app.fleet.swarm_types_shown
+            assert _cell(rows, "id-bravo/sa/a1", "agent_type").strip() == "Explore"
+            assert _cell(rows, "id-bravo/wf/wf_1/w1", "agent_type").strip() == "review · Verify"
+            assert _cell(rows, "id-bravo/sa/a2", "agent_type").strip() == "subagent"
+            # The agent rows show their own kind, on the same grid
+            bravo = _bravo(app)
+            cols = [c.id for c in bravo.visible_columns()]
+            j = cols.index("agent_type")
+            assert bravo.row_cells()[j].plain.strip() == "agent"
+            x = sum(app.column_widths[:j])
+            assert _at(_line(rows, "id-bravo/sa/a1")[1], x).startswith(" Explore")
+            assert _at(bravo.render().plain, x).startswith(" agent")
+            # Collapsed again: the column takes no width
+            await pilot.press("left")
+            await pilot.pause()
+            assert not app.fleet.swarm_types_shown
+            assert app.column_widths[j] == 0
+            assert bravo.row_cells()[j].plain == ""
+
+    def test_a_large_list_s_more_line_counts_in_suba(self):
+        rows = {f"p/sa/a{i}": {"parent": "p", "row": "member", "group": "p/sa",
+                               "kind": "subagent", "light": "green", "started_at": float(i)}
+                for i in range(12)}
         lines = swarm_view.layout("p", rows)
         more = lines[-1]
         cell = cell_segments(_column("subagents"), ColumnContext.for_virtual(more, _parent_ctx()))
         assert "".join(t for t, _ in cell).split() == ["+9"]
+
+    def test_a_member_without_a_model_of_its_own_shows_the_parent_s_dim(self):
+        line = swarm_view.SwarmLine("p/sa/x", "", "member", 1, label="t",
+                                    row={"light": "green", "model_inherited": True})
+        ctx = ColumnContext.for_virtual(line, _parent_ctx(model="claude-opus-4-6"))
+        segs = cell_segments(_column("model"), ctx)
+        assert "".join(t for t, _ in segs).strip() == "Op4.6"
+        assert all(style == "dim" for _, style in segs)
+        own = swarm_view.SwarmLine("p/sa/y", "", "member", 1, label="t",
+                                   row={"light": "green", "model": "claude-haiku-4-5"})
+        segs = cell_segments(_column("model"),
+                             ColumnContext.for_virtual(own, _parent_ctx(model="claude-opus-4-6")))
+        assert "".join(t for t, _ in segs).strip() == "Hk4.5"
+        assert not any(style == "dim" for _, style in segs)
+
+    def test_a_member_s_quota_and_billing_cells(self):
+        line = swarm_view.SwarmLine("p/sa/x", "", "member", 1, label="t",
+                                    row={"light": "green", "quota_pp": 1.25})
+        ctx = ColumnContext.for_virtual(line, _parent_ctx())
+        assert "".join(t for t, _ in cell_segments(_column("quota"), ctx)).strip() == "1.25%"
+        bill = cell_segments(_column("billing_code"), ctx)
+        assert bill and all(style == "dim" for _, style in bill)
+        # A summary line has neither
+        done = swarm_view.SwarmLine("p/done", "", "done", 1, label="done",
+                                    counts=(("ok", 3),))
+        dctx = ColumnContext.for_virtual(done, _parent_ctx())
+        assert cell_segments(_column("quota"), dctx) == []
+        assert cell_segments(_column("billing_code"), dctx) == []
 
 
 class TestSummaryModes:
@@ -297,14 +338,14 @@ class TestSummaryModes:
             assert seen["last_command"] == "⌨ Read src/engine.py"
             assert seen["annotation"] == seen["heartbeat"] == "-"
 
-    def test_mapping_for_a_finished_member_and_a_group(self):
+    def test_mapping_for_a_finished_member_and_a_summary_line(self):
         done = swarm_view.SwarmLine("k", "", "member", 2, label="t", summary="found it · ran 4s",
                                     row={"light": "done", "result": "ok"})
         assert render_virtual.virtual_summary(done, "ai_short") == ("💬 found it · ran 4s",
                                                                     "dim italic")
         assert render_virtual.virtual_summary(done, "last_command") == ("-", "dim")
-        group = swarm_view.SwarmLine("g", "", "group", 1, summary="3 agents")
-        assert render_virtual.virtual_summary(group, "heartbeat")[0] == "3 agents"
+        more = swarm_view.SwarmLine("g", "", "more", 1, summary="→ to open")
+        assert render_virtual.virtual_summary(more, "heartbeat")[0] == "→ to open"
 
 
 @pytest.mark.asyncio
@@ -317,7 +358,7 @@ class TestEmojiFree:
             text = rows._shown.plain
             for glyph in ("🧩", "👥", "🟢", "🟠", "✅", "❌"):
                 assert glyph not in text, glyph
-            assert "Wk review" in text and "Sa map the engine" in text
+            assert "Wk verify-1" in text and "Sa map the engine" in text
             bravo = _bravo(app)
             assert _x_of(_plain_lines(rows)[0], " │ ") == _x_of(bravo.render().plain, " │ ")
 
@@ -353,6 +394,25 @@ class TestQuiet:
             assert rows.builds == builds and rows.paints == paints
 
 
+@pytest.mark.parametrize("width", [120, 200])
+async def test_lines_never_wrap_at_any_detail_level(make_tui, width):
+    """At a real terminal width the columns overrun the row at high detail:
+    each line crops at the edge, one screen row per line, as an agent row
+    does (they used to wrap and shift every row below)."""
+    engine = GridEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(three_agents(), engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        rows = await _open(pilot, engine)
+        for level in app.SUMMARY_LEVELS:
+            app._set_summary_level(level)
+            await pilot.pause()
+            await pilot.pause()
+            assert rows.outer_size.height == len(rows.lines), level
+            assert all(cell_len(ln) <= rows.content_size.width
+                       for ln in _plain_lines(rows)), level
+
+
 # ---------------------------------------------------------------------------
 # Every registered column with a virtual context
 # ---------------------------------------------------------------------------
@@ -368,10 +428,9 @@ def _parent_ctx(**kw):
 
 def _sample_lines():
     rows, _ = swarm.virtual_rows("p", _hook_state(), NOW, 30, Details(), CONVERSATIONS)
-    lines = swarm_view.layout("p", rows, opened={"p/sa/done": True, "p/wf/wf_1/done": True},
-                              details={"p/sa/a1"})
+    lines = swarm_view.layout("p", rows, opened={"p/done": True}, details={"p/sa/a1"})
     kinds = {ln.kind for ln in lines}
-    assert {"group", "phase", "member", "done", "detail"} <= kinds
+    assert {"member", "detail"} <= kinds and "done" not in kinds
     return [ln for ln in lines if ln.kind != "detail"]
 
 

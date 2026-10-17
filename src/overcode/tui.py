@@ -22,6 +22,7 @@ timeline refresh, focus, and the key/quit/unmount plumbing.
 """
 
 from typing import List, Optional
+import dataclasses
 import logging
 import sys
 import threading
@@ -1000,6 +1001,9 @@ class SupervisorTUI(
         as ``overcode list`` does); True if a row's flags changed."""
         widgets = list(self.query(SessionSummary))
         fleet = compute_fleet_flags(w.fleet_row() for w in widgets)
+        if getattr(self, "swarm_types_shown", False):
+            # The expanded members' TYPE column (tui_actions.swarm)
+            fleet = dataclasses.replace(fleet, swarm_types_shown=True)
         self.fleet = fleet
         flipped = False
         for widget in widgets:

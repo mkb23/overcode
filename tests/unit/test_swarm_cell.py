@@ -35,6 +35,16 @@ class TestCell:
         assert self._text(swarm_rollup=_rollup(total=2, running=2)) == " 👥 ▶2"
         assert self._text(swarm_rollup=_rollup(total=3, ok=3)) == " 👥 ✅3"
 
+    def test_members_on_their_own_background_work_show_their_light(self):
+        """🟡 as on their rows (waiting on a shell of their own), not ▶."""
+        rollup = _rollup(total=17, running=1, yellow=2, ok=14)
+        assert self._text(swarm_rollup=rollup) == " 👥 ▶1 🟡2 ✅14"
+        assert self._text(swarm_rollup=_rollup(total=2, yellow=2)) == " 👥 🟡2"
+
+    def test_a_sister_s_rollup_without_yellow_still_draws(self):
+        rollup = {"total": 2, "running": 2, "ok": 0}
+        assert self._text(swarm_rollup=rollup) == " 👥 ▶2"
+
     def test_idle_teammates_show_so_a_listening_team_is_not_blank(self):
         assert self._text(swarm_rollup=_rollup(total=2, idle=2)) == " 👥 ⚪2"
 

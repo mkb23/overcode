@@ -38,6 +38,8 @@ RUN_DIR = Path(tempfile.mkdtemp(prefix="overcode-pytest-"))
 os.environ["OVERCODE_DIR"] = str(RUN_DIR / "overcode")
 os.environ["OVERCODE_STATE_DIR"] = str(RUN_DIR / "overcode" / "sessions")
 os.environ["OVERCODE_TMUX_SOCKET"] = f"overcode-pytest-{os.getpid()}"
+# Claude's task output (swarm_files.ShellEnds): never the real /tmp/claude-<uid>
+os.environ["CLAUDE_CODE_TMPDIR"] = str(RUN_DIR / "claude-tmp")
 # Inside tmux (the usual case: overcode agents run tests), TMUX points every
 # bare `tmux` call at the user's server, and the agent's own identity would
 # make CLI code act as, or on, that agent.
