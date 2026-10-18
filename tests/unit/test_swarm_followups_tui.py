@@ -403,3 +403,29 @@ class TestTreeFold:
             await pilot.press("X")
             await pilot.pause()
             assert app.collapsed_parents == set()
+
+
+@pytest.mark.asyncio
+class TestNoJumpWhenOneFinishes:
+    async def test_the_columns_hold_still_as_a_member_finishes(self, app, engine):
+        """Seen live (2026-10-18): a finished member's ✅ result opened the
+        RES column and pushed every column right for its 30 s, then back."""
+        live = {"event": "Stop", "timestamp": NOW,
+                "subagents": {"a1": {"kind": "subagent", "type": "Explore",
+                                     "started_at": NOW - 30}},
+                "swarm": {"bg_at": NOW, "done": {}}}
+        engine.states["bravo"] = live
+        engine.tick()
+        async with app.run_test() as pilot:
+            await _start(pilot)
+            await _press(pilot, engine, "right")
+            assert _keys(app) == ["id-bravo/sa/a1"]
+            before = list(app.column_widths)
+            engine.states["bravo"] = {**live, "subagents": {}, "swarm": {"bg_at": NOW, "done": {
+                "a1": {"kind": "subagent", "type": "Explore", "result": "ok",
+                       "started_at": NOW - 30, "ended_at": NOW - 1}}}}
+            await _settle(pilot, engine)
+            app._column_widths_dirty = True
+            app._recompute_cell_column_widths()
+            assert [ln.row.get("light") for ln in _lines(app)] == ["done"]
+            assert app.column_widths == before
