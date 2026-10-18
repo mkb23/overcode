@@ -23,6 +23,11 @@ REAL_HOME = Path.home()
 _FAKE_HOME = RUN_DIR / "home"
 _FAKE_HOME.mkdir(parents=True, exist_ok=True)
 os.environ["HOME"] = str(_FAKE_HOME)
+# Claude's task output (swarm_files.ShellEnds) is never the real
+# /tmp/claude-<uid>. Unit tests only: the e2e tiers launch real CLIs, and a
+# missing CLAUDE_CODE_TMPDIR broke hermes's permission step (2026-10-18)
+(RUN_DIR / "claude-tmp").mkdir(parents=True, exist_ok=True)
+os.environ["CLAUDE_CODE_TMPDIR"] = str(RUN_DIR / "claude-tmp")
 for _var in ("CODEX_HOME", "GROK_HOME", "HERMES_HOME", "OPENCODE_DATA_DIR",
              "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
              "XDG_CACHE_HOME", "XDG_STATE_HOME"):
