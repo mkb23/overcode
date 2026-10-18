@@ -1,7 +1,7 @@
 """Delegated-work rows on the column grid (0.6.1 observability, phase 2).
 
-An expanded parent's delegated agents and its summary lines ("+k more",
-"done": ``swarm_view.SwarmLine``) render through the same columns as agent rows,
+An expanded parent's delegated agents and its "+k more" line
+(``swarm_view.SwarmLine``) render through the same columns as agent rows,
 so they line up cell for cell. ``ColumnContext.for_virtual`` builds a
 row's context from the parent's (view settings only) and the row the
 engine published; a column with a ``virtual_render`` (below) fills its
@@ -317,7 +317,7 @@ def virtual_summary(line: SwarmLine, mode: str, emoji_free: bool = False) -> Tup
     """
     e = lambda c: emoji_or_ascii(c, emoji_free)  # noqa: E731
     if line.kind != "member":
-        return line.summary, "dim italic" if line.kind in ("more", "done", "older") else "cyan"
+        return line.summary, "dim italic" if line.kind == "more" else "cyan"
     done = line.row.get("light") == "done"
     style = "dim italic" if done else "italic"
     if mode == "ai_long":

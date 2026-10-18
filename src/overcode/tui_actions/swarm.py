@@ -3,10 +3,10 @@
 docs/design/agent-observability-0.6.1.md §4. The engine publishes an
 expanded parent's virtual rows (its subagents, forks, workflow agents and
 teammates) when this view subscribes to ``swarm:<id>``; the subscription
-is the set of parents expanded here, plus ``<id>/done`` for each whose
-done line is open (its finished members, across every group). The rows
-are drawn by a ``SwarmRows`` widget right under the parent's row, laid out
-flat by ``swarm_view`` (members, then the one done line). The highlight
+is the set of parents expanded here. The rows are drawn by a
+``SwarmRows`` widget right under the parent's row, laid out flat by
+``swarm_view`` (live members, then those finished within
+``finished_row_seconds``, as ``swarm_finished`` allows). The highlight
 can move onto them (``swarm_cursor``) while the parent's row keeps Textual
 focus, so the split's bottom pane stays on the parent: a virtual row has
 no pane of its own.
@@ -15,9 +15,10 @@ Which parents are expanded: the swarm-detail cycle (``f``) sets a standing
 rule (``off``: none; ``groups``: every agent with delegated work in
 flight; ``needs-you``: every agent with a 🟠 member, listing only those
 until the rest are opened), and → / ← / ``X`` override it per parent. The
-rule, the overrides, open done lines and opened "+k more" lists persist in
-``tui_preferences.json`` (keys ``<id>/done`` and ``<id>/members``; the
-group and phase keys of earlier builds are dropped on load).
+rule, the overrides, opened "+k more" lists (``<id>/members``) and what
+finished members show as (``swarm_finished``, the visibility dialog)
+persist in ``tui_preferences.json``; the group, phase and done keys of
+earlier builds are dropped on load.
 
 The TYPE column (each member's agent type) earns its width only while the
 members on screen are of two or more types: ``swarm_types_shown``, carried
@@ -78,13 +79,15 @@ class SwarmMixin:
     def _init_swarm_state(self) -> None:
         # The standing rule: which parents open by themselves (SWARM_DETAIL_MODES)
         self.swarm_detail: str = "off"
+        # What finished members show as (swarm_view.FINISHED_MODES)
+        self.swarm_finished: str = swarm_view.FINISHED_SHOW
         # Per-parent overrides of the rule: True expanded, False collapsed
         self.swarm_manual: Dict[str, bool] = {}
         # Parents whose delegated work shows as rows (the rule plus the
         # overrides, over the agents on screen): the engine subscription
         self.swarm_expanded: Set[str] = set()
-        # Done lines (<id>/done) and "+k more" lists (<id>/members) the
-        # person opened; the rest are closed (swarm_view.AUTO_COLLAPSE_ABOVE)
+        # "+k more" lists (<id>/members) the person opened; the rest are
+        # closed (swarm_view.AUTO_COLLAPSE_ABOVE)
         self.swarm_opened: Dict[str, bool] = {}
         # The members on screen are of two or more types: the TYPE column shows
         self.swarm_types_shown: bool = False
@@ -102,6 +105,9 @@ class SwarmMixin:
         prefs = self._prefs
         mode = getattr(prefs, "swarm_detail", "off")
         self.swarm_detail = mode if mode in SWARM_DETAIL_MODES else "off"
+        finished = getattr(prefs, "swarm_finished", swarm_view.FINISHED_SHOW)
+        self.swarm_finished = finished if finished in swarm_view.FINISHED_MODES \
+            else swarm_view.FINISHED_SHOW
         manual = getattr(prefs, "swarm_expanded", None)
         self.swarm_manual = {k: v for k, v in manual.items()
                              if isinstance(k, str) and isinstance(v, bool)} \
@@ -121,6 +127,7 @@ class SwarmMixin:
             opened = {k: v for k, v in opened.items() if _parent_of(k) in known}
             self.swarm_manual, self.swarm_opened = manual, opened
         self._prefs.swarm_detail = self.swarm_detail
+        self._prefs.swarm_finished = self.swarm_finished
         self._prefs.swarm_expanded = dict(manual)
         self._prefs.swarm_opened = dict(opened)
         self._save_prefs()
@@ -134,7 +141,7 @@ class SwarmMixin:
         return swarm_view.Layout(parent_id, self._swarm_virtual(), self.swarm_opened,
                                  self.swarm_details, emoji_free=self.emoji_free,
                                  needs_you=self.swarm_detail == "needs_you",
-                                 base_depth=base_depth)
+                                 base_depth=base_depth, finished=self.swarm_finished)
 
     def _swarm_layout(self, parent_id: str, base_depth: int = 0) -> List[SwarmLine]:
         return self._swarm_layout_of(parent_id, base_depth).build()
@@ -236,8 +243,10 @@ class SwarmMixin:
         self._swarm_widgets = {}
         for widget in self.query(SessionSummary):
             expanded = widget.session.id in parents
-            if widget.swarm_expanded != expanded:
+            if (widget.swarm_expanded != expanded
+                    or widget.swarm_finished != self.swarm_finished):
                 widget.swarm_expanded = expanded
+                widget.swarm_finished = self.swarm_finished
                 widget.refresh()
         focused = self._get_focused_widget()
         focused_id = focused.session.id if focused is not None else None
@@ -481,12 +490,17 @@ class SwarmMixin:
         """f: off → groups → needs-you, at the agent level. Starts afresh:
         per-agent choices and opened lists are dropped, so the rule decides."""
         i = SWARM_DETAIL_MODES.index(self.swarm_detail) if self.swarm_detail in SWARM_DETAIL_MODES else -1
-        self.swarm_detail = SWARM_DETAIL_MODES[(i + 1) % len(SWARM_DETAIL_MODES)]
+        self._set_swarm_detail(SWARM_DETAIL_MODES[(i + 1) % len(SWARM_DETAIL_MODES)])
+
+    def _set_swarm_detail(self, mode: str, notify: bool = True) -> None:
+        """Set the rule (f, the visibility dialog), starting afresh."""
+        self.swarm_detail = mode if mode in SWARM_DETAIL_MODES else "off"
         self.swarm_manual.clear()
         self.swarm_opened.clear()
         self.swarm_cursor = None
         self._swarm_changed()
-        self.notify(SWARM_DETAIL_NOTES[self.swarm_detail], severity="information")
+        if notify:
+            self.notify(SWARM_DETAIL_NOTES[self.swarm_detail], severity="information")
 
     # ── j / k through the virtual rows ───────────────────────────────
 

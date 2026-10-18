@@ -18,7 +18,7 @@ from ..clock import from_iso
 from ..session_manager import Session
 from ..status_patterns import extract_from_pane, extract_sleep_duration
 from ..history_reader import AgentSessionStats, synthesize_remote_stats
-from .. import tui_engine
+from .. import swarm_view, tui_engine
 from ..tui_helpers import (
     calculate_uptime,
     get_current_state_times,
@@ -187,6 +187,7 @@ class SessionSummary(Static, can_focus=True):
         self.job_count: int = 0  # Running jobs it launched — set by TUI (#463)
         self.children_collapsed: bool = False  # True when children hidden via X — set by TUI
         self.swarm_expanded: bool = False  # delegated work shown as rows below (→) — set by TUI
+        self.swarm_finished: str = "show"  # finished members shown? (swarm_view) — set by TUI
         # Always single-line display
         self.add_class("list-mode")
         self._hover_column: Optional[str] = None  # column whose popup is showing
@@ -583,7 +584,7 @@ class SessionSummary(Static, can_focus=True):
             task_result=self.task_result,
             task_reason=self.task_reason,
             child_rollup=self.child_rollup,
-            swarm_rollup=self.swarm_rollup,
+            swarm_rollup=swarm_view.shown_rollup(self.swarm_rollup, self.swarm_finished),
             swarm_expanded=self.swarm_expanded,
             subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
             quota=self.engine.get("quota") if self.engine else None,

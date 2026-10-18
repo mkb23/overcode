@@ -63,7 +63,7 @@ LIGHTS = {
 }
 DONE_GLYPHS = {"ok": ("✅", "green"), "failed": ("❌", "red")}
 # Count key → glyph, in the order a SubAgents cell shows them ("more" is a
-# "+k more" / "+k older" line's count)
+# "+k more" line's count)
 COUNT_GLYPHS = (("running", "▶"), ("yellow", "🟡"), ("waiting", "🟠"), ("idle", "⚪"),
                 ("ok", "✅"), ("failed", "❌"), ("more", "+"))
 KIND_WORDS = {"subagent": "subagent", "fork": "fork", "teammate": "teammate",
@@ -109,14 +109,32 @@ def rows_of(parent: str, virtual: Mapping[str, dict]) -> Dict[str, dict]:
     return {k: r for k, r in virtual.items() if isinstance(r, dict) and r.get("parent") == parent}
 
 
-DONE_SUFFIX = "/done"
 MEMBERS_SUFFIX = "/members"
 
+# What a finished member shows as (the person's choice, the visibility
+# dialog): its row for a while and its ✅/❌ count; only the ❌ ones; or
+# nothing (live work only)
+FINISHED_SHOW = "show"
+FINISHED_FAILED = "failed"
+FINISHED_HIDE = "hide"
+FINISHED_MODES = (FINISHED_SHOW, FINISHED_FAILED, FINISHED_HIDE)
 
-def done_key(parent: str) -> str:
-    """The agent's done line's key (also the engine subscription for its
-    finished members)."""
-    return parent + DONE_SUFFIX
+
+def shown_rollup(rollup: Optional[dict], finished: str) -> Optional[dict]:
+    """The SubAgents counts as shown: ✅ dropped unless finished members
+    show, ❌ dropped too when they are hidden. The engine's rollup is kept
+    whole (the 👥 hover's total, the auto-open rule)."""
+    if not rollup or finished == FINISHED_SHOW:
+        return rollup
+    drop = ("ok",) if finished == FINISHED_FAILED else ("ok", "failed")
+    return {k: (0 if k in drop else v) for k, v in rollup.items()}
+
+
+def finished_shown(row: dict, finished: str) -> bool:
+    """Whether a finished member keeps its row under this setting."""
+    if finished == FINISHED_HIDE:
+        return False
+    return finished == FINISHED_SHOW or row.get("result") == "failed"
 
 
 def members_key(parent: str) -> str:
@@ -200,9 +218,11 @@ class Layout:
     def __init__(self, parent: str, virtual: Mapping[str, dict],
                  opened: Optional[Mapping[str, bool]] = None,
                  details: Optional[Set[str]] = None, emoji_free: bool = False,
-                 needs_you: bool = False, base_depth: int = 0) -> None:
+                 needs_you: bool = False, base_depth: int = 0,
+                 finished: str = FINISHED_SHOW) -> None:
         self.parent = parent
         self.needs_you = needs_you
+        self.finished = finished
         self.rows = rows_of(parent, virtual)
         self.opened = opened or {}
         self.details = details or set()
@@ -215,7 +235,8 @@ class Layout:
     def build(self) -> List[SwarmLine]:
         members = [(k, r) for k, r in self.rows.items() if r.get("row") == "member"]
         live = sorted((kr for kr in members if kr[1].get("light") != "done"), key=_live_order)
-        finished = sorted((kr for kr in members if kr[1].get("light") == "done"),
+        finished = sorted((kr for kr in members if kr[1].get("light") == "done"
+                           and finished_shown(kr[1], self.finished)),
                           key=_ended_order, reverse=True)
         top = self._collapsed(live)
         for mkey, member in (top if top is not None else live):
@@ -344,8 +365,9 @@ def _tokens(n: int) -> str:
 
 def layout(parent: str, virtual: Mapping[str, dict], opened=None, details=None,
            emoji_free: bool = False, needs_you: bool = False,
-           base_depth: int = 0) -> List[SwarmLine]:
-    return Layout(parent, virtual, opened, details, emoji_free, needs_you, base_depth).build()
+           base_depth: int = 0, finished: str = FINISHED_SHOW) -> List[SwarmLine]:
+    return Layout(parent, virtual, opened, details, emoji_free, needs_you, base_depth,
+                  finished).build()
 
 
 def step(lines: List[SwarmLine], cursor: Optional[str], direction: int) -> Tuple[Optional[str], bool]:

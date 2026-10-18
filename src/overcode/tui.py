@@ -97,6 +97,7 @@ from .tui_widgets import (
     SkillsModal,
     TmuxConfigModal,
     PassthruConfigModal,
+    SwarmVisibilityModal,
     NewAgentModal,
     RenameAgentModal,
     BillingCodeModal,
@@ -614,6 +615,8 @@ class SupervisorTUI(
         yield TmuxConfigModal(id="tmux-config-modal", classes="modal")
         # Modal for passthru key configuration (#446)
         yield PassthruConfigModal(id="passthru-config-modal", classes="modal")
+        # Modal for child and subagent visibility (palette: Subagent visibility…)
+        yield SwarmVisibilityModal(id="swarm-visibility-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")
         yield RenameAgentModal(id="rename-agent-modal", classes="modal")
@@ -2006,6 +2009,7 @@ class SupervisorTUI(
                 # Apply display modes
                 widget.emoji_free = self.emoji_free
                 widget.show_cost = self.show_cost
+                widget.swarm_finished = self.swarm_finished
                 widget.fleet = self.fleet  # until _update_fleet_flags below
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 # What the engine (or a sister) already says about it

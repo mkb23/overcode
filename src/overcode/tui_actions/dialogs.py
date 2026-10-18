@@ -27,6 +27,7 @@ from ..tui_widgets import (
     NewAgentDefaultsModal,
     NewAgentModal,
     PassthruConfigModal,
+    SwarmVisibilityModal,
     BillingCodeModal,
     RenameAgentModal,
     SessionSummary,
@@ -443,6 +444,38 @@ class DialogsMixin:
         self, message: PassthruConfigModal.Cancelled
     ) -> None:
         """Handle passthru config modal cancellation (#446)."""
+        self._dialog_did_close()
+
+    def action_open_swarm_visibility(self) -> None:
+        """The child and subagent visibility dialog (Settings, in the palette)."""
+        from ..config import get_observability_config
+        try:
+            modal = self.query_one("#swarm-visibility-modal", SwarmVisibilityModal)
+        except NoMatches:
+            return
+        self._dialog_will_open()
+        modal.show({
+            "swarm_detail": self.swarm_detail,
+            "swarm_finished": self.swarm_finished,
+            "finished_row_seconds": get_observability_config()["finished_row_seconds"],
+            "show_done": bool(self.show_done),
+        }, self)
+
+    def on_swarm_visibility_modal_changed(self, message: SwarmVisibilityModal.Changed) -> None:
+        """Apply one visibility setting as it changes."""
+        setting, value = message.setting, message.value
+        if setting == "swarm_detail":
+            self._set_swarm_detail(value, notify=False)
+        elif setting == "swarm_finished":
+            self.swarm_finished = value
+            self._swarm_changed()
+        elif setting == "finished_row_seconds":
+            from ..config import save_finished_row_seconds
+            save_finished_row_seconds(value)  # the engine reads it on its next publish
+        elif setting == "show_done" and bool(self.show_done) != bool(value):
+            self.action_toggle_show_done()
+
+    def on_swarm_visibility_modal_closed(self, message: SwarmVisibilityModal.Closed) -> None:
         self._dialog_did_close()
 
     def _record_instruction(self, text: str, agent_name: str) -> None:

@@ -735,11 +735,14 @@ class TUIPreferences:
     collapsed_parents: Set[str] = field(default_factory=set)
     # Delegated work (0.6.1 observability): the swarm-detail rule (f:
     # "off" | "groups" | "needs_you"), per-agent overrides of it ({agent id:
-    # expanded?}, from → / ← / X) and open or closed groups, phases and done
-    # lines ({row key: open?}); ids of agents that are gone are pruned on save
+    # expanded?}, from → / ← / X) and opened "+k more" lists ({row key:
+    # open?}); ids of agents that are gone are pruned on save
     swarm_detail: str = "off"
     swarm_expanded: dict = field(default_factory=dict)
     swarm_opened: dict = field(default_factory=dict)
+    # What finished delegated agents show as: "show" (a row for a while and
+    # ✅/❌ counts), "failed" (only the ❌ ones) or "hide" (visibility dialog)
+    swarm_finished: str = "show"
     # The agent last highlighted by hand (its id): the next start highlights
     # it again, and the split's bottom pane opens on its window
     last_focused_agent: str = ""

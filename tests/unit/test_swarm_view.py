@@ -155,6 +155,33 @@ class TestNoDoneLine:
         assert _kinds(lines) == ["member", "member"]
 
 
+class TestFinishedVisibility:
+    """The visibility dialog's "finished subagents": show / failures only / hide."""
+
+    def _fresh(self):
+        state = _loose(1, 0)
+        state["swarm"]["done"].update({
+            "ok1": {"kind": "subagent", "result": "ok", "started_at": 90.0, "ended_at": 95.0},
+            "bad": {"kind": "subagent", "result": "failed", "started_at": 90.0,
+                    "ended_at": 96.0}})
+        rows, _ = swarm.virtual_rows("p", state, 100.0, 30)
+        return rows
+
+    def test_rows(self):
+        rows = self._fresh()
+        keys = lambda mode: [ln.key for ln in swarm_view.layout("p", rows, finished=mode)]  # noqa: E731
+        assert keys("show") == ["p/sa/a0", "p/sa/bad", "p/sa/ok1"]
+        assert keys("failed") == ["p/sa/a0", "p/sa/bad"]
+        assert keys("hide") == ["p/sa/a0"]
+
+    def test_counts(self):
+        rollup = {"total": 14, "running": 1, "ok": 12, "failed": 1, "workflows": 0}
+        assert swarm_view.shown_rollup(rollup, "show") is rollup
+        assert swarm_view.shown_rollup(rollup, "failed") == {**rollup, "ok": 0}
+        assert swarm_view.shown_rollup(rollup, "hide") == {**rollup, "ok": 0, "failed": 0}
+        assert swarm_view.shown_rollup(None, "hide") is None
+
+
 class TestNeedsYou:
     def test_only_the_orange_members_until_the_rest_are_opened(self):
         rows = _workflow(3, orange={1})

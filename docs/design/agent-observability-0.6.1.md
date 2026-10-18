@@ -213,7 +213,8 @@ still draw the earlier 🛰).
   shows phase rows ("Verify 18/30"), and each phase opens on its own.
 - Done members fold into counts. Expanding a group shows live members,
   then a single `✅ 25 done · ❌ 1` line, which opens the finished ones on
-  demand.
+  demand. *(Superseded: groups and phases by decision 10, the done line
+  by decision 11; finished members are the parent's ✅/❌ counts.)*
 
 ### 4.2 Mockups
 
@@ -631,6 +632,18 @@ Choices where the design left room, or the data disagreed:
     `finished_row_seconds`, then is only those counts. The TUI no longer
     subscribes `<id>/done` or saves a done key (old ones are dropped on
     load); the engine still answers that subscription, unused.
+
+12. **Visibility dialog** (owner, 2026-10-18: "a dedicated modal for child
+    / subagent visibility options, and hide finished agents being one
+    option"). "Subagent visibility…" in the palette's Settings opens it (no key: every free letter clashes with a preset): the `f` rule, **finished subagents** (show /
+    failures only / hide; `swarm_finished` in tui_preferences.json),
+    **finished row stays** (0/10/30/120 s, written to config.yaml's
+    `finished_row_seconds`, which the engine re-reads) and **done child
+    agents** (the `D` toggle, still not persisted, #319). Finished ✅/❌
+    are hidden in the view only (`swarm_view.shown_rollup`,
+    `finished_shown`): the engine's rollup stays whole, so the hover's
+    total and the auto-open rule are unchanged. A ❌ stays under
+    "failures only": a failure is worth seeing.
 
 For Phase 3 (🛰 background sessions as ordinary agent views): the row
 class goes into the default snapshot's `agents`, not `virtual`, so extend

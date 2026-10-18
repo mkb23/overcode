@@ -279,10 +279,10 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        state=lambda app: _toggle(getattr(app, "show_done", None))),
     _C("toggle_collapse_children", "Fold / unfold children", "Display", "collapse expand tree", agent=True),
     _C("expand_swarm", "Expand row", "Display",
-       "delegated work subagents workflow phases teammates team swarm rows done children "
+       "delegated work subagents workflow phases teammates team swarm rows children "
        "tree unfold open drill right", agent=True),
     _C("collapse_swarm", "Collapse row", "Display",
-       "delegated work subagents workflow phases teammates team swarm rows done children "
+       "delegated work subagents workflow phases teammates team swarm rows children "
        "tree fold left", agent=True),
     _C("toggle_expand_all", "Expand / collapse all", "Display",
        "delegated work subagents swarm children tree fold unfold everything"),
@@ -363,6 +363,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("open_sister_selection", "Sister visibility…", "Settings", "remote hosts machines"),
     _C("open_tmux_config", "Tmux toggle key…", "Settings", "split pane focus"),
     _C("open_passthru_config", "Passthru keys…", "Settings", "forward ctrl"),
+    _C("open_swarm_visibility", "Subagent visibility…", "Settings",
+       "delegated work subagents children finished hide failures done rows seconds swarm"),
 
     # App, not Settings: it rewrites the user's keys, so `overcode view
     # toggle` (agents) may not run it.

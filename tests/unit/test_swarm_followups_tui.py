@@ -1,8 +1,7 @@
 """Delegated work, the owner's follow-ups to phase 2 (agent-observability-0.6.1).
 
-* the agent's one ``✅ n done`` line opens: the engine lists its most
-  recent finished members (every group's) only while it is open
-  (subscription ``<id>/done``);
+* finished members are the agent's ✅/❌ counts, not a line; the
+  visibility dialog ("Subagent visibility…") hides them, or all but the failed ones;
 * what is open survives a TUI restart (``tui_preferences.json``);
 * ``X`` expands or collapses everything, ``f`` cycles the swarm-detail rule
   (off → groups → needs-you), and ← / → also fold children in tree sort.
@@ -116,6 +115,67 @@ def _keys(app, parent="id-bravo"):
 
 def _saved(app):
     return TUIPreferences.load(app.tmux_session)
+
+
+def _suba(app, name="bravo"):
+    from overcode.tui_widgets import SessionSummary
+
+    w = next(w for w in app.query(SessionSummary) if w.session.name == name)
+    cols = [c.id for c in w.visible_columns()]
+    return w.row_cells()[cols.index("subagents")].plain
+
+
+@pytest.mark.asyncio
+class TestVisibilityDialog:
+    async def test_hiding_finished_drops_their_rows_and_counts(self, app,
+                                                                             engine):
+        from overcode.tui_widgets import SwarmVisibilityModal
+
+        engine.rollups["bravo"] = dict(BUSY, failed=1)
+        engine.tick()
+        async with app.run_test() as pilot:
+            await _start(pilot)
+            await _press(pilot, engine, "right")
+            assert _keys(app) == ["id-bravo/sa/a1", "id-bravo/sa/fresh"]
+            assert "✅7" in _suba(app) and "❌1" in _suba(app)
+            app.action_open_swarm_visibility()
+            await pilot.pause()
+            modal = app.query_one(SwarmVisibilityModal)
+            assert "visible" in modal.classes
+            await pilot.press("j")              # Finished subagents
+            await _press(pilot, engine, "space")  # → failures only
+            assert app.swarm_finished == "failed"
+            assert _keys(app) == ["id-bravo/sa/a1"]  # the fresh one finished ok
+            assert "✅" not in _suba(app) and "❌1" in _suba(app)
+            await _press(pilot, engine, "space")  # → hide
+            assert "❌" not in _suba(app) and "▶1" in _suba(app)
+            await pilot.press("escape")
+            assert "visible" not in modal.classes
+        assert _saved(app).swarm_finished == "hide"
+
+    async def test_the_finished_row_time_is_written_to_config(self, app, engine):
+        from overcode.config import get_observability_config
+
+        async with app.run_test() as pilot:
+            await _start(pilot)
+            app.action_open_swarm_visibility()
+            await pilot.pause()
+            await pilot.press("j", "j", "space")  # Finished row stays: 30s → 2m
+            await pilot.pause()
+            assert get_observability_config()["finished_row_seconds"] == 120.0
+            await pilot.press("left", "left")     # → 10s
+            await pilot.pause()
+            assert get_observability_config()["finished_row_seconds"] == 10.0
+
+    async def test_an_odd_saved_value_shows_everything(self, make_tui):
+        prefs = TUIPreferences()
+        prefs.swarm_finished = "sometimes"
+        prefs.save("test")
+        engine = Engine()
+        app = make_tui(three_agents(), engine=engine, size=(200, 40))
+        async with app.run_test() as pilot:
+            await _start(pilot)
+            assert app.swarm_finished == "show"
 
 
 @pytest.mark.asyncio

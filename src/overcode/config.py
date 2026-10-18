@@ -781,15 +781,14 @@ def get_observability_config() -> dict:
     a fleet agent's directory gets a 🌙 row of its own (decision 1); a
     finished one keeps it for the same ``finished_row_seconds``.
 
-    A group's ``✅ n done`` line opens on demand: then its most recently
-    finished members get rows again, at most ``done_rows`` of them (the
-    rest show as "+k older").
+    ``done_rows`` caps the finished members the engine lists for an
+    ``<id>/done`` subscriber; the TUI no longer subscribes (it has no done
+    line since 2026-10-18), so it is not documented for users.
 
     Config format in ~/.overcode/config.yaml:
         observability:
           finished_row_seconds: 30   # 0 folds a finished agent at once
           background_sessions: true  # false: no 🌙 rows
-          done_rows: 50              # finished members an open done line lists
 
     Returns:
         Dict with ``finished_row_seconds`` (float, never negative; a
@@ -809,6 +808,18 @@ def get_observability_config() -> dict:
         "done_rows": int(_non_negative(cfg.get("done_rows", DONE_ROWS_DEFAULT),
                                        DONE_ROWS_DEFAULT)),
     }
+
+
+def save_finished_row_seconds(seconds: float) -> None:
+    """Set ``observability.finished_row_seconds`` in config.yaml (the
+    visibility dialog); the engine reads it on its next publish."""
+    config = load_config()
+    section = config.get("observability")
+    if not isinstance(section, dict):
+        section = {}
+    section["finished_row_seconds"] = float(seconds)
+    config["observability"] = section
+    save_config(config)
 
 
 _SIZE_UNITS = {"": 1, "B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
