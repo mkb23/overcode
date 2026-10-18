@@ -19,7 +19,7 @@ class NavigationActionsMixin:
             job_widgets = self._get_job_widgets()
             if not job_widgets:
                 return
-            self.focused_job_index = (self.focused_job_index + 1) % len(job_widgets)
+            self._choose_job((self.focused_job_index + 1) % len(job_widgets))
             return
         widgets = self._get_widgets_in_session_order()
         if not widgets:
@@ -35,7 +35,7 @@ class NavigationActionsMixin:
             job_widgets = self._get_job_widgets()
             if not job_widgets:
                 return
-            self.focused_job_index = (self.focused_job_index - 1) % len(job_widgets)
+            self._choose_job((self.focused_job_index - 1) % len(job_widgets))
             return
         widgets = self._get_widgets_in_session_order()
         if not widgets:

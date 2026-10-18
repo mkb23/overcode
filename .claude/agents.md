@@ -51,6 +51,15 @@ add an entry when something bites.
   content edge, every row's cells on the header's grid, at 120-260 columns
   and every detail level and content mode. `OVERCODE_LAYOUT_SHOTS=<dir>`
   saves SVGs of each state to look at.
+- The highlighted agent is remembered by id (`_chosen_session_id`, the
+  agent last chosen with j/k, click, jump or palette), never by row.
+  `focused_session_index` is only where that agent sits right now. A
+  view change (Z, killed/done agents, filters, folds, sorts) must leave
+  the choice and the split's bottom pane alone: a neighbour stands in
+  while the chosen agent is hidden, and it gets the highlight back when
+  shown. Remove rows with `SessionSummary.leave()`, not `remove()`: a
+  removed row lingers in the DOM until pruned. The jobs view does the
+  same with `_chosen_job_id`.
 - The preview pane is only for sister agents and jobs view.
 - Timer cadences in `tui_timers.py` `TIMER_INTERVALS` are the product's freshness
   contract. Fix CPU by doing the work cheaper, never by polling slower.

@@ -227,6 +227,16 @@ class SessionSummary(Static, can_focus=True):
                 pass
         self.__dict__["_built"] = None
 
+    @property
+    def leaving(self) -> bool:
+        """Removed, waiting for Textual to prune it: not a row any more."""
+        return bool(self.__dict__.get("_leaving"))
+
+    def leave(self):
+        """Remove the row; it stops counting as one at once (``leaving``)."""
+        self.__dict__["_leaving"] = True
+        return self.remove()
+
     def refresh(self, *args, **kwargs):
         """Redraw. Whoever asks may have changed a session or the column
         overrides in place, so the row is worked out again (the row clock

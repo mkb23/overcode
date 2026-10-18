@@ -1599,6 +1599,15 @@ class SupervisorTUI(
             return widgets[self.focused_session_index].session.id
         return None
 
+    def _chosen_session_id(self) -> Optional[str]:
+        """The agent the person chose (j/k, click, jump, palette): the one
+        the highlight and the split's bottom pane belong to. Kept by id,
+        never by row: a view change (Z, killed or done agents shown or
+        hidden, a filter, a fold, a re-sort) moves rows, not the choice.
+        While the chosen agent is hidden a neighbour is highlighted, and
+        it gets the highlight back as soon as it shows again."""
+        return self._prefs.last_focused_agent or None
+
     def _reanchor_selection(self, session_id: Optional[str]) -> None:
         """Move ``focused_session_index`` back onto ``session_id`` after a re-order (#471).
 
@@ -1748,6 +1757,13 @@ class SupervisorTUI(
         """Auto-focus the widget at the new index, update preview, and sync tmux."""
         if self._suppress_focus_watcher:
             return
+        if getattr(self, '_user_navigated', False):
+            # The person chose this agent: remember it by id at once, even
+            # when a dialog defers the rest (a palette pick lands here
+            # before the palette has closed)
+            widgets = self._get_widgets_in_session_order()
+            if 0 <= new_index < len(widgets):
+                self._remember_focus(widgets[new_index].session.id)
         if self._any_modal_visible():
             return
         widget = self._get_focused_widget()
@@ -1979,7 +1995,7 @@ class SupervisorTUI(
         # Remove widgets for deleted sessions
         for session_id in sessions_removed:
             widget = existing_widgets[session_id]
-            widget.remove()
+            widget.leave()
 
         # Clear empty message if we now have sessions
         if has_empty_message and display_sessions:
@@ -2091,28 +2107,32 @@ class SupervisorTUI(
         return flipped
 
     def _restore_focus_in_update(self, focused_session_id: str | None, focus_was_on_session: bool) -> None:
-        """Restore focused_session_index after update_session_widgets DOM mutations.
+        """Put the highlight back on the chosen agent after update_session_widgets.
 
-        If the previously focused session still exists, move the index to its
-        new position. If it was removed/filtered, clamp the index.
+        The chosen agent (``_chosen_session_id``) wins whenever it is on
+        screen, so one hidden and shown again (Z, killed or done agents, a
+        filter, a fold) gets the highlight back. Else the agent highlighted
+        before the update (a neighbour standing in), else the nearest row.
         Only fires the watcher (which calls .focus()) when a SessionSummary
         had Textual focus before the update — never steals from command bar.
         """
-        if not focused_session_id:
-            return
         widgets = self._get_widgets_in_session_order()
         if not widgets:
+            return
+        rows = {w.session.id: i for i, w in enumerate(widgets)}
+        chosen = self._chosen_session_id()
+        target = next((sid for sid in (chosen, focused_session_id) if sid and sid in rows), None)
+        if target is None and not focused_session_id:
             return
         # Suppress watcher if focus wasn't on a session (e.g. command bar open)
         if not focus_was_on_session:
             self._suppress_focus_watcher = True
         try:
-            for i, widget in enumerate(widgets):
-                if widget.session.id == focused_session_id:
-                    self.focused_session_index = i
-                    return
-            # Focused session was removed/filtered — clamp index
-            self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+            if target is not None:
+                self.focused_session_index = rows[target]
+            else:
+                # Hidden or gone: a neighbour stands in (the choice is kept)
+                self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
         finally:
             self._suppress_focus_watcher = False
 
@@ -2164,7 +2184,9 @@ class SupervisorTUI(
         query() returns widgets in DOM/mount order, but we want navigation
         to follow self.sessions order for consistency with display.
         """
-        widgets = list(self.query(SessionSummary))
+        # A removed row stays in the DOM until Textual prunes it: it is
+        # not a row any more (counting it put the highlight one row off)
+        widgets = [w for w in self.query(SessionSummary) if not w.leaving]
         if not widgets:
             return []
         # Build session_id -> order mapping from self.sessions

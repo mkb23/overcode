@@ -249,6 +249,8 @@ class ViewActionsMixin:
             widgets = self._get_widgets_in_session_order()
             for i, w in enumerate(widgets):
                 if w.session.id == session_id:
+                    # The parent stands in while the chosen child is folded
+                    # away; unfolding brings the highlight back to the child
                     self.focused_session_index = i
                     break
             self.notify(f"Collapsed children of {parent_name}", severity="information")

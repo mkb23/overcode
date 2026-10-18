@@ -298,8 +298,11 @@ class CommandBarMixin:
                     if target_widget:
                         target_widget.focus()
                     else:
-                        self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
-                        widgets[self.focused_session_index].focus()
+                        # The target went away: back to the chosen agent, by id
+                        self._restore_focus_in_update(self._chosen_session_id(), True)
+                        widgets = self._get_widgets_in_session_order()
+                        if widgets:
+                            widgets[min(self.focused_session_index, len(widgets) - 1)].focus()
                     if self.preview_visible:
                         self._update_preview()
         except NoMatches:

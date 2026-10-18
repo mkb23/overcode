@@ -46,11 +46,11 @@ class JobsMixin:
                 # Zoom the TUI and show the preview (as in sister view)
                 self._dialog_will_open()
                 self.preview_visible = True
-                # Focus first job widget if available
-                job_widgets = list(self.query(JobSummary))
+                # The job chosen last time, else the first
+                job_widgets = self._get_job_widgets()
                 if job_widgets:
-                    self.focused_job_index = 0
-                    job_widgets[0].focus()
+                    self.focused_job_index = self._chosen_job_row(job_widgets)
+                    job_widgets[self.focused_job_index].focus()
             else:
                 jobs_container.remove_class("visible")
                 jobs_container.display = False
@@ -111,8 +111,24 @@ class JobsMixin:
             bar.refresh()
 
     def _get_job_widgets(self) -> List[JobSummary]:
-        """Get job widgets in order."""
-        return list(self.query(JobSummary))
+        """Get job widgets in order (not ones removed and waiting to be pruned)."""
+        return [w for w in self.query(JobSummary) if not getattr(w, "_leaving", False)]
+
+    def _choose_job(self, index: int) -> None:
+        """j/k in the jobs view: highlight the job at ``index`` and remember
+        it by id, so a refresh or a shown/hidden job never moves it."""
+        widgets = self._get_job_widgets()
+        if 0 <= index < len(widgets):
+            self._chosen_job_id = widgets[index].job.id
+        self.focused_job_index = index
+
+    def _chosen_job_row(self, widgets: List[JobSummary]) -> int:
+        """The chosen job's row now; while it is not listed, the nearest row."""
+        chosen = getattr(self, "_chosen_job_id", None)
+        for i, w in enumerate(widgets):
+            if w.job.id == chosen:
+                return i
+        return max(0, min(self.focused_job_index, len(widgets) - 1))
 
     @work(thread=True, group="refresh_jobs")
     @single_flight("refresh_jobs")
@@ -144,6 +160,7 @@ class JobsMixin:
         # Remove widgets for deleted jobs
         for job_id, widget in existing.items():
             if job_id not in current_ids:
+                widget._leaving = True
                 widget.remove()
 
         # Update existing or mount new
@@ -159,8 +176,13 @@ class JobsMixin:
                 widget.name_width = name_width
                 container.mount(widget)
 
-        # Capture pane content for focused job
+        # The highlight stays on the chosen job, by id (rows came and went)
         if self.tui_mode == "jobs":
+            widgets = self._get_job_widgets()
+            if widgets:
+                row = self._chosen_job_row(widgets)
+                if row != self.focused_job_index:
+                    self.focused_job_index = row
             self._update_focused_job_pane_content()
 
     def _update_focused_job_pane_content(self) -> None:

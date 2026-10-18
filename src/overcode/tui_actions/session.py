@@ -868,19 +868,14 @@ class SessionActionsMixin:
             self.sessions = [s for s in self.sessions if s.id != session_id]
 
             # Remove the widget (will be re-added if show_terminated is True)
-            focused.remove()
+            focused.leave()
             # Reconcile widgets immediately — Textual's Widget.remove() is async,
             # and without this kicker the row could linger until the next 10 s
             # refresh_sessions tick (#456). update_session_widgets diffs DOM vs
             # display_sessions and force-removes anything stale, *and* re-adds
             # the row from _terminated_sessions when show_terminated is True.
             self.update_session_widgets()
-
-            # Focus next available agent (uses session order for j/k consistency)
-            widgets = self._get_widgets_in_session_order()
-            if widgets:
-                self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
-                # Watcher handles .focus(), preview update, and tmux sync
+            self._choose_after_removal(session_id)
         else:
             self.notify(f"Failed to kill agent: {session_name}", severity="error")
 
@@ -898,16 +893,21 @@ class SessionActionsMixin:
             del self._terminated_sessions[session_id]
         self._terminated_times.pop(session_id, None)
         # Remove the widget
-        focused.remove()
+        focused.leave()
         # Same reconciliation as _execute_kill (#456) — force a diff so the row
         # disappears immediately rather than waiting for the next refresh tick.
         self.update_session_widgets()
+        self._choose_after_removal(session_id)
 
-        # Focus next available agent (uses session order for j/k consistency)
+    def _choose_after_removal(self, session_id: str) -> None:
+        """After a kill or clean-up: a ghost row of it (killed agents shown)
+        keeps the choice; an agent gone from the list is replaced by the
+        row now in its place, chosen as j/k would (the pane follows)."""
         widgets = self._get_widgets_in_session_order()
-        if widgets:
-            self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
-            # Watcher handles .focus(), preview update, and tmux sync
+        if not widgets or any(w.session.id == session_id for w in widgets):
+            return
+        self._user_navigated = True
+        self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
 
     def _execute_restart(self, focused: "SessionSummary") -> None:
         """Execute the actual restart operation after confirmation (#133).
