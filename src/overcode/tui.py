@@ -502,7 +502,7 @@ class SupervisorTUI(
         # Initialize hide_asleep from preferences
         self.hide_asleep = self._prefs.hide_asleep
         # Initialize show_done from preferences (#244)
-        self.show_done = self._prefs.show_done
+        self.show_done = self._prefs.show_done_children
         # Initialize summary_content_mode from preferences (#98)
         self.summary_content_mode = self._prefs.summary_content_mode
         # Initialize baseline_minutes from preferences (for mean spin calculation)

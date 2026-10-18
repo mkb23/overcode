@@ -29,7 +29,7 @@ _ROWS: List[Tuple[str, str, str, Sequence[Tuple[Any, str]], str]] = [
      "Agents put to sleep (z)"),
     ("Agents", "show_done", "Done child agents",
      ((False, "hidden"), (True, "shown")),
-     "Child agents that reported back · resets on restart"),
+     "Child agents that reported back (overcode report)"),
     ("Subagents", "swarm_detail", "Open by itself",
      (("off", "off"), ("groups", "with work"), ("needs_you", "needs you")),
      "Whose subagents open as rows without → (same as f)"),

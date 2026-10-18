@@ -118,11 +118,7 @@ class TestRows:
             teammates={"aalice-1234abcd": {"name": "alice"}})
         rows, deadline = swarm.virtual_rows("P", state, 10.0, 30)
         assert deadline is None
-        assert set(rows) == {"P/sa", "P/sa/a1", "P/tm", "P/tm/alice", "P/wf/wf_1", "P/wf/wf_1/w1",
-                             "P/all"}
-        # The agent's counts across every group (its one done line)
-        assert rows["P/all"] == {"parent": "P", "row": "summary",
-                                 "counts": {"running": 1, "waiting": 1, "idle": 1}}
+        assert set(rows) == {"P/sa", "P/sa/a1", "P/tm", "P/tm/alice", "P/wf/wf_1", "P/wf/wf_1/w1"}
         assert [rows[k]["order"] for k in ("P/wf/wf_1", "P/tm", "P/sa")] == [0, 1000, 2000]
         assert rows["P/sa/a1"]["light"] == "green" and rows["P/sa/a1"]["title"] == "Explore"
         assert rows["P/tm/alice"]["light"] == "idle"
@@ -218,25 +214,11 @@ class TestRows:
         row = rows["P/wf/wf_1/w1"]
         assert (row["workflow"], row["phase_title"]) == ("review-060", "Verify")
 
-    def test_the_agent_level_done_line_lists_across_groups_up_to_the_cutoff(self):
+    def test_long_finished_members_are_only_counts(self):
         done = {f"a{i}": {"kind": "subagent", "result": "ok", "ended_at": 10.0 + i}
                 for i in range(3)}
-        done.update({f"w{i}": {"kind": "workflow", "result": "ok", "ended_at": 20.0 + i,
-                               "run": "wf_1"} for i in range(3)})
-        state = _state(done=done, workflows={"t1": {"status": "ok", "run_id": "wf_1",
-                                                    "ended_at": 5.0}})
-        closed, _ = swarm.virtual_rows("P", state, 100.0, 30)
-        assert not any(r.get("row") == "member" for r in closed.values())
-        assert closed["P/all"]["counts"] == {"ok": 6}
-        rows, _ = swarm.virtual_rows("P", state, 100.0, 30, done_open={"P"}, done_limit=4)
-        members = sorted(k for k, r in rows.items() if r.get("row") == "member")
-        assert members == ["P/sa/a2", "P/wf/wf_1/w0", "P/wf/wf_1/w1", "P/wf/wf_1/w2"]
-
-    def test_folded_history_counts_in_the_agent_s_done_line(self):
-        state = _state({"a1": {"kind": "subagent"}})
-        state["swarm"]["folded"] = {"agents_ok": 7, "agents_failed": 2}
-        rows, _ = swarm.virtual_rows("P", state, 0.0, 30)
-        assert rows["P/all"]["counts"] == {"running": 1, "ok": 7, "failed": 2}
+        rows, _ = swarm.virtual_rows("P", _state(done=done), 100.0, 30)
+        assert not any(r.get("row") == "member" for r in rows.values())
 
     def test_meta_files_name_the_members(self, tmp_path):
         base = tmp_path / "sid"
@@ -348,45 +330,19 @@ def _many_done(n, now=1000.0):
     return _state({"live": {"kind": "subagent", "started_at": now - 5}}, done=done)
 
 
-class TestDoneLine:
-    def test_finished_members_fold_into_counts_until_the_line_opens(self):
+class TestFinishedFold:
+    def test_finished_members_fold_into_counts(self):
         rows, deadline = swarm.virtual_rows("P", _many_done(5), 1000.0, 30.0)
         assert sorted(k for k in rows if k.startswith("P/sa/")) == ["P/sa/live"]
         assert rows["P/sa"]["counts"] == {"running": 1, "ok": 4, "failed": 1}
         assert deadline is None
 
-    def test_an_open_line_lists_the_most_recent_up_to_the_limit(self):
-        rows, deadline = swarm.virtual_rows("P", _many_done(80), 1000.0, 30.0,
-                                            done_open={"P/sa"}, done_limit=50)
-        listed = [k for k, r in rows.items() if r.get("light") == "done"]
-        assert set(listed) == {f"P/sa/d{i:03d}" for i in range(30, 80)}  # the newest 50
-        assert rows["P/sa/d079"]["result"] == "ok" and rows["P/sa/d070"]["result"] == "failed"
-        # Counts still cover every finished member; nothing here moves with the clock
-        assert rows["P/sa"]["counts"] == {"running": 1, "ok": 72, "failed": 8}
-        assert deadline is None
-        later, _ = swarm.virtual_rows("P", _many_done(80), 5000.0, 30.0,
-                                      done_open={"P/sa"}, done_limit=50)
-        assert later == rows
-
-    def test_members_still_kept_count_against_the_limit(self):
+    def test_one_finished_moments_ago_keeps_its_row_until_its_time(self):
         state = _many_done(10)
         state["swarm"]["done"]["fresh"] = {"kind": "subagent", "result": "ok",
                                            "started_at": 980.0, "ended_at": 990.0}
-        rows, deadline = swarm.virtual_rows("P", state, 1000.0, 30.0,
-                                            done_open={"P/sa"}, done_limit=3)
-        listed = sorted(k for k, r in rows.items() if r.get("light") == "done")
-        assert listed == ["P/sa/d008", "P/sa/d009", "P/sa/fresh"]
-        assert deadline == 1020.0  # the kept one's time still runs out on schedule
+        rows, deadline = swarm.virtual_rows("P", state, 1000.0, 30.0)
+        assert sorted(k for k, r in rows.items() if r.get("light") == "done") == ["P/sa/fresh"]
+        assert deadline == 1020.0
 
-    def test_another_group_s_line_does_not_open(self):
-        state = _many_done(3)
-        state["subagents"]["t1"] = {"kind": "teammate", "started_at": 990.0}
-        state["swarm"]["done"]["t0"] = {"kind": "teammate", "result": "ok", "ended_at": 100.0}
-        rows, _ = swarm.virtual_rows("P", state, 1000.0, 30.0, done_open={"P/tm"})
-        assert not any(k.startswith("P/sa/d") for k in rows)
-        assert rows["P/tm/t0"]["light"] == "done"
 
-    def test_a_zero_limit_lists_nothing(self):
-        rows, _ = swarm.virtual_rows("P", _many_done(5), 1000.0, 30.0,
-                                     done_open={"P/sa"}, done_limit=0)
-        assert not any(r.get("light") == "done" for r in rows.values())

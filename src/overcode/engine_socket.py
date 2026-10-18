@@ -445,8 +445,7 @@ class EngineClient:
         self._send({"t": "focus", "agent": agent})
 
     def set_swarm(self, agents) -> None:
-        """Subscribe to the virtual rows of these parents (``swarm:<id>``), and to
-        the finished members of groups named ``<group key>/done``; () for none."""
+        """Subscribe to the virtual rows of these parents (``swarm:<id>``); () for none."""
         self._swarm = tuple(sorted(agents))
         self._send({"t": "swarm", "agents": list(self._swarm)})
 

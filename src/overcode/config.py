@@ -765,7 +765,6 @@ def get_session_archive_config() -> dict:
 
 
 FINISHED_ROW_SECONDS_DEFAULT = 30.0
-DONE_ROWS_DEFAULT = 50
 
 
 def get_observability_config() -> dict:
@@ -781,10 +780,6 @@ def get_observability_config() -> dict:
     a fleet agent's directory gets a 🌙 row of its own (decision 1); a
     finished one keeps it for the same ``finished_row_seconds``.
 
-    ``done_rows`` caps the finished members the engine lists for an
-    ``<id>/done`` subscriber; the TUI no longer subscribes (it has no done
-    line since 2026-10-18), so it is not documented for users.
-
     Config format in ~/.overcode/config.yaml:
         observability:
           finished_row_seconds: 30   # 0 folds a finished agent at once
@@ -793,8 +788,8 @@ def get_observability_config() -> dict:
     Returns:
         Dict with ``finished_row_seconds`` (float, never negative; a
         missing or invalid entry falls back to 30),
-        ``background_sessions`` (bool, default True) and ``done_rows``
-        (int, never negative; default 50).
+        and ``background_sessions`` (bool, default True). An old
+        ``done_rows`` entry (0.6.1 betas' done line) is ignored.
     """
     cfg = _get_config_value("observability", {})
     if not isinstance(cfg, dict):
@@ -805,8 +800,6 @@ def get_observability_config() -> dict:
             cfg.get("finished_row_seconds", FINISHED_ROW_SECONDS_DEFAULT),
             FINISHED_ROW_SECONDS_DEFAULT),
         "background_sessions": background if isinstance(background, bool) else True,
-        "done_rows": int(_non_negative(cfg.get("done_rows", DONE_ROWS_DEFAULT),
-                                       DONE_ROWS_DEFAULT)),
     }
 
 

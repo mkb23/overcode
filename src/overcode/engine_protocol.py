@@ -20,9 +20,8 @@ workflow groups, teammates: docs/design/agent-observability-0.6.1.md
 §6.2), keyed by row identity, the same shape as ``agents``. The engine
 fills it only for the parents a visible view subscribed to (``swarm``),
 so a collapsed swarm costs nothing here. A ``swarm`` entry is a parent's
-id, or ``<group key>/done`` for a group whose finished members the view
-also wants listed (an engine that predates it matches no agent with it and
-ignores it). A view that does not know the section ignores it.
+id; anything else (a 0.6.1 beta's ``<id>/done``) is ignored. A view that
+does not know the section ignores it.
 """
 
 from __future__ import annotations

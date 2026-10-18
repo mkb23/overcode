@@ -642,7 +642,7 @@ Choices where the design left room, or the data disagreed:
     failures only / hide; `swarm_finished` in tui_preferences.json),
     **finished row stays** (0/10/30/120 s, written to config.yaml's
     `finished_row_seconds`, which the engine re-reads) and **done child
-    agents** (the `D` toggle, still not persisted, #319). Finished ✅/❌
+    agents** (the old `D` toggle; remembered since 2026-10-18 as `show_done_children`). Finished ✅/❌
     are hidden in the view only (`swarm_view.shown_rollup`,
     `finished_shown`): the engine's rollup stays whole, so the hover's
     total and the auto-open rule are unchanged. A ❌ stays under

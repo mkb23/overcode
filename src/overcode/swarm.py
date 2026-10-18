@@ -50,8 +50,6 @@ WORKFLOW_TOOL = "Workflow"
 # Bounds on what the hook state keeps (design §6.1: the live set plus the
 # last 200 done). Older finished agents and runs fold into counts.
 DONE_KEEP = 200
-# Finished members listed under an open done line (observability.done_rows)
-DONE_ROWS_DEFAULT = 50
 WORKFLOWS_KEEP = 50
 ASYNC_KEEP = 100
 # Background shells one subagent started that its entry remembers
@@ -667,17 +665,12 @@ def rollup(hook_state: Optional[dict], now: float) -> Optional[dict]:
 #   <parent>/wf/<run>/<agent id>  one of its agents
 #   <parent>/tm, <parent>/tm/<name>     the team and a teammate
 #   <parent>/sa, <parent>/sa/<agent id> loose subagents (and forks)
-#   <parent>/all                  the agent's counts across every group
 #
 # Every value holds still between events: absolute times, counts, names.
 # A finished member keeps its row for ``keep_seconds`` after it ended (so
 # does a finished workflow run's group); the earliest such deadline is
 # returned with the rows, for the engine to publish their removal on time.
-# A group whose done line a view opened (subscription ``<group>/done``)
-# also lists its most recently finished members, up to ``done_limit``;
-# ``<parent>/done`` (the agent's one done line, as the TUI draws it) lists
-# the most recent across every group. That list moves only when a member
-# finishes, never with the clock.
+# After that a finished member is only a count (the parent's swarm_rollup).
 #
 # A member row carries what its cells show: its light, times, type
 # (``agent_type``, ``kind``, ``workflow`` and ``phase_title``), its model
@@ -687,11 +680,6 @@ def rollup(hook_state: Optional[dict], now: float) -> Optional[dict]:
 ROW_GROUP = "group"
 ROW_PHASE = "phase"
 ROW_MEMBER = "member"
-ROW_SUMMARY = "summary"   # <parent>/all: the agent's counts across every group
-
-
-def summary_key(parent: str) -> str:
-    return f"{parent}/all"
 
 GROUP_WORKFLOW = "workflow"
 GROUP_TEAM = "team"
@@ -832,32 +820,21 @@ class _Builder:
     """One parent's virtual rows (``virtual_rows``)."""
 
     def __init__(self, parent, hook_state, now, keep_seconds, details, conversations,
-                 done_open=(), done_limit=DONE_ROWS_DEFAULT, quota_of=None):
+                 quota_of=None):
         self.parent = parent
         self.now = now
         self.keep = keep_seconds
         self.details = details
-        # Groups whose done line is open: their finished members get rows too,
-        # the most recent ``done_limit`` of them (counting those still kept).
-        # The parent itself in it: the agent's one done line, across groups.
-        self.done_open = frozenset(done_open or ())
-        self.all_done = parent in self.done_open
         self.quota_of = quota_of
-        self.done_limit = max(0, int(done_limit))
-        self.done_kept: dict = {}        # group key -> finished members shown anyway
-        self.done_waiting: dict = {}     # group key -> [(ended, order, agent id, entry)]
         swarm = hook_state.get("swarm") if isinstance(hook_state.get("swarm"), dict) else {}
         live, _ = _live_items(hook_state, now)
         done = [(a, e) for a, e in (swarm.get("done") or {}).items() if isinstance(e, dict)]
         self.members = [(a, e, True) for a, e in live] + [(a, e, False) for a, e in done]
-        self.done_order = {a: i for i, (a, _) in enumerate(done)}  # the map is oldest-first
         self.runs = {t: r for t, r in (swarm.get("workflows") or {}).items()
                      if isinstance(r, dict)}
         self.teammates = swarm.get("teammates") or {}
-        self.folded = swarm.get("folded") if isinstance(swarm.get("folded"), dict) else {}
         self.spend, self.run_spend = spend_by_agent(conversations)
         self.entries = entries_by_agent(conversations)
-        self.totals = {k: 0 for k in _COUNT_KEYS}  # every member, every group
         self.rows: dict = {}
         self.groups: dict = {}
         self.deadlines: list = []
@@ -949,33 +926,9 @@ class _Builder:
             ended = entry.get("ended_at")
             key = "failed" if result == RESULT_FAILED else "ok"
         counts[key] += 1
-        self.totals[key] += 1
-        if is_live and not shown:
+        if not shown or (not is_live and not self._kept(ended)):
             return
-        if not is_live:
-            # The agent's done line lists across groups (a finished run's too)
-            bucket = self.parent if self.all_done else gkey
-            if shown and self._kept(ended):
-                self.done_kept[bucket] = self.done_kept.get(bucket, 0) + 1
-            else:
-                if self.all_done or (shown and gkey in self.done_open):
-                    stamp = ended if isinstance(ended, (int, float)) else 0
-                    self.done_waiting.setdefault(bucket, []).append(
-                        (stamp, self.done_order.get(agent_id, 0), agent_id, entry))
-                return
         self._emit(agent_id, entry, mkey, gkey, task, light, result, ended)
-
-    def _listed_done(self) -> None:
-        """Open done lines: their most recent finished members, up to the limit."""
-        for bucket, waiting in self.done_waiting.items():
-            room = self.done_limit - self.done_kept.get(bucket, 0)
-            if room <= 0:
-                continue
-            waiting.sort(key=lambda w: (w[0], w[1]), reverse=True)
-            for ended, _, agent_id, entry in waiting[:room]:
-                _, gkey, mkey, _, task = self._place(agent_id, entry, False)
-                self._emit(agent_id, entry, mkey, gkey, task, LIGHT_DONE,
-                           entry.get("result") or RESULT_OK, entry.get("ended_at"))
 
     def _emit(self, agent_id, entry, mkey, gkey, task, light, result, ended) -> None:
         run = self.runs.get(task) or {}
@@ -1035,7 +988,6 @@ class _Builder:
     def build(self) -> Tuple[dict, Optional[float]]:
         for agent_id, entry, is_live in self.members:
             self._member(agent_id, entry, is_live)
-        self._listed_done()
         # A run whose agents have not started yet still gets its group
         for task_id in self.runs:
             if self.shown_runs[task_id]:
@@ -1059,31 +1011,18 @@ class _Builder:
             row["light"] = group_light(counts)
             row["counts"] = {k: v for k, v in counts.items() if v}
             self.rows[key] = row
-        # The agent's own counts across every group (folded history too):
-        # its one done line
-        totals = dict(self.totals)
-        totals["ok"] += int(self.folded.get("agents_ok") or 0)
-        totals["failed"] += int(self.folded.get("agents_failed") or 0)
-        totals = {k: v for k, v in totals.items() if v}
-        if totals:
-            self.rows[summary_key(self.parent)] = {"parent": self.parent, "row": ROW_SUMMARY,
-                                                   "counts": totals}
         return self.rows, (min(self.deadlines) if self.deadlines else None)
 
 
 def virtual_rows(parent: str, hook_state: Optional[dict], now: float, keep_seconds: float,
-                 details=None, conversations=None, done_open=(),
-                 done_limit: int = DONE_ROWS_DEFAULT,
+                 details=None, conversations=None,
                  quota_of=None) -> Tuple[dict, Optional[float]]:
     """``parent``'s virtual rows and when they next change with the clock (None: never).
 
     ``details`` reads members' ``.meta.json`` and workflow journals
     (``NoDetails`` when absent); ``conversations`` is the parent's spend
-    per conversation, for each row's own share of it. ``done_open`` names
-    the groups whose done line a view opened: their ``done_limit`` most
-    recently finished members get rows (beyond ``keep_seconds`` too); the
-    rest stay counts. ``parent`` itself in ``done_open`` opens the agent's
-    one done line: its ``done_limit`` most recent across every group.
+    per conversation, for each row's own share of it. A finished member
+    keeps its row for ``keep_seconds``, then is only a count.
     ``quota_of`` (the quota engine's, when a subscription is known) turns a
     member's spend entries into points of the weekly quota. Pure otherwise.
     """
@@ -1091,5 +1030,5 @@ def virtual_rows(parent: str, hook_state: Optional[dict], now: float, keep_secon
         return {}, None
     builder = _Builder(parent, hook_state, now, keep_seconds,
                        details if details is not None else NoDetails(), conversations,
-                       done_open, done_limit, quota_of)
+                       quota_of)
     return builder.build()

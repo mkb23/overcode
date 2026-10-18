@@ -14,11 +14,8 @@ state the detector just read), and between ticks when:
 * a watched workflow journal moved (one stat per live run of an expanded
   parent, at the wake scan's cadence: phase progress within a second).
 
-A subscription is ``<parent id>`` (that parent's rows), ``<parent id>/done``
-(the agent's done line, which the TUI opened: its most recently finished
-members across every group, ``observability.done_rows`` of them) or
-``<group key>/done`` (one group's). Finished members past their
-``finished_row_seconds`` cost nothing until a done line opens.
+A subscription is ``<parent id>``: that parent's rows. Finished members
+past their ``finished_row_seconds`` are only counts and cost nothing.
 
 Rows hold absolute times and counts, so a quiet swarm builds the same rows
 and the engine's diff sends nothing.
@@ -30,7 +27,7 @@ those are ordinary agent views. This module only ever fills ``virtual``.
 from __future__ import annotations
 
 import time
-from typing import Callable, Dict, Iterable, Optional, Tuple
+from typing import Callable, Dict, Iterable, Optional
 
 from . import swarm
 from .swarm_files import SwarmFiles
@@ -42,31 +39,11 @@ def finished_row_seconds() -> float:
     return get_observability_config()["finished_row_seconds"]
 
 
-def done_rows() -> int:
-    from .config import get_observability_config
-
-    return get_observability_config()["done_rows"]
-
-
-DONE_SUFFIX = "/done"
-
-
-def split_subscriptions(subs: Iterable[str]) -> Tuple[frozenset, Dict[str, set]]:
-    """``(parents, {parent: groups whose done line is open})`` from a view's
-    subscriptions: ``<parent id>`` for its rows, ``<group key>/done`` for a
-    group's finished members (a group key starts ``<parent id>/``), and
-    ``<parent id>/done`` for all of them (the parent id itself in the set)."""
-    parents = set()
-    done: Dict[str, set] = {}
-    for sub in subs:
-        if not isinstance(sub, str):
-            continue
-        if "/" not in sub:
-            parents.add(sub)
-        elif sub.endswith(DONE_SUFFIX):
-            group = sub[:-len(DONE_SUFFIX)]
-            done.setdefault(group.split("/", 1)[0], set()).add(group)
-    return frozenset(parents), done
+def subscribed_parents(subs: Iterable[str]) -> frozenset:
+    """The parents a view subscribed to (``<parent id>``). A key with a
+    "/" (``<id>/done`` from a 0.6.1 beta TUI's done line) asks for nothing
+    any more and is ignored."""
+    return frozenset(s for s in subs if isinstance(s, str) and "/" not in s)
 
 
 class SwarmPublisher:
@@ -77,7 +54,6 @@ class SwarmPublisher:
         swarm_state: Callable[[str], Optional[dict]],
         conversations: Callable[[str], Optional[dict]],
         keep_seconds: Callable[[], float] = finished_row_seconds,
-        done_limit: Callable[[], int] = done_rows,
         files: Optional[SwarmFiles] = None,
         clock: Callable[[], float] = time.time,
         quota_of: Optional[Callable[[dict], Optional[float]]] = None,
@@ -85,7 +61,6 @@ class SwarmPublisher:
         self.swarm_state = swarm_state          # agent name -> hook state (or None)
         self.conversations = conversations      # agent id -> spend per conversation
         self.keep_seconds = keep_seconds
-        self.done_limit = done_limit
         self.files = files if files is not None else SwarmFiles()
         self.clock = clock
         self.quota_of = quota_of                # spend entries -> weekly quota points
@@ -103,8 +78,7 @@ class SwarmPublisher:
             return {}
         now = self.clock() if now is None else now
         keep = self.keep_seconds()
-        parents, done_open = split_subscriptions(subs)
-        limit = self.done_limit() if done_open else 0
+        parents = subscribed_parents(subs)
         out: Dict[str, dict] = {}
         deadlines = []
         journals: set = set()
@@ -119,7 +93,6 @@ class SwarmPublisher:
             details = self.files.details(sw.get("transcript"))
             rows, deadline = swarm.virtual_rows(sid, hook_state, now, keep, details,
                                                 self.conversations(sid),
-                                                done_open.get(sid, ()), limit,
                                                 quota_of=self.quota_of)
             self.builds += 1
             out.update(rows)

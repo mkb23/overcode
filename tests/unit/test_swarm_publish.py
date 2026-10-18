@@ -87,7 +87,7 @@ class TestSubscriptions:
         daemon._engine.subs = frozenset({"s1"})
         daemon._publish_state(daemon.state.sessions, save=False)
         rows = _virtual(daemon)
-        assert set(rows) == {"s1/sa", "s1/sa/a1", "s1/sa/a2", "s1/all"}
+        assert set(rows) == {"s1/sa", "s1/sa/a1", "s1/sa/a2"}
         assert daemon.swarm_publisher.builds == 1
 
     def test_rows_never_reach_the_state_file(self, daemon, tmp_path):
@@ -174,47 +174,17 @@ def test_the_parent_publishes_its_subagents_share_of_its_spend():
     assert "subagent_cost_usd" in SessionDaemonState().to_dict()
 
 
-class TestDoneLineSubscription:
-    """``<group>/done`` asks for a group's finished members as well."""
+class TestOldSubscriptions:
+    """A 0.6.1 beta TUI's ``<id>/done`` subscription asks for nothing."""
 
-    def test_split_subscriptions(self):
-        from overcode.swarm_publisher import split_subscriptions
+    def test_only_parent_ids_count(self):
+        from overcode.swarm_publisher import subscribed_parents
 
-        parents, done = split_subscriptions(
-            {"s1", "s1/sa/done", "s1/wf/wf_1/done", "s2/tm/done", "junk/x", 7})
-        assert parents == {"s1"}
-        assert done == {"s1": {"s1/sa", "s1/wf/wf_1"}, "s2": {"s2/tm"}}
+        assert subscribed_parents({"s1", "s1/sa/done", "s2/done", "junk/x", 7}) == {"s1"}
 
-    def test_opening_the_line_publishes_older_finished_members(self, daemon):
-        from overcode.engine_wake import WakeLoop
-
-        daemon.hook_states["one"] = _hook_state(done_at=NOW - 600)  # long folded
-        loop = WakeLoop(daemon)
-        daemon._engine.subs = frozenset({"s1"})
-        daemon._publish_state(daemon.state.sessions, save=False)
-        assert "s1/sa/a2" not in _virtual(daemon)
-        daemon._engine.subs = frozenset({"s1", "s1/sa/done"})
-        assert loop.publish_swarm_if_due()
-        assert _virtual(daemon)["s1/sa/a2"]["light"] == "done"
-        daemon._engine.subs = frozenset({"s1"})
-        assert loop.publish_swarm_if_due()
-        assert "s1/sa/a2" not in _virtual(daemon)
-
-    def test_a_done_line_alone_builds_nothing(self, daemon):
-        daemon._engine.subs = frozenset({"s1/sa/done"})
+    def test_a_done_key_alone_builds_nothing(self, daemon):
+        daemon._engine.subs = frozenset({"s1/done"})
         daemon._publish_state(daemon.state.sessions, save=False)
         assert _virtual(daemon) == {} and daemon.swarm_publisher.builds == 0
 
 
-def test_the_done_row_limit_comes_from_config(monkeypatch):
-    from overcode import config
-
-    def cfg(value):
-        return lambda key, default=None: {"done_rows": value} if key == "observability" else default
-
-    monkeypatch.setattr(config, "_get_config_value", cfg(7))
-    assert config.get_observability_config()["done_rows"] == 7
-    monkeypatch.setattr(config, "_get_config_value", cfg(-3))
-    assert config.get_observability_config()["done_rows"] == 50
-    monkeypatch.setattr(config, "_get_config_value", cfg("lots"))
-    assert config.get_observability_config()["done_rows"] == 50

@@ -557,15 +557,16 @@ class TestToggleShowDone:
         ViewActionsMixin.action_toggle_show_done(mock_tui)
 
         assert mock_tui.show_done is True
-        # show_done is ephemeral — not persisted (#319)
-        mock_tui._save_prefs.assert_not_called()
+        # Remembered since 2026-10-18 (was ephemeral, #319)
+        assert mock_tui._prefs.show_done_children is True
+        mock_tui._save_prefs.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
         mock_tui.update_timeline.assert_called_once()
         assert "visible" in mock_tui.notify.call_args[0][0]
         assert "2" in mock_tui.notify.call_args[0][0]
 
     def test_disables_show_done(self):
-        """Should toggle show_done off (ephemeral, not persisted) and refresh widgets."""
+        """Should toggle show_done off, remember it, and refresh widgets."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
@@ -575,8 +576,8 @@ class TestToggleShowDone:
         ViewActionsMixin.action_toggle_show_done(mock_tui)
 
         assert mock_tui.show_done is False
-        # show_done is ephemeral — not persisted (#319)
-        mock_tui._save_prefs.assert_not_called()
+        assert mock_tui._prefs.show_done_children is False
+        mock_tui._save_prefs.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
         mock_tui.update_timeline.assert_called_once()
         assert "hidden" in mock_tui.notify.call_args[0][0]

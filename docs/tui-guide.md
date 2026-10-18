@@ -119,7 +119,7 @@ takes no width at all:
   choices.
 - `d` (or **Agent visibility…** in the `/` palette) opens one dialog
   for what the table shows. **Agents**: killed agents (ghost rows),
-  sleeping agents, done child agents (reset on restart). **Subagents**:
+  sleeping agents, done child agents. **Subagents**:
   the `f` rule; what finished subagents show as (**show**: their row for
   a while and their ✅/❌ count; **failures only**: just the ❌ ones;
   **hide**: live work only); how long a finished subagent keeps its row

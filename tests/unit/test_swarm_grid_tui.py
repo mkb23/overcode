@@ -314,8 +314,8 @@ class TestFlatLines:
         bill = cell_segments(_column("billing_code"), ctx)
         assert bill and all(style == "dim" for _, style in bill)
         # A summary line has neither
-        done = swarm_view.SwarmLine("p/done", "", "done", 1, label="done",
-                                    counts=(("ok", 3),))
+        done = swarm_view.SwarmLine("p/+more", "", "more", 1, label="+3 more",
+                                    counts=(("more", 3),))
         dctx = ColumnContext.for_virtual(done, _parent_ctx())
         assert cell_segments(_column("quota"), dctx) == []
         assert cell_segments(_column("billing_code"), dctx) == []

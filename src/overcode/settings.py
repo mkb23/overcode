@@ -695,8 +695,10 @@ def get_tui_preferences_path(session: str) -> Path:
 class TUIPreferences:
     """TUI preferences that persist between launches."""
 
-    # Fields excluded from persistence — always use dataclass default (#319)
-    _SKIP_PERSIST = frozenset({"show_done"})
+    # Fields excluded from persistence — always use dataclass default. (The
+    # old "show_done" key, not persisted since #319, is ignored on load:
+    # done children are remembered as show_done_children since 2026-10-18.)
+    _SKIP_PERSIST = frozenset()
     # Load defaults that differ from dataclass defaults (migration compat)
     _LOAD_DEFAULTS = {"baseline_minutes": 0}
 
@@ -706,7 +708,9 @@ class TUIPreferences:
     tui_log_panel_visible: bool = False
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
-    show_done: bool = False  # show "done" child agents (#244)
+    # Show "done" child agents (#244; the Agent visibility dialog). A new
+    # key, so a stale "show_done": true saved before #319 stays ignored
+    show_done_children: bool = False
     sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value, by_tree (#61), col:<id> (#487)
     sort_reversed: bool = False  # flip the sort column's natural direction (#487)
     summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation, heartbeat (#98, #171)

@@ -15,7 +15,7 @@ import pytest
 from overcode import swarm
 from overcode.engine_protocol import Snapshot
 from overcode.settings import TUIPreferences
-from overcode.swarm_publisher import split_subscriptions
+from overcode.swarm_publisher import subscribed_parents
 from tests.tui_harness import FakeEngine, ready, three_agents
 from tests.unit.test_swarm_tui import NOW, _view
 
@@ -51,15 +51,13 @@ class Engine(FakeEngine):
 
     def snapshot_now(self):
         agents, virtual = {}, {}
-        parents, done = split_subscriptions(self.swarm_subscriptions)
+        parents = subscribed_parents(self.swarm_subscriptions)
         for i, name in enumerate(("alpha", "bravo", "charlie")):
             rollup = self.rollups.get(name)
             view = _view(name, i, **({"swarm_rollup": rollup} if rollup else {}))
             agents[view["session_id"]] = view
             if view["session_id"] in parents and name in self.states:
-                rows, _ = swarm.virtual_rows(view["session_id"], self.states[name], NOW, 30,
-                                             done_open=done.get(view["session_id"], ()),
-                                             done_limit=self.limit)
+                rows, _ = swarm.virtual_rows(view["session_id"], self.states[name], NOW, 30)
                 virtual.update(rows)
         return Snapshot(agents=agents, fleet={"status": "active", "current_interval": 2,
                                               "interval_mode": "attended"}, virtual=virtual)
