@@ -914,6 +914,85 @@ class TestSendPromptToWindow:
             assert launcher._prompt_landed(window, prompt, timeout=0) is False
         assert cap.call_args.kwargs["lines"] > 61
 
+    # The hermes pane from a live run whose launch Enter became a line
+    # break: a resize left a stale copy of the input line above the live one
+    _HERMES_UNSENT = (
+        "Welcome to Hermes Agent! Type your message or /help for commands.\n"
+        " ☤ gpt-5-mini │ ctx -- │ [░░░░░░░░░░] -- │ 2s │ ⏲ 0s\n"
+        "────────────────\n"
+        "❯ Reply with the single word pong and nothing else.\n\n"
+        "────────────────\n"
+        " ☤ gpt-5-mini │ ctx -- │ [░░░░░░░░░░] -- │ 3s │ ⏲ 0s\n"
+        "────────────────\n"
+        "❯ Reply with the single word pong and nothing else.\n\n"
+        "────────────────\n"
+    )
+    _HERMES_SENT = (
+        "────────────────\n"
+        "● Reply with the single word pong and nothing else.\n"
+        "Initializing agent...\n"
+        "────────────────\n"
+        "☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel\n"
+        "────────────────\n"
+    )
+    _PONG = "Reply with the single word pong and nothing else."
+
+    @pytest.mark.parametrize("panes, unsent", [
+        ([_HERMES_UNSENT], True),
+        ([_HERMES_SENT], False),
+        # Not drawn yet, then drawn and still there at the deadline
+        (["", _HERMES_UNSENT], True),
+        # Drawn, then submitted: done before the deadline
+        ([_HERMES_UNSENT, _HERMES_SENT], False),
+        # A stale copy above, but the live input line moved on
+        ([_HERMES_UNSENT + "❯ \n"], False),
+    ], ids=["unsent", "sent", "late-draw", "submitted", "stale-copy"])
+    def test_hermes_unsent_prompt_is_seen_on_its_input_line(self, tmp_path, panes, unsent):
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        captures = iter(panes)
+        last = panes[-1]
+        clock = iter(range(100))
+        with patch("overcode.agent_io.get_tmux_pane_content",
+                   side_effect=lambda *a, **k: next(captures, last)), \
+                patch("overcode.agent_io.time.time", side_effect=lambda: next(clock) * 0.5), \
+                patch("overcode.agent_io.time.sleep"):
+            assert launcher._prompt_unsent(
+                window, self._PONG, get_backend("hermes"), timeout=2.0) is unsent
+
+    @pytest.mark.parametrize("still_unsent, enters", [
+        ([False], 0), ([True, False], 1), ([True, True, True], 3),
+    ], ids=["submitted", "enter-again", "gives-up"])
+    def test_hermes_initial_prompt_gets_enter_again_while_unsent(
+            self, tmp_path, still_unsent, enters):
+        """hermes reads an Enter within 50 ms of a text change as a line
+        break: busy starting up, the launch prompt sat unsent."""
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch.object(launcher, "_prompt_unsent", side_effect=still_unsent), \
+                patch.object(launcher.tmux, "send_keys", return_value=True) as keys, \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True) as send:
+            assert launcher._send_prompt_to_window(
+                window, self._PONG, backend=get_backend("hermes"))
+        assert send.call_count == 1
+        assert keys.call_count == enters
+        for call in keys.call_args_list:
+            assert call.args == (window, "") and call.kwargs == {"enter": True}
+
+    def test_submit_is_not_checked_for_other_backends(self, tmp_path):
+        from overcode.backends import get_backend
+
+        launcher, window = self._codex_launcher(tmp_path)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True), \
+                patch.object(launcher, "_prompt_landed", return_value=True), \
+                patch.object(launcher, "_prompt_unsent") as unsent, \
+                patch("overcode.agent_io.send_text_to_tmux_window", return_value=True):
+            launcher._send_prompt_to_window(window, self._PONG, backend=get_backend("codex"))
+        unsent.assert_not_called()
+
     def test_claude_prompt_delivery_is_not_checked(self, tmp_path):
         """Claude folds a long paste into "[Pasted text]": its words never show."""
         from overcode.backends import get_backend

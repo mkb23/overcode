@@ -228,10 +228,12 @@ class AgentBackendBase:
     # Launch and send, for CLIs that need more than a paste once the input
     # line shows (agent_io): seconds to look again for a dialog drawn over
     # the input line, whether to check the first prompt reached the screen,
-    # whether the first prompt goes on the command line, and whether a
+    # whether to check the first prompt left the input line (Enter again if
+    # not), whether the first prompt goes on the command line, and whether a
     # multi-line send is typed rather than pasted.
     prompt_settle_seconds: float = 0.0
     confirm_prompt_delivery: bool = False
+    confirm_prompt_submit: bool = False
     prompt_as_argument: bool = False
     type_multiline_text: bool = False
 

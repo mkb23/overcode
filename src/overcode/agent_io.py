@@ -158,6 +158,35 @@ class AgentIOMixin:
                 return False
             time.sleep(0.2)
 
+    def _prompt_unsent(self, window_name: str, prompt: str,
+                       backend: AgentBackend, timeout: float) -> bool:
+        """Whether ``prompt`` still sits on the input line after ``timeout``.
+
+        The input line is the pane's last line the backend calls ready (a
+        resize leaves stale copies above it); unsent, it starts with the
+        prompt's first words. Not drawn yet is not sent: False early only
+        once the prompt has shown there and gone.
+        """
+        from .status_patterns import strip_ansi
+
+        first = next((line for line in prompt.splitlines() if line.strip()), "")
+        needle = " ".join(first.split())[:30]
+        if not needle:
+            return False
+        seen = False
+        deadline = time.time() + timeout
+        while True:
+            content = get_tmux_pane_content(self.tmux.session_name, window_name, lines=20) or ""
+            ready = [line for line in (strip_ansi(raw).strip() for raw in content.split('\n'))
+                     if backend.prompt_ready_line(line)]
+            unsent = bool(ready) and needle in " ".join(ready[-1].split())
+            if seen and not unsent:
+                return False
+            seen = seen or unsent
+            if time.time() >= deadline:
+                return unsent
+            time.sleep(0.2)
+
     def _send_prompt_to_window(
         self,
         window_name: str,
@@ -198,6 +227,13 @@ class AgentIOMixin:
                     if self._prompt_landed(window_name, prompt, timeout=3.0):
                         break
                     sent = send(0)
+            # hermes can read the Enter as a line break (see its backend):
+            # Enter again while the prompt has not left the input line
+            if sent and prompt.strip() and backend.confirm_prompt_submit:
+                for _ in range(3):
+                    if not self._prompt_unsent(window_name, prompt, backend, timeout=2.0):
+                        break
+                    self.tmux.send_keys(window_name, "", enter=True)
             return sent
         # Fallback: prompt not detected, use original delay
         return send(startup_delay)

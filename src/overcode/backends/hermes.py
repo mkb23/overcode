@@ -516,6 +516,13 @@ class HermesBackend(AgentBackendBase):
         | BackendCapability.HOOK_EVENTS
         | BackendCapability.TRANSCRIPT_STATS
     )
+    # Hermes reads an Enter that comes within 50 ms of a text change as a
+    # line break (its paste guard, _RAPID_INPUT_ENTER_WINDOW_S), timed when
+    # it reads the keys: busy starting up, it reads the launch prompt and
+    # the Enter together and the prompt sits unsent. The launcher presses
+    # Enter again while the prompt is still on the input line (an Enter on
+    # "text\n" submits the stripped text).
+    confirm_prompt_submit = True
 
     def executable(self) -> str:
         """The binary to invoke, honouring the HERMES_COMMAND override.
