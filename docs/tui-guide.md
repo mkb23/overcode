@@ -117,12 +117,14 @@ takes no width at all:
   just those until you open `+k more`). `→` / `←` on an agent still
   override the rule for that agent; `f` starts afresh, dropping those
   choices.
-- **Subagent visibility…** in the `/` palette (Settings) opens the child & subagent visibility dialog: the `f` rule; what
-  finished subagents show as (**show**: their row for a while and their
-  ✅/❌ count; **failures only**: just the ❌ ones; **hide**: live work
-  only); how long a finished subagent keeps its row (0s, 10s, 30s, 2m,
-  saved in config.yaml); and done child agents (as `D`, reset on
-  restart). Changes apply as you make them; `Esc` closes it.
+- **Agent visibility…** in the `/` palette (Settings) opens one dialog
+  for what the table shows. **Agents**: killed agents (ghost rows),
+  sleeping agents, done child agents (reset on restart). **Subagents**:
+  the `f` rule; what finished subagents show as (**show**: their row for
+  a while and their ✅/❌ count; **failures only**: just the ❌ ones;
+  **hide**: live work only); how long a finished subagent keeps its row
+  (0s, 10s, 30s, 2m, saved in config.yaml). Changes apply as you make
+  them; `Esc` closes it.
 - `X` expands every agent that has delegated work (and, in tree sort,
   unfolds every parent's children); with something open, it collapses
   everything instead. It does not change the `f` rule.
@@ -238,10 +240,12 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 |-----|--------|
 | `t` | Toggle timeline display (hidden at start: the top pane is short) |
 | `d` | Toggle daemon log panel |
-| `g` | Show/hide terminated agents |
 | `Z` | Show/hide sleeping agents |
-| `D` | Show/hide done child agents |
 | `h` / `?` | Show/hide help overlay |
+
+Killed agents, done child agents and sleeping agents are also in the
+**Agent visibility…** dialog (`/`); the TUI diagnostic log is in the `/`
+palette too (no key).
 
 ### Display Customization
 

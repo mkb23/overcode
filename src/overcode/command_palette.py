@@ -363,8 +363,9 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("open_sister_selection", "Sister visibility…", "Settings", "remote hosts machines"),
     _C("open_tmux_config", "Tmux toggle key…", "Settings", "split pane focus"),
     _C("open_passthru_config", "Passthru keys…", "Settings", "forward ctrl"),
-    _C("open_swarm_visibility", "Subagent visibility…", "Settings",
-       "delegated work subagents children finished hide failures done rows seconds swarm"),
+    _C("open_agent_visibility", "Agent visibility…", "Settings",
+       "show hide killed terminated ghost sleeping asleep done children subagents "
+       "delegated work finished failures rows seconds swarm"),
 
     # App, not Settings: it rewrites the user's keys, so `overcode view
     # toggle` (agents) may not run it.

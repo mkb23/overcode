@@ -254,7 +254,7 @@ parent-agent    🟢  2.5h  ...
 
 - **`←` / `→`** — Fold / unfold the focused agent's children (`←` on a child moves to its parent)
 - **`X`** — Fold or unfold every parent at once (also expands or collapses all delegated work)
-- **`D`** — Show/hide "done" child agents (hidden by default)
+- **Agent visibility…** (`/` palette) — Show/hide "done" child agents (hidden by default)
 
 The child count column (👶) shows how many direct children each agent has, then how they stand: `👶 5 2▶ 1📭 1✅ 1❌` (▶ still working, 📭 stopped without a report, ✅ success, ❌ failure or timeout; zero counts are left out). A parent whose turn ended while its children still work shows 🟡 ("Waiting on N children"), not 🔴.
 
@@ -262,7 +262,7 @@ The child count column (👶) shows how many direct children each agent has, the
 
 When a child reports success or failure via `overcode report`, it enters the "done" state, at rest (⚪) with ✅ or ❌ and the reason in the Result column (hover it, or see `overcode list`, for the full reason):
 - Hidden from default list and TUI views
-- Press `D` in TUI or use `--show-done` in CLI to reveal them
+- Turn on "Done child agents" in the TUI's Agent visibility dialog (`/`), or use `--show-done` in CLI, to reveal them
 - Auto-archived by the monitor daemon after 1 hour
 - Manually archive with `overcode cleanup --done`
 

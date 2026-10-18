@@ -97,7 +97,7 @@ from .tui_widgets import (
     SkillsModal,
     TmuxConfigModal,
     PassthruConfigModal,
-    SwarmVisibilityModal,
+    AgentVisibilityModal,
     NewAgentModal,
     RenameAgentModal,
     BillingCodeModal,
@@ -216,7 +216,6 @@ class SupervisorTUI(
         ("h", "toggle_help", "Help"),
         ("question_mark", "toggle_help", "Help"),
         ("d", "toggle_daemon", "Daemon panel"),
-        ("O", "toggle_tui_log", "TUI logs"),
         ("t", "toggle_timeline", "Toggle timeline"),
         ("s", "cycle_summary", "Summary detail"),
         ("c", "sync_to_main_and_clear", "Sync main+clear"),
@@ -270,7 +269,6 @@ class SupervisorTUI(
         # Sleep mode toggle - mark agent as paused (excluded from stats)
         ("z", "toggle_sleep", "Sleep mode"),
         # Show terminated/killed sessions (ghost mode)
-        ("g", "toggle_show_terminated", "Show killed"),
         # Jump to sessions needing attention (bell/red)
         ("b", "jump_to_attention", "Jump attention"),
         # VSCode-style jump-to-agent by name (#420); `>` in it lists commands
@@ -288,7 +286,6 @@ class SupervisorTUI(
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
         # Show/hide done child agents (#244)
-        ("D", "toggle_show_done", "Show done"),
         # Expand / collapse: → / ← on one row (its delegated work, and its
         # children in tree sort), X on everything, f cycles which agents'
         # delegated work opens by itself (0.6.1 observability)
@@ -615,8 +612,8 @@ class SupervisorTUI(
         yield TmuxConfigModal(id="tmux-config-modal", classes="modal")
         # Modal for passthru key configuration (#446)
         yield PassthruConfigModal(id="passthru-config-modal", classes="modal")
-        # Modal for child and subagent visibility (palette: Subagent visibility…)
-        yield SwarmVisibilityModal(id="swarm-visibility-modal", classes="modal")
+        # Modal for agent and subagent visibility (palette: Agent visibility…)
+        yield AgentVisibilityModal(id="agent-visibility-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")
         yield RenameAgentModal(id="rename-agent-modal", classes="modal")

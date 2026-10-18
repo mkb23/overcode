@@ -195,7 +195,8 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
     done_key = km.label("toggle_show_done")
     # Where a key does something about a light, say so
     keys = {STATUS_ASLEEP: f"{sleep_key} to toggle" if sleep_key else "",
-            STATUS_DONE: f"{done_key} to show reported ones" if done_key else ""}
+            STATUS_DONE: f"{done_key} to show reported ones" if done_key
+            else "Agent visibility (/) shows reported ones"}
     statuses: List[Text] = []
     for entry in LIGHT_LEGEND:
         lead = entry.statuses[0]

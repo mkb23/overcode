@@ -635,7 +635,10 @@ Choices where the design left room, or the data disagreed:
 
 12. **Visibility dialog** (owner, 2026-10-18: "a dedicated modal for child
     / subagent visibility options, and hide finished agents being one
-    option"). "Subagent visibility…" in the palette's Settings opens it (no key: every free letter clashes with a preset): the `f` rule, **finished subagents** (show /
+    option"; then "both child and non child agent settings", 2026-10-18).
+    "Agent visibility…" in the palette's Settings opens it (no key: every
+    free letter clashes with a preset). Agents: killed (the old `g`),
+    sleeping (`Z`), done child agents (the old `D`). Subagents: the `f` rule, **finished subagents** (show /
     failures only / hide; `swarm_finished` in tui_preferences.json),
     **finished row stays** (0/10/30/120 s, written to config.yaml's
     `finished_row_seconds`, which the engine re-reads) and **done child

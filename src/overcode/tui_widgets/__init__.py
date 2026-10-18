@@ -19,7 +19,7 @@ from .new_agent_defaults_modal import NewAgentDefaultsModal
 from .skills_modal import SkillsModal
 from .tmux_config_modal import TmuxConfigModal
 from .passthru_config_modal import PassthruConfigModal
-from .swarm_visibility_modal import SwarmVisibilityModal
+from .agent_visibility_modal import AgentVisibilityModal
 from .agent_select_modal import AgentSelectModal
 from .sister_selection_modal import SisterSelectionModal
 from .new_agent_modal import NewAgentModal
@@ -48,7 +48,7 @@ __all__ = [
     "SkillsModal",
     "TmuxConfigModal",
     "PassthruConfigModal",
-    "SwarmVisibilityModal",
+    "AgentVisibilityModal",
     "AgentSelectModal",
     "SisterSelectionModal",
     "NewAgentModal",

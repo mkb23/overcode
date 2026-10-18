@@ -27,7 +27,7 @@ from ..tui_widgets import (
     NewAgentDefaultsModal,
     NewAgentModal,
     PassthruConfigModal,
-    SwarmVisibilityModal,
+    AgentVisibilityModal,
     BillingCodeModal,
     RenameAgentModal,
     SessionSummary,
@@ -446,11 +446,11 @@ class DialogsMixin:
         """Handle passthru config modal cancellation (#446)."""
         self._dialog_did_close()
 
-    def action_open_swarm_visibility(self) -> None:
-        """The child and subagent visibility dialog (Settings, in the palette)."""
+    def action_open_agent_visibility(self) -> None:
+        """The agent visibility dialog (Settings, in the palette): agents and subagents."""
         from ..config import get_observability_config
         try:
-            modal = self.query_one("#swarm-visibility-modal", SwarmVisibilityModal)
+            modal = self.query_one("#agent-visibility-modal", AgentVisibilityModal)
         except NoMatches:
             return
         self._dialog_will_open()
@@ -459,9 +459,11 @@ class DialogsMixin:
             "swarm_finished": self.swarm_finished,
             "finished_row_seconds": get_observability_config()["finished_row_seconds"],
             "show_done": bool(self.show_done),
+            "show_terminated": bool(self.show_terminated),
+            "hide_asleep": bool(self.hide_asleep),
         }, self)
 
-    def on_swarm_visibility_modal_changed(self, message: SwarmVisibilityModal.Changed) -> None:
+    def on_agent_visibility_modal_changed(self, message: AgentVisibilityModal.Changed) -> None:
         """Apply one visibility setting as it changes."""
         setting, value = message.setting, message.value
         if setting == "swarm_detail":
@@ -474,8 +476,12 @@ class DialogsMixin:
             save_finished_row_seconds(value)  # the engine reads it on its next publish
         elif setting == "show_done" and bool(self.show_done) != bool(value):
             self.action_toggle_show_done()
+        elif setting == "show_terminated" and bool(self.show_terminated) != bool(value):
+            self.action_toggle_show_terminated()
+        elif setting == "hide_asleep" and bool(self.hide_asleep) != bool(value):
+            self.action_toggle_hide_asleep()
 
-    def on_swarm_visibility_modal_closed(self, message: SwarmVisibilityModal.Closed) -> None:
+    def on_agent_visibility_modal_closed(self, message: AgentVisibilityModal.Closed) -> None:
         self._dialog_did_close()
 
     def _record_instruction(self, text: str, agent_name: str) -> None:

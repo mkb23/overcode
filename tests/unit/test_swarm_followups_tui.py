@@ -129,7 +129,7 @@ def _suba(app, name="bravo"):
 class TestVisibilityDialog:
     async def test_hiding_finished_drops_their_rows_and_counts(self, app,
                                                                              engine):
-        from overcode.tui_widgets import SwarmVisibilityModal
+        from overcode.tui_widgets import AgentVisibilityModal
 
         engine.rollups["bravo"] = dict(BUSY, failed=1)
         engine.tick()
@@ -138,11 +138,11 @@ class TestVisibilityDialog:
             await _press(pilot, engine, "right")
             assert _keys(app) == ["id-bravo/sa/a1", "id-bravo/sa/fresh"]
             assert "✅7" in _suba(app) and "❌1" in _suba(app)
-            app.action_open_swarm_visibility()
+            app.action_open_agent_visibility()
             await pilot.pause()
-            modal = app.query_one(SwarmVisibilityModal)
+            modal = app.query_one(AgentVisibilityModal)
             assert "visible" in modal.classes
-            await pilot.press("j")              # Finished subagents
+            await pilot.press("j", "j", "j", "j")  # Subagents: Finished
             await _press(pilot, engine, "space")  # → failures only
             assert app.swarm_finished == "failed"
             assert _keys(app) == ["id-bravo/sa/a1"]  # the fresh one finished ok
@@ -153,14 +153,27 @@ class TestVisibilityDialog:
             assert "visible" not in modal.classes
         assert _saved(app).swarm_finished == "hide"
 
+    async def test_the_agent_rows_toggle_killed_sleeping_and_done(self, app, engine):
+        async with app.run_test() as pilot:
+            await _start(pilot)
+            app.action_open_agent_visibility()
+            await pilot.pause()
+            assert (app.show_terminated, app.hide_asleep, app.show_done) == (False, False, False)
+            await pilot.press("space", "j", "space", "j", "space")
+            await pilot.pause()
+            assert (app.show_terminated, app.hide_asleep, app.show_done) == (True, True, True)
+            await pilot.press("escape")
+        saved = _saved(app)
+        assert saved.show_terminated and saved.hide_asleep
+
     async def test_the_finished_row_time_is_written_to_config(self, app, engine):
         from overcode.config import get_observability_config
 
         async with app.run_test() as pilot:
             await _start(pilot)
-            app.action_open_swarm_visibility()
+            app.action_open_agent_visibility()
             await pilot.pause()
-            await pilot.press("j", "j", "space")  # Finished row stays: 30s → 2m
+            await pilot.press("j", "j", "j", "j", "j", "space")  # Finished row stays: 30s → 2m
             await pilot.pause()
             assert get_observability_config()["finished_row_seconds"] == 120.0
             await pilot.press("left", "left")     # → 10s

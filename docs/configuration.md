@@ -529,7 +529,7 @@ child that stopped without reporting and whose window has gone goes the
 same way. Any daemon does this for terminated entries in any tmux session,
 so entries left behind by a tmux session that no longer has a daemon are
 cleared too; at most 50 are archived per pass. During the grace the TUI's
-"show killed" ghost rows (`g`) still list the agent, and `overcode revive`
+"killed agents" ghost rows (Agent visibility dialog) still list the agent, and `overcode revive`
 can still find it; after it, the agent is in the archive (`overcode
 history`, and `overcode show` of a name no longer live).
 

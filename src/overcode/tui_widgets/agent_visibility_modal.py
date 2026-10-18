@@ -1,12 +1,13 @@
 """
-Child and subagent visibility dialog (palette: "Subagent visibility…").
+Agent visibility dialog (palette: "Agent visibility…").
 
-One place for what the table shows of the work agents hand out: which
-agents' subagents open by themselves (the f rule), what a finished
-subagent shows as (its row and ✅/❌ count, only the ❌ ones, or nothing),
-how long a finished subagent keeps its own row (config.yaml
-``observability.finished_row_seconds``) and whether finished overcode
-child agents show (D). Each change applies at once; Esc closes.
+One place for what the table shows. Agents: killed ones (ghost rows),
+sleeping ones, and finished overcode child agents. Subagents (the work an
+agent hands out inside its session): whose open by themselves (the f
+rule), what a finished one shows as (its row and ✅/❌ count, only the ❌
+ones, or nothing) and how long a finished one keeps its row (config.yaml
+``observability.finished_row_seconds``). Each change applies at once;
+Esc closes.
 """
 
 from typing import Any, List, Optional, Sequence, Tuple
@@ -18,24 +19,30 @@ from textual.message import Message
 from . import dialog_style as ds
 from .modal_base import ModalBase
 
-# (setting, label, [(value, shown as)], tip for the selected row)
-_ROWS: List[Tuple[str, str, Sequence[Tuple[Any, str]], str]] = [
-    ("swarm_detail", "Open by itself",
+# (section, setting, label, [(value, shown as)], tip for the selected row)
+_ROWS: List[Tuple[str, str, str, Sequence[Tuple[Any, str]], str]] = [
+    ("Agents", "show_terminated", "Killed agents",
+     ((False, "hidden"), (True, "shown")),
+     "Ghost rows for killed agents (revive with overcode revive)"),
+    ("Agents", "hide_asleep", "Sleeping agents",
+     ((False, "shown"), (True, "hidden")),
+     "Agents put to sleep (z)"),
+    ("Agents", "show_done", "Done child agents",
+     ((False, "hidden"), (True, "shown")),
+     "Child agents that reported back · resets on restart"),
+    ("Subagents", "swarm_detail", "Open by itself",
      (("off", "off"), ("groups", "with work"), ("needs_you", "needs you")),
      "Whose subagents open as rows without → (same as f)"),
-    ("swarm_finished", "Finished subagents",
+    ("Subagents", "swarm_finished", "Finished",
      (("show", "show"), ("failed", "failures only"), ("hide", "hide")),
      "Their row and ✅/❌ count; only the ❌ ones; or live work only"),
-    ("finished_row_seconds", "Finished row stays",
+    ("Subagents", "finished_row_seconds", "Finished row stays",
      ((0.0, "0s"), (10.0, "10s"), (30.0, "30s"), (120.0, "2m")),
      "Then only the count shows · saved in ~/.overcode/config.yaml"),
-    ("show_done", "Done child agents",
-     ((False, "hidden"), (True, "shown")),
-     "Finished overcode child agents (same as D; resets on restart)"),
 ]
 
 
-class SwarmVisibilityModal(ModalBase):
+class AgentVisibilityModal(ModalBase):
     """space / → next option, ← previous; j/k move; esc closes."""
 
     class Changed(Message):
@@ -49,7 +56,7 @@ class SwarmVisibilityModal(ModalBase):
     class Closed(Message):
         """The dialog closed (its changes were applied as they were made)."""
 
-    TITLE = "Child & subagent visibility"
+    TITLE = "Agent visibility"
     WIDTH = 78
     _LABEL_W = 22
 
@@ -70,7 +77,12 @@ class SwarmVisibilityModal(ModalBase):
     def render(self) -> Text:
         w = self.inner_width
         text = Text(no_wrap=True, overflow="crop")
-        for i, (setting, label, choices, _) in enumerate(_ROWS):
+        section = None
+        for i, (sec, setting, label, choices, _) in enumerate(_ROWS):
+            if sec != section:
+                section = sec
+                text.append_text(ds.section(sec, w))
+                text.append("\n")
             line = ds.item(i == self.selected_index)
             line.append(f" {label:<{self._LABEL_W - 1}}", style="bold" if i == self.selected_index
                         else ds.TEXT)
@@ -84,7 +96,7 @@ class SwarmVisibilityModal(ModalBase):
             line.append_text(ds.options(shown, current, w - 1 - self._LABEL_W))
             text.append_text(ds.finish(line, w))
             text.append("\n")
-        tip = _ROWS[self.selected_index][3] if 0 <= self.selected_index < len(_ROWS) else ""
+        tip = _ROWS[self.selected_index][4] if 0 <= self.selected_index < len(_ROWS) else ""
         text.append_text(ds.tip(w, Text(tip, style=ds.MUTED)))
         return text
 
@@ -104,7 +116,7 @@ class SwarmVisibilityModal(ModalBase):
             event.stop()
 
     def _step(self, direction: int) -> None:
-        setting, _, choices, _ = _ROWS[self.selected_index]
+        _, setting, _, choices, _ = _ROWS[self.selected_index]
         j = self._current(setting, choices)
         j = (j + direction) % len(choices) if j >= 0 else (0 if direction > 0 else len(choices) - 1)
         value = choices[j][0]
