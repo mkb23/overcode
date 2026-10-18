@@ -117,7 +117,7 @@ takes no width at all:
   just those until you open `+k more`). `→` / `←` on an agent still
   override the rule for that agent; `f` starts afresh, dropping those
   choices.
-- **Agent visibility…** in the `/` palette (Settings) opens one dialog
+- `d` (or **Agent visibility…** in the `/` palette) opens one dialog
   for what the table shows. **Agents**: killed agents (ghost rows),
   sleeping agents, done child agents (reset on restart). **Subagents**:
   the `f` rule; what finished subagents show as (**show**: their row for
@@ -239,13 +239,12 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 | Key | Action |
 |-----|--------|
 | `t` | Toggle timeline display (hidden at start: the top pane is short) |
-| `d` | Toggle daemon log panel |
+| `d` | Agent visibility: killed, sleeping and done agents; subagent options |
 | `Z` | Show/hide sleeping agents |
 | `h` / `?` | Show/hide help overlay |
 
-Killed agents, done child agents and sleeping agents are also in the
-**Agent visibility…** dialog (`/`); the TUI diagnostic log is in the `/`
-palette too (no key).
+The daemon log panel and the TUI diagnostic log are in the `/` palette
+(no key).
 
 ### Display Customization
 
@@ -498,7 +497,7 @@ This helps compare current activity against a past baseline, useful for ignoring
 
 ## Daemon Panel
 
-Press `d` to show the daemon log panel at the bottom. This displays:
+Open the daemon log panel at the bottom from the `/` palette ("Daemon panel"). It displays:
 - Monitor daemon status and logs
 - Supervisor daemon activity
 - API server port when running

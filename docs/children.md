@@ -31,7 +31,7 @@ overcode launch -n fix-jwt-refresh --parent api-work -p "<prompt>"
   `--no-cascade` leaves them running as orphans.
 - In the TUI, the Tree sort (`S`, then Tree) draws children under their
   parent with `├─`/`└─`. `X` folds a parent's children, and the fold is
-  remembered. The Agent visibility dialog (`/`) shows or hides done children. Every other sort also keeps
+  remembered. The Agent visibility dialog (`d`) shows or hides done children. Every other sort also keeps
   children grouped under their parent.
 
 ### Kinds of row

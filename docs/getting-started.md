@@ -157,7 +157,7 @@ overcode supervisor-daemon start
 The supervisor:
 - Monitors agents for permission prompts
 - Consults standing orders to decide actions
-- Logs interventions in the daemon panel (press `d` to toggle)
+- Logs interventions in the daemon panel (`/` → "Daemon panel" to toggle)
 
 ## Cleaning Up
 

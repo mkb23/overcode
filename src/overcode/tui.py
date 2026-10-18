@@ -215,7 +215,7 @@ class SupervisorTUI(
         ("q", "quit", "Quit"),
         ("h", "toggle_help", "Help"),
         ("question_mark", "toggle_help", "Help"),
-        ("d", "toggle_daemon", "Daemon panel"),
+        ("d", "open_agent_visibility", "Agent visibility"),
         ("t", "toggle_timeline", "Toggle timeline"),
         ("s", "cycle_summary", "Summary detail"),
         ("c", "sync_to_main_and_clear", "Sync main+clear"),
@@ -612,7 +612,7 @@ class SupervisorTUI(
         yield TmuxConfigModal(id="tmux-config-modal", classes="modal")
         # Modal for passthru key configuration (#446)
         yield PassthruConfigModal(id="passthru-config-modal", classes="modal")
-        # Modal for agent and subagent visibility (palette: Agent visibility…)
+        # Modal for agent and subagent visibility (d)
         yield AgentVisibilityModal(id="agent-visibility-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")

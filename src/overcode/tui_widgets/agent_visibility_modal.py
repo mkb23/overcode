@@ -1,5 +1,5 @@
 """
-Agent visibility dialog (palette: "Agent visibility…").
+Agent visibility dialog (d, or "Agent visibility…" in the palette).
 
 One place for what the table shows. Agents: killed ones (ghost rows),
 sleeping ones, and finished overcode child agents. Subagents (the work an
@@ -110,7 +110,7 @@ class AgentVisibilityModal(ModalBase):
         elif key in ("left", "h"):
             self._step(-1)
             event.stop()
-        elif key in ("escape", "q", "Q"):
+        elif key in ("escape", "q", "Q", "d"):
             self.post_message(self.Closed())
             self._hide()
             event.stop()

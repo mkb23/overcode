@@ -447,7 +447,7 @@ class DialogsMixin:
         self._dialog_did_close()
 
     def action_open_agent_visibility(self) -> None:
-        """The agent visibility dialog (Settings, in the palette): agents and subagents."""
+        """d: the agent visibility dialog, agents and subagents."""
         from ..config import get_observability_config
         try:
             modal = self.query_one("#agent-visibility-modal", AgentVisibilityModal)

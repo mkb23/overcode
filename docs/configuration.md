@@ -630,7 +630,7 @@ observability:
 
 `finished_row_seconds` is how long a finished agent keeps its own row
 under its parent; after that it is only a ✅/❌ count in the parent's
-SubAgents cell. The TUI's visibility dialog (`/` → "Subagent visibility…") sets it too, and
+SubAgents cell. The TUI's Agent visibility dialog (`d`) sets it too, and
 can hide finished agents altogether, or all but the failed ones.
 
 ## Children Presets

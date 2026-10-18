@@ -1064,12 +1064,14 @@ class TestSupervisorTUIPilot:
             daemon_panel = app.query_one("#daemon-panel")
             initial_display = daemon_panel.display
 
-            # Press d to toggle daemon panel
-            await pilot.press("d")
+            # The palette's "Daemon panel" toggles it (no key since d opens
+            # Agent visibility)
+            app.action_toggle_daemon()
+            await pilot.pause()
             assert daemon_panel.display != initial_display
 
-            # Press d again to toggle back
-            await pilot.press("d")
+            app.action_toggle_daemon()
+            await pilot.pause()
             assert daemon_panel.display == initial_display
 
     @pytest.mark.asyncio
