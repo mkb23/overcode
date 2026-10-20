@@ -42,6 +42,7 @@
  *  * v2 names its shell tool "shell", which canonicalizes to Claude's "Bash".
  */
 
+import { execFile } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -656,6 +657,122 @@ function createTelemetry(env, options = {}) {
   }
 }
 
+// How many user prompts to keep in agents/<id>/prompts.jsonl, and how much
+// of each: the same shape hook_handler writes for the other backends (the
+// auto-namer reads them).
+const MAX_RECORDED_PROMPTS = 3
+const MAX_RECORDED_PROMPT_CHARS = 1024
+
+// How long a prompt may wait for `hook-handler --prompt-context`. It runs
+// before the prompt reaches the model, as Claude's UserPromptSubmit hook does.
+const PROMPT_CONTEXT_TIMEOUT_MS = 5000
+
+/** argv for overcode: OVERCODE_HOOK_COMMAND (set by the launcher to the
+ *  absolute binary, or `python -m overcode.cli`), else `overcode` on PATH. */
+function hookCommand(env) {
+  const raw = (env && env.OVERCODE_HOOK_COMMAND) || "overcode"
+  return raw.trim().split(/\s+/)
+}
+
+/**
+ * The text overcode adds to a user prompt, or "" (never rejects).
+ *
+ * `overcode hook-handler --prompt-context` prints what Claude's
+ * UserPromptSubmit hook prints: the enhanced-context line when the agent
+ * has it on, then the one-shot rename notice, which it consumes.
+ */
+function readPromptContext(env, options = {}) {
+  const [cmd, ...args] = hookCommand(env)
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        cmd,
+        [...args, "hook-handler", "--prompt-context"],
+        { env, timeout: options.timeoutMs || PROMPT_CONTEXT_TIMEOUT_MS },
+        (err, stdout) => resolve(err ? "" : String(stdout || "").trim()),
+      )
+    } catch (e) {
+      resolve("")
+    }
+  })
+}
+
+/**
+ * Append one of the agent's first user prompts to agents/<id>/prompts.jsonl
+ * as {"t": iso, "prompt": text}. Needs OVERCODE_SESSION_ID; best-effort.
+ */
+function recordPrompt(env, text, options = {}) {
+  if (!env || !env.OVERCODE_SESSION_ID || typeof text !== "string" || !text.trim()) return
+  try {
+    const dir = path.join(
+      resolveStateDir(env, options.homedir || os.homedir()), "agents", env.OVERCODE_SESSION_ID)
+    const file = path.join(dir, "prompts.jsonl")
+    let count = 0
+    try {
+      count = fs.readFileSync(file, "utf8").split("\n").filter((l) => l !== "").length
+    } catch (e) {
+      count = 0
+    }
+    if (count >= MAX_RECORDED_PROMPTS) return
+    const t = options.now ? new Date(options.now() * 1000) : new Date()
+    fs.mkdirSync(dir, { recursive: true })
+    fs.appendFileSync(file, JSON.stringify({
+      t: t.toISOString(),
+      prompt: text.slice(0, MAX_RECORDED_PROMPT_CHARS),
+    }) + "\n")
+  } catch (e) {
+    /* best-effort */
+  }
+}
+
+/** Record the prompt, then fetch the context to add to it. */
+async function promptContext(env, text, options = {}) {
+  recordPrompt(env, text, options)
+  return readPromptContext(env, options)
+}
+
+/**
+ * opencode2's `session.hook("prompt")` handler (index.js): append the
+ * context to a root session's prompt text. A `subagent` child's session has
+ * a `parentID` and is left alone. Never throws.
+ */
+async function extendPrompt(api, env, input, options = {}) {
+  try {
+    const prompt = input && input.prompt
+    if (!prompt || typeof prompt.text !== "string") return
+    const info = await api.session.get({ sessionID: input.sessionID })
+    if (!info || info.parentID) return
+    const text = await promptContext(env, prompt.text, options)
+    if (text) prompt.text = `${prompt.text}\n\n${text}`
+  } catch (e) {
+    /* the prompt goes through without it */
+  }
+}
+
+// opencode's ascending ids (v1.18.29's Identifier.ascending): prefix, 12 hex
+// digits of ms*4096+counter, 14 random base62 characters. A part added to
+// a user message needs one, and sorts after the parts already there.
+const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+let lastIdMs = 0
+let idCounter = 0
+
+function ascendingId(prefix) {
+  const ms = Date.now()
+  if (ms !== lastIdMs) {
+    lastIdMs = ms
+    idCounter = 0
+  }
+  idCounter += 1
+  const value = BigInt(ms) * BigInt(4096) + BigInt(idCounter)
+  let hex = ""
+  for (let i = 0; i < 6; i += 1) {
+    hex += Number((value >> BigInt(40 - 8 * i)) & BigInt(255)).toString(16).padStart(2, "0")
+  }
+  let tail = ""
+  for (let i = 0; i < 14; i += 1) tail += BASE62[Math.floor(Math.random() * 62)]
+  return `${prefix}_${hex}${tail}`
+}
+
 /** True when the environment identifies an overcode-launched agent. */
 function isOvercodeSession(env) {
   return Boolean(env && env.OVERCODE_SESSION_NAME && env.OVERCODE_TMUX_SESSION)
@@ -664,12 +781,18 @@ function isOvercodeSession(env) {
 export {
   BLOCKED_ON_PATTERNS,
   MAX_SESSION_IDS,
+  ascendingId,
   canonicalToolName,
   classifyBlockedOn,
   computeForeground,
   createTelemetry,
   createWriter,
+  extendPrompt,
+  hookCommand,
   isOvercodeSession,
   normalize,
+  promptContext,
+  readPromptContext,
+  recordPrompt,
   resolveStateDir,
 }

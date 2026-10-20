@@ -238,7 +238,8 @@ class RenameMixin:
     def _write_rename_notice(self, session: Session, old_name: str, new_name: str) -> None:
         """Leave the agent a note of its new name for its next prompt (#478).
 
-        Delivered as prompt context by the UserPromptSubmit hook
+        Delivered as prompt context by the UserPromptSubmit hook, or the
+        opencode plugins' ``hook-handler --prompt-context``
         (``hook_handler._emit_rename_notice``), so it costs no extra turn;
         its conversation otherwise still calls it ``old_name``.
         Written in the agent's own directory, created here if it has none

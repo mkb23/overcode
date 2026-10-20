@@ -24,6 +24,8 @@ import json
 import os
 import re
 import shlex
+import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
@@ -39,6 +41,20 @@ from .base import (
 
 if TYPE_CHECKING:
     from ..stats_reader import StatsReader
+
+
+def _resolve_overcode_bin() -> str:
+    """Resolve the absolute path to the overcode binary.
+
+    Byte-identical to claude_code.py's / hermes.py's helper (see the note
+    in codex.py on why it is copied rather than imported): the plugin runs
+    ``overcode hook-handler --prompt-context`` from inside opencode, whose
+    PATH may not have a venv-only overcode on it.
+    """
+    which = shutil.which("overcode")
+    if which:
+        return which
+    return f"{sys.executable} -m overcode.cli"
 
 
 class OpencodeNotFoundError(AgentCliNotFoundError):
@@ -518,6 +534,9 @@ class OpencodeBackend(AgentBackendBase):
         # has broken launches mid-fleet. Agents run the installed version;
         # people update opencode themselves.
         env: Dict[str, str] = {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
+        # How the plugin runs `overcode hook-handler --prompt-context` for
+        # the rename notice and enhanced context it adds to each prompt.
+        env["OVERCODE_HOOK_COMMAND"] = shlex.quote(_resolve_overcode_bin())
         state_dir = os.environ.get("OVERCODE_STATE_DIR")
         if state_dir:
             env["OVERCODE_STATE_DIR"] = shlex.quote(state_dir)

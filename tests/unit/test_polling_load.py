@@ -243,6 +243,19 @@ class TestEntrypoint:
         ep.main()
         assert called == [None, "grok"]
 
+    def test_prompt_context_bypasses_cli(self, monkeypatch):
+        # The opencode plugins run it before every prompt reaches the model.
+        import overcode.entrypoint as ep
+        import overcode.hook_handler as hh
+        import overcode.cli as cli
+
+        called = []
+        monkeypatch.setattr(hh, "handle_prompt_context", lambda: called.append("context"))
+        monkeypatch.setattr(cli, "main", lambda: called.append("cli"))
+        monkeypatch.setattr(sys, "argv", ["overcode", "hook-handler", "--prompt-context"])
+        ep.main()
+        assert called == ["context"]
+
     def test_other_commands_reach_cli(self, monkeypatch):
         import overcode.entrypoint as ep
         import overcode.cli as cli

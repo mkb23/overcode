@@ -655,6 +655,35 @@ def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
         print(text)
 
 
+def emit_prompt_context(tmux_session: str, session_name: str) -> None:
+    """Print what a user prompt carries into the model's context.
+
+    The enhanced-context line (when the agent has it on), then the pending
+    rename note, consumed. Claude, codex, grok and hermes get it from the
+    UserPromptSubmit hook; the opencode plugins from ``--prompt-context``.
+    """
+    from .time_context import generate_enhanced_context
+
+    line = generate_enhanced_context(tmux_session, session_name)
+    if line:
+        print(line)
+    _emit_rename_notice(tmux_session, session_name)
+
+
+def handle_prompt_context() -> None:
+    """``hook-handler --prompt-context``: the UserPromptSubmit context alone.
+
+    For a plugin that publishes the hook files itself and only needs the
+    text to add to the prompt (opencode, opencode2): reads no stdin and
+    writes no hook state. Silent without the agent's env vars.
+    """
+    session_name = os.environ.get("OVERCODE_SESSION_NAME")
+    tmux_session = os.environ.get("OVERCODE_TMUX_SESSION")
+    if not session_name or not tmux_session:
+        return
+    emit_prompt_context(tmux_session, session_name)
+
+
 def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for the append-only hook event log (#448).
 
@@ -1419,9 +1448,4 @@ def handle_hook_event(backend: str | None = None) -> None:
                 )
                 sys.exit(2)
 
-        from .time_context import generate_enhanced_context
-
-        line = generate_enhanced_context(tmux_session, session_name)
-        if line:
-            print(line)
-        _emit_rename_notice(tmux_session, session_name)
+        emit_prompt_context(tmux_session, session_name)

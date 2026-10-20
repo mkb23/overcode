@@ -90,6 +90,7 @@ with a clean "backend X does not support …" — never a crash.
 | Send instruction | `i` / `:` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Key gestures are backend-resolved; grok uses digit keys (`2`/`3`), no Enter; opencode2's Enter confirms the preselected *Allow once*; hermes uses digit + Enter (`1`/`4`) |
 | Live hook-grade status | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval`; grok: global `~/.grok/hooks/overcode.json`, camelCase dialect, incl. `waiting_approval`; opencode2: bundled subdirectory TUI plugin (below); hermes: global `$HERMES_HOME/plugins/overcode/` Python plugin, incl. `waiting_approval` |
+| Rename notice and enhanced context reach the model | — | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | What Claude's UserPromptSubmit hook prints. opencode: a hidden synthetic part in `chat.message`; opencode2: appended to the prompt text, so the TUI shows it; codex: the hook's stdout, as a developer message; hermes: `pre_llm_call` context; grok discards an allowing UserPromptSubmit hook's output (see the grok telemetry section) |
 | Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
 | Token / cost / context columns | — | ✅ | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate unless Hermes priced it | opencode2: SQLite `session_v2`/`session_message` reader. codex: rollout-JSONL reader; cost has no local figure, but `pricing.py` now carries a `gpt-5.6-sol` entry (codex's account-default model), so it shows that model's real published rate applied to codex's real token counts — a list-price estimate, not a billed figure. grok: `GrokStatsReader` reads a full local token/cost split from `updates.jsonl` (summed per-turn `turn_completed.usage`, `costUsdTicks` converted from nano-dollars) — genuinely billing-accurate, not an estimate. hermes: `HermesStatsReader` reads cumulative tokens + the live prompt size from `state.db`; Hermes's own `estimated_cost_usd` is used when its `cost_status` isn't `unknown`, else overcode prices the real tokens itself |
 | AI summaries | `A` | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -612,6 +613,33 @@ the rules are written out as an executable oracle in
   forever. `HookStatusDetector` now reports *terminated* for any backend
   whose pane is back at a bare shell prompt with no live-TUI chrome near it.
 
+### Prompt context: the rename notice and enhanced context
+
+Claude's UserPromptSubmit hook prints the enhanced-context line (when the
+agent has it on) and the one-shot rename notice that `overcode rename`
+leaves in `agents/<id>/rename_notice.txt`, and Claude adds that output to
+the model's context. Both opencode plugins get the same text from
+`overcode hook-handler --prompt-context`, which prints exactly that,
+consumes the notice and writes no hook state. The launcher exports
+`OVERCODE_HOOK_COMMAND` (the absolute `overcode`, or `python -m
+overcode.cli`) so the plugin can find it.
+
+- **opencode (v1)**: `chat.message` waits for the command, then adds the
+  text to the user message as a `synthetic` text part. opencode stores it
+  with the message and sends it to the model; the TUI does not show it.
+  Verified live on 1.18.29.
+- **opencode2**: the server entrypoint (`index.js`) registers
+  `session.hook("prompt")` and appends the text to the prompt, after a
+  blank line. The model gets it, and the TUI shows it as part of the
+  user's message. Verified live on dev-19272.
+- Only the agent's own prompts get it. A `task`/`subagent` child's prompt
+  does not, so a child never takes the rename notice.
+- The first 3 user prompts also go to `agents/<id>/prompts.jsonl`, one
+  `{"t": <ISO time>, "prompt": <first 1024 characters>}` per line, as the
+  hook handler writes them for the other backends.
+- If the command fails or takes more than 5 s, the prompt goes through
+  without the context.
+
 ### Things worth knowing about the footprint
 
 - **The plugin files are visible to git.** They land in your project as an
@@ -683,10 +711,23 @@ flag never touches a codex session you launch by hand outside overcode.
 `overcode doctor` reports `missing-settings` for a codex agent whose argv
 lacks `--dangerously-bypass-hook-trust` — see the doctor section below.
 
+**Prompt context reaches the model.** As with Claude, the UserPromptSubmit
+hook's stdout (the enhanced-context line, the one-shot rename notice) is
+added to the conversation. codex sends it as a separate developer-role
+message, not as part of the prompt. Verified live on 0.156.1, and in
+`codex-rs/hooks/src/events/user_prompt_submit.rs`. On exit 0, codex adds
+plain stdout as is. Stdout that parses as UserPromptSubmit JSON is read for
+`hookSpecificOutput.additionalContext`. Stdout that looks like JSON but does
+not parse fails the hook. Above about 2,500 tokens (the per-hook
+`additionalContextLimit`), codex saves the output to a file and sends a
+preview.
+
 **Hook cost.** Every backend fires `overcode hook-handler` on every tool
 call, so its startup time is paid fleet-wide, many times a second. The
 `overcode` console script (`overcode.entrypoint:main`) dispatches
-`hook-handler [--backend <name>]` straight to `hook_handler.handle_hook_event()` before
+`hook-handler [--backend <name>]` straight to `hook_handler.handle_hook_event()`
+(and the opencode plugins' `hook-handler --prompt-context` to
+`handle_prompt_context()`) before
 the typer CLI, rich, or libtmux are imported — roughly 20 ms per event
 instead of 80 ms. Any other invocation falls through to the full CLI.
 
@@ -929,6 +970,18 @@ project you launch grok in, so overcode writes there instead — inertness
 
 `overcode doctor` reports `missing-settings` for a grok agent whose global
 hooks file is missing or de-markered — see the doctor section below.
+
+**Prompt context does not reach the model.** grok discards the stdout of a
+UserPromptSubmit hook that lets the prompt through, and it has no
+`additionalContext` for that event either. grok's own hooks guide says so
+(`~/.grok/docs/user-guide/10-hooks.md`, and the same text is in the 1.0.34
+binary). So a grok agent never sees the enhanced-context line, and a
+renamed grok agent is not told its new name. A UserPromptSubmit hook can
+only block the prompt, and the reason goes to the user, not the model.
+grok does pass `additionalContext` to the model from PreToolUse,
+PostToolUse, PostToolUseFailure and Stop hooks. Those could carry the
+rename notice on the agent's next tool call, but nothing uses them for it
+yet. Not checked live: grok was not signed in on the test machine.
 
 ### Dialect and event mapping
 
