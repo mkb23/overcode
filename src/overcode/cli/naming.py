@@ -39,7 +39,7 @@ def _naming(directory: Optional[str] = None):
 
 
 def naming_context(rules, directory: Optional[str], self_id: Optional[str] = None,
-                   sessions=None):
+                   sessions=None, names_taken: bool = True):
     """The fleet ``name`` is checked against: live agents, aliases, recent archive."""
     from ..git_context import read_git_context_from_disk
     from ..naming_policy import NamingContext
@@ -61,16 +61,16 @@ def naming_context(rules, directory: Optional[str], self_id: Optional[str] = Non
         except Exception:
             repo = None
     return NamingContext.from_fleet(rules, sm.list_sessions(), archived=archived,
-                                    repo=repo, self_id=self_id)
+                                    repo=repo, self_id=self_id, names_taken=names_taken)
 
 
 def evaluate(name: str, directory: Optional[str], *, use_model: bool = True,
-             sessions=None):
+             sessions=None, names_taken: bool = True):
     """(verdict, advice): the deterministic rules, then ``llm_check`` if they pass."""
     from ..naming_policy import check, llm_check, suggest
 
     _, rules, advice = _naming(directory)
-    ctx = naming_context(rules, directory, sessions=sessions)
+    ctx = naming_context(rules, directory, sessions=sessions, names_taken=names_taken)
     verdict = check(name, ctx)
     if verdict.ok and use_model and rules.llm_check:
         found = llm_check(name, advice)
@@ -106,13 +106,15 @@ def check_launch_name(name: str, directory: Optional[str], force_name: bool,
     if not launched_from_agent():
         _, rules, _ = _naming(directory)
         if rules.warn_humans:
-            verdict, advice = evaluate(name, directory, sessions=sessions)
+            verdict, advice = evaluate(name, directory, sessions=sessions, names_taken=False)
             if not verdict.ok:
                 err_console.print(f"Warning: {escape(verdict.message(advice))}",
                                   style="yellow", highlight=False)
         return HUMAN, False
 
-    verdict, advice = evaluate(name, directory, use_model=not force_name, sessions=sessions)
+    # An existing agent's name is the launcher's to settle (see from_fleet)
+    verdict, advice = evaluate(name, directory, use_model=not force_name, sessions=sessions,
+                               names_taken=False)
     if verdict.ok:
         return PARENT, False
     if verdict.hard or not force_name:

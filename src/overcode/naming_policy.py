@@ -102,8 +102,14 @@ class NamingContext:
         repo: Optional[str] = None,
         self_id: Optional[str] = None,
         now: Optional[datetime] = None,
+        names_taken: bool = True,
     ) -> "NamingContext":
         """A context from session records and archive records (raw dicts).
+
+        Without ``names_taken`` an agent's current name is not taken (its
+        old names still are): ``launch`` and ``fork`` decide what an
+        existing name means, returning a live agent and replacing a stale
+        record, as they did before the policy.
 
         Sister agents are left out (not named, not unique across machines).
         The repo column shows when the agents (with ``repo``) are in more
@@ -114,7 +120,8 @@ class NamingContext:
         for s in sessions:
             if getattr(s, "is_remote", False) or s.id == self_id:
                 continue
-            taken.setdefault(s.name, f"agent '{s.name}'")
+            if names_taken:
+                taken.setdefault(s.name, f"agent '{s.name}'")
             for alias in s.previous_names or ():
                 taken.setdefault(alias, f"an old name of '{s.name}'")
             if s.repo_name:

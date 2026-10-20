@@ -78,11 +78,19 @@ class TestLaunchFromAnAgent:
         child = fleet.get("child-1")
         assert (child.name_source, child.name_forced) == ("parent", True)
 
-    def test_force_name_never_gets_past_a_taken_name(self, fleet, in_agent, naming_config):  # noqa: F811
+    def test_an_existing_agents_name_is_the_launchers_to_settle(self, fleet, in_agent, naming_config):  # noqa: F811
+        """A parent relaunching a child gets it back (live) or a fresh one
+        (stale window), as before the policy: never exit 3."""
         fleet.add("busy")
-        result = _launch("-n", "busy", "--force-name")
+        result = _launch("-n", "busy")
+        assert result.exit_code != 3, result.output
+        assert "taken" not in " ".join(strip_ansi(result.stderr).split())
+
+    def test_force_name_never_gets_past_an_alias(self, fleet, in_agent, naming_config):  # noqa: F811
+        fleet.add("new", previous_names=["old"])
+        result = _launch("-n", "old", "--force-name")
         assert result.exit_code == 3
-        assert "taken by agent 'busy'" in " ".join(strip_ansi(result.stderr).split())
+        assert "old name of 'new'" in " ".join(strip_ansi(result.stderr).split())
 
     def test_an_alias_is_taken(self, fleet, in_agent, naming_config):  # noqa: F811
         fleet.add("new", previous_names=["old"])
