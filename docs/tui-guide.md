@@ -176,7 +176,7 @@ takes no width at all:
 
 ### Claude background sessions (🌙)
 
-A Claude background session (`claude --bg`, `/bg` or `←` in Claude, or one
+A Claude background session (`claude --bg`, `/fork` or `←` in Claude, or one
 dispatched from `claude agents`) runs under Claude's own supervisor, not
 overcode's. When its directory is inside one of your agents' directories, or
 in another git worktree of a repository one of them works in, it gets a row
@@ -188,7 +188,7 @@ of its own, marked 🌙 (`Bs` emoji-free), right under the agent it came from:
 ```
 
 - It is nested under the agent whose hooks it ran under (it inherited that
-  agent's environment, as `/bg` from the agent's Claude does), or whose
+  agent's environment, as `/fork` from the agent's Claude does), or whose
   conversation it continues, or else whose directory holds it (the deepest
   one). A session in a worktree outside every agent's directory nests under
   the agent working in that worktree's repository: the one in the main
@@ -215,6 +215,19 @@ of its own, marked 🌙 (`Bs` emoji-free), right under the agent it came from:
   note about these keys.
 - `observability.background_sessions: false` in config.yaml turns the rows
   off.
+
+**An agent's own conversation in Claude's background worker** is not a 🌙
+row. Claude moves an interactive conversation into its background worker
+when you message it from another device (Remote Control) or send it there
+with `/background` (`/bg`); it carries on under a new id, from a copy of its
+history, and the agent's pane shows it as before. overcode follows it: that
+conversation is the agent's (its turns drive the agent's light, `restart`
+resumes it, its spend is the agent's and the copied history counts once),
+and the agent shows 🌙 (`Bw` emoji-free) in its status detail while it runs
+there; hover it for "running in Claude's background worker". If the
+conversation comes back to the agent's pane, overcode follows that too. Work
+the agent sends off on its own (`claude --bg`, `/fork`, an Agent background
+session) keeps its 🌙 row.
 
 ### Sorting and Column Headers
 

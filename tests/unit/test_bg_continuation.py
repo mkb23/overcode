@@ -502,3 +502,24 @@ class TestSpend:
             tzinfo=None)
         window = history_reader.get_session_window_token_usage(self._agent(), since, projects)
         assert {k: window[k] for k in KEYS} == usage_of(CHARLIE)
+
+
+class TestBackInThePaneElsewhere:
+    def test_another_agent_s_conversation_is_still_only_shared(self, agent, worker):
+        from overcode.session_manager import SessionManager
+
+        sm = SessionManager(skip_git_detection=True)
+        other = sm.create_session(name="bravo", tmux_session="agents",
+                                  tmux_window="b", command=["claude"])
+        sm.add_agent_session_id(other.id, OTHER)
+        agent.working(os.getpid())
+        moved = agent.move_to_worker()
+        agent.send({"hook_event_name": "UserPromptSubmit", "session_id": MOVED,
+                    "transcript_path": str(moved)}, pid=worker)
+        agent.send({"hook_event_name": "SessionStart", "source": "resume",
+                    "session_id": OTHER}, pid=os.getpid())
+        state = agent.state()
+        assert state["conversation_warning"]["kind"] == "shared"
+        assert state["conversation_warning"]["owner"] == "bravo"
+        assert "bg_worker" not in state
+        assert agent.record().active_agent_session_id == MOVED

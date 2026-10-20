@@ -1456,6 +1456,14 @@ def handle_hook_event(backend: str | None = None) -> None:
                         "kind": WARN_UNPLACED, "session_id": session_id, "at": now}
                 _write_state_file(_get_hook_state_path(tmux_session, session_name), quiet)
                 return
+            if kind == FOREIGN_CONTINUED and not entry.get("bg"):
+                # Back in the agent's pane: the worker no longer has it, and
+                # another agent's conversation is still only shared
+                prev_state = {k: v for k, v in prev_state.items() if k != "bg_worker"}
+                if "owner" not in entry:
+                    entry["owner"] = _conversation_owner(session_id, session_name)
+                if entry["owner"]:
+                    kind = FOREIGN_OWN
             if kind == FOREIGN_CONTINUED:
                 # The agent's own conversation, moved into Claude's background
                 # worker (or from it back to the agent's pane): it IS the
