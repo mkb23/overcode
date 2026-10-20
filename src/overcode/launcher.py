@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import re
 
@@ -41,7 +41,7 @@ from .agent_identity import current_agent, env_agent_id, env_agent_name, in_agen
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
 from .launch_settings import NORMAL_PERMISSIONS_CONFLICT, LaunchArgs, resolve_launch_settings
-from .ledger import billing_code_of, billing_lookup, inherited_billing_code
+from .ledger import billing_lookup
 from .dependency_check import require_tmux, require_agent_cli
 from .exceptions import (
     AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
@@ -222,22 +222,27 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
     # Maximum nesting depth for agent hierarchy (#244)
     MAX_HIERARCHY_DEPTH = 5
 
-    def _parent_billing_code(self, parent: Session) -> str:
-        """The code a child of ``parent`` bills to: the parent's, else its root's.
+    def _parent_billing_code(self, parent: Session) -> Tuple[str, str]:
+        """``(id, name)`` of the code a child of ``parent`` bills to: the parent's, else its root's.
 
         A parent an older overcode launched has no code until a daemon
         housekeeping pass gives it its root's; a child launched before then
         must take that code too, not the parent's name, or its spend is
-        split from the rest of its tree for good (codes are sticky).
+        split from the rest of its tree for good (codes are sticky). A
+        legacy code string is mapped to its code (``codes.adopt``).
         """
-        if parent.billing_code or not parent.parent_session_id:
-            return billing_code_of(parent)
-        try:
-            lookup = billing_lookup(self.sessions.list_sessions(),
-                                    self.sessions.iter_archived_records(newest_first=True))
-        except Exception:  # unreadable archive: the parent's name, as before
-            return billing_code_of(parent)
-        return inherited_billing_code(parent, lookup)
+        codes = self.sessions.ledger.codes
+        if parent.billing_code_id:
+            code_id = codes.canonical(parent.billing_code_id)
+            return code_id, codes.name_of(code_id)
+        lookup: dict = {}
+        if not parent.billing_code and parent.parent_session_id:
+            try:
+                lookup = billing_lookup(self.sessions.list_sessions(),
+                                        self.sessions.iter_archived_records(newest_first=True))
+            except Exception:  # unreadable archive: the parent's name, as before
+                lookup = {}
+        return self.sessions._code_id_of(parent, lookup)
 
     def backend_for(self, session: Session) -> AgentBackend:
         """Resolve the agent backend that owns a session's CLI grammar."""
@@ -272,6 +277,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         billing_code: Optional[str] = None,
         name_source: str = "human",
         name_forced: bool = False,
+        billing_code_id: Optional[str] = None,
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -300,7 +306,17 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             billing_code=billing_code or name,
             name_source=name_source,
             name_forced=name_forced,
+            billing_code_id=billing_code_id,
         )
+
+    def _root_billing_code(self, billing_code: Optional[str], name: str, session_id: str) -> str:
+        """The code a new root agent bills to: the code ``billing_code`` (else
+        ``name``) names, a new one only for an unknown name, so every launch
+        under one name rolls up into one code."""
+        from .codes import DEFAULT, HUMAN
+
+        return self.sessions.ledger.codes.resolve(
+            billing_code or name, source=HUMAN if billing_code else DEFAULT, root=session_id)
 
     def _build_launch_cmd_str(
         self,
@@ -464,9 +480,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
         # Billing code: a child is always billed to its parent's code, even
         # with --no-inherit; its own is ignored
+        billing_code_id = None
         if parent_session is not None:
-            inherited = self._parent_billing_code(parent_session)
-            if billing_code and billing_code != inherited:
+            billing_code_id, inherited = self._parent_billing_code(parent_session)
+            if billing_code and self.sessions.ledger.codes.find(billing_code) != billing_code_id:
                 print(f"Warning: --billing-code {billing_code} ignored: a child is billed "
                       f"to its parent's code ({inherited})", file=sys.stderr)
             billing_code = inherited
@@ -572,6 +589,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             agent_persona=agent_persona, model=model, provider=provider,
             wrapper=resolved_wrapper, backend=agent_backend.name,
             skill_profile=skill_profile, billing_code=billing_code,
+            billing_code_id=billing_code_id or self._root_billing_code(
+                billing_code, name, session_id),
             name_source=name_source, name_forced=name_forced,
         )
 
@@ -764,6 +783,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         # populated. The shared helper below then renders the shell line.
         # wrapper is inherited so a forked child lands in the same execution
         # environment (e.g. the same container) as its source.
+        parent_code = self._parent_billing_code(source_session)
         metadata = self._build_session_metadata(
             name=name, tmux_window=window_name, command=[],
             start_directory=source_session.start_directory, session_id=session_id,
@@ -774,7 +794,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             model=source_session.model, provider=source_session.provider,
             wrapper=source_session.wrapper, backend=agent_backend.name,
             skill_profile=getattr(source_session, "skill_profile", None),
-            billing_code=self._parent_billing_code(source_session),
+            billing_code=parent_code[1], billing_code_id=parent_code[0],
             name_source=name_source, name_forced=name_forced,
         )
 

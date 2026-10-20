@@ -58,7 +58,7 @@ except ImportError:
 # counts, the ledger backfill, a report and ``overcode export`` read.
 ARCHIVE_KEYS = (
     "id", "name", "previous_names", "name_source", "name_forced", "tmux_session", "tmux_window",
-    "parent_session_id", "billing_code", "billing_seg", "billing_base_cost",
+    "parent_session_id", "billing_code", "billing_code_id", "billing_seg", "billing_base_cost",
     "billing_base_tokens", "billing_base_usage", "tags",
     "backend", "model", "provider", "skill_profile", "wrapper",
     "heartbeat_enabled", "cost_budget_usd", "human_annotation", "agent_value",

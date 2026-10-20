@@ -123,7 +123,7 @@ def test_an_archived_agent_with_transcripts_is_restated(sm, tmp_path):
     old = version_1_stats(claude, capture, sid, "/proj/wf")
     agent = archive_agent(sm, "wf", "/proj/wf", sid, old)
     backfill(sm)
-    before_cost = sm.ledger.totals()["wf"]["cost"]
+    before_cost = sm.ledger.named(sm.ledger.totals())["wf"]["cost"]
     assert before_cost == pytest.approx(old["estimated_cost_usd"])
     lines_before = sum(1 for _ in sm.iter_archived_records())
 
@@ -140,8 +140,8 @@ def test_an_archived_agent_with_transcripts_is_restated(sm, tmp_path):
     assert sum(1 for _ in sm.iter_archived_records()) == lines_before
     [row] = [r for r in sm.ledger.iter_rows() if r.get("kind") == CORRECTION]
     assert row["closing"] is True and row["sid"] == agent
-    assert sm.ledger.totals()["wf"]["cost"] == pytest.approx(stats["estimated_cost_usd"])
-    assert sm.ledger.totals()["wf"]["agents"] == 1
+    assert sm.ledger.named(sm.ledger.totals())["wf"]["cost"] == pytest.approx(stats["estimated_cost_usd"])
+    assert sm.ledger.named(sm.ledger.totals())["wf"]["agents"] == 1
     assert done(sm) and not needs_restating(record)
 
 

@@ -309,3 +309,10 @@ def _print_storage(session: str, session_manager) -> None:
         rprint(f"[dim]  {note}[/dim]")
     for finding in storage_findings(report, terminated_grace_seconds=grace):
         rprint(f"[yellow]⚠[/yellow] {finding}")
+    try:
+        from ..doctor import billing_findings
+
+        for finding in billing_findings(session_manager):
+            rprint(f"[yellow]⚠[/yellow] {finding}")
+    except Exception:
+        pass

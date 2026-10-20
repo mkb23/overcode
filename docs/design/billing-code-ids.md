@@ -1,7 +1,8 @@
 # Billing codes: ids with renamable names
 
-Status: proposal, 2026-10-20. Asked for by Mike while deciding auto-naming
-(#542, `auto-naming.md`): "billing GUIDs with renamable names … ASAP".
+Status: built, 2026-10-20 (branch `billing-code-ids`; deviations below).
+Asked for by Mike while deciding auto-naming (#542, `auto-naming.md`):
+"billing GUIDs with renamable names … ASAP".
 
 ## Why
 
@@ -112,6 +113,39 @@ can't be fixed by renaming once both have spend.
   the old spend.
 - Merge, then a report over a period that spans the merge.
 - `test_upgrade_from_058.py` extended: 0.5.8 → 0.6.1 lands on ids.
+
+## As built: deviations and calls made
+
+- **Lock.** The registry has its own lock (`ledger/.codes.lock`), taken
+  inside the sessions lock by `rebill` and `create_session` (order:
+  sessions → codes → ledger), not the sessions lock itself: the CLI's
+  `rename`/`merge` need not hold the sessions lock, and the ledger's
+  append lock is never nested under it.
+- **totals.json** (`v: 2`) folds by *code key*: a row's `code`, else its
+  legacy string. Keys are mapped to codes (`legacy`, then `merged_into`)
+  when a report is made, so a rename, a merge or a legacy string minted
+  later never needs a refold. `totals()` and `report()` return codes by
+  id (an unmapped legacy string stays a key of its own; doctor flags it).
+- **`roots`** (new registry field, at most two kept): the root agents that
+  resolved to a code. `follow_agent_name` needs exactly one. Legacy-minted
+  codes have none, so they never follow.
+- **Legacy codes are `human`**: the migration cannot tell a default from a
+  chosen string. A minted name already taken by a current code (one
+  renamed onto it before the mint) gets `~2`, `~3`.
+- **A name given explicitly** (`--billing-code`, rebill, TUI) that lands on
+  a `default` code makes it `human`.
+- **Merge** also moves live agents on the folded code to the kept one
+  (their `billing_code_id` and name copy; no rows: both keys report as one).
+- **Name copies.** `Session.billing_code` is refreshed by the daemon's
+  housekeeping pass (`fill_billing_codes`) and at once by `billing
+  rename`/`merge`; the TUI shows it via the engine, as before.
+- **`rebill`** still returns the old code's name; to a name of the code the
+  agent already has (e.g. a previous name) it writes no rows and returns
+  the current name.
+- **`follow_agent_name(code_id, name) -> bool`** lives in `codes.py`,
+  unwired; the auto-namer must also refresh the session name copies
+  (the daemon pass does it within one housekeeping interval).
+- `overcode billing --json` keys `codes` by id, each entry with `name`.
 
 ## Timing
 

@@ -692,17 +692,37 @@ presets` lists the presets in effect and the warnings. See
 ## Billing Codes
 
 Every agent's spend is filed under a billing code, kept in a ledger for
-ever. The code is the agent's launch name unless set at launch, so every
-run named `shirka` rolls up under `shirka`; a child or a fork always takes
-its parent's code (also with `--no-inherit`; a child's own `--billing-code`
-is ignored with a warning). The code is sticky: a rename keeps it.
+ever. The code is the one named after the agent's launch name unless set at
+launch, so every run named `shirka` rolls up under one `shirka` code; a
+child or a fork always takes its parent's code (also with `--no-inherit`; a
+child's own `--billing-code` is ignored with a warning). The code is
+sticky: renaming the agent keeps it.
+
+A code has an id (`c_…`, fixed) and a name (yours to change). Renaming a
+code changes how every report shows it, past spend included, without
+touching the ledger; its old name still works wherever a code is typed
+(launch, rebill, the TUI), unless another code takes it. Two codes that
+should have been one can be merged: the first one's spend, past and
+future, reports under the second.
 
 ```bash
 overcode launch -n research --billing-code client-x   # set it at launch
 overcode rebill research client-y                     # from now on; the spend so far stays on client-x
 overcode billing                                      # spend per code, all time
-overcode billing --since 30d                          # or --month 2026-09, --json
+overcode billing --since 30d                          # or --month 2026-09, --json, --ids
+overcode billing rename client-y acme                 # every report says acme from now on
+overcode billing merge acme-v2 acme                   # fold acme-v2's spend into acme
+overcode billing codes                                # name, id, source, agents, spend, old names
 ```
+
+The codes live in `~/.overcode/ledger/codes.json`. A code's `source` is
+`default` (created for a launch under its name) or `human` (given with
+`--billing-code`, a rebill, a rename). Ledgers written before codes had ids
+(0.6.0) are not rewritten: the first start gives each code string a code
+of its own, and reports map the old rows to it, so a renamed code keeps its
+history and a new code later given its old name starts from nothing.
+`overcode doctor` warns about an agent whose code is missing from the
+registry and about ledger code strings no code maps.
 
 `overcode rebill` is forward only: the ledger closes the old code with the
 agent's spend so far and starts a new segment under the new one. Children

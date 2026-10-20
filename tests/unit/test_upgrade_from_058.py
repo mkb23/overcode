@@ -62,7 +62,7 @@ def first_start(root: Path) -> dict:
         out["migrate"][tmux] = passes
         out["tidy"][tmux] = sm.tidy_agent_storage(tmux)
         out["storage"][tmux] = storage_report(tmux, sm)
-    out["totals"] = sm.ledger.totals()
+    out["totals"] = sm.ledger.named(sm.ledger.totals())
     return out
 
 
@@ -172,6 +172,28 @@ def check_ledger(sm, totals: dict) -> None:
         assert row["billing_code"] == MANIFEST["billing_code_by_archived_id"][row["sid"]], row["name"]
 
 
+def check_codes(sm, totals: dict) -> None:
+    """Every billing code is a code with an id: live agents carry one, the
+    backfilled strings map to one each, and reports are keyed by them."""
+    from overcode.codes import is_code_id
+    from overcode.doctor import billing_findings
+
+    codes = sm.ledger.codes
+    assert codes.migrated()
+    for session in sm.list_sessions():
+        assert is_code_id(session.billing_code_id), session.name
+        assert codes.name_of(session.billing_code_id) == session.billing_code, session.name
+    strings = set(MANIFEST["billing_code_by_archived_id"].values())
+    strings |= set(MANIFEST["expected_live_billing_codes"].values())
+    legacy = codes.load()["legacy"]
+    assert strings <= set(legacy)
+    assert len({legacy[s] for s in strings}) == len(strings)  # one code per string
+    raw = sm.ledger.totals(save=False)
+    assert all(is_code_id(code) for code in raw)
+    assert sm.ledger.named(raw) == totals
+    assert billing_findings(sm) == []
+
+
 def check_files_kept(root: Path, sm, pristine: Path) -> None:
     """Every name-keyed file is where it was (a live agent's) or packed whole into a bundle."""
     live_names = {(s.tmux_session, s.name) for s in sm.list_sessions()}
@@ -233,6 +255,7 @@ def check_upgraded(root: Path, out: dict, before: dict, pristine: Path) -> None:
     check_archive(sm)
     check_no_secrets(root)
     check_ledger(sm, out["totals"])
+    check_codes(sm, out["totals"])
     check_files_kept(root, sm, pristine)
     check_config()
     check_storage(out)
@@ -298,6 +321,10 @@ def test_ledger_backfill(upgraded):
     check_ledger(upgraded[1]["sm"], upgraded[1]["totals"])
 
 
+def test_billing_codes_land_on_ids(upgraded):
+    check_codes(upgraded[1]["sm"], upgraded[1]["totals"])
+
+
 def test_no_file_lost(upgraded):
     root, out, _ = upgraded
     check_files_kept(root, out["sm"], FIXTURE / "tree")
@@ -329,7 +356,8 @@ def test_second_start_changes_nothing(upgraded):
     digest = tree_digest(root)
     again = first_start(root)
     for tmux, passes in again["migrate"].items():
-        assert all(not (p["packed"] or p["backfilled"] or p["coded"]) for p in passes), tmux
+        assert all(not (p["packed"] or p["backfilled"] or p["minted"] or p["coded"])
+                   for p in passes), tmux
     assert tree_digest(root) == digest
     check_upgraded(root, again, before, FIXTURE / "tree")
 
@@ -381,7 +409,7 @@ def test_spend_restatement_keeps_agents_with_no_transcripts(upgraded, tmp_path):
     root, out, before = upgraded
     sm = out["sm"]
     digest = tree_digest(root / "sessions")
-    totals = sm.ledger.totals()
+    totals = sm.ledger.named(sm.ledger.totals())
     history = tmp_path / "no-claude" / "history.jsonl"
     history.parent.mkdir()
     history.write_text("")
@@ -390,7 +418,7 @@ def test_spend_restatement_keeps_agents_with_no_transcripts(upgraded, tmp_path):
     assert counts["done"] == 1 and counts["restated"] == 0 and counts["rows"] == 0
     after = tree_digest(root / "sessions")
     assert {k: v for k, v in after.items() if ".spend_rv" not in k} == digest
-    assert sm.ledger.totals() == totals
+    assert sm.ledger.named(sm.ledger.totals()) == totals
     check_archive(sm)
 
 
@@ -412,7 +440,7 @@ def test_ledger_by_month(upgraded):
         year, mon = map(int, month.split("-"))
         start = datetime(year, mon, 1)
         end = datetime(year + mon // 12, mon % 12 + 1, 1)
-        report = sm.ledger.report(start, end)
+        report = sm.ledger.named(sm.ledger.report(start, end))
         assert {c: e["cost"] for c, e in report.items()} == \
             {c: pytest.approx(v) for c, v in expected.items()}, month
 

@@ -460,9 +460,11 @@ def print_archived_session(session, *, files: bool = False) -> None:
         rprint(f"  Ended: {end_time}")
     rprint(f"  Directory: {session.start_directory or '-'}")
     rprint(f"  Repo: {session.repo_name or '-'} ({session.branch or '-'})")
-    billing_code = getattr(session, "billing_code", None)
-    if billing_code:
-        rprint(f"  Billing code: {billing_code}")
+    if getattr(session, "billing_code_id", None) or getattr(session, "billing_code", None):
+        from ..ledger import Ledger, billing_code_of
+
+        # The code's current name: it may have been renamed since
+        rprint(f"  Billing code: {Ledger().codes.name_of(billing_code_of(session))}")
     if session.report_status:
         reason = f" ({session.report_reason})" if session.report_reason else ""
         rprint(f"  Report: {session.report_status}{reason}")

@@ -100,7 +100,7 @@ class _Fleet:
         return [r for r in self.sm.ledger.iter_rows() if r["sid"] == RID]
 
     def totals(self):
-        return self.sm.ledger.totals(save=False)
+        return self.sm.ledger.named(self.sm.ledger.totals(save=False))
 
     def view(self):
         return self.daemon._engine.agents.get(RID)
@@ -154,7 +154,8 @@ class TestBilled:
         out = CliRunner().invoke(app, ["billing"]).output
         assert "proj-x" in out and "background" in out
         data = json.loads(CliRunner().invoke(app, ["billing", "--json"]).output)
-        assert data["codes"]["proj-x"]["background"] == 1
+        by_name = {entry["name"]: entry for entry in data["codes"].values()}
+        assert by_name["proj-x"]["background"] == 1
 
 
 class TestLive:
@@ -248,7 +249,9 @@ class TestOnce:
 
         # `overcode rebill`: the next tick's agents carry the new code
         fleet.daemon.claude_bg.set_agents(
-            [replace(a, billing_code="proj-y") for a in fleet.daemon.claude_bg.agents])
+            [replace(a, billing_code="proj-y",
+                     billing_code_id=fleet.sm.ledger.codes.resolve("proj-y"))
+             for a in fleet.daemon.claude_bg.agents])
         spend_more(fleet.transcript, 2)
         fleet.step(10)
         totals = fleet.totals()

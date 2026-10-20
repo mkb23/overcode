@@ -202,8 +202,9 @@ class SessionDaemonState:
     wrapper: Optional[str] = None          # Wrapper script path, or None
     sandbox_enabled: Optional[bool] = None  # /sandbox live state, None = unknown
     skill_profile: Optional[str] = None    # Skill profile applied at launch (#499)
-    # The code the ledger bills new spend to (ledger.billing_code_of: its
-    # own, else its name). Changes only on `overcode rebill`.
+    # The name of the code the ledger bills new spend to
+    # (ledger.billing_name_of). Changes on `overcode rebill` and when the
+    # code is renamed or merged (`overcode billing rename`).
     billing_code: Optional[str] = None
 
     # Resource usage (summed across the agent process tree)
