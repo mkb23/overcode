@@ -300,7 +300,7 @@ class DialogsMixin:
         self._dialog_did_close()
 
     def action_open_billing_codes(self) -> None:
-        """Open the billing codes dialog (palette: Billing codes…); the ledger is read in a worker."""
+        """Open the billing codes dialog (m; palette: Billing codes & spend…); the ledger is read in a worker."""
         try:
             modal = self.query_one("#billing-codes-modal", BillingCodesModal)
         except NoMatches:

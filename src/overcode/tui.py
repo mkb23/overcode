@@ -302,6 +302,7 @@ class SupervisorTUI(
         ("V", "edit_agent_value", "Edit value"),
         # Cost budget (#173)
         ("B", "edit_cost_budget", "Cost budget"),
+        ("m", "open_billing_codes", "Billing codes"),
         # Cycle summary content mode (#74)
         ("l", "cycle_summary_content", "Summary content"),
         # Split resize

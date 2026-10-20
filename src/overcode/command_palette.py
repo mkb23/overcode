@@ -336,7 +336,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("focus_human_annotation", "Annotation…", "Agent", "note comment", agent=True),
     _C("edit_agent_value", "Agent value…", "Agent", "priority", agent=True),
     _C("edit_cost_budget", "Cost budget…", "Agent", "money limit dollars", agent=True),
-    _C("set_billing_code", "Billing code…", "Agent", "rebill client charge spend ledger account", agent=True),
+    _C("set_billing_code", "Rebill this agent…", "Agent",
+       "billing code rebill client charge spend ledger account", agent=True),
     _C("toggle_enhanced_context", "Enhanced context", "Agent", "hook inject",
        state=_agent_toggle("enhanced_context_enabled"), agent=True),
     _C("toggle_hook_detection", "Status detection", "Agent", "hooks polling mode",
@@ -368,7 +369,7 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     # Settings dialogs
     _C("open_new_agent_defaults", "New agent defaults…", "Settings", "launch config"),
     _C("open_skills", "Skill profiles…", "Settings", "skills plugins library pin folder"),
-    _C("open_billing_codes", "Billing codes…", "Settings",
+    _C("open_billing_codes", "Billing codes & spend…", "Settings",
        "spend ledger cost bill rename merge client account money month"),
     _C("open_sister_selection", "Sister visibility…", "Settings", "remote hosts machines"),
     _C("open_tmux_config", "Tmux toggle key…", "Settings", "split pane focus"),

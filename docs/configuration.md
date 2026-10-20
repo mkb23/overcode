@@ -707,7 +707,7 @@ touching the ledger; its old name still works wherever a code is typed
 (launch, rebill, the TUI), unless another code takes it. Two codes that
 should have been one can be merged: the first one's spend, past and
 future, reports under the second.
-In the TUI, the "Billing codes…" dialog (`/` palette) lists every code
+In the TUI, the "Billing codes & spend…" dialog (`m`, or the `/` palette) lists every code
 with its spend (total, this month, last month) and renames or merges them
 in place ([TUI guide](tui-guide.md#billing-codes)).
 
@@ -755,7 +755,7 @@ over-count and a rebilled agent's spend stays split as before. Archived
 agents are restated too, once, while their transcripts are still on disk;
 agents whose transcripts are gone keep their figures.
 
-In the TUI, the new-agent dialog's Billing row and the "Billing code…"
+In the TUI, the new-agent dialog's Billing row and the "Rebill this agent…"
 palette command (which rebills, exactly as `overcode rebill` does) cycle
 with `Space` through the agent's own name and a shortlist from config.yaml;
 any other code can be typed. See [TUI guide → Billing codes](tui-guide.md#billing-codes).

@@ -267,8 +267,8 @@ def test_the_palette_lists_it_for_help():
     from overcode.tui_widgets.help_overlay import build_help
 
     entry = next(c for c in COMMANDS if c.action == "open_billing_codes")
-    assert entry.title == "Billing codes…" and not entry.agent
-    assert "Billing codes…" in build_help(200).plain
+    assert entry.title == "Billing codes & spend…" and not entry.agent
+    assert "Billing codes & spend…" in build_help(200).plain
 
 
 @pytest.mark.asyncio

@@ -671,7 +671,7 @@ class SessionActionsMixin:
         )
 
     def action_set_billing_code(self) -> None:
-        """Open the billing-code dialog for the focused agent (palette: Billing code…).
+        """Open the billing-code dialog for the focused agent (palette: Rebill this agent…).
 
         Applying it is ``overcode rebill``: forward only, this agent only.
         """

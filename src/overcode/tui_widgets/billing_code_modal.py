@@ -117,7 +117,7 @@ class BillingCodeModal(ModalBase):
 
     # ── render ───────────────────────────────────────────────────────────
 
-    TITLE = "Billing code"
+    TITLE = "Rebill agent"
     WIDTH = 80
 
     def hints(self) -> str:

@@ -325,9 +325,9 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `G` | New agent defaults |
 | `W` | Skill profiles: build named sets of skills, pin them to folders ([guide](skill-profiles.md)) |
 | `U` | Sister visibility |
-| `/` → "Billing code…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
+| `/` → "Rebill this agent…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
 | `/` → "Naming lab…" | Try naming advice on the whole fleet (no default key; see [Agent names](#agent-names)) |
-| `/` → "Billing codes…" | Every code's spend; rename or merge codes (no default key; see [Billing codes](#billing-codes)) |
+| `m` | Billing codes & spend: every code's spend; rename or merge codes (see [Billing codes](#billing-codes)) |
 
 ### Daemon Control
 
@@ -367,14 +367,14 @@ billing:
 - **New agent** (`n`): the Billing row. `Space` cycles, `Enter` types a
   code of your own. (A child always takes its parent's code; a dialog
   opened for a child shows that code, locked.)
-- **An existing agent**: `/`, then "Billing code…". The dialog opens on
+- **An existing agent**: `/`, then "Rebill this agent…". The dialog opens on
   its current code, ready to type; `Space` cycles, `Enter` applies, `Esc`
   cancels. Applying it is `overcode rebill`: forward only — the spend so
   far stays on the old code. Only this agent moves: children already
   running keep their codes, children it launches later take the new one.
   A sister's agent has to be rebilled on its own machine.
 
-**All codes**: `/`, then "Billing codes…". One row per code, most spend
+**All codes**: `m` (or `/`, then "Billing codes & spend…"). One row per code, most spend
 first: its name, total, this month, last month, agents (and how many are
 running) and source, with the totals underneath; the highlighted code's
 previous names and id are in the foot. The figures are read from the

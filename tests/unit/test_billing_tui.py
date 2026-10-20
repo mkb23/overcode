@@ -189,7 +189,7 @@ def test_the_palette_lists_it_for_help():
     from overcode.command_palette import COMMANDS
 
     entry = next(c for c in COMMANDS if c.action == "set_billing_code")
-    assert entry.title == "Billing code…" and entry.agent
+    assert entry.title == "Rebill this agent…" and entry.agent
 
 
 @pytest.mark.asyncio
