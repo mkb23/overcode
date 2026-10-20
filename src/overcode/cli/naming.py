@@ -161,6 +161,7 @@ def name_policy(
     """Print the naming advice and rules. Read it before naming a child agent."""
     import os
     from ..naming_policy import project_advice_path
+    from ..config import describe_auto_naming
     from ..summarizer_prompts import DEFAULT_NAMING_ADVICE, naming_prompt_customised, naming_prompt_path
 
     directory = directory or os.getcwd()
@@ -176,6 +177,8 @@ def name_policy(
                        "not taken by a live agent's name or old name"],
             "exit_code_on_refusal": EXIT_NAME_REFUSED,
             "enabled": cfg["enabled"],
+            "auto_naming": describe_auto_naming(cfg),
+            "first_after": cfg["first_after"],
             "max_length_target": cfg["max_length"],
             "warnings": cfg["warnings"],
         }))
@@ -189,6 +192,10 @@ def name_policy(
     elif project:
         rprint(f"[dim](includes {escape(str(project))})[/dim]")
     rprint(f"Aim for at most {cfg['max_length']} characters.")
+
+    rprint(f"\n[bold]Auto-naming[/bold] {escape(describe_auto_naming(cfg))}")
+    rprint("[dim](naming.enabled in config.yaml, or / Auto-naming in the TUI; "
+           "naming.first_after.work_minutes sets the work before a name)[/dim]")
 
     rprint("\n[bold]Always refused[/bold] (even with --force-name)")
     rprint("  a name outside letters, digits, - and _ (at most 64)")

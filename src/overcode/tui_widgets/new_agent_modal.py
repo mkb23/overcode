@@ -467,10 +467,28 @@ class NewAgentModal(ModalBase):
                 note = Text("type to edit · ← → home end move", style=ds.MUTED)
             elif f.locked:
                 note = Text("A child is always billed to its parent's code", style=ds.MUTED)
+            elif f.key == "name":
+                note = Text(self._name_tip(f), style=ds.MUTED)
             else:
                 note = Text(self._TIPS.get(f.key, ""), style=ds.MUTED)
             t.append_text(ds.tip(w, note))
         return t
+
+    @staticmethod
+    def _name_tip(f: FormField) -> str:
+        """The name's tip: what auto-naming will do with it (naming.enabled)."""
+        try:
+            from ..config import get_naming_config
+            cfg = get_naming_config()
+        except Exception:
+            cfg = {}
+        if not cfg.get("enabled"):
+            return "Agent name; follows the directory until you edit it · auto-naming off (/ Auto-naming)"
+        if not f.auto:
+            return "Agent name · a name you type is kept: auto-naming only replaces default names"
+        work = float((cfg.get("first_after") or {}).get("work_minutes") or 0)
+        when = f"after {work:g} min of work" if work else "at a turn end"
+        return f"Agent name; left as it is, auto-naming renames it {when}"
 
     def _render_choice(self, f: FormField, editing: bool, width: int) -> Text:
         """The Billing row: the cycle with the current code lit, a typed

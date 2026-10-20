@@ -136,6 +136,14 @@ def _summarizer_state(app: Any) -> StateView:
         return _toggle(None)
 
 
+def _auto_naming_state(app: Any) -> StateView:
+    try:
+        from .config import get_naming_config
+        return _toggle(bool(get_naming_config()["enabled"]))
+    except Exception:
+        return _toggle(None)
+
+
 def _web_state(app: Any) -> StateView:
     try:
         from .web_server import is_web_server_running
@@ -380,6 +388,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     # Daemons and services
     _C("toggle_summarizer", "AI summarizer", "Daemons", "openai summary", state=_summarizer_state),
     _C("open_summary_prompt_lab", "AI summary prompts…", "Daemons", "summarizer edit tune lab"),
+    _C("toggle_auto_naming", "Auto-naming", "Daemons",
+       "names namer rename default name auto-name agents after work", state=_auto_naming_state),
     _C("open_naming_lab", "Naming lab…", "Daemons", "names advice auto-naming namer tune"),
     _C("toggle_web_server", "API server (sisters)", "Daemons", "web server http api sister", state=_web_state),
     _C("cycle_notifications", "macOS notifications", "Daemons", "sound banner alert",

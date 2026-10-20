@@ -200,6 +200,43 @@ class TestNameCommands:
         assert data["rules"]["forbid"] == ["child", "tmp"]
 
 
+class TestAutoNamingSwitch:
+
+    def test_policy_says_whether_auto_naming_is_on(self, naming_config):
+        out = strip_ansi(runner.invoke(app, ["name", "policy"]).output)
+        assert "Auto-naming off" in out
+        naming_config("naming:\n  enabled: true\n")
+        out = strip_ansi(runner.invoke(app, ["name", "policy"]).output)
+        assert "Auto-naming on: a default name is replaced after 5 min of work" in out
+        data = json.loads(runner.invoke(app, ["name", "policy", "--json"]).stdout)
+        assert data["enabled"] is True and data["first_after"]["work_minutes"] == 5.0
+
+    def test_describe(self, naming_config):
+        assert config.describe_auto_naming().startswith("off")
+        naming_config("naming:\n  enabled: true\n  first_after: {work_minutes: 0}\n")
+        assert "at a turn end" in config.describe_auto_naming()
+
+    def test_the_switch_keeps_the_rest_of_naming(self, naming_config):
+        naming_config(FORBID)
+        config.save_naming_enabled(True)
+        config._clear_config_cache()
+        cfg = config.get_naming_config()
+        assert cfg["enabled"] is True and cfg["advice"] == "name the work"
+        assert cfg["rules"]["forbid"] == ["child", "tmp"]
+        config.save_naming_enabled(False)
+        config._clear_config_cache()
+        assert config.get_naming_config()["enabled"] is False
+
+    def test_the_new_agent_dialog_says_what_happens_to_the_name(self, naming_config):
+        from overcode.tui_widgets.new_agent_modal import FormField, NewAgentModal
+        field = FormField("name", "Name", "text", value="overcode-main2", auto=True)
+        assert "auto-naming off" in NewAgentModal._name_tip(field)
+        naming_config("naming:\n  enabled: true\n")
+        assert "auto-naming renames it after 5 min of work" in NewAgentModal._name_tip(field)
+        field.auto = False
+        assert "a name you type is kept" in NewAgentModal._name_tip(field)
+
+
 class TestRename:
 
     def test_auto_and_lock_keep_the_name(self, fleet, naming_config):  # noqa: F811
@@ -240,3 +277,19 @@ class TestListJson:
         fleet.add("gamma")
         out = strip_ansi(runner.invoke(app, ["list"]).output)
         assert "~beta" in out and "~gamma" not in out
+
+
+async def test_the_palette_switch_turns_auto_naming_on_and_off(make_tui, naming_config):
+    from overcode.command_palette import COMMANDS
+    entry = next(c for c in COMMANDS if c.action == "toggle_auto_naming")
+    app = make_tui()
+    async with app.run_test(size=(160, 40)) as pilot:
+        assert entry.state(app).current == 0             # off
+        app.action_toggle_auto_naming()
+        await pilot.pause()
+        config._clear_config_cache()
+        assert config.get_naming_config()["enabled"] is True
+        assert entry.state(app).current == 1             # on
+        app.action_toggle_auto_naming()
+        config._clear_config_cache()
+        assert config.get_naming_config()["enabled"] is False

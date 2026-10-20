@@ -1079,6 +1079,29 @@ def _regex_or_none(value, where: str, warnings: List[str]) -> Optional[str]:
     return value
 
 
+def save_naming_enabled(enabled: bool) -> None:
+    """Turn auto-naming on or off (``naming.enabled``), keeping the rest of ``naming:``."""
+    config = load_config()
+    naming = config.get("naming")
+    naming = dict(naming) if isinstance(naming, dict) else {}
+    naming["enabled"] = bool(enabled)
+    config["naming"] = naming
+    save_config(config)
+
+
+def describe_auto_naming(cfg: Optional[dict] = None) -> str:
+    """Auto-naming in one line, for the palette, the new-agent dialog, the
+    naming lab and ``overcode name policy``."""
+    cfg = cfg if cfg is not None else get_naming_config()
+    if not cfg.get("enabled"):
+        return "off: agents keep the names they are launched with"
+    first = cfg.get("first_after") or {}
+    work = float(first.get("work_minutes") or 0)
+    when = (f"after {work:g} min of work" if work
+            else "at a turn end, once it has done some work")
+    return f"on: a default name is replaced {when}, following the naming advice"
+
+
 def get_naming_config() -> dict:
     """Auto-naming and the naming policy (#542, docs/design/auto-naming.md §2a, §6).
 
