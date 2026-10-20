@@ -277,15 +277,18 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        state=lambda app: _toggle(getattr(app, "hide_asleep", None))),
     _C("toggle_show_done", "Show done child agents", "Display", "finished children",
        state=lambda app: _toggle(getattr(app, "show_done", None))),
-    _C("toggle_collapse_children", "Fold / unfold children", "Display", "collapse expand tree", agent=True),
-    _C("expand_swarm", "Expand row", "Display",
-       "delegated work subagents workflow phases teammates team swarm rows children "
-       "tree unfold open drill right", agent=True),
-    _C("collapse_swarm", "Collapse row", "Display",
-       "delegated work subagents workflow phases teammates team swarm rows children "
-       "tree fold left", agent=True),
+    # ← / → / X: one tree view over every agent kind (overcode children and
+    # 🌙 background sessions in tree sort, delegated work in any sort)
+    _C("expand_swarm", "Expand row / step in", "Display",
+       "expand unfold right children tree delegated work subagents workflow "
+       "background swarm rows drill", agent=True),
+    _C("collapse_swarm", "Collapse row / to parent", "Display",
+       "collapse fold left children tree delegated work subagents workflow "
+       "background swarm rows up", agent=True),
     _C("toggle_expand_all", "Expand / collapse all", "Display",
-       "delegated work subagents swarm children tree fold unfold everything"),
+       "expand collapse fold unfold everything children tree delegated work subagents swarm"),
+    _C("toggle_collapse_children", "Fold / unfold row", "Display",
+       "collapse expand toggle children tree delegated work", agent=True),
     _C("cycle_swarm_detail", "Delegated work detail", "Display",
        "swarm subagents workflow groups needs you orange auto expand off cycle",
        state=_swarm_detail_state),

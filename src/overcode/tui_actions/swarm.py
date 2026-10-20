@@ -367,68 +367,118 @@ class SwarmMixin:
             self.swarm_cursor = None
             self._sync_swarm_rows()
 
-    # ── → / ← ──────────────────────────────────────────────────────
+    # ── → / ←: a tree view over every kind of row ────────────────────
+    #
+    # An agent's children are its shown overcode children and 🌙 background
+    # sessions (tree sort only: a flat sort never hides them) and its
+    # delegated work (virtual rows); a member's child is its detail line.
+
+    def _tree_mode(self) -> bool:
+        return self._prefs.sort_mode == "by_tree"
+
+    def _unfolded_sessions(self) -> list:
+        """The agents the visibility settings show, folds ignored."""
+        from ..tui_logic import filter_visible_sessions
+
+        return filter_visible_sessions(
+            active_sessions=self.sessions,
+            terminated_sessions=list(self._terminated_sessions.values()),
+            hide_asleep=self.hide_asleep, show_terminated=self.show_terminated,
+            show_done=self.show_done, tag_filter=self.tag_filter)
+
+    def _foldable_parents(self) -> Set[str]:
+        """Agents with children that would show (tree sort; else none)."""
+        if not self._tree_mode():
+            return set()
+        return {s.parent_session_id for s in self._unfolded_sessions() if s.parent_session_id}
 
     def _tree_children(self, session_id: str) -> bool:
-        return self._prefs.sort_mode == "by_tree" and any(
-            s.parent_session_id == session_id for s in self.sessions)
+        return session_id in self._foldable_parents()
+
+    def _delegates(self, widget: Any) -> bool:
+        return bool(widget.swarm_rollup) and not widget.session.is_remote
+
+    def _node_state(self, widget: Any) -> tuple:
+        """(has children, any part open, every part open) of an agent's row."""
+        pid = widget.session.id
+        parts = []
+        if self._tree_children(pid):
+            parts.append(pid not in self.collapsed_parents)
+        if self._delegates(widget):
+            parts.append(pid in self.swarm_expanded)
+        return bool(parts), any(parts), bool(parts) and all(parts)
+
+    def _set_node(self, widget: Any, expanded: bool) -> None:
+        """Open or close every kind of child an agent has, at once."""
+        pid = widget.session.id
+        if self._tree_children(pid) and (pid in self.collapsed_parents) == expanded:
+            self._fold_children(pid, not expanded, notify=False)
+        if self._delegates(widget):
+            self._swarm_set(widget, expanded)
+            if not expanded:
+                # A long list opens compact again next time
+                self.swarm_opened.pop(swarm_view.members_key(pid), None)
+            self._swarm_changed()
+
+    def _nothing_to_expand(self, what: str) -> None:
+        self.notify(f"Nothing to expand: {what}", severity="information")
 
     def action_expand_swarm(self) -> None:
-        """→: expand the focused agent (its folded children, then its
-        delegated work), or go one level into its rows."""
+        """→: open the focused row (all its kinds of children), or move
+        onto its first child row when it is open."""
         widget = self._get_focused_widget()
         if widget is None:
             return
         pid = widget.session.id
         if self.swarm_cursor is None:
-            if pid in self.collapsed_parents and self._tree_children(pid):
-                self._fold_children(pid, False)
-                return
-            if widget.session.is_remote:
-                self.notify("Delegated work shows for this machine's agents only",
-                            severity="information")
-                return
-            if not widget.swarm_rollup:
-                self.notify(f"{widget.session.name} has not delegated any work",
-                            severity="information")
-                return
-            if pid not in self.swarm_expanded:
-                self._swarm_set(widget, True)
-                self._swarm_changed()
-                return
-            lines = self._swarm_lines.get(pid) or []
-            first, _ = swarm_view.step(lines, None, 1)
-            if first is not None:
-                self.swarm_cursor = first
-                self._sync_swarm_rows()
-                self._swarm_scroll_to_cursor()
+            has, _, opened = self._node_state(widget)
+            if not has:
+                self._nothing_to_expand(f"{widget.session.name} has no children or delegated work")
+            elif not opened:
+                self._set_node(widget, True)
+            else:
+                self._first_child(widget)
             return
         line = swarm_view.line_for(self._swarm_lines.get(pid) or [], self.swarm_cursor)
         if line is None:
             return
         if line.kind == "more":
             self.swarm_opened[swarm_view.members_key(pid)] = True
-        elif line.kind == "member":
+        elif line.kind == "member" and line.key not in self.swarm_details:
             self.swarm_details.add(line.key)
+        else:
+            self._nothing_to_expand("its details are open")
+            return
         self._swarm_changed()
 
+    def _first_child(self, widget: Any) -> None:
+        """Onto an open agent's first child row: a virtual row (drawn first),
+        else its first shown child agent."""
+        pid = widget.session.id
+        first, _ = swarm_view.step(self._swarm_lines.get(pid) or [], None, 1) \
+            if pid in self.swarm_expanded else (None, False)
+        if first is not None:
+            self.swarm_cursor = first
+            self._sync_swarm_rows()
+            self._swarm_scroll_to_cursor()
+            return
+        for child in self._get_widgets_in_session_order():
+            if child.session.parent_session_id == pid:
+                self._focus_session_id(child.session.id)
+                return
+
     def action_collapse_swarm(self) -> None:
-        """←: close what the cursor is on, or go up a level; on the agent,
-        collapse its delegated work, then its children (tree sort), then
-        move to its parent."""
+        """←: close the focused row (all its kinds of children), or move to
+        its parent when it is closed (a virtual row's owner; in tree sort,
+        an agent's parent agent)."""
         widget = self._get_focused_widget()
         if widget is None:
             return
         pid = widget.session.id
         if self.swarm_cursor is None:
-            if pid in self.swarm_expanded:
-                self._swarm_set(widget, False)
-                # A long list opens compact again next time
-                self.swarm_opened.pop(swarm_view.members_key(pid), None)
-                self._swarm_changed()
-            elif self._tree_children(pid) and pid not in self.collapsed_parents:
-                self._fold_children(pid, True)
-            elif self._prefs.sort_mode == "by_tree" and widget.session.parent_session_id:
+            if self._node_state(widget)[1]:
+                self._set_node(widget, False)
+            elif self._tree_mode() and widget.session.parent_session_id:
                 self._focus_session_id(widget.session.parent_session_id)
             return
         line = swarm_view.line_for(self._swarm_lines.get(pid) or [], self.swarm_cursor)
@@ -451,41 +501,47 @@ class SwarmMixin:
     # ── X and f: everything at once ───────────────────────────────────
 
     def action_toggle_expand_all(self) -> None:
-        """X: collapse everything open (delegated work, and children in tree
-        sort); with nothing open, expand every agent's delegated work and
-        every fold. The swarm-detail rule stays as it is."""
+        """X: close everything open (delegated work, detail lines, and
+        children in tree sort); with nothing open, open it all. The
+        swarm-detail rule stays as it is."""
         from ..tui_widgets import SessionSummary
 
-        tree = self._prefs.sort_mode == "by_tree"
-        ids = {s.id for s in self.sessions}
-        parents = {s.parent_session_id for s in self.sessions
-                   if s.parent_session_id in ids} if tree else set()
-        widgets = [w for w in self.query(SessionSummary) if not w.session.is_remote]
-        if self.swarm_expanded or (parents - self.collapsed_parents):
-            for widget in widgets:
+        parents = self._foldable_parents()
+        shown = {w.session.id for w in self._get_widgets_in_session_order()}
+        if self.swarm_expanded or self.swarm_details or (parents & shown) - self.collapsed_parents:
+            # Agents folded out of sight close too: no override keeps them open
+            self.swarm_manual = {k: v for k, v in self.swarm_manual.items() if not v}
+            for widget in self.query(SessionSummary):
                 if widget.session.id in self.swarm_expanded:
                     self._swarm_set(widget, False)
             self.swarm_cursor = None
-            folds = parents
+            self.swarm_details.clear()
+            self._set_folds(self.collapsed_parents | parents)
             note = "Collapsed all"
         else:
-            delegating = [w for w in widgets if w.swarm_rollup]
-            for widget in delegating:
-                self._swarm_set(widget, True)
-            folds = set()
-            if not delegating and not (tree and self.collapsed_parents & parents):
-                self.notify("Nothing to expand", severity="information")
+            if parents & self.collapsed_parents:
+                self._set_folds(self.collapsed_parents - parents)
+            elif not any(self._delegates(w) for w in self.query(SessionSummary)):
+                self._nothing_to_expand("no agent has children or delegated work")
                 return
+            # After the folds open: the agents inside them have rows now
+            for widget in self.query(SessionSummary):
+                if self._delegates(widget):
+                    self._swarm_set(widget, True)
             note = "Expanded all"
         self.notify(note, severity="information")
         self._swarm_changed()
-        if tree and folds != (self.collapsed_parents & parents):
-            self.collapsed_parents = set(folds)
-            self._prefs.collapsed_parents = set(folds)
-            self._save_prefs()
-            self._sort_sessions()
-            self.update_session_widgets()
-            self.update_timeline()
+
+    def _set_folds(self, folds: Set[str]) -> None:
+        """Replace the folded parents (X), persisted, and redraw."""
+        if folds == self.collapsed_parents:
+            return
+        self.collapsed_parents = set(folds)
+        self._prefs.collapsed_parents = set(folds)
+        self._save_prefs()
+        self._sort_sessions()
+        self.update_session_widgets()
+        self.update_timeline()
 
     def action_cycle_swarm_detail(self) -> None:
         """f: off → groups → needs-you, at the agent level. Starts afresh:

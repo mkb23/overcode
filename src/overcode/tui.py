@@ -289,9 +289,9 @@ class SupervisorTUI(
         # Expand / collapse: → / ← on one row (its delegated work, and its
         # children in tree sort), X on everything, f cycles which agents'
         # delegated work opens by itself (0.6.1 observability)
-        ("right", "expand_swarm", "Expand row"),
-        ("left", "collapse_swarm", "Collapse row"),
-        ("X", "toggle_expand_all", "Expand/collapse all"),
+        ("right", "expand_swarm", "Expand row / step in"),
+        ("left", "collapse_swarm", "Collapse row / to parent"),
+        ("X", "toggle_expand_all", "Expand / collapse all"),
         ("f", "cycle_swarm_detail", "Delegated work detail"),
         # Sort picker: the palette on sort choices (#61, #487)
         ("S", "choose_sort", "Sort by…"),
@@ -2140,6 +2140,9 @@ class SupervisorTUI(
         rows = {w.session.id: i for i, w in enumerate(widgets)}
         chosen = self._chosen_session_id()
         target = next((sid for sid in (chosen, focused_session_id) if sid and sid in rows), None)
+        if target is None:
+            # Folded away: its nearest shown ancestor stands in
+            target = self._shown_ancestor(focused_session_id or chosen, rows)
         if target is None and not focused_session_id:
             return
         # Suppress watcher if focus wasn't on a session (e.g. command bar open)
@@ -2153,6 +2156,16 @@ class SupervisorTUI(
                 self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
         finally:
             self._suppress_focus_watcher = False
+
+    def _shown_ancestor(self, session_id: Optional[str], rows) -> Optional[str]:
+        parents = {s.id: s.parent_session_id for s in self.sessions}
+        seen = set()
+        while session_id and session_id not in seen:
+            seen.add(session_id)
+            session_id = parents.get(session_id)
+            if session_id in rows:
+                return session_id
+        return None
 
     def on_session_summary_stalled_agent_visited(self, message: SessionSummary.StalledAgentVisited) -> None:
         """The person reached a 🔔 agent (focus or click): a visit."""
@@ -2266,16 +2279,18 @@ class SupervisorTUI(
         child_counts = compute_child_counts([s for s in self.sessions if not is_background(s)])
         if is_tree_mode:
             tree_meta = compute_tree_metadata(self.sessions)
+            # ▶ only where the fold hides something the settings would show
+            folded = self.collapsed_parents & self._foldable_parents()
             for widget in ordered_widgets:
                 meta = tree_meta.get(widget.session.id)
                 widget.child_count = child_counts.get(widget.session.id, 0)
-                widget.children_collapsed = widget.session.id in self.collapsed_parents
+                widget.children_collapsed = widget.session.id in folded
                 widget.tree_prefix = meta.prefix if meta else ""
                 widget.tree_depth = meta.depth if meta else 0
         else:
             for widget in ordered_widgets:
                 widget.child_count = child_counts.get(widget.session.id, 0)
-                widget.children_collapsed = widget.session.id in self.collapsed_parents
+                widget.children_collapsed = False  # a flat sort hides no children
                 widget.tree_prefix = ""
                 widget.tree_depth = 0
         # Remote agents: prefer the daemon-reported children_count from the
