@@ -134,6 +134,14 @@ class Fleet:
                       for a in agents]
             self.namer.on_tick(live, states, self.clock.wall())
 
+    def idle(self, *agents, seconds=0.0, status="waiting_user"):
+        """One tick with each agent sitting idle, ``seconds`` after the last."""
+        self.clock.now += timedelta(seconds=seconds)
+        states = [SimpleNamespace(session_id=a.id, current_status=status,
+                                  green_time_seconds=self.green[a.id], output_tokens=0)
+                  for a in agents]
+        self.namer.on_tick(self.sm.list_sessions(), states, self.clock.wall())
+
     def state(self, session):
         return nm.load_state("agents", session.id)
 
@@ -723,6 +731,56 @@ class TestClaudeTitle:
         assert [k[2] for k in mock.sent_keys] == ["/rename renamed"]
         fleet.turn(a)
         assert len(mock.sent_keys) == 1                 # aligned: once
+
+    def test_an_idle_agent_takes_a_rename_without_a_turn(self, tmp_path):
+        fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
+        a = fleet.add("work")
+        fleet.turn(a)                                   # title known: "work"
+        fleet.sm.rename_session(a.id, "renamed", name_source="human")
+        mock.set_pane_content("agents", "work-w", EMPTY)
+        fleet.idle(a)
+        assert [k[2] for k in mock.sent_keys] == ["/rename renamed"]
+        fleet.idle(a, seconds=60)
+        assert len(mock.sent_keys) == 1                 # aligned: once
+
+    def test_an_idle_agent_with_typed_input_is_retried(self, tmp_path):
+        fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
+        a = fleet.add("work")
+        fleet.turn(a)
+        fleet.sm.rename_session(a.id, "renamed", name_source="human")
+        mock.set_pane_content("agents", "work-w", TYPED)
+        fleet.idle(a)
+        mock.set_pane_content("agents", "work-w", EMPTY)
+        fleet.idle(a, seconds=5)
+        assert mock.sent_keys == []                     # not before the retry
+        fleet.idle(a, seconds=nm.TITLE_RETRY_SECONDS)
+        assert [k[2] for k in mock.sent_keys] == ["/rename renamed"]
+
+    def test_a_busy_agent_is_not_retitled_between_turns(self, tmp_path):
+        fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
+        a = fleet.add("work")
+        fleet.turn(a)
+        fleet.sm.rename_session(a.id, "renamed", name_source="human")
+        mock.set_pane_content("agents", "work-w", EMPTY)
+        fleet.idle(a, status="running")
+        fleet.idle(a, status="waiting_approval")
+        assert mock.sent_keys == []
+
+    def test_an_untitled_idle_agent_is_left_alone(self, tmp_path):
+        fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
+        a = fleet.add("work")                           # launched with --name work
+        mock.set_pane_content("agents", "work-w", EMPTY)
+        fleet.idle(a)
+        assert mock.sent_keys == [] and fleet.state(a).cli_title == "work"
+
+    def test_a_rename_records_the_title_it_leaves_behind(self, tmp_path):
+        launcher, sm = _launcher(tmp_path)
+        a = launcher.launch(name="alpha")
+        assert nm.load_state("agents", a.id).cli_title is None
+        assert launcher.rename(sm.get_session(a.id), "beta")
+        assert nm.load_state("agents", a.id).cli_title == "alpha"
+        assert launcher.rename(sm.get_session(a.id), "gamma")
+        assert nm.load_state("agents", a.id).cli_title == "alpha"  # still what Claude shows
 
     def test_cli_title_off_types_nothing(self, tmp_path):
         fleet, mock = self._fleet(tmp_path, cfg=_cfg(cli_title=False), model=StubModel(_reply("x-y")))

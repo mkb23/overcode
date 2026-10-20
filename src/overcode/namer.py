@@ -19,7 +19,8 @@ code ``overcode``, and stops for the day at ``naming.cost_cap_per_day``
 
 Claude Code keeps a session name of its own (§7): the launch passes
 ``--name``, a rename is typed in as ``/rename <new>`` when the agent is idle
-with an empty input line (else at a later Stop, never forced), and a
+with an empty input line (at its next Stop, or on a tick while it sits idle
+after a rename from the TUI or CLI; never forced), and a
 ``/rename`` typed in Claude (a new ``custom-title`` in its transcript) is
 taken as a human rename. That part runs whether or not the namer is on
 (``naming.cli_title``, default on).
@@ -37,7 +38,7 @@ import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .name_source import AUTO, HUMAN, is_locked
 from .status_constants import (
@@ -58,6 +59,7 @@ MIN_RENAME_GAP_SECONDS = 600     # auto names change at least this far apart
 RETRY_GAP_SECONDS = 600          # after a call that failed or was skipped
 REFINE_FACTOR = 10               # the refinement comes at 10x the first's work
 HUMAN_QUIET_SECONDS = 30         # no rename this soon after a TUI keypress
+TITLE_RETRY_SECONDS = 30         # an idle agent's lagging title is tried again this often
 ARCHIVED_HOURS = 24              # archived agents the model sees
 FLEET_LINES = 120                # at most this many fleet lines in the prompt
 PANE_LINES = 60                  # a hookless agent's fallback input
@@ -700,6 +702,9 @@ class Namer:
         self._pool = None
         self._last_status: Dict[str, str] = {}
         self._title_seen: Dict[str, str] = {}   # the CLI title last looked at, per id
+        # Per id, the name an idle agent's title was last checked against, and
+        # when to check again (None: settled until the name changes)
+        self._idle_title: Dict[str, Tuple[str, Optional[float]]] = {}
         self._in_flight: set = set()
         self._lock = threading.Lock()
         self._cap_logged_day: Optional[str] = None
@@ -784,6 +789,12 @@ class Namer:
             elif title is not None:
                 self._title_seen[sid] = title
             turn_end = previous in GREEN_STATUSES and status in TURN_END_STATUSES
+            if (not turn_end and status in TURN_END_STATUSES
+                    and self._idle_title_due(session, now.timestamp())):
+                if cfg is None:
+                    cfg = self.config()
+                if cfg.get("cli_title", True) and self._is_claude(session):
+                    self._run(f"align:{sid}", lambda sid=sid: self._align(sid))
             if not turn_end and not title:
                 continue
             if cfg is None:
@@ -796,6 +807,20 @@ class Namer:
             if sid not in seen:
                 del self._last_status[sid]
                 self._title_seen.pop(sid, None)
+                self._idle_title.pop(sid, None)
+
+    def _idle_title_due(self, session, now: float) -> bool:
+        """Whether to check an idle agent's title against its name now (a rename made while it sat idle).
+
+        Once per name, then every ``TITLE_RETRY_SECONDS`` while ``_align``
+        could not type it in; ``_align`` settles it.
+        """
+        seen = self._idle_title.get(session.id)
+        if seen is not None and seen[0] == session.name and (
+                seen[1] is None or now < seen[1]):
+            return False
+        self._idle_title[session.id] = (session.name, now + TITLE_RETRY_SECONDS)
+        return True
 
     def _on_stop(self, session, st, cfg: dict, now: datetime) -> None:
         tmux_session = session.tmux_session or self.tmux_session
@@ -952,7 +977,8 @@ class Namer:
         """Type ``/rename <name>`` into a Claude agent whose title lags its name (worker).
 
         Only into an idle agent with an empty input line, not while a person
-        is typing in the TUI; otherwise the next Stop tries again.
+        is typing in the TUI; otherwise the next Stop or idle retry tries
+        again. A title never recorded is the launch's ``--name``.
         """
         from .backends import get_backend, session_backend_name
         session = self.session_manager.get_session(session_id)
@@ -960,7 +986,11 @@ class Namer:
             return
         tmux_session = session.tmux_session or self.tmux_session
         state = load_state(tmux_session, session_id)
+        if state.cli_title is None:
+            state.cli_title = session.name
+            save_state(tmux_session, session_id, state)
         if state.cli_title == session.name:
+            self._idle_title[session_id] = (session.name, None)
             return
         backend = get_backend(session_backend_name(session))
         if not input_line_empty(self._capture(session, 15), backend):
@@ -971,6 +1001,7 @@ class Namer:
         state = load_state(tmux_session, session_id)
         state.cli_title = session.name
         save_state(tmux_session, session_id, state)
+        self._idle_title[session_id] = (session.name, None)
 
     def _consider_title(self, session, title: str) -> None:
         tmux_session = session.tmux_session or self.tmux_session

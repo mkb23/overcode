@@ -156,10 +156,25 @@ class RenameMixin:
                 self.tmux.rename_window(new_window, old_window)
             raise ValueError(f"an agent named '{new_name}' already exists")
 
+        self._keep_cli_title(session, old_name)
         self._write_rename_notice(session, old_name, new_name)
         self._write_parent_notice(session, old_name, new_name)
         self._drop_name_keyed_files(old_name)  # an older overcode's leftovers
         return True
+
+    def _keep_cli_title(self, session: Session, old_name: str) -> None:
+        """Record the CLI title as the old name if nothing has recorded it yet.
+
+        It is the launch's ``--name``; the namer types ``/rename <new>`` when
+        the title lags the name (``Namer._align``). Unrecorded, it would be
+        taken to be the new name.
+        """
+        from .namer import load_state, save_state
+
+        state = load_state(self.tmux_session, session.id)
+        if state.cli_title is None:
+            state.cli_title = old_name
+            save_state(self.tmux_session, session.id, state)
 
     def _rename_with_restart(
         self, session: Session, new_name: str, *, force: bool, graceful_exit_wait: float,

@@ -950,8 +950,9 @@ renaming it.
 **Claude Code's own name.** Claude Code has a session name of its own (its
 prompt box, `/resume`, the terminal title). overcode launches it with
 `--name <agent name>`; after a rename it types `/rename <new name>` into the
-agent, only when the agent is idle with an empty input line (otherwise at a
-later turn end); and a `/rename` you type in Claude renames the agent too,
+agent, only when the agent is idle with an empty input line (an idle agent
+gets it within a tick, retried every 30 s while you type; a busy one at its
+turn end); and a `/rename` you type in Claude renames the agent too,
 as a name you chose (`human`, locked). This runs whether or not
 auto-naming is on; `cli_title: false` turns it off.
 
