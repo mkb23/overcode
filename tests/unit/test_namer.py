@@ -809,6 +809,37 @@ class TestClaudeTitle:
         assert launcher.rename(sm.get_session(a.id), "gamma")
         assert nm.load_state("agents", a.id).cli_title == "alpha"
 
+    def _renamer(self, tmp_path, status="waiting_user", pane=EMPTY, backend=None):
+        launcher, sm = _launcher(tmp_path)
+        a = launcher.launch(name="alpha", **({"backend": backend} if backend else {}))
+        launcher._live_status = lambda session: status
+        launcher.tmux.capture_pane = lambda window, lines=100: pane
+        mock = launcher.tmux.client
+        mock.sent_keys.clear()
+        return launcher, sm, a, mock
+
+    def _typed(self, mock):
+        return [k[2] for k in mock.sent_keys if k[2].startswith("/rename")]
+
+    def test_a_rename_types_the_title_in_at_once(self, tmp_path):
+        launcher, sm, a, mock = self._renamer(tmp_path)
+        assert launcher.rename(sm.get_session(a.id), "beta")
+        assert self._typed(mock) == ["/rename beta"]
+        assert nm.load_state("agents", a.id).cli_title == "beta"
+
+    def test_an_asleep_agent_is_retitled_at_once(self, tmp_path):
+        launcher, sm, a, mock = self._renamer(tmp_path, status="asleep")
+        assert launcher.rename(sm.get_session(a.id), "beta")
+        assert self._typed(mock) == ["/rename beta"]
+
+    def test_a_busy_or_drafting_agent_is_left_to_the_namer(self, tmp_path):
+        for i, kw in enumerate(({"status": "running"}, {"status": "waiting_approval"},
+                                {"pane": TYPED})):
+            launcher, sm, a, mock = self._renamer(tmp_path / str(i), **kw)
+            assert launcher.rename(sm.get_session(a.id), "beta")
+            assert self._typed(mock) == [], kw
+            assert nm.load_state("agents", a.id).cli_title == "alpha", kw  # the namer's job now
+
     def test_title_lag_is_what_claude_still_shows(self, tmp_path):
         fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
         a = fleet.add("work")

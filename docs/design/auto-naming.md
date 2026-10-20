@@ -347,8 +347,9 @@ lists overcode agents by their first prompt.
   default.
 - **On a rename**, overcode types `/rename <new>` into the agent. It does
   this only when the agent is idle and its input line is empty (the
-  launcher's ready-line check). An agent renamed while idle (Ctrl+N, the
-  CLI) is checked on the next tick and every 10 s while the input line is
+  launcher's ready-line check). The rename itself (Ctrl+N, the CLI, an
+  auto rename) types it in at once when it can (`RenameMixin._type_cli_title`);
+  otherwise the daemon checks an idle agent on the next tick and every 10 s while the input line is
   not empty (asleep counts as idle); a busy one waits for its next Stop. A title never recorded is
   taken to be the launch's `--name`, so a rename records the old name as
   the title first. A

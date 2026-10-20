@@ -160,6 +160,43 @@ class RenameMixin:
         self._write_rename_notice(session, old_name, new_name)
         self._write_parent_notice(session, old_name, new_name)
         self._drop_name_keyed_files(old_name)  # an older overcode's leftovers
+        try:
+            self._type_cli_title(session.id)
+        except Exception:  # the daemon's namer tries again on its next tick
+            pass
+        return True
+
+    def _type_cli_title(self, session_id: str) -> bool:
+        """Type ``/rename <name>`` into a Claude agent now, if it is idle with an empty input line.
+
+        The daemon's namer does the same on its next tick (``Namer._align``)
+        and keeps trying while it can't; doing it here shows a person who
+        just renamed the agent the new name in Claude at once. A busy agent
+        or a half-typed input line is left to the namer.
+        """
+        from .config import get_naming_config
+        from .namer import IDLE_STATUSES, input_line_empty, load_state, save_state
+
+        session = self.sessions.get_session(session_id)
+        if session is None or not get_naming_config().get("cli_title", True):
+            return False
+        backend = self.backend_for(session)
+        if not backend.display_name_args(session.name):
+            return False
+        if load_state(self.tmux_session, session_id).cli_title == session.name:
+            return False
+        if not self.tmux.window_exists(session.tmux_window):
+            return False
+        if self._live_status(session) not in IDLE_STATUSES:
+            return False
+        if not input_line_empty(self.tmux.capture_pane(session.tmux_window, lines=15) or "",
+                                backend):
+            return False
+        if not self.tmux.send_keys(session.tmux_window, f"/rename {session.name}", enter=True):
+            return False
+        state = load_state(self.tmux_session, session_id)
+        state.cli_title = session.name
+        save_state(self.tmux_session, session_id, state)
         return True
 
     def _keep_cli_title(self, session: Session, old_name: str) -> None:
