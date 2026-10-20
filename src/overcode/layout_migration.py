@@ -15,13 +15,17 @@ from the monitor daemon (at start, then with the hourly storage tidy):
 2. the ledger is backfilled from the archive (billing code: the agent's
    own, else its parent's up to the root, else its name), again whenever
    an older overcode's archive file is taken in;
-3. live records with no billing code get their parent's code, up to the
-   root, else their name (sticky from now on). This one runs on every
-   call, done or not, and the daemon repeats it each housekeeping pass
+3. every billing code string from before ids (in the ledger, the live
+   records and the archive) gets a code of its own in the registry
+   (``mint_legacy_codes``; ``codes``), once, and again with step 2;
+4. live records with no billing code id get their parent's code, up to
+   the root, else the code named after them (sticky from now on), and a
+   stale name copy is refreshed. This one runs on every call, done or
+   not, and the daemon repeats it each housekeeping pass
    (``Housekeeping.fill_billing_codes``): an older overcode still running
    (or a downgrade) can launch a child after the migration, and nothing
    else would ever give it its parent's code;
-4. name-keyed files left in the session directory are packed into today's
+5. name-keyed files left in the session directory are packed into today's
    bundle (one member per name, ``"legacy": true``) and removed — except
    those of a live agent launched before the upgrade (no ``agents/<id>/``,
    its hooks or plugin still write them), which are left until it is
@@ -153,14 +157,18 @@ def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAM
     """Move one batch of a tmux session's storage to the 0.6 layout (see module docstring).
 
     Returns counts: ``packed`` names, ``skipped`` (a live agent's), ``left``
-    (for a later call), ``backfilled`` ledger rows, ``coded`` records, and
-    ``done`` (1 once the marker is written). Never raises.
+    (for a later call), ``backfilled`` ledger rows, ``minted`` codes,
+    ``coded`` records, and ``done`` (1 once the marker is written). Never
+    raises.
     """
-    counts = {"packed": 0, "skipped": 0, "left": 0, "backfilled": 0, "coded": 0, "done": 0}
+    counts = {"packed": 0, "skipped": 0, "left": 0, "backfilled": 0, "minted": 0, "coded": 0,
+              "done": 0}
     if (layout_version(tmux_session) == LAYOUT_VERSION
             and session_manager.ledger.backfilled()):
         counts["done"] = 1
         try:
+            if not session_manager.ledger.codes.migrated():
+                counts["minted"] = mint_legacy_codes(session_manager)
             counts["coded"] = len(fill_billing_codes(session_manager))
         except Exception as e:
             logger.warning("billing codes not filled: %s", e)
@@ -169,6 +177,7 @@ def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAM
     try:
         session_manager._migrate_legacy_archive()
         counts["backfilled"] = session_manager.ledger.backfill_from_archive(session_manager)
+        counts["minted"] = mint_legacy_codes(session_manager)
         counts["coded"] = len(fill_billing_codes(session_manager))
     except Exception as e:
         logger.warning("storage migration (archive, ledger) failed: %s", e)
@@ -211,33 +220,80 @@ def migrate_layout(tmux_session: str, session_manager, *, batch: int = BATCH_NAM
     return counts
 
 
-def fill_billing_codes(session_manager, sessions=None) -> Dict[str, str]:
-    """Give each live record with no billing code one (one write, if any).
+def legacy_code_strings(session_manager) -> set:
+    """Every billing code string from before ids: id-less ledger rows, live and archived records."""
+    found = set()
+    for row in session_manager.ledger.iter_rows():
+        if not row.get("code") and row.get("billing_code"):
+            found.add(row["billing_code"])
+    records = [*session_manager.iter_archived_records(newest_first=True),
+               *(s.to_dict() for s in session_manager.list_sessions())]
+    for record in records:
+        if isinstance(record, dict) and not record.get("billing_code_id") and record.get("billing_code"):
+            found.add(record["billing_code"])
+    return {s for s in found if isinstance(s, str) and s}
 
-    Its parent's code, walking up to the root through live and archived
-    records (children always bill to the parent), else its name. Returns
-    the codes of those found with none, by session id (one a stale
-    ``sessions`` lacks but the file has is returned, not rewritten).
-    ``sessions`` (the live records, when the caller has them) spares a
-    read when none is missing.
+
+def mint_legacy_codes(session_manager) -> int:
+    """Give every legacy billing code string a code of its own (``codes.adopt``); how many were new.
+
+    Idempotent: a string mapped already keeps its code (renamed or not).
+    No row or record is rewritten; readers map the strings.
     """
-    from .ledger import billing_lookup, inherited_billing_code
+    codes = session_manager.ledger.codes
+    strings = legacy_code_strings(session_manager)
+    before = len(codes.codes())
+    codes.adopt(strings)
+    codes.mark_migrated()
+    return len(codes.codes()) - before
+
+
+def fill_billing_codes(session_manager, sessions=None) -> Dict[str, tuple]:
+    """Give each live record with no billing code id one, and refresh stale names (one write, if any).
+
+    Its own code string's code, else its parent's code, walking up to the
+    root through live and archived records (children always bill to the
+    parent), else the code named after it. A record whose code was renamed
+    or merged since gets the current id and name. Returns ``(id, name)``
+    of each record changed, by session id (one a stale ``sessions`` lacks
+    but the file has is returned, not rewritten). ``sessions`` (the live
+    records, when the caller has them) spares a read when none is missing.
+    """
+    from .ledger import billing_lookup
 
     if sessions is None:
         sessions = session_manager.list_sessions()
-    missing = [s.id for s in sessions if not s.billing_code]
+    codes = session_manager.ledger.codes
+
+    def stale(s) -> bool:
+        code_id = getattr(s, "billing_code_id", None)
+        if not code_id:
+            return True
+        if codes.get(code_id) is None:
+            return False  # not in the registry: doctor says so, nothing here can fix it
+        return codes.canonical(code_id) != code_id or codes.name_of(code_id) != s.billing_code
+
+    missing = [s.id for s in sessions if stale(s)]
     if not missing:
         return {}
-    archived = billing_lookup(session_manager.iter_archived_records(newest_first=True))
-    filled: Dict[str, str] = {}
+    needs_tree = any(not getattr(s, "billing_code_id", None) and not s.billing_code
+                     and s.parent_session_id for s in sessions if s.id in missing)
+    archived = (billing_lookup(session_manager.iter_archived_records(newest_first=True))
+                if needs_tree else {})
+    filled: Dict[str, tuple] = {}
     with session_manager._state_transaction() as txn:
         lookup = {**archived, **billing_lookup(txn.state.values())}
         for session_id in missing:
             entry = txn.state.get(session_id)
             if entry is None or not entry.get("name"):
                 continue
-            if not entry.get("billing_code"):
-                entry["billing_code"] = inherited_billing_code(entry, lookup)
+            if entry.get("billing_code_id"):
+                code_id = codes.canonical(entry["billing_code_id"])
+                code = (code_id, codes.name_of(code_id))
+            else:
+                code = session_manager._code_id_of(entry, lookup)
+            if (entry.get("billing_code_id"), entry.get("billing_code")) != code:
+                entry["billing_code_id"], entry["billing_code"] = code
                 txn.dirty = True
-            filled[session_id] = entry["billing_code"]
+            filled[session_id] = code
     return filled

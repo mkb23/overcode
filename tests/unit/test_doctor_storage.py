@@ -40,7 +40,8 @@ def test_report_counts(sm):
     assert report["live"] == 2 and report["agent_dirs"] == 3 and report["orphans"] == 1
     assert report["agent_bytes"] == 200
     assert report["bundles"] == 1 and report["bundle_bytes"] == 1000
-    assert report["ledger_files"] == 1 and report["ledger_bytes"] > 0
+    # the month and the code registry (codes.json)
+    assert report["ledger_files"] == 2 and report["ledger_bytes"] > 0
     assert report["layout"] == "1" and report["legacy_names"] == 1
 
 

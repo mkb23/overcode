@@ -59,8 +59,13 @@ FORGET_SECONDS = ledger_mod.CLOSED_KEEP_DAYS * 86400
 _AMOUNTS = ledger_mod.AMOUNTS
 
 
-def _record(row, code: str) -> dict:
-    """The ledger record (``ledger.make_row``'s input) of a 🌙 row's agent state."""
+def _record(row, code: str, name: Optional[str] = None) -> dict:
+    """The ledger record (``ledger.make_row``'s input) of a 🌙 row's agent state.
+
+    Billed to ``code`` (its agent's code id, else a legacy string) named ``name``.
+    """
+    from .codes import is_code_id
+
     st = row.state
     stats = {
         "estimated_cost_usd": float(st.estimated_cost_usd or 0.0),
@@ -73,7 +78,8 @@ def _record(row, code: str) -> dict:
                              + stats["cache_creation_tokens"] + stats["cache_read_tokens"])
     info = st.claude_bg or {}
     return {"id": st.session_id, "name": st.name, "parent_session_id": info.get("parent_id"),
-            "billing_code": code, "model": st.model, "stats": stats}
+            "billing_code_id": code if is_code_id(code) else None,
+            "billing_code": name or code, "model": st.model, "stats": stats}
 
 
 def _stats_of(spend: Mapping[str, object]) -> dict:
@@ -118,6 +124,7 @@ class BgLedger:
         self._every = checkpoint_seconds or _checkpoint_seconds
         self._seen: Dict[str, dict] = {}   # row id -> last record observed (this process)
         self._cache = None                 # (file signature, state) as last read
+        self._codes = None                 # the ledger's code registry, this pass
         self.writes = 0                    # rows written (tests)
 
     @property
@@ -170,8 +177,11 @@ class BgLedger:
         """Bring the ledger up to date with ``rows`` (the source's, as built); rows written.
 
         ``agents`` are the source's FleetAgents (their own conversations are
-        skipped); ``codes`` maps an agent id to its billing code (default:
-        each FleetAgent's ``billing_code``, else its name). ``reread``
+        skipped); ``codes`` maps an agent id to its billing code key
+        (default: each FleetAgent's ``billing_code_id``, else its
+        ``billing_code``, else its name). A segment's code is compared by
+        the code it reports under (``ledger.codes``), so a legacy string
+        and its code's id are one code, not a rebill. ``reread``
         answers a session id's spend now (``ClaudeBgSource.read_spend_of``),
         so a segment closed for a row that is gone closes at what the
         session really spent, not at its last checkpoint.
@@ -185,6 +195,7 @@ class BgLedger:
             return 0
         by_id = {a.id: a for a in agents}
         code_of = dict(codes or {})
+        self._codes = getattr(ledger, "codes", None)
         observed: Dict[str, dict] = {}
         finished: Dict[str, bool] = {}
         for row in rows:
@@ -192,9 +203,10 @@ class BgLedger:
             parent = by_id.get(info.get("parent_id"))
             if parent is None or info.get("session_id") in parent.conversations:
                 continue  # the agent's own conversation: its own spend counts it
-            code = (code_of.get(parent.id) or getattr(parent, "billing_code", None)
-                    or parent.name)
-            record = _record(row, code)
+            name = getattr(parent, "billing_code", None) or parent.name
+            code = (code_of.get(parent.id) or getattr(parent, "billing_code_id", None)
+                    or name)
+            record = _record(row, code, name)
             if record["stats"]["estimated_cost_usd"] <= 0 and record["stats"]["total_tokens"] <= 0:
                 continue  # nothing spent (yet), or no transcript read
             observed[row.state.session_id] = record
@@ -280,13 +292,22 @@ class BgLedger:
             changed = True
         return out, state, changed
 
+    def _canonical(self, key: Optional[str]) -> Optional[str]:
+        return self._codes.canonical(key) if self._codes is not None else key
+
+    def _name(self, key: str) -> str:
+        """The name a row billed to ``key`` carries: an id's current name; a legacy string as it is."""
+        from .codes import is_code_id
+
+        return self._codes.name_of(key) if self._codes is not None and is_code_id(key) else key
+
     def _row(self, record: dict, kind: str, entry: dict, now_dt: datetime,
              code: Optional[str] = None, seg: Optional[int] = None,
              base: Optional[dict] = None) -> dict:
         base = base if base is not None else entry.get("base") or {}
+        code = code or entry.get("code") or ledger_mod.billing_code_of(record)
         row = ledger_mod.make_row(
-            record, kind, now=now_dt,
-            billing_code=code or entry.get("code") or record.get("billing_code"),
+            record, kind, now=now_dt, code=code, billing_code=self._name(code),
             seg=int(entry.get("seg", 0) if seg is None else seg),
             base={"cost": float(base.get("cost", 0.0) or 0.0),
                   "tokens": int(base.get("tokens", 0) or 0), "usage": None})
@@ -300,12 +321,19 @@ class BgLedger:
         ``ledger.correction_rows``: the segment's cumulative values and its
         base are scaled by new/old; ``entry``'s base takes the scaled one.
         """
+        from .codes import is_code_id
+
         base = entry.get("base") or {}
         fields = {"billing_seg": int(entry.get("seg", 0) or 0),
                   "billing_base_cost": float(base.get("cost", 0.0) or 0.0),
                   "billing_base_tokens": int(base.get("tokens", 0) or 0),
                   "billing_base_usage": None,
-                  "billing_code": entry.get("code") or after.get("billing_code")}
+                  "billing_code_id": None, "billing_code": None}
+        code = entry.get("code") or ledger_mod.billing_code_of(after)
+        if is_code_id(code):
+            fields.update(billing_code_id=code, billing_code=self._name(code))
+        else:
+            fields["billing_code"] = code
         rows, new_base = ledger_mod.correction_rows(
             dict(before, **fields), dict(after, **fields),
             closed=bool(entry.get("closed")), now=now_dt)
@@ -320,13 +348,18 @@ class BgLedger:
                   now: float, now_dt: datetime):
         """(rows to write, the new state entry or None) for one observed session."""
         amounts = ledger_mod.spend_of(record)
-        code = record["billing_code"]
+        code = ledger_mod.billing_code_of(record)
         every = self._every()
         if entry is None:
             entry = {"seg": 0, "closed": False, "base": dict.fromkeys(_AMOUNTS, 0),
                      "code": code, "last": None, "at": None}
         previous = entry.get("record")
         entry = dict(entry, owner=self.owner, record=record)
+        if entry.get("code") and entry["code"] != code and (
+                self._canonical(entry["code"]) == self._canonical(code)):
+            # The same code by another key (a legacy string, an id merged
+            # since): its rows carry the current key from now on
+            entry = dict(entry, code=code)
         rows: List[dict] = []
         if (_lowered(amounts, entry.get("last")) and isinstance(previous, dict)
                 and (entry.get("closed") or entry.get("code") == code)):

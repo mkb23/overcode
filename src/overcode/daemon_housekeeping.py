@@ -312,18 +312,18 @@ class Housekeeping:
             self.log.info(f"Archived spend restated: {counts}")
 
     def fill_billing_codes(self, sessions, session_manager) -> list:
-        """``sessions`` with a billing code each, giving one to any that has none.
+        """``sessions`` with a billing code id each, giving one to any that has none.
 
         A record with none was written by an older overcode (a downgrade,
         or one still running after the upgrade, launching a child): it gets
-        its parent's code, up to the root, else its name, as the storage
-        migration gives them (``layout_migration.fill_billing_codes``).
-        Checked every pass, after the migration too, since nothing else
-        would; costs nothing when every record has one. The returned list
-        carries the new codes, so this pass's checkpoints bill them.
+        its own code string's code, else its parent's, up to the root, else
+        the code named after it, as the storage migration gives them
+        (``layout_migration.fill_billing_codes``). A renamed or merged
+        code's records get its current id and name. Checked every pass,
+        after the migration too, since nothing else would; costs a stat of
+        the registry when nothing changed. The returned list carries the
+        new codes, so this pass's checkpoints bill them.
         """
-        if all(s.billing_code for s in sessions):
-            return list(sessions)
         try:
             from .layout_migration import fill_billing_codes
 
@@ -332,9 +332,9 @@ class Housekeeping:
             self.log.warn(f"billing codes not filled: {e}")
             return list(sessions)
         if filled:
-            self.log.info(f"Billing codes given to {len(filled)} agent(s) an older overcode launched")
-        return [replace(s, billing_code=filled[s.id]) if s.id in filled else s
-                for s in sessions]
+            self.log.info(f"Billing codes given or renamed for {len(filled)} agent(s)")
+        return [replace(s, billing_code_id=filled[s.id][0], billing_code=filled[s.id][1])
+                if s.id in filled else s for s in sessions]
 
     def prune_finished_jobs(self) -> None:
         """Drop finished jobs past their retention, at most hourly."""

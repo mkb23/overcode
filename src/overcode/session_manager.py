@@ -15,7 +15,7 @@ from . import paths
 from .agent_files import remove_agent_dir
 from .exceptions import StateWriteError
 from .json_store import JsonStore, Transaction
-from .ledger import Ledger, billing_code_of, make_row
+from .ledger import Ledger, make_row
 from .git_context import GitContextMixin, read_git_context_from_disk  # noqa: F401  (re-export)
 from .session_archive import SessionArchiveMixin
 from .session_identity import SessionIdentityMixin
@@ -173,9 +173,12 @@ class Session:
     # its launch name unless `launch --billing-code` set one, and always its
     # parent's for a child or a fork. `overcode rebill` changes it forward
     # only: a new segment (billing_seg) starts from the spend so far
-    # (billing_base_*), which stays on the old code. None (a record from
-    # before billing codes) reads as the agent's name.
+    # (billing_base_*), which stays on the old code. billing_code_id is the
+    # code (codes.CodeRegistry); billing_code its name, a display copy kept
+    # current by the daemon. No id: a record from before ids (its string is
+    # a legacy code); neither: from before billing codes (its name).
     billing_code: Optional[str] = None
+    billing_code_id: Optional[str] = None
     billing_seg: int = 0
     billing_base_cost: float = 0.0
     billing_base_tokens: int = 0
@@ -708,7 +711,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                     continue  # already gone (cleanup, or another daemon's archive pass)
                 record = entry.copy()
                 if session_id in codes:
-                    record['billing_code'] = codes[session_id]
+                    record['billing_code_id'], record['billing_code'] = codes[session_id]
                 record['end_time'] = datetime.now().isoformat()
                 record['status'] = 'archived'
                 if session_id in pointers:
@@ -735,17 +738,18 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 remove_agent_dir(tmux_session, session_id)
         return written
 
-    def _inherited_codes(self, session_ids: Iterable[str], state: dict) -> Dict[str, str]:
-        """``{id: code}`` for those of ``session_ids`` that are children with no billing code.
+    def _inherited_codes(self, session_ids: Iterable[str], state: dict) -> Dict[str, tuple]:
+        """``{id: (code id, name)}`` for those of ``session_ids`` that are children with no billing code.
 
         A child an older overcode launched has a parent but no code until a
         daemon housekeeping pass gives it one; archived before that, its
         final ledger row and archive record must still bill its root's code
-        (``inherited_billing_code``), not its own name. The archive is read
+        (``inherited_billing``), not its own name. The archive is read
         only when such a record is found. (A codeless root bills to its
-        name, which ``make_row`` already gives it.)
+        name, which ``make_row`` already gives it.) A legacy string found
+        is mapped to its code (``codes.adopt``).
         """
-        from .ledger import billing_lookup, inherited_billing_code
+        from .ledger import billing_lookup
 
         missing = [sid for sid in session_ids
                    if isinstance(state.get(sid), dict) and not state[sid].get('billing_code')
@@ -757,7 +761,30 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         except Exception as e:  # the live records still give most codes
             logger.warning("archived billing codes not read: %s", e)
             lookup = billing_lookup(state.values())
-        return {sid: inherited_billing_code(state[sid], lookup) for sid in missing}
+        return {sid: self._code_id_of(state[sid], lookup) for sid in missing}
+
+    def _code_id_of(self, record: dict, lookup: Dict[str, dict]) -> tuple:
+        """``(id, name)`` of the code a record bills to, inherited up its tree;
+        a legacy string is mapped to (or minted as) a code."""
+        from .ledger import inherited_billing
+
+        code_id, name = inherited_billing(record, lookup)
+        codes = self.ledger.codes
+        if code_id is None:
+            code_id = codes.adopt([name])[name]
+        return code_id, codes.name_of(code_id)
+
+    @staticmethod
+    def _root_id(session_id: str, state: dict) -> str:
+        """The root agent of ``session_id``'s tree (live records only)."""
+        seen = {session_id}
+        current = session_id
+        while True:
+            parent = (state.get(current) or {}).get("parent_session_id")
+            if not parent or parent in seen or parent not in state:
+                return current
+            seen.add(parent)
+            current = parent
 
     def _pack_for_archive(self, session_ids: Iterable[str]) -> Dict[str, dict]:
         """Pack each staged agent's directory into its day bundle: {id: pointer}.
@@ -817,7 +844,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                       wrapper: Optional[str] = None,
                       skill_profile: Optional[str] = None,
                       launcher_version: str = "",
-                      billing_code: Optional[str] = None) -> Session:
+                      billing_code: Optional[str] = None,
+                      billing_code_id: Optional[str] = None) -> Session:
         """Create and register a new session.
 
         Args:
@@ -833,6 +861,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             agent_persona: Agent persona name passed as --agent
             backend: Agent CLI backend name (see overcode.backends)
             session_id: Optional pre-generated session ID (used when ID must be known before window creation)
+            billing_code: The billing code's name (default: ``name``),
+                resolved to a code unless ``billing_code_id`` is given
         """
         if self._skip_git_detection:
             repo_name, branch = None, None
@@ -862,7 +892,12 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             skill_profile=skill_profile,
             launcher_version=launcher_version,
             billing_code=billing_code or name,
+            billing_code_id=billing_code_id,
         )
+        codes = self.ledger.codes
+        if session.billing_code_id is None:
+            session.billing_code_id = codes.resolve(session.billing_code, root=session.id)
+        session.billing_code = codes.name_of(session.billing_code_id)
 
         with self._locked_state() as state:
             # A new agent taking a name that is another agent's alias takes
@@ -1011,46 +1046,59 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             pending.add_ledger_rows(scratch.ledger_rows)
 
     def rebill(self, session_id: str, billing_code: str) -> Optional[str]:
-        """Move an agent to another billing code, forward only; returns the old code.
+        """Move an agent to another billing code, forward only; returns the old code's name.
 
-        Under the state lock, write-ahead: the ledger gets a ``close`` row
-        for the old code (the agent's spend so far stays there) and an
-        ``open`` row for the new one, then the record starts a new segment
-        whose base is the spend so far. None if the agent is unknown; the
-        code unchanged (no rows) if it already is ``billing_code``.
+        ``billing_code`` is a name, resolved as at launch (``codes.resolve``:
+        an unknown one is a new code). Under the state lock, write-ahead:
+        the ledger gets a ``close`` row for the old code (the agent's spend
+        so far stays there) and an ``open`` row for the new one, then the
+        record starts a new segment whose base is the spend so far. None if
+        the agent is unknown; the code unchanged (no rows) if it already
+        is that code, and then the name returned is the record's
+        ``billing_code`` after.
         """
+        from .codes import HUMAN, CodeError
+        from .ledger import spend_of, usage_of
+
         billing_code = billing_code.strip()
         if not billing_code:
             raise ValueError("a billing code cannot be empty")
+        codes = self.ledger.codes
         with self._state_transaction() as txn:
             entry = txn.state.get(session_id)
             if entry is None:
                 return None
             # A child an older overcode launched has no code of its own yet:
             # its spend so far is its root's, not its name's
-            old = (self._inherited_codes([session_id], txn.state).get(session_id)
-                   or billing_code_of(entry))
-            if old == billing_code:
-                if entry.get("billing_code") != billing_code:
-                    entry["billing_code"] = billing_code
+            if entry.get("billing_code_id"):
+                old_id = entry["billing_code_id"]
+            elif entry.get("billing_code") or not entry.get("parent_session_id"):
+                old_id = self._code_id_of(entry, {})[0]
+            else:
+                old_id = self._inherited_codes([session_id], txn.state)[session_id][0]
+            try:
+                new_id = codes.resolve(billing_code, source=HUMAN,
+                                       root=self._root_id(session_id, txn.state))
+            except CodeError as e:
+                raise ValueError(str(e)) from e
+            old_name, new_name = codes.name_of(old_id), codes.name_of(new_id)
+            if codes.canonical(old_id) == new_id:
+                if entry.get("billing_code_id") != new_id or entry.get("billing_code") != new_name:
+                    entry.update(billing_code_id=new_id, billing_code=new_name)
                     txn.dirty = True
-                return old
-            from .ledger import spend_of
-
-            from .ledger import usage_of
-
+                return new_name
             spend, usage = spend_of(entry), usage_of(entry)
             seg = int(entry.get("billing_seg", 0) or 0)
-            close = make_row(entry, "close", billing_code=old)
-            opened = make_row(entry, "open", billing_code=billing_code, seg=seg + 1,
+            close = make_row(entry, "close", code=old_id, billing_code=old_name)
+            opened = make_row(entry, "open", code=new_id, billing_code=new_name, seg=seg + 1,
                               base={"cost": spend["cost"], "tokens": spend["tokens"],
                                     "usage": usage})
             self.ledger.append([close, opened])
-            entry.update(billing_code=billing_code, billing_seg=seg + 1,
+            entry.update(billing_code=new_name, billing_code_id=new_id, billing_seg=seg + 1,
                          billing_base_cost=spend["cost"], billing_base_tokens=spend["tokens"],
                          billing_base_usage=usage)
             txn.dirty = True
-        return old
+        return old_name
 
     def tidy_agent_storage(
         self,

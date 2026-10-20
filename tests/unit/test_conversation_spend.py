@@ -187,7 +187,7 @@ def test_a_model_switch_after_a_rebill_moves_no_spend(sm, before, after,
     assert row["px"] is None and contribution(row)["cost"] == pytest.approx(0, abs=1e-4)
     _sync(sm, s.id, {"a": conv(1_010_000, 101_000, model=after)}, model=after)
     sm.delete_sessions([s.id])
-    totals = sm.ledger.totals()
+    totals = sm.ledger.named(sm.ledger.totals())
     assert totals["client-a"]["cost"] == pytest.approx(spent, abs=1e-4)
     assert totals["client-b"]["cost"] == pytest.approx(price_after(10_000, 1_000), abs=1e-4)
 

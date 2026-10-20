@@ -88,6 +88,7 @@ class TestBillingCodes:
         with sm._locked_state() as state:
             state[child.id]["parent_session_id"] = parent.id
             state[child.id].pop("billing_code", None)
+            state[child.id].pop("billing_code_id", None)
             state[child.id]["stats"]["estimated_cost_usd"] = cost
         return child
 
@@ -101,8 +102,8 @@ class TestBillingCodes:
         finals = {r["sid"]: r["billing_code"] for r in _rows(sm) if r["kind"] == "final"}
         assert finals == {child.id: "ACME", grandchild.id: "ACME"}
         assert sm.find_archived(child.id).billing_code == "ACME"
-        assert sm.ledger.totals()["ACME"]["cost"] == 3.0
-        assert "orch-helper" not in sm.ledger.totals()
+        assert sm.ledger.named(sm.ledger.totals())["ACME"]["cost"] == 3.0
+        assert "orch-helper" not in sm.ledger.named(sm.ledger.totals())
 
     def test_a_child_of_a_codeless_parent_takes_the_roots_code(self, launcher, sm):
         root = launcher.launch(name="orch", billing_code="ACME")
@@ -145,8 +146,8 @@ class TestRows:
         assert [r["kind"] for r in _rows(sm)] == ["final"]
         sm.delete_session(s.id)  # the retry writes a duplicate final row
         assert [r["kind"] for r in _rows(sm)] == ["final", "final"]
-        assert sm.ledger.totals()["a"]["cost"] == 2.0  # counted once
-        assert sm.ledger.totals()["a"]["agents"] == 1
+        assert sm.ledger.named(sm.ledger.totals())["a"]["cost"] == 2.0  # counted once
+        assert sm.ledger.named(sm.ledger.totals())["a"]["agents"] == 1
 
 
 class TestFinalRow:
@@ -191,7 +192,7 @@ class TestRebill:
         sm.delete_session(s.id)
         assert [(r["kind"], r["billing_code"], r["seg"]) for r in _rows(sm)] == [
             ("close", "a", 0), ("open", "client-y", 1), ("final", "client-y", 1)]
-        totals = sm.ledger.totals()
+        totals = sm.ledger.named(sm.ledger.totals())
         assert totals["a"]["cost"] == 3.0 and totals["a"]["tokens"] == 300
         assert totals["client-y"]["cost"] == 2.0 and totals["client-y"]["tokens"] == 200
 
@@ -202,13 +203,14 @@ class TestRebill:
         kid = sm.create_session(name="kid", tmux_session="agents", tmux_window="k-1", command=[])
         with sm._state_transaction() as txn:
             txn.state[kid.id].pop("billing_code", None)
+            txn.state[kid.id].pop("billing_code_id", None)
             txn.state[kid.id]["parent_session_id"] = root.id
             txn.dirty = True
         _spend(sm, kid, 5.0, 1000)
         assert sm.rebill(kid.id, "other") == "acme"
         assert [(r["kind"], r["billing_code"]) for r in _rows(sm) if r["sid"] == kid.id] == [
             ("close", "acme"), ("open", "other")]
-        totals = sm.ledger.totals(save=False)
+        totals = sm.ledger.named(sm.ledger.totals(save=False))
         assert "kid" not in totals and totals["acme"]["cost"] == 5.0
 
     def test_rebilling_a_codeless_child_to_its_roots_code_writes_no_rows(self, sm):
@@ -217,6 +219,7 @@ class TestRebill:
         kid = sm.create_session(name="kid", tmux_session="agents", tmux_window="k-1", command=[])
         with sm._state_transaction() as txn:
             txn.state[kid.id].pop("billing_code", None)
+            txn.state[kid.id].pop("billing_code_id", None)
             txn.state[kid.id]["parent_session_id"] = root.id
             txn.dirty = True
         assert sm.rebill(kid.id, "acme") == "acme"
@@ -252,7 +255,7 @@ class TestRebill:
         self._work(sm, s, after, 5_010_000, 1_001_000)  # /model, then a little work
         new_work = self._estimate(after, 10_000, 1_000)
         sm.delete_sessions([s.id])
-        totals = sm.ledger.totals()
+        totals = sm.ledger.named(sm.ledger.totals())
         assert totals["client-a"]["cost"] == pytest.approx(spent)
         assert totals["client-b"]["cost"] == pytest.approx(new_work, abs=1e-3)
 
@@ -262,7 +265,7 @@ class TestRebill:
         sm.ledger.append([make_row(sm.get_session(s.id), "checkpoint", t="2026-09-30T12:00:00")])
         self._work(sm, s, "claude-opus-4-1", 5_010_000, 1_001_000)
         sm.ledger.append([make_row(sm.get_session(s.id), "checkpoint", t="2026-10-02T12:00:00")])
-        octo = sm.ledger.report(since=datetime(2026, 10, 1), until=datetime(2026, 11, 1))
+        octo = sm.ledger.named(sm.ledger.report(since=datetime(2026, 10, 1), until=datetime(2026, 11, 1)))
         assert octo["w"]["cost"] == pytest.approx(
             self._estimate("claude-opus-4-1", 10_000, 1_000), abs=1e-3)
 
@@ -297,34 +300,34 @@ class TestTotals:
         ledger = self._ledger(sm, [self._row("s1", "x", 1.0, seq=1),
                                    self._row("s1", "x", 4.0, seq=2),
                                    self._row("s2", "x", 0.5, kind="final", seq=3)])
-        totals = ledger.totals()
+        totals = ledger.named(ledger.totals())
         assert totals["x"]["cost"] == 4.5
         assert totals["x"]["agents"] == 2 and totals["x"]["running"] == 1
 
     def test_a_downward_revision_and_a_late_older_row(self, sm):
         ledger = self._ledger(sm, [self._row("s1", "x", 4.0, seq=2)])
-        ledger.totals()
+        ledger.named(ledger.totals())
         ledger.append([self._row("s1", "x", 3.0, seq=5),   # revised down
                        self._row("s1", "x", 9.0, seq=1)])  # an older row, late
-        assert ledger.totals()["x"]["cost"] == 3.0
+        assert ledger.named(ledger.totals())["x"]["cost"] == 3.0
 
     def test_incremental_reads_only_new_rows(self, sm):
         ledger = self._ledger(sm, [self._row("s1", "x", 1.0, kind="final", seq=1)])
-        assert ledger.totals()["x"]["cost"] == 1.0
+        assert ledger.named(ledger.totals())["x"]["cost"] == 1.0
         seen = []
         real = Ledger._rows_of
         with patch.object(Ledger, "_rows_of", staticmethod(
                 lambda path, offset=0: seen.append(offset) or real(path, offset))):
             ledger.append([self._row("s2", "y", 2.0, kind="final", seq=2)])
-            totals = ledger.totals()
+            totals = ledger.named(ledger.totals())
             assert totals["y"]["cost"] == 2.0 and totals["x"]["cost"] == 1.0
             assert seen and seen[0] > 0  # from where the last fold stopped
 
     def test_a_late_checkpoint_after_the_final_is_ignored(self, sm):
         ledger = self._ledger(sm, [self._row("s1", "x", 5.0, kind="final", seq=10)])
-        ledger.totals()
+        ledger.named(ledger.totals())
         ledger.append([self._row("s1", "x", 2.0, seq=4)])
-        totals = ledger.totals()
+        totals = ledger.named(ledger.totals())
         assert totals["x"]["cost"] == 5.0 and totals["x"]["running"] == 0
 
     def test_period_report(self, sm):
@@ -334,22 +337,22 @@ class TestTotals:
             self._row("s1", "x", 4.0, seq=2, t=octo.isoformat()),
             self._row("s2", "y", 2.0, kind="final", seq=3, t=sept.isoformat()),
         ])
-        oct_report = ledger.report(since=datetime(2026, 10, 1), until=datetime(2026, 11, 1))
+        oct_report = ledger.named(ledger.report(since=datetime(2026, 10, 1), until=datetime(2026, 11, 1)))
         assert oct_report == {"x": {"cost": 3.0, "tokens": 300, "tok_in": 0, "tok_out": 0,
                                     "tok_cache": 0, "agents": 1, "running": 1, "background": 0}}
-        sep_report = ledger.report(since=datetime(2026, 9, 1), until=datetime(2026, 10, 1))
+        sep_report = ledger.named(ledger.report(since=datetime(2026, 9, 1), until=datetime(2026, 10, 1)))
         assert sep_report["x"]["cost"] == 1.0 and sep_report["y"]["cost"] == 2.0
 
     def test_months_are_gzipped_and_still_read(self, sm):
         ledger = sm.ledger
         ledger.append([self._row("s1", "x", 1.0, kind="final", seq=1)], now=datetime(2026, 8, 1))
-        ledger.totals()
+        ledger.named(ledger.totals())
         ledger.append([self._row("s2", "x", 2.0, kind="final", seq=2)], now=datetime(2026, 9, 1))
         assert [p.name for _, p in ledger.months()] == ["2026-08.jsonl.gz", "2026-09.jsonl"]
-        assert ledger.totals()["x"]["cost"] == 3.0
-        assert Ledger(sm.state_dir).totals(save=False)["x"]["cost"] == 3.0
+        assert ledger.named(ledger.totals())["x"]["cost"] == 3.0
+        assert Ledger(sm.state_dir).named(Ledger(sm.state_dir).totals(save=False))["x"]["cost"] == 3.0
         os.unlink(ledger.totals_path)
-        assert ledger.totals()["x"]["cost"] == 3.0  # a full refold agrees
+        assert ledger.named(ledger.totals())["x"]["cost"] == 3.0  # a full refold agrees
 
     def test_cli(self, sm):
         sm.ledger.append([self._row("s1", "client-x", 12.5, kind="final", seq=1)])
@@ -378,10 +381,10 @@ class TestStaleCheckpoints:
         sm.ledger.append([make_row(stale, "checkpoint")])  # seg 0, code a, newer seq
         _spend(sm, s, 15.0, 1500)
         sm.delete_session(s.id)
-        totals = sm.ledger.totals()
+        totals = sm.ledger.named(sm.ledger.totals())
         assert (totals["a"]["cost"], totals["a"]["running"]) == (10.0, 0)
         assert (totals["b"]["cost"], totals["b"]["running"]) == (5.0, 0)
-        report = sm.ledger.report()
+        report = sm.ledger.named(sm.ledger.report())
         assert report["a"]["cost"] == 10.0 and report["a"]["running"] == 0
         assert report["b"]["cost"] == 5.0
 
@@ -391,10 +394,10 @@ class TestStaleCheckpoints:
         stale = self._stale(sm, s, 2.0)
         sm.delete_session(s.id)
         sm.ledger.append([make_row(stale, "checkpoint")])
-        assert sm.ledger.totals()["w"]["running"] == 0
+        assert sm.ledger.named(sm.ledger.totals())["w"]["running"] == 0
         os.unlink(sm.ledger.totals_path)
-        assert sm.ledger.totals()["w"]["running"] == 0  # a full refold agrees
-        assert sm.ledger.report()["w"]["running"] == 0
+        assert sm.ledger.named(sm.ledger.totals())["w"]["running"] == 0  # a full refold agrees
+        assert sm.ledger.named(sm.ledger.report())["w"]["running"] == 0
 
     def test_across_a_period_boundary(self, sm):
         row = {"sid": "s", "billing_code": "x", "seg": 0, "tokens": 0, "base_cost": 0.0,
@@ -402,7 +405,7 @@ class TestStaleCheckpoints:
         sm.ledger.append([dict(row, cost=2.0, kind="final", seq=1, t="2026-09-30T23:59:59"),
                           dict(row, cost=3.0, kind="checkpoint", seq=2,
                                t="2026-10-01T00:00:01")])
-        assert sm.ledger.report(since=datetime(2026, 10, 1)) == {}
+        assert sm.ledger.named(sm.ledger.report(since=datetime(2026, 10, 1))) == {}
 
 
 class TestCheckpoints:
@@ -424,7 +427,7 @@ class TestCheckpoints:
         assert hk.checkpoint_spend([sm.get_session(s.id)], sm.ledger,
                                    later + timedelta(minutes=125)) == 1
         assert [r["cost"] for r in _rows(sm)] == [1.0, 2.0]
-        assert sm.ledger.totals()["a"]["running"] == 1
+        assert sm.ledger.named(sm.ledger.totals())["a"]["running"] == 1
         hk.checkpoint_spend([], sm.ledger, later)
         assert hk.last_checkpoint == {}  # a departed agent is forgotten
 
@@ -443,7 +446,7 @@ class TestBackfill:
         assert _rows(sm) == []
         assert sm.ledger.backfill_from_archive(sm) == 2
         assert sm.ledger.backfill_from_archive(sm) == 0
-        totals = sm.ledger.totals()
+        totals = sm.ledger.named(sm.ledger.totals())
         assert totals["a"]["cost"] == 1.0 and totals["b"]["cost"] == 2.0
 
 

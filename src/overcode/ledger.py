@@ -1,17 +1,26 @@
 """The spend ledger: what every agent spent, by billing code, kept for ever.
 
-Every agent has a billing code (``Session.billing_code``): its launch name
-unless ``overcode launch --billing-code`` set one, and always its parent's
-for a child or a fork. ``overcode rebill`` changes it forward only.
+Every agent has a billing code (``Session.billing_code_id``, a code of the
+registry in ``codes``; ``Session.billing_code`` is its name, a display
+copy): the code named after its launch name unless ``overcode launch
+--billing-code`` named one, and always its parent's for a child or a fork.
+``overcode rebill`` changes it forward only.
 
 ``~/.overcode/ledger/<YYYY-MM>.jsonl`` holds one row per spend event,
 named by write time (a closed month is gzipped). A row carries the agent's
 *cumulative* own spend so far, never a delta, so a repeated or late row is
 harmless: readers keep the last row of each agent's segment. Rows::
 
-    {"t", "seq", "sid", "name", "parent", "billing_code", "seg", "model",
-     "cost", "tokens", "tok_in", "tok_out", "tok_cache", "tok_cw", "tok_cr",
-     "px", "base_cost", "base_tokens", "base_usage", "kind"}
+    {"t", "seq", "sid", "name", "parent", "code", "billing_code", "seg",
+     "model", "cost", "tokens", "tok_in", "tok_out", "tok_cache", "tok_cw",
+     "tok_cr", "px", "base_cost", "base_tokens", "base_usage", "kind"}
+
+``code`` is the code's id; ``billing_code`` its name when the row was
+written (for anyone grepping the files). Rows from before ids carry only
+the ``billing_code`` string: a reader groups a row by its *code key*
+(``row_code``: the id, else that string) and reports under the code the
+registry maps it to (``codes.CodeRegistry.canonical``: legacy strings and
+merges followed), shown by its current name. No row is ever rewritten.
 
 A Claude background session the engine adopted (a 🌙 row) is billed the
 same way, as an "agent" of its own (``sid`` ``claude-bg:<sessionId>``,
@@ -63,8 +72,9 @@ the "last cumulative row wins" rule, and contributions stay
 non-negative.
 
 ``ledger/totals.json`` folds the rows incrementally: per month, how far
-they were read; the last row of every open segment; per-code totals of
-closed ones (a ``final``, ``close`` or ``backfill`` row closes a segment;
+they were read; the last row of every open segment; per-code-key totals of
+closed ones (mapped to codes when reported, so a rename or merge needs no
+refold) (a ``final``, ``close`` or ``backfill`` row closes a segment;
 a later checkpoint, from a snapshot taken before it closed, never reopens
 it). A closed
 segment's contribution is remembered for a while (CLOSED_KEEP_DAYS), so a
@@ -98,7 +108,7 @@ except ImportError:  # pragma: no cover - Windows
 
 logger = logging.getLogger(__name__)
 
-TOTALS_VERSION = 1
+TOTALS_VERSION = 2  # 2: keyed by code key (an id, else a legacy string)
 # How long a closed segment's contribution is remembered, to replace (not
 # add) a duplicate or revised final row for it
 CLOSED_KEEP_DAYS = 62
@@ -123,8 +133,20 @@ def _get(record, key, default=None):
 
 
 def billing_code_of(record) -> str:
-    """An agent's billing code: its own, else its name (records from before codes)."""
+    """An agent's billing code key: its code's id; for a record from before ids
+    its code string, else its name (a legacy key, ``codes``)."""
+    return (_get(record, "billing_code_id") or _get(record, "billing_code")
+            or _get(record, "name") or "?")
+
+
+def billing_name_of(record) -> str:
+    """The name an agent's billing code is shown by (the record's display copy)."""
     return _get(record, "billing_code") or _get(record, "name") or "?"
+
+
+def row_code(row: dict) -> str:
+    """The code key a ledger row is grouped by: its id, else its legacy string."""
+    return row.get("code") or row.get("billing_code") or "?"
 
 
 def spend_of(record) -> Dict[str, float]:
@@ -146,36 +168,38 @@ def spend_of(record) -> Dict[str, float]:
 
 
 def billing_lookup(*groups) -> Dict[str, dict]:
-    """``{id: {billing_code, parent_session_id, name}}`` of records and sessions.
+    """``{id: {billing_code_id, billing_code, parent_session_id, name}}`` of records and sessions.
 
-    What ``inherited_billing_code`` walks; the first group to name an id wins.
+    What ``inherited_billing`` walks; the first group to name an id wins.
     """
     found: Dict[str, dict] = {}
     for group in groups:
         for record in group:
             sid = _get(record, "id")
             if isinstance(sid, str) and sid not in found:
-                found[sid] = {key: _get(record, key)
-                              for key in ("billing_code", "parent_session_id", "name")}
+                found[sid] = {key: _get(record, key) for key in
+                              ("billing_code_id", "billing_code", "parent_session_id", "name")}
     return found
 
 
-def inherited_billing_code(record, lookup: Dict[str, dict]) -> str:
-    """A record's billing code: its own, else its parent's (up to the root), else its name.
+def inherited_billing(record, lookup: Dict[str, dict]) -> Tuple[Optional[str], str]:
+    """``(id or None, name)`` of a record's billing code: its own, else its
+    parent's (up to the root), else (None, its name).
 
-    For records from before billing codes (an upgrade): children always
-    bill to the code their tree's root was launched with.
+    For records from before billing codes or ids (an upgrade): children
+    always bill to the code their tree's root was launched with. None for
+    the id: a legacy string, for the registry to map (``codes.adopt``).
     """
     seen = set()
     current = record
     while True:
-        code = _get(current, "billing_code")
-        if code:
-            return code
+        code_id, code = _get(current, "billing_code_id"), _get(current, "billing_code")
+        if code_id or code:
+            return code_id, code or billing_name_of(current)
         parent_id = _get(current, "parent_session_id")
         parent = lookup.get(parent_id) if parent_id and parent_id not in seen else None
         if parent is None:
-            return _get(current, "name") or billing_code_of(record)
+            return None, _get(current, "name") or billing_name_of(record)
         seen.add(parent_id)
         current = parent
 
@@ -229,10 +253,21 @@ def _usage(row: dict) -> Optional[Dict[str, int]]:
 
 
 def make_row(record, kind: str, *, now: Optional[datetime] = None,
-             billing_code: Optional[str] = None, seg: Optional[int] = None,
-             base: Optional[Dict[str, float]] = None, t: Optional[str] = None) -> dict:
-    """The ledger row for an agent's record (a sessions.json dict or a Session)."""
+             code: Optional[str] = None, billing_code: Optional[str] = None,
+             seg: Optional[int] = None, base: Optional[Dict[str, float]] = None,
+             t: Optional[str] = None) -> dict:
+    """The ledger row for an agent's record (a sessions.json dict or a Session).
+
+    Billed to ``code`` (an id) named ``billing_code``; by default the
+    record's own. ``billing_code`` alone is a legacy string (no ``code``).
+    """
+    from .codes import is_code_id
+
     now = now or datetime.now()
+    if code is None and billing_code is None:
+        code, billing_code = billing_code_of(record), billing_name_of(record)
+    if not is_code_id(code):
+        billing_code, code = billing_code or code, None
     spend = spend_of(record)
     usage = usage_of(record)
     stats = _get(record, "stats") or {}
@@ -255,7 +290,8 @@ def make_row(record, kind: str, *, now: Optional[datetime] = None,
         "sid": _get(record, "id"),
         "name": _get(record, "name"),
         "parent": _get(record, "parent_session_id"),
-        "billing_code": billing_code or billing_code_of(record),
+        **({"code": code} if code else {}),
+        "billing_code": billing_code or billing_name_of(record),
         "seg": int(_get(record, "billing_seg", 0) or 0) if seg is None else seg,
         "model": _get(record, "model"),
         **spend,
@@ -403,8 +439,31 @@ class Ledger:
     """The ledger directory of one sessions registry (see the module docstring)."""
 
     def __init__(self, registry_dir: Optional[Path] = None):
+        from .codes import CodeRegistry
+
         self.dir = paths.ledger_dir(registry_dir)
         self.totals_path = paths.ledger_totals_path(registry_dir)
+        self.codes = CodeRegistry(self.dir)
+
+    def by_code(self, report: Dict[str, dict]) -> Dict[str, dict]:
+        """A report by code key, summed by the code each key reports under (``codes``).
+
+        Keys: code ids, and any legacy string the registry does not map.
+        """
+        out: Dict[str, dict] = {}
+        for key, entry in report.items():
+            code = self.codes.canonical(key)
+            if code not in out:
+                out[code] = dict(entry)
+                continue
+            for name, value in entry.items():
+                if isinstance(value, (int, float)):
+                    out[code][name] = out[code].get(name, 0) + value
+        return out
+
+    def named(self, report: Dict[str, dict]) -> Dict[str, dict]:
+        """A report by code (``totals``, ``report``) keyed by each code's current name."""
+        return {self.codes.name_of(code): entry for code, entry in report.items()}
 
     # ── files ───────────────────────────────────────────────────────────
 
@@ -555,7 +614,7 @@ class Ledger:
                 and key not in open_ and isinstance(row.get("was"), dict)):
             # A correction of a segment whose closed share has been
             # forgotten: its code moves by the difference
-            code = row.get("billing_code") or "?"
+            code = row_code(row)
             amounts, was = contribution(row), row["was"]
             entry = codes.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0})
             for name in AMOUNTS:
@@ -586,7 +645,7 @@ class Ledger:
             row = last  # an older row arriving late does not move the segment back
         if is_closing(row):
             open_.pop(key, None)
-            code = row.get("billing_code") or "?"
+            code = row_code(row)
             amounts = contribution(row)
             entry = codes.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0})
             for name in AMOUNTS:
@@ -603,7 +662,7 @@ class Ledger:
     def totals(self, *, now: Optional[datetime] = None, save: bool = True) -> Dict[str, dict]:
         """Spend per billing code over the whole ledger, folded incrementally.
 
-        ``{code: {"cost", "tokens", "tok_in", "tok_out", "tok_cache",
+        ``{code id: {"cost", "tokens", "tok_in", "tok_out", "tok_cache",
         "agents", "running", "background"}}``: closed segments from the
         fold, plus each open segment's last row (``running`` counts those;
         ``background`` the background sessions' segments among ``agents``).
@@ -639,7 +698,7 @@ class Ledger:
         changed = changed or bool(stale)
         if changed and save:
             self._save_totals(totals)
-        return self._report(totals)
+        return self.by_code(self._report(totals))
 
     def _refold(self, now: datetime, *, save: bool) -> Dict[str, dict]:
         try:
@@ -666,7 +725,7 @@ class Ledger:
             report[code]["running"] = 0
             report[code]["background"] = entry.get("background", 0)
         for row in totals["open"].values():
-            code = row.get("billing_code") or "?"
+            code = row_code(row)
             entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0)
                                       | {"agents": 0, "running": 0, "background": 0})
             for name, value in contribution(row).items():
@@ -679,7 +738,7 @@ class Ledger:
 
     def report(self, since: Optional[datetime] = None,
                until: Optional[datetime] = None) -> Dict[str, dict]:
-        """Spend per billing code in [since, until), from the rows (by their time).
+        """Spend per billing code (id) in [since, until), from the rows (by their time).
 
         A segment's spend in the period is its last cumulative value before
         ``until`` less its last one before ``since``. Reads every month: a
@@ -721,7 +780,7 @@ class Ledger:
                     amounts["cost"] = max(0.0, (float(row.get("cost", 0) or 0)
                                                 - price(px, prior_usage))
                                           * row_factor["cost"])
-            code = row.get("billing_code") or "?"
+            code = row_code(row)
             entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0)
                                       | {"agents": 0, "running": 0, "background": 0})
             for name in AMOUNTS:
@@ -731,7 +790,7 @@ class Ledger:
                 entry["running"] += 1
             if row.get("claude_bg"):
                 entry["background"] += 1
-        return report
+        return self.by_code(report)
 
     # ── backfill ────────────────────────────────────────────────────────
 
@@ -782,16 +841,17 @@ class Ledger:
                 continue
             t = record.get("end_time") or record.get("start_time")
             last = running.get(sid)
-            if last is not None and not record.get("billing_code"):
-                rows.append(make_row(record, "backfill", t=t,
+            if last is not None and not (record.get("billing_code_id")
+                                         or record.get("billing_code")):
+                rows.append(make_row(record, "backfill", t=t, code=last.get("code"),
                                      billing_code=last.get("billing_code"),
                                      seg=int(last.get("seg", 0) or 0),
                                      base={"cost": last.get("base_cost", 0.0),
                                            "tokens": last.get("base_tokens", 0),
                                            "usage": last.get("base_usage")}))
             else:
-                rows.append(make_row(record, "backfill", t=t,
-                                     billing_code=inherited_billing_code(record, lookup)))
+                code_id, name = inherited_billing(record, lookup)
+                rows.append(make_row(record, "backfill", t=t, code=code_id, billing_code=name))
         rows.reverse()
         for i in range(0, len(rows), 1000):
             self.append(rows[i:i + 1000])

@@ -222,7 +222,7 @@ class TestRebillFromTheTui:
         assert sm.get_session(child.id).billing_code == "alpha"  # per agent: children keep theirs
         rows = [(r["kind"], r["billing_code"]) for r in sm.ledger.iter_rows()]
         assert rows == [("close", "alpha"), ("open", "client-y")]
-        assert sm.ledger.totals()["alpha"]["cost"] == 3.0
+        assert sm.ledger.named(sm.ledger.totals())["alpha"]["cost"] == 3.0
 
     async def test_a_remote_agent_is_refused_with_how_to_do_it(self, make_tui, monkeypatch):
         from overcode.tui_actions import session as session_actions

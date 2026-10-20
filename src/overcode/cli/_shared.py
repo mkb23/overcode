@@ -75,6 +75,15 @@ budget_app = typer.Typer(
 )
 app.add_typer(budget_app, name="budget")
 
+# Billing codes and the spend ledger: the report, rename, merge, codes
+billing_app = typer.Typer(
+    name="billing",
+    help="Spend per billing code, and the codes themselves.",
+    no_args_is_help=False,
+    invoke_without_command=True,
+)
+app.add_typer(billing_app, name="billing")
+
 # Sister subcommand group
 sister_app = typer.Typer(
     name="sister",

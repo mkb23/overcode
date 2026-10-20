@@ -206,10 +206,10 @@ class TestLiveCorrection:
     def test_the_cost_goes_down_once_with_a_correction_row(self, sm):
         s = _agent(sm, ["a"])
         _sync(sm, s.id, {"a": v1(300_000)})
-        assert sm.ledger.totals() == {}
+        assert sm.ledger.named(sm.ledger.totals()) == {}
         rows = [make_row(sm.get_session(s.id), "checkpoint")]
         sm.ledger.append(rows)
-        assert sm.ledger.totals()["cx"]["cost"] == pytest.approx(_opus(300_000))
+        assert sm.ledger.named(sm.ledger.totals())["cx"]["cost"] == pytest.approx(_opus(300_000))
 
         session, pending = _sync(sm, s.id, {"a": v2(200_000)})
         assert session.stats.estimated_cost_usd == pytest.approx(_opus(200_000))
@@ -217,7 +217,7 @@ class TestLiveCorrection:
         assert row["closing"] is False and row["seg"] == 0
         assert row["scale"]["cost"] == pytest.approx(2 / 3)
         assert row["was"]["cost"] == pytest.approx(_opus(300_000))
-        assert sm.ledger.totals()["cx"]["cost"] == pytest.approx(_opus(200_000))
+        assert sm.ledger.named(sm.ledger.totals())["cx"]["cost"] == pytest.approx(_opus(200_000))
 
         # Idempotent: the next sync reads at the same version, nothing to restate
         _sync(sm, s.id, {"a": v2(200_000)})
@@ -225,7 +225,7 @@ class TestLiveCorrection:
         # And spend grows normally after it
         session, _ = _sync(sm, s.id, {"a": v2(210_000)})
         sm.ledger.append([make_row(session, "checkpoint")])
-        assert sm.ledger.totals()["cx"]["cost"] == pytest.approx(_opus(210_000))
+        assert sm.ledger.named(sm.ledger.totals())["cx"]["cost"] == pytest.approx(_opus(210_000))
 
     def test_a_rebilled_agent_has_every_segment_scaled(self, sm):
         s = _agent(sm, ["a"])
@@ -233,14 +233,14 @@ class TestLiveCorrection:
         assert sm.rebill(s.id, "client-b") == "cx"
         session, _ = _sync(sm, s.id, {"a": v1(450_000)})
         sm.ledger.append([make_row(session, "checkpoint")])
-        before = sm.ledger.totals()
+        before = sm.ledger.named(sm.ledger.totals())
         assert before["cx"]["cost"] == pytest.approx(_opus(300_000))
         assert before["client-b"]["cost"] == pytest.approx(_opus(150_000))
 
         session, _ = _sync(sm, s.id, {"a": v2(300_000)})  # really 2/3 of it
         rows = _corrections(sm)
         assert sorted((r["seg"], r["closing"]) for r in rows) == [(0, True), (1, False)]
-        after = sm.ledger.totals()
+        after = sm.ledger.named(sm.ledger.totals())
         assert after["cx"]["cost"] == pytest.approx(_opus(200_000))
         assert after["client-b"]["cost"] == pytest.approx(_opus(100_000))
         assert after["cx"]["agents"] == 1 and after["client-b"]["running"] == 1
@@ -249,8 +249,8 @@ class TestLiveCorrection:
         assert session.billing_base_tokens == 200_000
         session, _ = _sync(sm, s.id, {"a": v2(330_000)})
         sm.ledger.append([make_row(session, "checkpoint")])
-        assert sm.ledger.totals()["client-b"]["cost"] == pytest.approx(_opus(130_000))
-        assert sm.ledger.totals()["cx"]["cost"] == pytest.approx(_opus(200_000))
+        assert sm.ledger.named(sm.ledger.totals())["client-b"]["cost"] == pytest.approx(_opus(130_000))
+        assert sm.ledger.named(sm.ledger.totals())["cx"]["cost"] == pytest.approx(_opus(200_000))
 
     def test_a_period_report_reads_the_past_corrected(self, sm):
         s = _agent(sm, ["a"])
@@ -260,11 +260,11 @@ class TestLiveCorrection:
         session, _ = _sync(sm, s.id, {"a": v1(600_000)})
         sm.ledger.append([make_row(session, "checkpoint", now=t0 + timedelta(days=10))])
         _sync(sm, s.id, {"a": v2(400_000)}, now=t0 + timedelta(days=20))
-        september = sm.ledger.report(since=t0 - timedelta(days=1), until=t0 + timedelta(days=5))
+        september = sm.ledger.named(sm.ledger.report(since=t0 - timedelta(days=1), until=t0 + timedelta(days=5)))
         assert september["cx"]["cost"] == pytest.approx(_opus(200_000))
-        later = sm.ledger.report(since=t0 + timedelta(days=5), until=t0 + timedelta(days=15))
+        later = sm.ledger.named(sm.ledger.report(since=t0 + timedelta(days=5), until=t0 + timedelta(days=15)))
         assert later["cx"]["cost"] == pytest.approx(_opus(200_000))
-        everything = sm.ledger.report()
+        everything = sm.ledger.named(sm.ledger.report())
         assert everything["cx"]["cost"] == pytest.approx(_opus(400_000))
 
     def test_a_record_with_totals_only_is_folded_first(self, sm):

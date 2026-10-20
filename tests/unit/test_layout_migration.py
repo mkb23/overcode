@@ -116,13 +116,13 @@ class TestMigrate:
         assert counts["backfilled"] == 1 and counts["coded"] == 1
         assert not sm.old_archive_file.exists()
         assert sm.find_archived("shirka").id == "arch-1"
-        assert sm.ledger.totals()["shirka"]["cost"] == 4.0
+        assert sm.ledger.named(sm.ledger.totals())["shirka"]["cost"] == 4.0
         assert sm.get_session("live-1").billing_code == "worker"
         # Idempotent
         session_dir("agents").joinpath(".layout").unlink()
         again = migrate_layout("agents", sm)
         assert again["backfilled"] == 0 and again["coded"] == 0
-        assert sm.ledger.totals()["shirka"]["cost"] == 4.0
+        assert sm.ledger.named(sm.ledger.totals())["shirka"]["cost"] == 4.0
 
 
 def _old_record(sid, name, cost, parent=None, end="2026-08-02T00:00:00"):
@@ -148,14 +148,14 @@ class TestChildrenBillToTheParent:
         migrate_layout("agents", sm)
         assert {s.id: s.billing_code for s in sm.list_sessions()} == {
             "proj": "proj", "tests": "proj", "grand": "proj"}
-        assert set(sm.ledger.totals()) == {"proj"}
+        assert set(sm.ledger.named(sm.ledger.totals())) == {"proj"}
 
     def test_an_archived_child_of_an_archived_parent(self, sm):
         sm.old_archive_file.write_text(
             json.dumps(_old_record("root", "lead", 1.0)) + "\n"
             + json.dumps(_old_record("kid", "lead-kid", 3.0, parent="root")) + "\n")
         migrate_layout("agents", sm)
-        totals = sm.ledger.totals()
+        totals = sm.ledger.named(sm.ledger.totals())
         assert set(totals) == {"lead"} and totals["lead"]["cost"] == 4.0
 
 
@@ -175,7 +175,7 @@ class TestReupgrade:
                           housekeeping=MagicMock(), rotation=MagicMock(),
                           model_metadata=MagicMock())
         hk.migrate_storage(sm)  # the re-upgraded daemon starts
-        totals = sm.ledger.totals()
+        totals = sm.ledger.named(sm.ledger.totals())
         assert totals["first"]["cost"] == 1.0
         assert (totals["second"]["cost"], totals["second"]["running"]) == (5.0, 0)
         assert totals["third"]["cost"] == 7.0
@@ -220,7 +220,7 @@ class TestChildLaunchedByAnOlderOvercode:
         assert migrate_layout("agents", sm)["coded"] == 0
 
     def test_the_daemon_gives_it_the_parent_code_after_it_migrated(self, sm):
-        from overcode.ledger import billing_code_of
+        from overcode.ledger import billing_name_of as billing_code_of
 
         parent = self._parent(sm)
         hk = _housekeeping()

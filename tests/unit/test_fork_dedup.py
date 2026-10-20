@@ -328,7 +328,7 @@ class TestBackgroundFork:
         assert row["tokens"] == sum(CHARLIE)
         assert row["cost"] == pytest.approx(
             claude_bg.read_spend(self.job(fork), (original,))["cost_usd"])
-        assert ledger.totals(save=False)["proj-x"]["tokens"] == sum(CHARLIE)
+        assert ledger.named(ledger.totals(save=False))["proj-x"]["tokens"] == sum(CHARLIE)
 
 
 class TestBgLedgerCorrection:
@@ -362,12 +362,12 @@ class TestBgLedgerCorrection:
         rows = list(ledger.iter_rows())
         assert [r["kind"] for r in rows] == ["checkpoint", CORRECTION]
         assert rows[-1]["closing"] is False and rows[-1]["claude_bg"] is True
-        totals = ledger.totals(save=False)["code-a"]
+        totals = ledger.named(ledger.totals(save=False))["code-a"]
         assert totals["cost"] == pytest.approx(1.0) and totals["tokens"] == 100
         # It spends again from there: a checkpoint, no second correction
         writer.sync([self._Row(1.5, 150)], self.AGENTS, ledger, now + 2)
         assert [r["kind"] for r in ledger.iter_rows()][-1] == "checkpoint"
-        assert ledger.totals(save=False)["code-a"]["cost"] == pytest.approx(1.5)
+        assert ledger.named(ledger.totals(save=False))["code-a"]["cost"] == pytest.approx(1.5)
 
     def test_a_closed_segment_s_share_is_replaced(self, tmp_path):
         from overcode.ledger import CORRECTION
@@ -375,12 +375,12 @@ class TestBgLedgerCorrection:
         ledger, writer = self._ledger(tmp_path)
         now = datetime(2026, 10, 17, 1, 0).timestamp()
         writer.sync([self._Row(3.0, 300, ended=now)], self.AGENTS, ledger, now)
-        assert ledger.totals(save=False)["code-a"]["cost"] == pytest.approx(3.0)
+        assert ledger.named(ledger.totals(save=False))["code-a"]["cost"] == pytest.approx(3.0)
         writer.sync([self._Row(1.0, 100, ended=now)], self.AGENTS, ledger, now + 1)
         rows = list(ledger.iter_rows())
         assert [r["kind"] for r in rows] == ["final", CORRECTION]
         assert rows[-1]["closing"] is True
-        totals = ledger.totals(save=False)["code-a"]
+        totals = ledger.named(ledger.totals(save=False))["code-a"]
         assert totals["cost"] == pytest.approx(1.0) and totals["agents"] == 1
         # Read the same again (a restart): nothing more
         assert writer.sync([self._Row(1.0, 100, ended=now)], self.AGENTS, ledger, now + 2) == 0
@@ -425,7 +425,7 @@ class TestArchived:
         pending.archive_session(s.id)
         sm.commit_pending(pending)
         sm.ledger.backfill_from_archive(sm)
-        before = sm.ledger.totals()["alpha"]["cost"]
+        before = sm.ledger.named(sm.ledger.totals())["alpha"]["cost"]
 
         def run():
             return recompute_archived_spend(sm, history_file=HistoryFile(claude.history_path),
@@ -438,7 +438,7 @@ class TestArchived:
         assert stats["conversations"][FORK]["cr"] == CHARLIE[3]
         [row] = [r for r in sm.ledger.iter_rows() if r.get("kind") == CORRECTION]
         assert row["closing"] is True
-        after = sm.ledger.totals()["alpha"]["cost"]
+        after = sm.ledger.named(sm.ledger.totals())["alpha"]["cost"]
         assert after < before
         assert after == pytest.approx(stats["estimated_cost_usd"])
         # Again: the record reads at the new version, nothing is billed again
@@ -447,4 +447,4 @@ class TestArchived:
         marker_path(sm).unlink()
         cursor_path(sm).unlink(missing_ok=True)
         assert run()["rows"] == 0
-        assert sm.ledger.totals()["alpha"]["cost"] == pytest.approx(after)
+        assert sm.ledger.named(sm.ledger.totals())["alpha"]["cost"] == pytest.approx(after)

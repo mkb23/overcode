@@ -265,10 +265,13 @@ class DialogsMixin:
         if old is None:
             self.notify(f"Agent '{message.name}' no longer exists", severity="error")
             return
-        if old == message.new_code:
+        # The code the name resolved to (a previous name reads as the current one)
+        after = self.session_manager.get_session(message.session_id)
+        new = getattr(after, "billing_code", None) or message.new_code.strip()
+        if old == new:
             self.notify(f"'{message.name}' is already billed to {old}")
             return
-        self.notify(f"'{message.name}' billed to {message.new_code} from now on "
+        self.notify(f"'{message.name}' billed to {new} from now on "
                     f"(its spend so far stays on {old})")
         self.refresh_sessions()
 

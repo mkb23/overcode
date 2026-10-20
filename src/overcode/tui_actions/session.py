@@ -650,7 +650,7 @@ class SessionActionsMixin:
         Applying it is ``overcode rebill``: forward only, this agent only.
         """
         from ..config import get_billing_config
-        from ..ledger import billing_code_of
+        from ..ledger import billing_name_of
         from ..tui_widgets import BillingCodeModal
 
         focused = _get_focused_session(self)
@@ -681,7 +681,7 @@ class SessionActionsMixin:
         modal.show(
             session_id=session.id,
             name=session.name,
-            code=billing_code_of(session),
+            code=billing_name_of(session),
             shortlist=billing["codes"],
             config_warning=warning,
             app_ref=self,

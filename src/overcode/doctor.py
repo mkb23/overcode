@@ -848,6 +848,32 @@ def quota_findings(status: Optional[dict], now: float) -> List[str]:
     return findings
 
 
+def billing_findings(session_manager) -> List[str]:
+    """Billing codes the registry cannot account for (``codes``).
+
+    A live agent whose code id is not in the registry (its spend reports
+    under a bare id), and code strings in id-less ledger rows that no code
+    maps (they report as a code of their own until the migration, run by
+    the daemon, takes them in). Reads every ledger month.
+    """
+    codes = session_manager.ledger.codes
+    findings = []
+    unknown = sorted(s.name for s in session_manager.list_sessions()
+                     if s.billing_code_id and codes.get(s.billing_code_id) is None)
+    if unknown:
+        findings.append(f"{len(unknown)} agent(s) bill to a code missing from ledger/codes.json: "
+                        f"{', '.join(unknown[:5])}{' …' if len(unknown) > 5 else ''}")
+    legacy = codes.load()["legacy"]
+    unmapped = sorted({row["billing_code"] for row in session_manager.ledger.iter_rows()
+                       if not row.get("code") and isinstance(row.get("billing_code"), str)
+                       and row["billing_code"] not in legacy})
+    if unmapped:
+        findings.append(f"{len(unmapped)} ledger code string(s) with no billing code: "
+                        f"{', '.join(unmapped[:5])}{' …' if len(unmapped) > 5 else ''} "
+                        "(the monitor daemon's storage migration maps them)")
+    return findings
+
+
 def storage_findings(report: dict, *, terminated_grace_seconds: float = 0.0) -> List[str]:
     """Warnings about a ``storage_report``: agents/ far above the live count, and why."""
     findings = []

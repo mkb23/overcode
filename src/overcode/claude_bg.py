@@ -196,7 +196,8 @@ class FleetAgent:
     foreign: FrozenSet[str] = frozenset()         # other conversations its hooks saw
     repo_name: Optional[str] = None
     branch: Optional[str] = None
-    billing_code: Optional[str] = None  # what its 🌙 rows' spend is billed to
+    billing_code: Optional[str] = None  # what its 🌙 rows' spend is billed to (the name)
+    billing_code_id: Optional[str] = None  # ... and the code's id
 
 
 @lru_cache(maxsize=1024)
@@ -800,6 +801,7 @@ def fleet_agents(sessions: Iterable[Any], foreign_of=None) -> List[FleetAgent]:
             repo_name=getattr(s, "repo_name", None),
             branch=getattr(s, "branch", None),
             billing_code=getattr(s, "billing_code", None) or s.name,
+            billing_code_id=getattr(s, "billing_code_id", None),
         ))
     return out
 
