@@ -1832,3 +1832,25 @@ class TestInSessionPermissionMode:
         tip = hover_permission_mode(_make_ctx(session=session, in_session_mode="plan",
                                               emoji_free=True)).plain
         assert "P?" in tip and "🧭" not in tip
+
+
+class TestKindGap:
+    """KIND sits right before NAME: its cell ends in a gap ("agentalpha" ran together)."""
+
+    @pytest.mark.parametrize("kind", ["agent", "child", "bg"])
+    def test_agent_row(self, kind):
+        from unittest.mock import PropertyMock, patch
+        from overcode.columns.render_identity import render_kind
+        ctx = _make_ctx()
+        with patch.object(type(ctx), "agent_kind", new_callable=PropertyMock, return_value=kind):
+            (text, _), = render_kind(ctx)
+        assert text.endswith(" ") and text.rstrip() == kind and len(text) == 6
+
+    def test_virtual_row(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from overcode.columns import render_virtual
+        line = SimpleNamespace(kind="member", row={"kind": "subagent"})
+        with patch.object(render_virtual, "_line", return_value=line):
+            (text, _), = render_virtual.render_virtual_kind(_make_ctx())
+        assert text.endswith(" ") and len(text) == 6

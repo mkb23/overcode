@@ -165,8 +165,8 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_kind(ctx: ColumnContext) -> ColumnOutput:
-    """KIND (hidden by default): ``agent`` or ``child``, the same width."""
-    return [(f"{ctx.agent_kind:<5}", f"dim{ctx.bg}")]
+    """KIND (full detail): ``agent``, ``child`` or ``bg``, the same width, then a gap."""
+    return [(f"{ctx.agent_kind:<5} ", f"dim{ctx.bg}")]
 
 
 def render_agent_type(ctx: ColumnContext) -> ColumnOutput:

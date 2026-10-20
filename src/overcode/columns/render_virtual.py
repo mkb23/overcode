@@ -175,7 +175,7 @@ def render_virtual_kind(ctx: ColumnContext) -> ColumnOutput:
     if line.kind != "member":
         return None
     word = KIND_SHORT.get(line.row.get("kind"), "sub")
-    return [(f"{word:<5}", "dim")]
+    return [(f"{word:<5} ", "dim")]
 
 
 def _fit(segments: List[Tuple[str, str]], width: int) -> List[Tuple[str, str]]:
