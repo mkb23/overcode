@@ -934,6 +934,7 @@ def list_agents(
     # Each child's result, from its session (the daemon publishes the
     # same, from the same fields), and each parent's children by state
     from ..child_lifecycle import child_rollup, task_result
+    from ..tui_helpers import result_text
     results = {sess.id: task_result(sess, status) for sess, status, *_ in session_data}
     children: dict = {}
     for sess, status, *_ in session_data:
@@ -976,7 +977,6 @@ def list_agents(
             session=sess, status=status, pr_number=getattr(sess, 'pr_number', None),
             subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
             has_status_detail=_get_status_detail(sess) is not None,
-            task_result=results[sess.id][0],
             has_swarm=swarms[sess.id] is not None,
             has_live_subagents=live_subs[sess.id] > 0,
             has_quota=quotas[sess.id] is not None,
@@ -1026,8 +1026,6 @@ def list_agents(
             max_branch_width=max_branch_width,
             all_names_match_repos=all_names_match_repos,
             subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
-            task_result=results[sess.id][0],
-            task_reason=results[sess.id][1],
             child_rollup=child_rollup(children.get(sess.id, ())),
             swarm_rollup=swarms[sess.id],
             quota=quotas[sess.id],
@@ -1044,9 +1042,9 @@ def list_agents(
         ctx.display_name = (indent + marker + sess.name[:available]).ljust(name_width)
 
         row_contexts.append(ctx)
-        # The result's full reason, which the column truncates
-        result_plain = COLUMNS_BY_ID["task_result"].render_plain(ctx)
-        activities.append(f"{activity}  {result_plain}" if result_plain else activity)
+        # A child's result follows its activity (the TUI's ``l`` result mode)
+        result = result_text(*results[sess.id])
+        activities.append(f"{activity}  {result[0]}" if result else activity)
 
     # Columns every row has the same value in say nothing: hide them, as
     # the TUI does, and note the shared values under the table

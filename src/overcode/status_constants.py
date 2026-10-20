@@ -53,7 +53,7 @@ ALL_STATUSES = [
 ]
 
 # A child agent whose turn is over, reported or not: at rest (⚪). Its
-# outcome is the Result column's (RESULT_KINDS), not the light's.
+# outcome is the result's (RESULT_KINDS, the ``l`` result mode), not the light's.
 AT_REST_STATUSES = frozenset({STATUS_DONE, STATUS_WAITING_OVERSIGHT})
 
 
@@ -133,7 +133,7 @@ EMOJI_ASCII = {
     "🟡": "[S]",
     "⚪": "[.]",
     "❔": "[?]",
-    # Result column (RESULT_KINDS)
+    # Results (RESULT_KINDS)
     "📭": "Un",
     "✅": "ok",
     "❌": "XX",
@@ -165,7 +165,7 @@ EMOJI_ASCII = {
     "💓": "<3",
     "💰": "$$",
     "⏳": "~~",
-    "⌛": "TO",  # oversight timeout expired (Result column)
+    "⌛": "TO",  # oversight timeout expired (a result)
     "⌚": "Md",  # median work time (was ⏱, text-default: an outline glyph)
     "🤖": "Ro",
     "👤": "Hu",
@@ -539,7 +539,7 @@ BADGE_MEANINGS: dict[str, str] = {
 
 
 # =============================================================================
-# The legend: what the traffic light and the Result column say
+# The legend: what the traffic light and the results say
 # =============================================================================
 #
 # One table each; the help overlay and docs/tui-guide.md are checked against
@@ -584,7 +584,7 @@ LIGHT_LEGEND: Tuple[LegendEntry, ...] = (
 )
 
 
-# The Result column: a child's task outcome, separate from the light.
+# A child's task outcome (the ``l`` result mode), separate from the light.
 # Fields: (emoji, ascii_fallback, style, meaning)
 RESULT_UNREPORTED = "unreported"
 RESULT_SUCCESS = "success"

@@ -102,9 +102,8 @@ takes no width at all:
   expanded rows on screen hold two or more types; agent rows then show
   their own kind (agent / child / bg), dim.
 - Each row fills the columns it has a value for: its light, time in state
-  (since it started; its run time once finished), RES (✅ / ❌, hover for
-  the result text), NAME (tree connector, 👥 or 🧩 for a workflow agent,
-  title), TYPE, MDL, TOK, $, Q% and uptime. TOK, $ and Q% are its own
+  (since it started; its run time once finished), NAME (tree connector,
+  👥 or 🧩 for a workflow agent, title), TYPE, MDL, TOK, $, Q% and uptime. TOK, $ and Q% are its own
   spend, read from its transcript at the stats cadence (Q% is its whole
   run's points of the weekly quota, with a subscription). MDL is its own
   model, or the parent's drawn dim when it inherits it. BILL shows the
@@ -118,8 +117,9 @@ takes no width at all:
   pane", "idle, listening", "waiting on its own background work"; once
   finished, its result and run time); **AI context** its agent type, kind
   and phase, then the same; **standing orders** its task as given (the full
-  title); **last command** its last tool call; **annotation** and
-  **heartbeat** `-`. A summary line (`+k more`) shows its own text in every
+  title); **last command** its last tool call; **result** ✅ / ❌ and its
+  result text once finished, else `-`; **annotation** and **heartbeat**
+  `-`. A summary line (`+k more`) shows its own text in every
   mode.
 - The KIND column (hidden by default; switch it on with `C`) spells out
   agent / child for fleet rows, and sub / fork / team / wf for delegated
@@ -196,8 +196,8 @@ of its own, marked 🌙 (`Bs` emoji-free), right under the agent it came from:
   session in none of these is not shown. KIND says `bg`.
 - Its light comes from Claude's own record of it: 🟢 working, 🟡 waiting on
   its own background work, 🔴 blocked on a question or permission (the
-  status text is what it asks), ⚪ finished with a Result (✅ done, ❌
-  failed, 📭 stopped). A blocked session rings the bell, once per stretch.
+  status text is what it asks), ⚪ finished, with a result (✅ done, ❌
+  failed, 📭 stopped) in the `l` result mode. A blocked session rings the bell, once per stretch.
 - A finished session keeps its row for 30 seconds
   (`observability.finished_row_seconds`), then the row goes.
 - Its tokens and $ are its own conversation's, read at the stats cadence
@@ -286,7 +286,7 @@ The daemon log panel and the TUI diagnostic log are in the `/` palette
 | Key | Action |
 |-----|--------|
 | `s` | Cycle summary detail: low → med → high → full |
-| `l` | Cycle summary content: AI short → AI long → orders → annotation → heartbeat |
+| `l` | Cycle summary content: AI short → AI long → orders → annotation → heartbeat → last command → result |
 | `S` | Sort by any column or tree order (picker; choosing the current sort reverses it) |
 | `$` | Cycle cost display (tokens / dollars / energy: joules, with the burn rate in watts / weekly quota on a subscription) |
 | `C` | Open column configuration |
@@ -415,7 +415,12 @@ The NAME column marks names nobody chose:
 A name you typed (in the new-agent dialog, `Ctrl+N`, or `-n` in a shell)
 or one a parent agent gave its child is plain, and overcode never
 renames it. The `~` takes a cell from the name, so the column keeps its
-width. Hover the name to see who named it, whether it was launched with
+width.
+
+The column grows to the widest name it shows, counting what leads it (the
+tree connector of a nested child, 🌙, `~`) and a fold's ` ▶`, so a nested
+name is not the one cut short. It stops at 42 cells at low detail, 38 at
+med and 34 at high and full, where more columns compete for the line. Hover the name to see who named it, whether it was launched with
 `--force-name`, and the names it had before.
 
 - `Ctrl+N` renames the agent; its **Named by** row says who names it from
@@ -514,9 +519,10 @@ A parent whose own turn ended while any of its children still work reads 🟡,
 with 👶 in the status detail ("Waiting on 2 children"). Once every child is at
 rest, the usual rules apply: 🔴 if it waits for you.
 
-### Result column
+### Results
 
-How a child's task went is the Result column (RES), not the light:
+How a child's task went is not the light: press `l` until the summary
+shows **Result** (the last mode):
 
 | Result | Meaning |
 |--------|---------|
@@ -525,9 +531,10 @@ How a child's task went is the Result column (RES), not the light:
 | ❌ | Reported failure (with its reason) |
 | ⌛ | Oversight timeout expired |
 
-The cell is blank until a child has a result, and the reason is cut to fit;
-hover it for the full reason (`overcode list` prints it in full after the
-activity). The 👶 column rolls a parent's children up the same way, e.g.
+Each glyph comes with the report's reason (or what the glyph means, when
+the report gave none), as much as fits; an agent without a result shows
+`🏁 (no result)`. `overcode list` prints the result in full after the
+activity. The 👶 column rolls a parent's children up the same way, e.g.
 `👶 5 ▶2 📭1 ✅1 ❌1` (only non-zero counts: ▶ still working). Unlike
 SubAgents it keeps the total: the states overlap and don't cover every
 child.
@@ -564,7 +571,14 @@ Press `l` to cycle through what's shown in the summary line:
 2. **AI Long** (📖) - Detailed AI summary with broader context
 3. **Orders** (🎯) - Standing orders for this agent
 4. **Annotation** (✏️) - Human-written notes
-5. **Heartbeat** - Latest heartbeat data
+5. **Heartbeat** (💓) - Latest heartbeat data
+6. **Last command** (⌨) - The last instruction sent to the agent
+7. **Result** - A child's outcome: 📭 unreported, ✅ / ❌ with its reason,
+   ⌛ timeout ([Results](#results)); `🏁 (no result)` otherwise
+
+The summary always keeps at least 24 cells: on a narrow terminal the
+columns at the right end of the row (and their headers) are cut instead,
+whole columns at a time.
 
 AI summaries require the summarizer to be enabled (press `A`) and configured with an API key.
 

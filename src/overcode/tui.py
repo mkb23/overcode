@@ -352,7 +352,8 @@ class SupervisorTUI(
     # Summary detail levels: low (minimal), med (timing), high (all metrics), full (everything)
     SUMMARY_LEVELS = ["low", "med", "high", "full"]
     # Summary content modes: what to show in the summary line (#74)
-    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat", "last_command"]
+    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat", "last_command",
+                             "result"]
 
     sessions: reactive[List[Session]] = reactive(list)
     focused_session_index: reactive[int] = reactive(0, always_update=True)
@@ -1532,9 +1533,7 @@ class SupervisorTUI(
         old = (self.max_name_width, self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
         sessions = list(sessions)
         if sessions:
-            self._session_name_width = max(
-                (len(s.name) for s in sessions), default=8
-            )
+            self._session_name_width = self._name_cell_width(sessions)
             # Expanded delegated-work rows' names (connector, marker, title)
             # share the NAME column, up to the same detail-level cap
             self.max_name_width = max(self._session_name_width,
@@ -1558,6 +1557,21 @@ class SupervisorTUI(
         if changed:
             self._column_widths_dirty = True
         return changed
+
+    def _name_cell_width(self, sessions) -> int:
+        """The widest name cell the rows draw: tree prefix, 🌙 / "~" markers,
+        name and fold marker, so a nested name is not the first one cut."""
+        from .tui_widgets.session_summary import FOLD_SUFFIX, name_lead
+        prefixes, folded = {}, set()
+        prefs = getattr(self, "_prefs", None)
+        if prefs is not None and prefs.sort_mode == "by_tree":
+            prefixes = {sid: meta.prefix for sid, meta in compute_tree_metadata(self.sessions).items()}
+            folded = self.collapsed_parents
+        # 🌙 and its ASCII "Bs" are the same width: emoji-free needs no recount
+        return max(
+            (cell_len(prefixes.get(s.id, "")) + cell_len(name_lead(s))
+             + len(s.name) + (len(FOLD_SUFFIX) if s.id in folded else 0)
+             for s in sessions), default=8)
 
     def _recompute_cell_column_widths(self, force: bool = False) -> None:
         """Recompute per-cell column widths across all visible widgets.
@@ -1590,29 +1604,11 @@ class SupervisorTUI(
         # Expanded parents' delegated-work rows share the grid (render_virtual)
         all_cells.extend(self._swarm_cells())
         self.column_widths = compute_column_widths(all_cells)
-        self._reserve_result_width(widgets[0])
         self.column_edges = column_edges(all_cells)
         self._column_widths_dirty = False
         self._paint_swarm_rows()
         # Update column headers if visible
         self._update_column_headers()
-
-    def _reserve_result_width(self, row: SessionSummary) -> None:
-        """RES keeps a finished subagent's width while subagent rows are on
-        screen, so a member finishing (✅ / ❌ and its result) does not push
-        every column right for its ``finished_row_seconds`` and back."""
-        from .columns.render_supervision import _RESULT_WIDTH
-        from .swarm_view import FINISHED_HIDE
-        if getattr(self, "swarm_finished", None) == FINISHED_HIDE:
-            return
-        if not any(ln.kind == "member" for rows in self._swarm_row_widgets()
-                   for ln in rows.lines):
-            return
-        ids = [c.id for c in row.visible_columns()]
-        if "task_result" in ids:
-            j = ids.index("task_result")
-            if j < len(self.column_widths):
-                self.column_widths[j] = max(self.column_widths[j], _RESULT_WIDTH)
 
     def _selected_session_id(self) -> Optional[str]:
         """Id of the agent the highlight is on, in the *current* display order.

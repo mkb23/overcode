@@ -388,6 +388,26 @@ def get_daemon_status_style(status: str) -> Tuple[str, str]:
     return _get_daemon_status_style(status)
 
 
+# The result mode's style category per result kind (RESULT_KINDS colours)
+_RESULT_STYLE = {"green": "bold_green", "red": "bold_red", "yellow": "bold_yellow"}
+
+
+def result_text(task_result: Optional[str], task_reason: Optional[str],
+                emoji_free: bool = False) -> Optional[Tuple[str, str]]:
+    """A child's task outcome as one line: (glyph and reason, RESULT_KINDS style).
+
+    📭 unreported, ✅ / ❌ with the report's reason, ⌛ timeout; the kind's
+    meaning when the report gave no reason. None: no result.
+    """
+    from .status_constants import RESULT_KINDS, RESULT_UNREPORTED
+    spec = RESULT_KINDS.get(task_result or "")
+    if spec is None:
+        return None
+    emoji, ascii_fb, style, meaning = spec
+    reason = "unreported" if task_result == RESULT_UNREPORTED else " ".join((task_reason or "").split())
+    return f"{ascii_fb if emoji_free else emoji} {reason or meaning}", style
+
+
 def get_summary_content_text(
     mode: str,
     annotation: Optional[str],
@@ -404,13 +424,16 @@ def get_summary_content_text(
     remaining_width: int,
     last_command: Optional[str] = None,
     scraped_recap: Optional[str] = None,
+    task_result: Optional[str] = None,
+    task_reason: Optional[str] = None,
+    emoji_free: bool = False,
 ) -> Tuple[str, str]:
     """Compute the text and style category for summary content area.
 
     Pure function — no side effects, fully testable.
 
     Args:
-        mode: Content mode (annotation, orders, ai_long, heartbeat, ai_short, last_command)
+        mode: Content mode (annotation, orders, ai_long, heartbeat, ai_short, last_command, result)
         annotation: Human annotation text
         standing_instructions: Standing orders text
         standing_orders_complete: Whether standing orders are complete
@@ -424,10 +447,13 @@ def get_summary_content_text(
         summarizer_enabled: Whether summarizer is enabled
         remaining_width: Available width for text
         last_command: Last instruction sent to this agent
+        task_result, task_reason: A child's result kind and reason (result_text)
+        emoji_free: ASCII result glyphs
 
     Returns:
         Tuple of (text, style_category) where style_category is one of:
-        "bold", "dim", "bold_green", "bold_cyan", "bold_yellow", "bold_magenta"
+        "bold", "dim", "bold_green", "bold_cyan", "bold_yellow", "bold_magenta",
+        "bold_red"
     """
     if mode == "annotation":
         if annotation:
@@ -468,6 +494,13 @@ def get_summary_content_text(
             oneline = last_command.replace("\n", " ↵ ")
             return f"⌨ {oneline[:remaining_width-3]}", "bold_cyan"
         return "⌨ (no command sent yet)", "dim"
+
+    elif mode == "result":
+        result = result_text(task_result, task_reason, emoji_free)
+        if result:
+            text, style = result
+            return text[:remaining_width], _RESULT_STYLE.get(style, "bold")
+        return "🏁 (no result)", "dim"
 
     else:
         # ai_short (default)

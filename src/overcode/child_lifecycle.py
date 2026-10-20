@@ -10,7 +10,7 @@ tick (``MonitorDaemon._settle_children``). ``AgentLauncher.reconcile_lifecycle``
 applies the same rule once for a CLI command run while no daemon is.
 
 Either way the child is *at rest* (⚪): the light says it stopped, and
-``task_result`` says how it went (the Result column).
+``task_result`` says how it went (the ``l`` result mode).
 """
 
 import json
@@ -41,7 +41,7 @@ SETTLEABLE_STATUSES = frozenset({"running", "starting", "terminated", STATUS_WAI
 CHILD_NOT_WORKING = AT_REST_STATUSES | {STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN}
 
 # The report reason an expired oversight timeout files (the daemon and
-# follow mode both write it); the Result column shows it as a timeout.
+# follow mode both write it); the result shows it as a timeout.
 OVERSIGHT_TIMEOUT_REASON = "Oversight timeout expired"
 
 
@@ -110,7 +110,7 @@ def settled_child_status(session, stopped: Optional[bool] = None) -> Optional[st
 
 
 def task_result(session, status: Optional[str] = None) -> Tuple[Optional[str], str]:
-    """A child's task outcome for the Result column: (result kind, reason).
+    """A child's task outcome (the ``l`` result mode): (result kind, reason).
 
     A filed report is ``success`` / ``failure`` (an expired oversight
     timeout is ``timeout``); a child at rest without one is

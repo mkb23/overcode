@@ -227,6 +227,26 @@ class TestCycleSummaryContent:
         # index 0 -> next is index 1
         assert mock_tui.summary_content_mode == "ai_long"
 
+    def test_result_is_the_last_mode(self):
+        """A child's result is the last stop of the real cycle, then back to the start."""
+        from overcode.tui import SupervisorTUI
+        from overcode.tui_actions.view import ViewActionsMixin
+
+        modes = SupervisorTUI.SUMMARY_CONTENT_MODES
+        assert modes == ["ai_short", "ai_long", "orders", "annotation", "heartbeat",
+                         "last_command", "result"]
+        mock_tui = MagicMock()
+        mock_tui.summary_content_mode = "last_command"
+        mock_tui.SUMMARY_CONTENT_MODES = modes
+        mock_tui.query.return_value = []
+        mock_tui._prefs = MagicMock()
+
+        ViewActionsMixin.action_cycle_summary_content(mock_tui)
+        assert mock_tui.summary_content_mode == "result"
+        assert mock_tui.notify.call_args[0][0] == "Result"
+        ViewActionsMixin.action_cycle_summary_content(mock_tui)
+        assert mock_tui.summary_content_mode == "ai_short"
+
 
 class TestToggleShowTerminated:
     """Test action_toggle_show_terminated method."""

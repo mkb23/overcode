@@ -181,3 +181,35 @@ class TestOldColumnIds:
         from overcode.tui_actions.view_control import ViewControlMixin
         for name in ("swarm", "subagent_count", "SUBA", "subagents", "SubAgents"):
             assert ViewControlMixin._resolve_column(None, name).id == "subagents"
+
+
+class TestRemovedResultColumn:
+    """RES (task_result) became the summary's result mode (0.6.1): what named it keeps loading."""
+
+    @pytest.mark.parametrize("overrides, expected", [
+        ({"task_result": True, "cost": False}, {"cost": False}),
+        ({"task_result": False, "swarm": True}, {"subagents": True}),
+    ])
+    def test_overrides_drop_it(self, overrides, expected):
+        from overcode.summary_columns import migrate_column_overrides
+        assert migrate_column_overrides(overrides) == expected
+
+    def test_an_old_prefs_file_loads_without_it(self, tmp_path, monkeypatch):
+        import json
+        from overcode import settings
+        prefs = tmp_path / "tui_preferences.json"
+        prefs.write_text(json.dumps({
+            "column_config": {"full": {"task_result": False, "uptime": True}},
+            "sort_mode": "col:task_result",
+            "summary_content_mode": "result",
+        }))
+        monkeypatch.setattr(settings, "get_tui_preferences_path", lambda session: prefs)
+        loaded = settings.TUIPreferences.load("agents")
+        assert loaded.column_config == {"full": {"uptime": True}}
+        assert loaded.sort_mode == settings.TUIPreferences().sort_mode
+        assert loaded.summary_content_mode == "result"
+
+    def test_view_commands_say_where_it_went(self):
+        from overcode.tui_actions.view_control import ViewCommandError, ViewControlMixin
+        with pytest.raises(ViewCommandError, match="result mode"):
+            ViewControlMixin._resolve_column(None, "task_result")

@@ -175,9 +175,10 @@ class TestAlignment:
             assert _cell(rows, a1, "model").strip() == "Hk4.5"
             assert _cell(rows, a1, "token_count").strip() == "Σ 15.3K"
             assert _cell(rows, a1, "time_in_state").strip().endswith("d")  # since it started
-            # A finished one: its result in RES and its run time, held still
+            # A finished one: its run time, held still (its result is the
+            # summary's result mode, TestSummaryModes)
             a2 = "id-bravo/sa/a2"
-            assert _cell(rows, a2, "task_result").strip().startswith("❌ failed")
+            assert "task_result" not in [c.id for c in rows._columns]
             assert _cell(rows, a2, "time_in_state").strip() == "45s"
             # Columns that do not apply: nothing of the parent's leaks in
             assert _cell(rows, a1, "git_diff") == "" and _cell(rows, a1, "repo_name") == ""
@@ -336,7 +337,13 @@ class TestSummaryModes:
             assert seen["ai_long"] == "📖 Explore · subagent · Read src/engine.py"
             assert seen["orders"] == "🎯 map the engine"
             assert seen["last_command"] == "⌨ Read src/engine.py"
-            assert seen["annotation"] == seen["heartbeat"] == "-"
+            assert seen["annotation"] == seen["heartbeat"] == seen["result"] == "-"
+            # A finished one's result: glyph and text
+            while app.summary_content_mode != "result":
+                await pilot.press("l")
+            await pilot.pause()
+            _, text = _line(rows, "id-bravo/sa/a2")
+            assert text.split(" │ ", 1)[1].strip() == "❌ failed"
 
     def test_mapping_for_a_finished_member_and_a_summary_line(self):
         done = swarm_view.SwarmLine("k", "", "member", 2, label="t", summary="found it · ran 4s",
@@ -344,6 +351,12 @@ class TestSummaryModes:
         assert render_virtual.virtual_summary(done, "ai_short") == ("💬 found it · ran 4s",
                                                                     "dim italic")
         assert render_virtual.virtual_summary(done, "last_command") == ("-", "dim")
+        assert render_virtual.virtual_summary(done, "result") == ("✅ done", "green")
+        failed = swarm_view.SwarmLine("k", "", "member", 2, label="t",
+                                      row={"light": "done", "result": "failed",
+                                           "result_text": "3 tests fail"})
+        assert render_virtual.virtual_summary(failed, "result") == ("❌ 3 tests fail", "red")
+        assert render_virtual.virtual_summary(failed, "result", emoji_free=True)[0] == "XX 3 tests fail"
         more = swarm_view.SwarmLine("g", "", "more", 1, summary="→ to open")
         assert render_virtual.virtual_summary(more, "heartbeat")[0] == "→ to open"
 

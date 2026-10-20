@@ -46,7 +46,6 @@ class FleetFlags:
     any_has_status_detail: bool = False
     any_has_subtree_cost: bool = False  # a parent with subtree cost
     any_has_burn: bool = False  # a non-zero burn rate (#174)
-    any_has_task_result: bool = False  # a child with a result (the Result column)
     any_has_swarm: bool = False  # an agent that delegated work in its session (👥)
     # Subagents seen running without a hook rollup (the SubAgents fallback)
     any_has_live_subagents: bool = False
@@ -66,7 +65,6 @@ class FleetRow:
     subtree_cost_usd: float = 0.0
     window_burn: Optional[object] = None  # Optional[WindowBurnStats]
     has_status_detail: bool = False
-    task_result: Optional[str] = None  # the child's result kind, if any
     has_swarm: bool = False  # a 👥 rollup published for it
     has_live_subagents: bool = False  # subagents running by the file / status-bar count
     has_quota: bool = False  # a quota estimate published for it
@@ -99,7 +97,6 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
             and (r.window_burn.tokens_per_hour > 0 or r.window_burn.cost_per_hour > 0)
             for r in rows
         ),
-        any_has_task_result=any(r.task_result for r in rows),
         any_has_swarm=any(r.has_swarm for r in rows),
         any_has_live_subagents=any(r.has_live_subagents for r in rows),
         any_has_quota=any(r.has_quota for r in rows),
@@ -167,11 +164,8 @@ class ColumnContext:
     # applied), for the plain status text
     status: str = ""
 
-    # A child's task outcome (RESULT_KINDS key, or None) and its full
-    # reason; a parent's children by state (working / unreported /
-    # success / failure counts), None without children
-    task_result: Optional[str] = None
-    task_reason: str = ""
+    # A parent's children by state (working / unreported / success /
+    # failure counts), None without children
     child_rollup: Optional[dict] = None
     # Its delegated work (swarm.rollup counts), None if it never delegated
     swarm_rollup: Optional[dict] = None
@@ -284,8 +278,6 @@ def build_cli_context(
     subtree_cost_usd: float = 0.0,
     status_detail: Optional[StatusDetail] = None,
     window_burn: Optional[object] = None,
-    task_result: Optional[str] = None,
-    task_reason: str = "",
     child_rollup: Optional[dict] = None,
     swarm_rollup: Optional[dict] = None,
     quota: Optional[dict] = None,
@@ -351,8 +343,6 @@ def build_cli_context(
         background_bash_count=bg_bash_count,
         child_count=child_count,
         status=status,
-        task_result=task_result,
-        task_reason=task_reason,
         child_rollup=child_rollup,
         swarm_rollup=swarm_rollup,
         quota=quota,

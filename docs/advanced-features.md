@@ -199,7 +199,7 @@ overcode report --status success --reason "All tests pass"
 overcode report --status failure --reason "Build failed"
 ```
 
-Without a report, the child enters `waiting_oversight` status when it stops: at rest (⚪), with 📭 in the Result column. The parent's follow mode blocks until a report arrives or the oversight policy triggers.
+Without a report, the child enters `waiting_oversight` status when it stops: at rest (⚪), with 📭 as its result (the TUI's `l` result mode). The parent's follow mode blocks until a report arrives or the oversight policy triggers.
 
 **Always include `overcode report` at the end of your `--prompt`.** This is the most common mistake when setting up delegation.
 
@@ -220,7 +220,7 @@ overcode launch -n child --follow --oversight-timeout 5m -p "..."
 
 `--preset supervised|balanced|autonomous` sets the oversight policy and the archive delay together (see [Presets](children.md#presets)).
 
-The TUI shows a countdown timer (⏳) for agents with a timeout policy. The monitor daemon starts the timeout when the child stops, so it applies whether or not a parent follows it; a child prompted again before it expires loses its deadline and gets a fresh one when it next stops. An expired timeout shows ⌛ in the Result column.
+The TUI shows a countdown timer (⏳) for agents with a timeout policy. The monitor daemon starts the timeout when the child stops, so it applies whether or not a parent follows it; a child prompted again before it expires loses its deadline and gets a fresh one when it next stops. An expired timeout shows ⌛ as the result.
 
 ### Budget Transfer
 
@@ -262,7 +262,7 @@ The child count column (👶) shows how many direct children each agent has, the
 
 ### Done Agents
 
-When a child reports success or failure via `overcode report`, it enters the "done" state, at rest (⚪) with ✅ or ❌ and the reason in the Result column (hover it, or see `overcode list`, for the full reason):
+When a child reports success or failure via `overcode report`, it enters the "done" state, at rest (⚪) with ✅ or ❌ and the reason as its result (the TUI's `l` result mode; `overcode list` prints it in full):
 - Hidden from default list and TUI views
 - Turn on "Done child agents" in the TUI's Agent visibility dialog (`d`), or use `--show-done` in CLI, to reveal them
 - Auto-archived by the monitor daemon after 1 hour
@@ -271,7 +271,7 @@ When a child reports success or failure via `overcode report`, it enters the "do
 ### Waiting for Oversight
 
 If a child stops without calling `overcode report`, it enters `waiting_oversight`:
-- Visible in the TUI at rest (⚪), with 📭 in the Result column; it never rings the bell
+- Visible in the TUI at rest (⚪), with 📭 as its result; it never rings the bell
 - Parent's follow mode remains blocked, waiting for a report
 - With `--oversight-timeout`, a countdown timer appears in the TUI (the daemon enforces it, with or without `--follow`)
 - Resolve by attaching to the child's tmux window and running `overcode report` manually, or let the timeout expire

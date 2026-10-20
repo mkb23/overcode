@@ -324,7 +324,7 @@ class JobLight:
     colour: Optional[str]       # STATUS_COLOR_*, None when unknown
     badges: Tuple[StatusBadge, ...] = ()
     activity: str = ""
-    result: Optional[str] = None  # the Result column: success / failure / unreported
+    result: Optional[str] = None  # its result (the ``l`` result mode): success / failure / unreported
     reason: str = ""
     ended_at: Optional[float] = None  # epoch, for a finished job
 

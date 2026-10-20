@@ -2390,7 +2390,7 @@ class TestListExtended:
         assert "running-agent" in result.output
 
     def test_list_shows_a_childs_result_and_its_full_reason(self, fleet):
-        """The Result column, and the whole reason after the activity."""
+        """The whole result after the activity (the TUI's ``l`` result mode); no RES column."""
         parent = fleet.add_with_history("parent")
         fleet.add_with_history(
             "child", parent_session_id=parent.id, status="waiting_oversight",
@@ -2405,8 +2405,8 @@ class TestListExtended:
             result = runner.invoke(app, ["list", "--full"], env={"COLUMNS": "400"})
 
         assert result.exit_code == 0, result.output
-        assert "❌ three integrati…" in result.output  # the column, cut
-        assert "❌ three integration tests still fail on main" in result.output  # in full
+        assert "RES" not in result.output and "integrati…" not in result.output
+        assert "At rest: no report yet  ❌ three integration tests still fail on main" in result.output
         assert "❌1" in result.output  # the parent's rollup
 
     def test_list_shows_delegated_work_the_daemon_published(self, fleet):

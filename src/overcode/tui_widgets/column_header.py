@@ -18,7 +18,7 @@ from textual import events
 from textual.message import Message
 from textual.widgets import Static
 
-from ..summary_columns import COLUMNS_BY_ID, column_at
+from ..summary_columns import COLUMNS_BY_ID, column_at, grid_room
 
 
 class ColumnHeader(Static):
@@ -65,6 +65,10 @@ class ColumnHeader(Static):
         if isinstance(content, Text) and width:
             line = content.copy()
             line.no_wrap = True
+            # The labels end where the rows' grid does (grid_room)
+            room = grid_room(self.column_widths, width)
+            if self.column_ids and room < sum(self.column_widths):
+                line.truncate(room, overflow="crop")
             if cell_len(line.plain) > width:
                 line.truncate(width, overflow="crop")
             return line
@@ -74,7 +78,8 @@ class ColumnHeader(Static):
         offset = event.get_content_offset(self)
         if offset is None:
             return None
-        return column_at(offset.x, self.column_ids, self.column_widths)
+        return column_at(offset.x, self.column_ids, self.column_widths,
+                         self.content_size.width or None)
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
         self._show_tooltip(self.column_at_event(event))

@@ -175,7 +175,7 @@ def key_sections(km: Any, compact: bool = False,
 def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
     """Status colours, indicators, emoji and the timeline legend.
 
-    The light and the Result column come from their one tables
+    The light and the results (the ``l`` result mode) come from their one tables
     (status_constants.LIGHT_LEGEND / RESULT_KINDS), as docs/tui-guide.md does.
     """
     from ..status_constants import (
@@ -213,7 +213,9 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
         line.append(meaning[0].upper() + meaning[1:], style=style)
         results.append(line)
     if not compact:
-        results.append(Text("Hover the cell for the report's full reason", style=C_MUTED))
+        key = km.label("cycle_summary_content") or "l"
+        results.append(Text(f"{key} cycles the summary to Result: the report's reason",
+                            style=C_MUTED))
 
     def plain(emoji: str, desc: str, style: str = C_TEXT) -> Text:
         t = Text()
