@@ -19,16 +19,17 @@ from textual.message import Message
 from . import dialog_style as ds
 from .modal_base import ModalBase
 
-# (section, setting, label, [(value, shown as)], tip for the selected row)
+# (section, setting, label, [(value, shown as)], tip for the selected row).
+# Every agent row offers "shown" first, whichever way its setting reads.
 _ROWS: List[Tuple[str, str, str, Sequence[Tuple[Any, str]], str]] = [
     ("Agents", "show_terminated", "Killed agents",
-     ((False, "hidden"), (True, "shown")),
+     ((True, "shown"), (False, "hidden")),
      "Ghost rows for killed agents (revive with overcode revive)"),
     ("Agents", "hide_asleep", "Sleeping agents",
      ((False, "shown"), (True, "hidden")),
      "Agents put to sleep (z)"),
     ("Agents", "show_done", "Done child agents",
-     ((False, "hidden"), (True, "shown")),
+     ((True, "shown"), (False, "hidden")),
      "Child agents that reported back (overcode report)"),
     ("Subagents", "swarm_detail", "Open by itself",
      (("off", "off"), ("groups", "with work"), ("needs_you", "needs you")),

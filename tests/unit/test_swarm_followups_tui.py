@@ -429,3 +429,12 @@ class TestNoJumpWhenOneFinishes:
             app._recompute_cell_column_widths()
             assert [ln.row.get("light") for ln in _lines(app)] == ["done"]
             assert app.column_widths == before
+
+
+def test_agent_rows_offer_their_choices_in_one_order():
+    """Killed, sleeping and done read "shown hidden" alike, though
+    hide_asleep is a hide setting and the others are show settings."""
+    from overcode.tui_widgets.agent_visibility_modal import _ROWS
+    agent_rows = [r for r in _ROWS if r[0] == "Agents"]
+    assert len(agent_rows) == 3
+    assert {tuple(label for _, label in r[3]) for r in agent_rows} == {("shown", "hidden")}
