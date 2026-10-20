@@ -704,6 +704,9 @@ touching the ledger; its old name still works wherever a code is typed
 (launch, rebill, the TUI), unless another code takes it. Two codes that
 should have been one can be merged: the first one's spend, past and
 future, reports under the second.
+In the TUI, the "Billing codes…" dialog (`/` palette) lists every code
+with its spend (total, this month, last month) and renames or merges them
+in place ([TUI guide](tui-guide.md#billing-codes)).
 
 ```bash
 overcode launch -n research --billing-code client-x   # set it at launch
