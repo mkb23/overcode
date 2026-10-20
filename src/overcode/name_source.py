@@ -85,3 +85,12 @@ def infer_legacy(record: Mapping) -> str:
     if is_fork_default(name):
         return DEFAULT
     return HUMAN
+
+
+def auto_rename_toast(before, after) -> Optional[str]:
+    """The TUI's toast when the namer renamed an agent (§8): ``old → new (auto)``, else None."""
+    if before is None or after is None or before.name == after.name:
+        return None
+    if getattr(after, "name_source", None) != AUTO:
+        return None
+    return f"{before.name} → {after.name} (auto)"

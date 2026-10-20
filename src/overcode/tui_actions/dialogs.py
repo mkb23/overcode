@@ -234,7 +234,7 @@ class DialogsMixin:
         old_name = session.name
         launcher = AgentLauncher(self.tmux_session, session_manager=self.session_manager)
         try:
-            renamed = launcher.rename(session, new_name, force=force, source="human")
+            renamed = launcher.rename(session, new_name, force=force, source=name_source)
         except AgentBusyError as e:
             state = "could not be checked" if e.status == "unknown" else f"is busy ({e.status})"
             self.call_from_thread(

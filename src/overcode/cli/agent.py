@@ -748,6 +748,10 @@ def list_agents(
     as_json: Annotated[
         bool, typer.Option("--json", help="One JSON object per agent: identity, name source, status")
     ] = False,
+    self_: Annotated[
+        bool, typer.Option("--self", help="From inside an agent: it and its descendants, by id "
+                                           "(survives renames)")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """List running agents with status.
@@ -801,9 +805,18 @@ def list_agents(
         rprint("[dim]No running agents[/dim]")
         return
 
-    # Filter to specific agent + descendants if name given (#244)
-    if name:
-        root = find_agent(launcher.sessions, name)
+    # Filter to specific agent + descendants if name given (#244); --self
+    # finds the calling agent by id, which a rename does not change
+    if self_ or name:
+        if self_:
+            from ..agent_identity import env_agent_id
+            own_id = env_agent_id()
+            root = launcher.sessions.get_session(own_id) if own_id else None
+            if not root:
+                rprint("[red]Error: --self works only inside an overcode agent[/red]")
+                raise typer.Exit(code=1)
+        else:
+            root = find_agent(launcher.sessions, name)
         if not root:
             rprint(f"[red]Error: Agent '{name}' not found[/red]")
             raise typer.Exit(code=1)

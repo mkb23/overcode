@@ -389,6 +389,17 @@ width. Hover the name to see who named it, whether it was launched with
 - In the palette (`/`): "Let overcode name it" and "Keep this name" do the
   same for the focused agent (`overcode rename <agent> --auto` / `--lock`).
 
+With auto-naming on (`naming.enabled`, see
+[Naming](configuration.md#naming)), the engine names an agent once its
+task is clear, at a turn end, and at most once more later. A toast says so
+(`overcode-main2 → jwt-refresh (auto)`), the name gets its `~`, and the
+daemon panel (`d`) logs it with the model's reason. The agent keeps
+running; its old name still reaches it. To undo, `Ctrl+N` it back: the name
+is then yours and is not renamed again. No rename happens within 30 s of a
+key pressed in the TUI, so a name does not change under you as you type it.
+For a Claude Code agent the name also shows in Claude's own prompt box,
+and a `/rename` typed inside Claude renames the agent.
+
 ### Weekly quota (subscriptions)
 
 On a Claude subscription, `$` has a **weekly quota** mode that hides the

@@ -58,7 +58,8 @@ except ImportError:  # pragma: no cover - Windows
 # is kept as text); logs are kept as text, cut to their last N bytes on a
 # line boundary. The lock, the heartbeat stamp, temp files and the rotated
 # episode log (nothing reads episodes yet) are left out.
-JSON_FILES = ("hook_state.json", "report.json", "report.previous.json")
+JSON_FILES = ("hook_state.json", "report.json", "report.previous.json",
+              AGENT_DIR_FILES["namer"])
 EPISODES_TAIL_BYTES = 256 * 1024
 HOOK_EVENTS_TAIL_BYTES = 128 * 1024
 OTHER_TAIL_BYTES = 64 * 1024
@@ -66,6 +67,10 @@ TEXT_FILES = {
     AGENT_DIR_FILES["episodes"]: EPISODES_TAIL_BYTES,
     AGENT_DIR_FILES["hook_events"]: HOOK_EVENTS_TAIL_BYTES,
     AGENT_DIR_FILES["rename_notice"]: OTHER_TAIL_BYTES,
+    # What the namer read (the naming lab reruns advice on archived agents)
+    AGENT_DIR_FILES["brief"]: OTHER_TAIL_BYTES,
+    AGENT_DIR_FILES["prompts"]: OTHER_TAIL_BYTES,
+    AGENT_DIR_FILES["child_notice"]: OTHER_TAIL_BYTES,
 }
 
 # An agent directory is an orphan (its record gone) only once it has been

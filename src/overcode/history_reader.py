@@ -461,6 +461,7 @@ class AgentSessionStats:
     effort: Optional[str] = None
     agent: Optional[str] = None  # detected agent persona, opencode2's NULL-row fallback
     pr_number: Optional[int] = None  # PR the session is linked to (Claude pr-link, #489)
+    custom_title: Optional[str] = None  # the session's own name (Claude custom-title, #542)
     last_command: Optional[str] = None  # Most recent user prompt text
     # The backend's *own* context window for this session, when it has one
     # (#469) — codex's rollout JSONL reports `payload.info.model_context_window`
@@ -990,6 +991,7 @@ def _parse_session_lines(
         "provider": None,
         "effort": None,
         "pr_number": None,
+        "custom_title": None,
     }
     token_keys = ("input_tokens", "output_tokens", "cache_creation_tokens",
                   "cache_read_tokens", "cache_creation_1h_tokens")
@@ -1094,6 +1096,12 @@ def _parse_session_lines(
                 pr = data.get("prNumber")
                 if isinstance(pr, int):
                     totals["pr_number"] = pr
+
+            elif msg_type == "custom-title":
+                # The session's name: `claude -n`, or a /rename typed in it (#542)
+                title = data.get("customTitle")
+                if isinstance(title, str) and title.strip():
+                    totals["custom_title"] = title
 
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
@@ -1494,6 +1502,7 @@ def get_session_stats(
     detected_provider: Optional[str] = None
     detected_effort: Optional[str] = None
     detected_pr: Optional[int] = None
+    detected_title: Optional[str] = None
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
     live_subagent_count = 0  # Subagents with recently-modified files (#256)
@@ -1557,6 +1566,8 @@ def get_session_stats(
                     detected_effort = usage.get("effort")
                 if usage.get("pr_number"):
                     detected_pr = usage["pr_number"]
+                if usage.get("custom_title"):
+                    detected_title = usage["custom_title"]
         else:
             if usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
@@ -1568,6 +1579,8 @@ def get_session_stats(
                 detected_effort = usage.get("effort")
             if usage.get("pr_number"):
                 detected_pr = usage["pr_number"]
+            if usage.get("custom_title"):
+                detected_title = usage["custom_title"]
 
         # Collect work times from this session file
         all_work_times.extend(work_times)
@@ -1618,6 +1631,7 @@ def get_session_stats(
         provider=detected_provider,
         effort=detected_effort,
         pr_number=detected_pr,
+        custom_title=detected_title,
         last_command=last_command,
         per_conversation=per_conversation,
     )

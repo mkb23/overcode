@@ -103,12 +103,13 @@ overcode launch -n builder -d ~/project --wrapper devcontainer --bypass-permissi
 List all running agents with status and statistics.
 
 ```bash
-overcode list [name] [--show-done] [--session <session>]
+overcode list [name | --self] [--show-done] [--session <session>]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `name` | Optional. Show only this agent and its descendants |
+| `--self` | From inside an agent: show it and its descendants, found by `OVERCODE_SESSION_ID` (so it still works after the agent is renamed) |
 | `--show-done` | Include "done" child agents |
 | `--json` | One JSON object per agent: `id`, `name`, `name_source` (`default`, `parent`, `auto` or `human`), `name_forced`, `previous_names`, `status`, `activity`, `parent_session_id`, `repo`, `branch`, `backend`, `model`, `is_remote` |
 
@@ -262,6 +263,7 @@ The naming policy (#542; see [Naming](configuration.md#naming)).
 ```bash
 overcode name policy [--directory <dir>] [--json]
 overcode name check <name> [--directory <dir>] [--json]
+overcode name suggest <agent> [--advice-file <file>] [--json]
 ```
 
 `name policy` prints the naming advice first (the policy proper: free text
@@ -276,6 +278,15 @@ and a suggested name when it does not. `--json` prints
 `hard` failures (`base_pattern`, `reserved`, `taken`) are the ones
 `--force-name` cannot get past. `--directory` picks the repo (for its
 advice file and `no_repo_prefix`), default the current directory.
+
+`name suggest` asks the auto-namer's model for one agent's name, with the
+inputs and prompt the engine would use, and renames nothing: it prints the
+candidates, overcode's pick (the first that passes the rules and is not
+taken) and the model's reason. `--advice-file` tries other advice in place
+of the configured one. `--json` prints `{agent, id, name_source, advice,
+candidates, keep, why, pick, error, model, tokens_in, tokens_out,
+cost_usd}`. It works with `naming.enabled` off; the call is billed to the
+`overcode` billing code. Exit 1 when there is no model or no usable reply.
 
 ### `overcode cleanup`
 

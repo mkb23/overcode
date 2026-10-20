@@ -1196,7 +1196,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             if session_id in state:
                 state[session_id].update(kwargs)
 
-    def rename_session(self, session_id: str, new_name: str, **fields) -> bool:
+    def rename_session(self, session_id: str, new_name: str, *,
+                       name_source: Optional[str] = None, **fields) -> bool:
         """Atomically rename a session: duplicate check and update in one
         locked read-modify-write, so two concurrent renames cannot both win.
 
@@ -1209,6 +1210,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             session_id: The session being renamed.
             new_name: The new name; the write is refused (False) when any
                 OTHER session already owns it.
+            name_source: Who chose ``new_name`` (``name_source.py``), stored
+                in the same write; None leaves the record's as it is.
             **fields: Additional fields to set in the same atomic write
                 (e.g. ``tmux_window`` alongside the rename).
 
@@ -1229,6 +1232,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                     record["previous_names"] = [a for a in aliases if a not in drop]
             record = state[session_id]
             record.update(fields)
+            if name_source is not None:
+                record["name_source"] = name_source
             if old_name and old_name != new_name:
                 record["previous_names"] = [
                     *(a for a in record.get("previous_names") or [] if a != old_name),

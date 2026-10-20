@@ -24,7 +24,9 @@ description: Run other coding agents through overcode. Hand a separate piece of 
 
 overcode runs coding agents in tmux windows the user can watch and step into.
 If `$OVERCODE_SESSION_NAME` is set, you are one of them, and agents you launch
-become your children.
+become your children. That variable keeps the name you were launched under: if
+you are renamed, overcode tells you the new name with your next prompt, and
+`overcode list --self` finds you either way.
 
 ## When to delegate
 
@@ -86,7 +88,7 @@ Other options:
 ## Checking in and unblocking
 
 ```bash
-overcode list "$OVERCODE_SESSION_NAME"   # you and your children, with status
+overcode list --self                     # you and your children, with status
 overcode show <name> -n 80               # an agent's recent output
 overcode send <name> "text"              # answer its question
 overcode send <name> approve             # or reject: a permission prompt, any backend

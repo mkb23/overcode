@@ -951,7 +951,7 @@ def get_billing_config() -> dict:
 
 NAMING_MAX_LENGTH_DEFAULT = 18
 _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "max_renames",
-                "cost_cap_per_day", "provider")
+                "cost_cap_per_day", "provider", "cli_title")
 _NAMING_RULE_KEYS = ("pattern", "max_length", "forbid", "require", "no_repo_prefix",
                      "recent_archived_hours", "llm_check", "warn_humans")
 _NAMING_FIRST_AFTER = {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000}
@@ -986,7 +986,7 @@ def get_naming_config() -> dict:
 
     Config format in ~/.overcode/config.yaml:
         naming:
-          enabled: false        # the namer (not built yet); the policy check runs regardless
+          enabled: false        # the daemon's namer; the policy check runs regardless
           advice: |             # free text: the primary policy, read by the namer
             kebab-case, 1-3 words, what the work is about
           max_length: 18        # the namer's target length
@@ -1002,6 +1002,8 @@ def get_naming_config() -> dict:
           first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
           max_renames: 2
           cost_cap_per_day: 0.50
+          provider: {...}       # api_type/api_url/model/api_key_var; default: the summarizer: block
+          cli_title: true       # keep Claude's own session name (--name, /rename) in step
 
     Every rule is off unless set: only overcode's name pattern and a name
     already taken are always refused. Unknown keys and bad values are
@@ -1077,6 +1079,8 @@ def get_naming_config() -> dict:
     max_renames = max_renames if isinstance(max_renames, int) and not isinstance(
         max_renames, bool) and max_renames >= 0 else 2
     provider = cfg.get("provider") if isinstance(cfg.get("provider"), dict) else None
+    if cfg.get("provider") is not None and provider is None:
+        warnings.append("naming.provider: should be a mapping — using the summarizer: block")
 
     return {
         "enabled": cfg.get("enabled") is True,
@@ -1087,6 +1091,7 @@ def get_naming_config() -> dict:
         "max_renames": max_renames,
         "cost_cap_per_day": _non_negative(cfg.get("cost_cap_per_day", 0.50), 0.50),
         "provider": provider,
+        "cli_title": cfg.get("cli_title") is not False,
         "warnings": warnings,
     }
 

@@ -27,7 +27,9 @@ class StatsSync:
     views: stats availability, median work time, context window, subagent
     count. ``last_commands`` holds each agent's last prompt, and
     ``transcript_prs`` the last pr-link PR number seen (the pane-text PR
-    extraction stands back for those agents).
+    extraction stands back for those agents), and ``transcript_titles``
+    the last custom-title (the CLI's own session name; the namer adopts a
+    ``/rename`` typed in it, auto-naming §7).
     """
 
     def __init__(self, *, session_manager, log, clock: Optional[Clock] = None):
@@ -38,6 +40,8 @@ class StatsSync:
         self.last_commands: Dict[str, str] = {}  # session_id → last user prompt
         # Last pr-link PR number seen per session id (see sync_pr)
         self.transcript_prs: Dict[str, int] = {}
+        # Last custom-title seen per session id (the namer reads it)
+        self.transcript_titles: Dict[str, str] = {}
         # Archived parents' conversations, by parent id (an archive record
         # never changes; looked up once): see fork_sources
         self._archived_parents: Dict[str, list] = {}
@@ -210,6 +214,9 @@ class StatsSync:
             # to Claude Max and vice versa).
             self.sync_model(session, stats.model, pending)
             self.sync_pr(session, stats.pr_number, pending)
+            title = getattr(stats, "custom_title", None)
+            if title:
+                self.transcript_titles[session.id] = title
             if stats.provider and stats.provider != session.provider:
                 pending.update_session(session.id, provider=stats.provider)
             if stats.effort and stats.effort != session.effort:

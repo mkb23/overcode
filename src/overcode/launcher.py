@@ -47,7 +47,7 @@ from .exceptions import (
     AgentCliNotFoundError, InvalidSessionNameError, LaunchError,
     TmuxNotFoundError,
 )
-from .agent_files import prepare_agent_dir
+from .agent_files import prepare_agent_dir, read_brief, write_brief
 from .agent_io import AgentIOMixin
 from .lifecycle import (  # noqa: F401  (window_* and LifecycleReconcile re-exported)
     AgentLifecycleMixin,
@@ -598,6 +598,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         if parent_session:
             self.sessions.update_session(session.id, parent_session_id=parent_session.id)
             session = self.sessions.get_session(session.id)
+        write_brief(self.tmux.session_name, session.id, initial_prompt or "")
 
         prompt_file = self._initial_prompt_file(agent_backend, session, initial_prompt)
         # The prompt file goes on every way out (a failed send, a refused
@@ -801,6 +802,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         session = self.sessions.create_session(**metadata)
         self.sessions.update_session(session.id, parent_session_id=source_session.id)
         session = self.sessions.get_session(session.id)
+        # The fork carries the source's task unless it is given a new one
+        write_brief(self.tmux.session_name, session.id,
+                    initial_prompt or read_brief(self.for_agent(source_session).tmux_session,
+                                                 source_session.id))
 
         # fork_from → helper emits --resume <id> --fork-session. For
         # backends with fork_prescribes_new_session_id=True (grok, and

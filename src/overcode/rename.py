@@ -91,8 +91,9 @@ class RenameMixin:
         the new name (``_rename_with_restart``); ``force`` applies only to
         it. Elsewhere ``force`` is accepted and ignored.
 
-        ``source`` says who chose the name (``human``, ``auto``, ...). It is
-        not stored yet.
+        ``source`` says who chose the name (``name_source``: ``human``,
+        ``auto``, ...); it is stored with the name in the same write. None
+        leaves the record's source as it is.
 
         Failure leaves the agent as it was: if the window rename fails, or a
         concurrent rename takes ``new_name`` first, the window keeps (or
@@ -133,7 +134,8 @@ class RenameMixin:
             )
         if not renames_in_place(self.tmux_session, session.id):
             return self._rename_with_restart(
-                session, new_name, force=force, graceful_exit_wait=graceful_exit_wait)
+                session, new_name, force=force, source=source,
+                graceful_exit_wait=graceful_exit_wait)
 
         old_name = session.name
         old_window = session.tmux_window
@@ -148,18 +150,20 @@ class RenameMixin:
         # Locked duplicate check + write: a concurrent rename of another
         # agent to `new_name` cannot slip between check and update.
         if not self.sessions.rename_session(
-            session.id, new_name, tmux_window=new_window
+            session.id, new_name, tmux_window=new_window, **_source_field(source)
         ):
             if window_exists:
                 self.tmux.rename_window(new_window, old_window)
             raise ValueError(f"an agent named '{new_name}' already exists")
 
         self._write_rename_notice(session, old_name, new_name)
+        self._write_parent_notice(session, old_name, new_name)
         self._drop_name_keyed_files(old_name)  # an older overcode's leftovers
         return True
 
     def _rename_with_restart(
         self, session: Session, new_name: str, *, force: bool, graceful_exit_wait: float,
+        source: Optional[str] = None,
     ) -> bool:
         """Rename an agent launched before per-agent directories (see ``rename``).
 
@@ -198,7 +202,7 @@ class RenameMixin:
         # Locked duplicate check + write; the relaunch and the rename notice
         # move the agent into its own directory (agents/<id>/, item 35).
         if not self.sessions.rename_session(
-            session.id, new_name, tmux_window=new_window
+            session.id, new_name, tmux_window=new_window, **_source_field(source)
         ):
             # Lost the race — restore the pre-rename identity before bailing.
             if window_exists:
@@ -207,6 +211,7 @@ class RenameMixin:
             raise ValueError(f"an agent named '{new_name}' already exists")
 
         self._write_rename_notice(session, old_name, new_name)
+        self._write_parent_notice(session, old_name, new_name)
         if not window_exists:
             self._drop_name_keyed_files(old_name)
             return True
@@ -257,3 +262,32 @@ class RenameMixin:
             )
         except OSError:
             pass  # a missing note is cosmetic
+
+    def _write_parent_notice(self, session: Session, old_name: str, new_name: str) -> None:
+        """Tell the agent's parent, with its next prompt, that its child has a new name (§8).
+
+        Courtesy, not correctness: the old name still reaches the child
+        (``previous_names``). Appended, so two renames before the parent's
+        next prompt are both told; the hook handler consumes the file.
+        """
+        from .paths import agent_dir, agent_file
+
+        parent = (self.sessions.get_session(session.parent_session_id)
+                  if session.parent_session_id else None)
+        if parent is None or parent.is_remote:
+            return
+        tmux_session = parent.tmux_session or self.tmux_session
+        if not agent_dir(tmux_session, parent.id).is_dir():
+            return  # a parent launched before per-agent directories has no notices
+        try:
+            with open(agent_file(tmux_session, parent.id, "child_notice"), "a",
+                      encoding="utf-8") as f:
+                f.write(f"[overcode] Your child agent '{old_name}' is now called "
+                        f"'{new_name}'; the old name still reaches it.\n")
+        except OSError:
+            pass  # a missing note is cosmetic
+
+
+def _source_field(source: Optional[str]) -> dict:
+    """The ``rename_session`` field that stores who chose the name, if known."""
+    return {"name_source": source} if source else {}

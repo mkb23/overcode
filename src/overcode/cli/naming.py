@@ -223,3 +223,77 @@ def name_policy(
         rprint(f"[dim]Namer prompt: {escape(str(naming_prompt_path()))}[/dim]")
     for warning in cfg["warnings"]:
         err_console.print(f"Warning: {escape(warning)}", style="yellow", highlight=False)
+
+
+@name_app.command("suggest")
+def name_suggest(
+    agent: Annotated[str, typer.Argument(help="The agent to name (a name, or an old name)")],
+    advice_file: Annotated[
+        Optional[str], typer.Option("--advice-file", help="Use this advice instead of the configured advice")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the result as JSON")] = False,
+    session: SessionOption = "agents",
+):
+    """Ask the namer for one agent's name: the candidates, the pick and why. Renames nothing.
+
+    One model call (the summarizer's, or naming.provider), billed to the
+    `overcode` billing code. Works whether or not naming.enabled is on.
+    """
+    from pathlib import Path
+    from ..config import get_naming_config
+    from ..namer import (advice_for, gather_inputs, make_client, naming_context, recent_archived,
+                         record_spend, suggest)
+    from ..session_manager import SessionManager
+    from ..summarizer_prompts import load_naming_prompt
+    from ._shared import find_agent
+
+    sm = SessionManager()
+    sess = find_agent(sm, agent)
+    if sess is None:
+        err_console.print(f"Error: Agent '{escape(agent)}' not found", style="red", highlight=False)
+        raise typer.Exit(code=1)
+    cfg = get_naming_config()
+    if advice_file:
+        try:
+            advice = Path(advice_file).expanduser().read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as e:
+            err_console.print(f"Error: cannot read {escape(advice_file)}: {e}", style="red",
+                              highlight=False)
+            raise typer.Exit(code=1)
+    else:
+        advice = advice_for(cfg, sess.start_directory)
+    tmux_session = sess.tmux_session or session
+
+    def pane() -> str:
+        from ..implementations import RealTmux
+        return RealTmux().capture_pane(tmux_session, sess.tmux_window, lines=60) or ""
+
+    sessions = sm.list_sessions()
+    archived = recent_archived(sm)
+    inputs = gather_inputs(sess, tmux_session=tmux_session, sessions=sessions, archived=archived,
+                           max_length=cfg["max_length"], pane=pane)
+    result = suggest(inputs, naming_context(cfg, sessions, archived, sess),
+                     client=make_client(cfg.get("provider")), template=load_naming_prompt(),
+                     advice=advice)
+    try:
+        record_spend(sm.ledger, result, sess)
+    except Exception:
+        pass  # the suggestion stands; the ledger row is bookkeeping
+    if as_json:
+        typer.echo(json.dumps({"agent": sess.name, "id": sess.id, "name_source": sess.name_source,
+                               "advice": advice, **result.to_dict()}))
+    else:
+        rprint(f"[bold]{escape(sess.name)}[/bold] [dim]({escape(sess.name_source)})[/dim]")
+        if result.error:
+            err_console.print(f"Error: {escape(result.error)}", style="red", highlight=False)
+        else:
+            rprint(f"candidates: {escape(', '.join(result.candidates)) or '[dim]none[/dim]'}")
+            pick = result.pick or "[dim]none passes[/dim]"
+            rprint(f"pick:       {escape(pick) if result.pick else pick}"
+                   + ("  [dim](the model would keep the current name)[/dim]" if result.keep else ""))
+            if result.why:
+                rprint(f"why:        {escape(result.why)}")
+            rprint(f"[dim]{escape(result.model or '?')}, {result.tokens_in}+{result.tokens_out} "
+                   f"tokens, ${result.cost_usd:.4f}[/dim]")
+    if result.error:
+        raise typer.Exit(code=1)

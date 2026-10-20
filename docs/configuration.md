@@ -98,8 +98,9 @@ ledger:
 billing:
   codes: []                       # e.g. [client-a, client-b, internal]
 
-# Naming advice and the optional naming rules; see "Naming" below
+# Naming advice, the optional naming rules and auto-naming; see "Naming" below
 naming:
+  enabled: false                  # the engine names agents (auto-naming)
   advice: ""                      # free text: the naming policy
   rules: {}                       # optional checks on names parents give children
 
@@ -564,7 +565,9 @@ sister's API key, so no copy is kept.
 ## Agent Files and Retention
 
 While an agent is live its own files (hook state and event log, report,
-episode log) are in `sessions/<tmux>/agents/<session-id>/`, keyed by its
+episode log, and what the namer reads: `brief.txt`, the first 2 KB of its
+launch prompt, and `prompts.jsonl`, its first three prompts) are in
+`sessions/<tmux>/agents/<session-id>/`, keyed by its
 session id so a new agent of a reused name never reads what an earlier one
 left. When it is archived the directory is packed into one gzip member of
 that day's bundle, `sessions/<tmux>/bundles/YYYY-MM-DD.agents.gz`, and
@@ -809,11 +812,55 @@ naming:
     recent_archived_hours: 0  # refuse a name an agent archived this recently had (0: off)
     llm_check: false        # also ask the summarizer model whether the name follows the advice
     warn_humans: false      # warn (never refuse) when a name you type breaks the rules
-  enabled: false            # auto-naming (not built yet; read but unused)
-  first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}   # unused yet
-  max_renames: 2            # unused yet
-  cost_cap_per_day: 0.50    # unused yet
+  enabled: false            # auto-naming: the engine names agents (off by default)
+  first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
+  max_renames: 2            # auto renames in an agent's life (the first name + one refinement)
+  cost_cap_per_day: 0.50    # USD a day for the namer's model calls (per tmux session)
+  # provider:               # the namer's model; default: the summarizer: block
+  #   api_type: anthropic
+  #   api_url: https://api.anthropic.com/v1/messages
+  #   model: claude-haiku-4-5
+  #   api_key_var: ANTHROPIC_API_KEY
+  cli_title: true           # keep Claude Code's own session name in step (below)
 ```
+
+**Auto-naming** (`enabled: true`, or a children preset that sets it). The
+engine names an agent whose name is `default` or `auto` once its task is
+clear: at the first turn end (Stop) after `first_after` work (at least
+`turns` completed turns, and `green_minutes` of green time or
+`output_tokens` output tokens). One refinement comes at 10 times that
+work, and renames only if the model says the task has changed. An auto
+name changes at most `max_renames` times, at least 10 minutes apart. The
+namer never renames a `human` or `parent` name, never while the agent
+waits on a permission dialog, and never within 30 s of a key pressed in
+the TUI (it waits for the next Stop). A rename is overcode's ordinary
+restartless rename: the agent keeps running, the old name stays an alias,
+the agent and its parent are told with their next prompt, and the TUI
+shows a toast (`old → new (auto)`) and the `~` marker. The first auto name
+also renames the agent's billing code when that code was made just for it
+(a root agent's default code, not one you chose).
+
+The model sees the agent's brief (the first 2 KB of its launch prompt),
+its first three prompts, its repo, branch and PR, the files it edits most,
+its name and parent, and the fleet (live agents and the last day's
+archived ones, siblings together), with the advice and `max_length` as a
+target. An agent with no hooks gives its last 60 terminal lines instead.
+It answers `{"candidates": [...], "keep": bool, "why": "..."}`; overcode
+picks the first candidate that passes the rules and is not taken (a
+numbered series stays legal), else adds the shortest number. Each call is
+a ledger row under the billing code `overcode`; at about two calls per
+agent with a mini model, 100 agents cost about $0.05. With no model
+configured (no `summarizer:` key) the daemon log says so once.
+`overcode name suggest <agent>` asks for one agent's name without
+renaming it.
+
+**Claude Code's own name.** Claude Code has a session name of its own (its
+prompt box, `/resume`, the terminal title). overcode launches it with
+`--name <agent name>`; after a rename it types `/rename <new name>` into the
+agent, only when the agent is idle with an empty input line (otherwise at a
+later turn end); and a `/rename` you type in Claude renames the agent too,
+as a name you chose (`human`, locked). This runs whether or not
+auto-naming is on; `cli_title: false` turns it off.
 
 **The advice is the policy.** It is free text, read by a model: the
 auto-namer, and `llm_check` when it is on. Say in it what you want names to
@@ -834,7 +881,7 @@ through if the call fails.
 **The namer's prompt** is `~/.overcode/prompts/naming.md` once saved (the
 naming lab will edit it); until then a built-in default. Its placeholders are
 `{advice}`, `{brief}`, `{prompts}`, `{repo}`, `{branch}`, `{files}`,
-`{current_name}`, `{name_source}`, `{fleet}`, `{siblings}` and
+`{current_name}`, `{name_source}`, `{parent}`, `{fleet}`, `{siblings}` and
 `{max_length}`.
 
 An unknown key or a bad value under `naming:` is ignored with a warning

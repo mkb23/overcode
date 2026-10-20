@@ -178,6 +178,7 @@ def empty_stats() -> Tuple[dict, List[float]]:
         "provider": None,
         "effort": None,
         "pr_number": None,
+        "custom_title": None,
     }, []
 
 
@@ -248,6 +249,8 @@ def parse_message_time(ts_str) -> Optional[datetime]:
 #       a user prompt (not a tool result) with a parseable timestamp
 #   ("p", pr_number)
 #       a pr-link record: the PR Claude Code linked the session to (#489)
+#   ("t", title)
+#       a custom-title record: the session's name (``-n``, ``/rename``; #542)
 # Anything else parses to None.
 _Event = tuple
 
@@ -372,6 +375,9 @@ def parse_line(
     if msg_type == "pr-link":
         pr = data.get("prNumber")
         return ("p", pr) if isinstance(pr, int) else None
+    if msg_type == "custom-title":
+        title = data.get("customTitle")
+        return ("t", title) if isinstance(title, str) and title.strip() else None
     return None
 
 
@@ -428,7 +434,7 @@ def fold_event(
     since_key: Optional[int],
     event: _Event,
 ) -> Optional[datetime]:
-    """Apply one user or pr-link event to the accumulators; returns the new last prompt.
+    """Apply one user, pr-link or custom-title event to the accumulators; returns the new last prompt.
 
     (Assistant lines go through ``fold_assistant``, which needs to know
     the message they belong to.) A user prompt is skipped when earlier
@@ -437,6 +443,9 @@ def fold_event(
     """
     if event[0] == "p":
         totals["pr_number"] = event[1]
+        return last_prompt
+    if event[0] == "t":
+        totals["custom_title"] = event[1]
         return last_prompt
     key, prompt_time = event[1], event[2]
     if since_key is not None and key < since_key:
