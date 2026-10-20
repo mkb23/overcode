@@ -335,7 +335,8 @@ class BillingCodesModal(ModalBase):
         if self.mode == "prompt":
             return ds.hints(("↵", "mark"), ("esc", "cancel"))
         return ds.hints(("↵", "rename"), ("a", "agents"), ("space $ i", "mark"),
-                        ("c", "collapse"), ("m", "merged"), ("s", "settings"), ("/", "filter"))
+                        ("c", "collapse"), ("m", "merged"), ("s", "settings"), ("/", "filter"),
+                        ("esc", "close"))
 
     def _name_w(self, w: int) -> int:
         return max(12, w - 1 - self._MARK_W - 3 * self._MONEY_W - 2 * self._COUNT_W

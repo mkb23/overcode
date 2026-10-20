@@ -34,7 +34,7 @@ overcode launch --name <name> [options]
 | `--wrapper` | `-w` | Wrapper script: path or name from `~/.overcode/wrappers/` (e.g., `devcontainer`) |
 | `--no-inherit` | | Don't inherit settings from the parent agent (see below) |
 | `--skills` | | Skill profile to switch on; `none` for none. Default: the parent's, then the folder's pinned profile. See [Skill Profiles](skill-profiles.md) |
-| `--billing-code` | | Bill this agent's spend to this code (default: its name). A child always takes its parent's. See [Billing Codes](configuration.md#billing-codes) |
+| `--billing-code` | | Bill this agent's spend to this code (default: per `billing.new_agent_code`: its name, its repo or `billing.default_code`). A child always takes its parent's. See [Billing Codes](configuration.md#billing-codes) |
 | `--force-name` | | From inside an agent: launch with a name the naming policy refuses. Recorded on the agent (`name_forced`). Never gets past a taken name or overcode's name pattern |
 | `--json` | | Print the launched agent (`id`, `name`, `name_source`, `parent_session_id`) as JSON, or a refused name as a structured error; everything else goes to stderr |
 | `--session` | | Tmux session name (default: `agents`) |
@@ -388,7 +388,9 @@ overcode billing --ids           # add each code's id
 |------------|------|
 | `overcode billing rename OLD NEW` | Renames a code (by name, previous name or id). Every report, past spend included, shows the new name; the ledger is not touched. Refuses a name another code has. |
 | `overcode billing merge A B` | Folds code A into B: A's rows report under B, A's names resolve to B, A's agents bill to B. Recorded in `ledger/codes.json`, no row rewritten. |
-| `overcode billing codes` | Lists codes: name, id, source (`default`/`human`), live agents, agents and spend, previous names (`--json`). |
+| `overcode billing unmerge CODE` | Undoes a merge or collapse: the code (by name, previous name or id) reports its own spend again, past and future. Live agents the merge moved stay on the other code. |
+| `overcode billing collapse [CODE]... [--under USD] [--idle 30d] [--dry-run] [-y]` | Merges codes into `billing.default_code` (`general`, created as needed). With no codes, every code the filters pick (and it asks first unless `-y`); given codes are filtered too. `--under`: less than that spend in total; `--idle`: no running agent and no ledger row for that long (`30d`, `2w`, or days). The default code never collapses. |
+| `overcode billing codes` | Lists codes: name, id, source (`default`/`human`), live agents, agents and spend, previous names (`--json`; `--merged` adds merged codes and what they merged into). |
 
 Claude background sessions billed to a code (🌙 rows) are counted among its
 agents and, when there are any, in a `background` column (`"background"` in
