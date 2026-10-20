@@ -288,7 +288,8 @@ The `transfer` command requires the source to be an ancestor of the target.
 ### `overcode rebill`
 
 Bill an agent's spend to another code from now on. Forward only: what it
-spent so far stays on its old code.
+spent so far stays on its old code. The code is a name (a code's current
+or previous name); an unknown name creates a code.
 
 ```bash
 overcode rebill <name> <code>
@@ -296,14 +297,22 @@ overcode rebill <name> <code>
 
 ### `overcode billing`
 
-Spend per billing code, from the ledger (all time by default).
+Spend per billing code, from the ledger (all time by default). Grouped by
+code id and shown by each code's current name.
 
 ```bash
 overcode billing                 # all time
 overcode billing --since 30d     # or 2w, 12h, 2026-09, 2026-09-15
 overcode billing --month 2026-09
-overcode billing --json
+overcode billing --json          # codes keyed by id, each with its "name"
+overcode billing --ids           # add each code's id
 ```
+
+| Subcommand | Does |
+|------------|------|
+| `overcode billing rename OLD NEW` | Renames a code (by name, previous name or id). Every report, past spend included, shows the new name; the ledger is not touched. Refuses a name another code has. |
+| `overcode billing merge A B` | Folds code A into B: A's rows report under B, A's names resolve to B, A's agents bill to B. Recorded in `ledger/codes.json`, no row rewritten. |
+| `overcode billing codes` | Lists codes: name, id, source (`default`/`human`), live agents, agents and spend, previous names (`--json`). |
 
 Claude background sessions billed to a code (🌙 rows) are counted among its
 agents and, when there are any, in a `background` column (`"background"` in

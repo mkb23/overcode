@@ -149,7 +149,9 @@ fork always takes its parent's code, so a whole tree of delegated work adds
 up under the code its root was launched with. `overcode rebill <agent>
 <code>` moves an agent to another code from now on (its spend so far stays
 where it was), and `overcode billing` prints spend per code (`--since 30d`,
-`--month 2026-09`). In the TUI, the new-agent dialog and the "Billing
+`--month 2026-09`). A code has a fixed id and a name you can change:
+`overcode billing rename` renames it in every report, past ones included,
+and `overcode billing merge` folds one code into another. In the TUI, the new-agent dialog and the "Billing
 code…" palette command cycle a `billing.codes` shortlist from config.yaml
 with `Space` ([TUI guide](tui-guide.md#billing-codes)). Codes have no
 limits of their own: budgets stay per agent. Details:

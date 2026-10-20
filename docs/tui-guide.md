@@ -338,8 +338,11 @@ billing:
   A sister's agent has to be rebilled on its own machine.
 
 The Billing column (BILL; hidden below full detail, shown by
-`overcode list`) shows each agent's code, dim while it is still the
-agent's name. A bad `billing:` entry is skipped and the dialog says so.
+`overcode list`) shows each agent's code by its current name, dim while it
+is still the agent's name; after `overcode billing rename` it shows the new
+name within a daemon pass. Codes are typed and shown by name; a code's
+previous name still picks it. A bad `billing:` entry is skipped and the
+dialog says so.
 
 ### Weekly quota (subscriptions)
 
