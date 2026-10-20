@@ -348,7 +348,7 @@ lists overcode agents by their first prompt.
   this only when the agent is idle and its input line is empty (the
   launcher's ready-line check). An agent renamed while idle (Ctrl+N, the
   CLI) is checked on the next tick and every 30 s while the input line is
-  not empty; a busy one waits for its next Stop. A title never recorded is
+  not empty (asleep counts as idle); a busy one waits for its next Stop. A title never recorded is
   taken to be the launch's `--name`, so a rename records the old name as
   the title first. A
   missed alignment changes only the cosmetic title, never overcode's

@@ -743,6 +743,15 @@ class TestClaudeTitle:
         fleet.idle(a, seconds=60)
         assert len(mock.sent_keys) == 1                 # aligned: once
 
+    def test_a_sleeping_agent_takes_a_rename(self, tmp_path):
+        fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
+        a = fleet.add("work")
+        fleet.turn(a)
+        fleet.sm.rename_session(a.id, "renamed", name_source="human")
+        mock.set_pane_content("agents", "work-w", EMPTY)
+        fleet.idle(a, status="asleep")
+        assert [k[2] for k in mock.sent_keys] == ["/rename renamed"]
+
     def test_an_idle_agent_with_typed_input_is_retried(self, tmp_path):
         fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
         a = fleet.add("work")

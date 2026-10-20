@@ -43,6 +43,7 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, 
 from .name_source import AUTO, HUMAN, is_locked
 from .status_constants import (
     GREEN_STATUSES,
+    STATUS_ASLEEP,
     STATUS_DONE,
     STATUS_WAITING_APPROVAL,
     STATUS_WAITING_HEARTBEAT,
@@ -54,6 +55,9 @@ from .status_constants import (
 # (waiting_approval is a turn still in progress: never a Stop)
 TURN_END_STATUSES = frozenset({STATUS_WAITING_USER, STATUS_WAITING_HEARTBEAT,
                                STATUS_WAITING_OVERSIGHT, STATUS_DONE})
+# An agent at its prompt, between turns: its lagging title is typed in on a
+# tick, not only at a Stop (asleep: snoozed, or the last idle stage)
+IDLE_STATUSES = TURN_END_STATUSES | {STATUS_ASLEEP}
 
 MIN_RENAME_GAP_SECONDS = 600     # auto names change at least this far apart
 RETRY_GAP_SECONDS = 600          # after a call that failed or was skipped
@@ -789,7 +793,7 @@ class Namer:
             elif title is not None:
                 self._title_seen[sid] = title
             turn_end = previous in GREEN_STATUSES and status in TURN_END_STATUSES
-            if (not turn_end and status in TURN_END_STATUSES
+            if (not turn_end and status in IDLE_STATUSES
                     and self._idle_title_due(session, now.timestamp())):
                 if cfg is None:
                     cfg = self.config()
