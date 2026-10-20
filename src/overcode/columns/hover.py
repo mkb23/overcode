@@ -155,17 +155,50 @@ def hover_subagents(ctx: ColumnContext):
     return _emoji_legend("SubAgents", rows)
 
 
+TRIP_FOOTER = "Budgets count the total: a trip reset never adds budget."
+
+
+def _spend_line(cost: float, tokens: int, joules: float) -> str:
+    from ..tui_helpers import format_joules, format_tokens
+    return f"${cost:.2f} · {format_tokens(tokens)} tokens · {format_joules(joules).strip()}"
+
+
 def hover_spend(ctx: ColumnContext):
-    """The agent's spend split into its own and its delegated work's (decision 6)."""
+    """The agent's spend: its trip beside the total (trip.py), and the total
+    split into its own and its delegated work's (decision 6)."""
+    from ..trip import describe, trip_tokens
     sub = ctx.subagent_cost_usd
-    total = getattr(ctx.session.stats, "estimated_cost_usd", 0.0) or 0.0
-    if not sub or ctx.claude_stats is None:
+    stats = ctx.session.stats
+    total = getattr(stats, "estimated_cost_usd", 0.0) or 0.0
+    trip = ctx.trip
+    if (not sub and not trip) or ctx.claude_stats is None:
         return None
-    own = max(0.0, total - sub)
-    rows = [("$", f"${total:.2f} in all"),
-            ("·", f"${own:.2f} its own turns"),
-            (ctx.e("👥"), f"${sub:.2f} its subagents, workflow agents and teammates")]
-    return _emoji_legend("Spend", rows, "Delegated work is inside the total; never add it again.")
+    rows, notes = [], []
+    if trip:
+        since = _spend_line(trip.get("estimated_cost_usd") or 0.0, trip_tokens(trip),
+                            trip.get("estimated_energy_j") or 0.0)
+        in_all = _spend_line(total, ctx.claude_stats.total_tokens,
+                             getattr(stats, "estimated_energy_j", 0.0) or 0.0)
+        rows += [(ctx.e("↺"), f"{since} {describe(trip)}"), ("Σ", f"{in_all} in all")]
+        notes.append(TRIP_FOOTER)
+    else:
+        rows.append(("$", f"${total:.2f} in all"))
+    if sub:
+        own = max(0.0, total - sub)
+        rows += [("·", f"${own:.2f} of it its own turns"),
+                 (ctx.e("👥"), f"${sub:.2f} of it its subagents, workflow agents and teammates")]
+        notes.append("Delegated work is inside the total; never add it again.")
+    return _emoji_legend("Spend", rows, "\n".join(notes))
+
+
+def hover_subtree_cost(ctx: ColumnContext):
+    """SUB$ on trips: the rows' sum beside the subtree's total."""
+    shown = ctx.subtree_trip_cost_usd
+    if shown is None or ctx.subtree_cost_usd <= 0:
+        return None
+    rows = [(ctx.e("↺"), f"${shown:.2f}: its rows' $ summed (trips where reset)"),
+            ("Σ", f"${ctx.subtree_cost_usd:.2f} in all")]
+    return _emoji_legend("Subtree cost", rows, TRIP_FOOTER)
 
 
 _CONFIDENCE = {
@@ -184,6 +217,11 @@ def hover_quota(ctx: ColumnContext):
     if not isinstance(q, dict) or q.get("pp7d") is None:
         return None
     rows = [("7d", f"{format_pp(q.get('pp7d'))} of the weekly quota this week")]
+    trip = ctx.trip
+    if trip and trip.get("pp7d") is not None:
+        from ..trip import describe
+        rows.insert(0, (ctx.e("↺"), f"{format_pp(trip.get('pp7d'))} {describe(trip)} "
+                                    "(this week's only, once the week rolls over)"))
     if q.get("pp5h") is not None:
         rows.append(("5h", f"{format_pp(q.get('pp5h'))} of the current 5-hour window"))
     w7, w5 = q.get("w7"), q.get("w5")

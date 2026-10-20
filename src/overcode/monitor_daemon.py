@@ -1301,6 +1301,12 @@ class MonitorDaemon:
         state.burn = self._burn_by_session.get(session.id)
         if self.quota is not None:
             state.quota = self.quota.agent_view(session.id)
+        if getattr(session, "trip_reset_at", None):
+            from .trip import trip_view, week_start
+
+            usage = self.quota.fleet_usage if self.quota is not None else None
+            state.trip = trip_view(session, state, state.quota,
+                                   week_start(usage, self.clock.wall().timestamp()))
 
     def _sync_git(self, sessions: list, now: datetime) -> None:
         """Git diff/untracked per distinct directory, every GIT_SYNC_SECONDS while attended."""
@@ -1342,10 +1348,12 @@ class MonitorDaemon:
 
         asleep = {s.id for s in sessions if getattr(s, "is_asleep", False)}
         by_session: Dict[str, dict] = {}
+        # Quota points per window for the burn's Q% mode, from the Q% column's model
+        quota_pp_of = self.quota.window_pp if self.quota is not None else None
         for hours in sorted(windows):
-            stats = compute_window_burn(sessions, asleep, hours, now=now)
+            stats = compute_window_burn(sessions, asleep, hours, now=now, quota_pp_of=quota_pp_of)
             for sid, burn in stats.per_session.items():
-                by_session.setdefault(sid, {})[str(float(hours))] = {
+                entry = by_session.setdefault(sid, {})[str(float(hours))] = {
                     "input_tokens": burn.input_tokens,
                     "output_tokens": burn.output_tokens,
                     "cache_creation_tokens": burn.cache_creation_tokens,
@@ -1353,6 +1361,8 @@ class MonitorDaemon:
                     "cost_usd": round(burn.cost_usd, 4),
                     "energy_j": round(burn.energy_j, 1),
                 }
+                if burn.quota_pp is not None:
+                    entry["quota_pp"] = burn.quota_pp
         self._burn_by_session = by_session
 
     def _sync_quota(self, sessions: list, now: datetime) -> None:
@@ -2101,6 +2111,9 @@ class MonitorDaemon:
     def _compute_subtree_costs(self, session_states, index: Optional[SessionIndex] = None):
         """Compute subtree cost (self + all descendants) for each parent agent.
 
+        And its trip reading (``trip.subtree_trip_cost``): the members' $ as
+        their rows show it, while any of them has a trip.
+
         Agents are linked by id: each record's ``parent_session_id`` in
         ``index``, so a rename between ticks moves no cost. Without an index
         the published ``parent_name`` links them. Parent links can still
@@ -2108,6 +2121,8 @@ class MonitorDaemon:
         each walk carries a ``visited`` set so a cycle counts every member
         once instead of recursing until the daemon dies with RecursionError.
         """
+        from .trip import subtree_trip_cost
+
         by_id = {s.session_id: s for s in session_states}
         if index is not None:
             parent_of = {sid: getattr(index.by_id.get(sid), "parent_session_id", None)
@@ -2129,9 +2144,17 @@ class MonitorDaemon:
                     total += _sum(child, visited)
             return total
 
+        def _members(sid, visited):
+            visited.add(sid)
+            yield by_id[sid]
+            for child in children_map.get(sid, []):
+                if child not in visited:
+                    yield from _members(child, visited)
+
         for s in session_states:
             if children_map.get(s.session_id):
                 s.subtree_cost_usd = _sum(s.session_id, set())
+                s.subtree_trip_cost_usd = subtree_trip_cost(_members(s.session_id, set()))
 
     def _count_children_working(self, index: SessionIndex) -> None:
         """Refill the children-working counts from the last published tick.

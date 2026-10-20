@@ -758,6 +758,51 @@ class SessionActionsMixin:
         except NoMatches:
             pass
 
+    # Trip counters (trip.py): rows show spend since a reset; the totals,
+    # the ledger and budgets keep counting
+    def action_reset_trip(self) -> None:
+        """Zero the focused agent's trip counter (palette: Reset trip counter)."""
+        self._reset_trips(tree=False)
+
+    def action_reset_trip_tree(self) -> None:
+        """Zero the trip counters of the focused agent and every agent under it."""
+        self._reset_trips(tree=True)
+
+    def action_reset_trip_all(self) -> None:
+        """Zero the trip counter of every local agent."""
+        from .. import trip
+
+        ids = [s.id for s in self.session_manager.list_sessions()
+               if s.tmux_session == self.tmux_session and not self._is_remote(s)]
+        done = trip.reset(self.session_manager, ids, self.tmux_session)
+        if not done:
+            self.notify("No local agents to reset", severity="warning")
+            return
+        self.notify(f"Trip counters reset for {len(done)} agent{'' if len(done) == 1 else 's'}"
+                    " (totals, billing and budgets keep counting)")
+
+    def _reset_trips(self, tree: bool) -> None:
+        from .. import trip
+
+        focused = _get_focused_session(self)
+        if not focused:
+            self.notify("No agent focused", severity="warning")
+            return
+        session = focused.session
+        if self._is_remote(session):
+            self.notify(f"Reset remote agent '{session.name}' on its own machine "
+                        f"(overcode trip reset {session.name})", severity="warning")
+            return
+        ids = trip.tree_ids(self.session_manager, session.id) if tree else [session.id]
+        done = trip.reset(self.session_manager, ids, self.tmux_session)
+        if not done:
+            self.notify(f"Agent '{session.name}' no longer exists", severity="error")
+            return
+        more = len(done) - 1
+        under = f" and {more} under it" if more else ""
+        self.notify(f"Trip reset for '{session.name}'{under} "
+                    "(totals, billing and budgets keep counting)")
+
     def action_focus_command_bar(self) -> None:
         """Focus the command bar for input."""
         self._open_command_bar()

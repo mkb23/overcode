@@ -193,6 +193,12 @@ class Session:
     # the old code's tokens onto the new one
     billing_base_usage: Optional[Dict[str, int]] = None
 
+    # Trip counter (trip.py): the cumulative spend at the last trip reset
+    # (TRIP_FIELDS, plus Q% points and their quota week) and when. Rows
+    # show spend since; the stats above, the ledger and budgets keep totals.
+    trip_base: Optional[Dict[str, Optional[float]]] = None
+    trip_reset_at: Optional[str] = None
+
     # Hook-based status detection - per-agent toggle (#5).
     # False = never use hooks for this agent (web API's hook-detection switch).
     hook_status_detection: bool = True
@@ -1287,6 +1293,28 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             budget_usd: Budget in USD (0.0 = no budget/unlimited)
         """
         self.update_session(session_id, cost_budget_usd=budget_usd)
+
+    def reset_trips(self, session_ids: Iterable[str], reset_at: str,
+                    quotas: Optional[Mapping[str, tuple]] = None) -> List[str]:
+        """Zero the trip counters of ``session_ids`` in one write; the ids reset.
+
+        Each base is the record's cumulative spend now and, from
+        ``quotas`` (id → (quota view, quota week start)), its Q% points.
+        """
+        from .trip import base_of
+
+        quotas = quotas or {}
+        done: List[str] = []
+        with self._locked_state() as state:
+            for sid in session_ids:
+                record = state.get(sid)
+                if not isinstance(record, dict) or sid in done:
+                    continue
+                quota, week = quotas.get(sid, (None, None))
+                record["trip_base"] = base_of(record.get("stats") or {}, quota, week)
+                record["trip_reset_at"] = reset_at
+                done.append(sid)
+        return done
 
     def set_human_annotation(self, session_id: str, annotation: str):
         """Set human annotation for a session (#74)."""

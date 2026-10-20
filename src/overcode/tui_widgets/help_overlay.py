@@ -228,6 +228,7 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
         ("👶", "Child agents, then ▶ working 📭 unreported ✅ success ❌ failure"),
         ("📋", "Standing orders active"), ("✓ ", "Standing orders complete"),
         ("🤝", "Agent teams enabled"),
+        ("↺ ", "Spend since its trip reset; budgets count the total"),
     )]
 
     from ..summary_columns import SKILL_EMOJI_DEFAULT, TOOL_EMOJI, get_skill_emoji

@@ -12,6 +12,7 @@ state into <dir>, to look at. Nothing is written by default.
 """
 
 import os
+import re
 
 import pytest
 
@@ -97,3 +98,69 @@ async def test_layout_follows_a_resize(make_tui):
                 assert_layout_invariants(app)
             except AssertionError as e:
                 raise AssertionError(f"resized to {width}: {e}") from e
+
+
+class TripEngine(GridEngine):
+    """GridEngine plus every spend cell's variants: alpha's trip reset (↺ on
+    TOK / ENRG / $ / Q%), bravo's SUB$ on trips, quotas and a window burn
+    with its quota points (the burn's Q% mode)."""
+
+    def snapshot_now(self):
+        snap = super().snapshot_now()
+        burn = {str(float(h)): {"input_tokens": 9000, "output_tokens": 3000, "cost_usd": 1.2,
+                                "energy_j": 900.0, "quota_pp": 0.84}
+                for h in (1, 3, 6, 12, 24)}
+        for view in snap.agents.values():
+            view.update(quota={"pp7d": 12.34, "pp5h": 3.1, "w7": 40, "w5": 10, "conf": "low"},
+                        burn=burn, estimated_energy_j=5.0e5)
+        snap.agents["id-alpha"]["trip"] = {
+            "reset_at": "2026-10-07T10:00:00+00:00", "estimated_cost_usd": 0.02,
+            "estimated_energy_j": 900.0, "input_tokens": 10, "output_tokens": 5,
+            "cache_creation_tokens": 0, "cache_read_tokens": 0, "pp7d": 0.01}
+        snap.agents["id-bravo"].update(subtree_cost_usd=3.0, subtree_trip_cost_usd=1.0)
+        return snap
+
+
+def _trip_agents():
+    agents = _named_agents()
+    agents[0].cost_budget_usd = 5.0  # BDG shows in the $ modes
+    return agents
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_layout_holds_with_trip_counters_in_every_cost_mode(make_tui, width):
+    """A reset row (↺) and the burn's quota mode keep the grid, in every $ preset."""
+    engine = TripEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_trip_agents(), engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _open(pilot, engine)
+        marked = set()
+        for level in app.SUMMARY_LEVELS:
+            app._set_summary_level(level)
+            await _settle(pilot)
+            for _ in app._COST_PRESETS:
+                app.action_toggle_cost_display()
+                await _settle(pilot)
+                mode = app.show_cost
+                try:
+                    assert_layout_invariants(app)
+                except AssertionError as e:
+                    raise AssertionError(f"{width} cols, {level}, {mode}: {e}") from e
+                _shot(app, f"layout-trip-{width}-{level}-{mode}")
+                alpha = next(w for w in app._get_widgets_in_session_order()
+                             if w.session.name == "alpha")
+                line = alpha.render().plain
+                if "↺" in line:
+                    marked.add(mode)
+                if mode == "quota" and level in ("high", "full") and width >= 200:
+                    # 0.84 points over the burn window, in points per hour
+                    assert re.search(r"🔥\d+\.\d\d%/h", line), line
+        assert {"tokens", "cost", "joules", "quota"} <= marked
+
+        app.action_toggle_emoji_free()
+        await _settle(pilot)
+        try:
+            assert_layout_invariants(app)
+        except AssertionError as e:
+            raise AssertionError(f"{width} cols, emoji-free: {e}") from e

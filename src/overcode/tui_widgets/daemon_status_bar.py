@@ -429,6 +429,16 @@ class DaemonStatusBar(Static):
                         content.append(
                             f" 🔥{format_cost(burn.cost_per_hour)}/h", style=bold_color,
                         )
+                elif self.show_cost == "quota":
+                    # Weekly-quota points over the window, and per hour
+                    from ..columns.render_usage import format_pp_rate
+                    from ..quota_model import format_pp
+                    if burn.quota_pp:
+                        content.append(f" Δ{format_pp(burn.quota_pp)}", style=color)
+                    if burn.pp_per_hour:
+                        content.append(
+                            f" 🔥{format_pp_rate(burn.pp_per_hour)}/h", style=bold_color,
+                        )
                 elif self.show_cost == "joules":
                     # Estimated energy over the window, and its average power (#521)
                     from ..energy import format_watts

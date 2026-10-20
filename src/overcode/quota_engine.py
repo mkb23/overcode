@@ -947,6 +947,23 @@ class QuotaEngine:
         model = self.current_model(getattr(self, "_cfg", None))
         return round(model.predict_tokens(toks, self.price_fn), 2)
 
+    def window_pp(self, session: Any, usage: Mapping) -> Optional[float]:
+        """Points of the weekly quota a window's tokens (``burn``'s usage)
+        are worth for ``session``, None while it has no quota view.
+
+        Priced at the agent's model, as the window's tokens are not split by
+        model; the long-context tier is not told apart.
+        """
+        if session.id not in self.views:
+            return None
+        cw = _int(usage.get("cache_creation_tokens"))
+        cw1h = min(cw, _int(usage.get("cache_creation_1h_tokens")))
+        toks = {"in": _int(usage.get("input_tokens")), "out": _int(usage.get("output_tokens")),
+                "cw5m": cw - cw1h, "cw1h": cw1h, "cr": _int(usage.get("cache_read_tokens"))}
+        model_name = getattr(session, "transcript_model", None) or getattr(session, "model", None)
+        model = self.current_model(getattr(self, "_cfg", None))
+        return round(model.predict_tokens({model_name or "?": toks}, self.price_fn), 4)
+
 
 def _epoch_local(value: Any) -> Optional[float]:
     if not value:

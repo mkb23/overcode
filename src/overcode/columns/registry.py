@@ -16,6 +16,7 @@ from .hover import (
     hover_quota,
     hover_skill_profile,
     hover_spend,
+    hover_subtree_cost,
     hover_status_detail,
     hover_subagents,
     hover_task_result,
@@ -142,6 +143,10 @@ from .render_usage import (
     render_subtree_cost_plain,
     render_token_count,
     render_token_count_plain,
+    shown_cost,
+    shown_energy,
+    shown_subtree_cost,
+    shown_tokens,
 )
 
 if TYPE_CHECKING:
@@ -184,7 +189,10 @@ def _sort_burn_rate(ctx: ColumnContext) -> Optional[float]:
     burn = ctx.window_burn
     if burn is None or burn.window_hours <= 0:
         return None
-    # Sort by what the column shows: tokens/h in token mode, else $/h
+    # Sort by what the column shows: tokens/h in token mode, quota points/h
+    # in quota mode, else $/h
+    if ctx.show_cost == "quota":
+        return burn.pp_per_hour
     return burn.tokens_per_hour if ctx.show_cost == "tokens" else burn.cost_per_hour
 
 
@@ -386,19 +394,21 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # LLM usage group — TOK, ENRG, $, BDG, SUB$ (energy before cost for readability)
     SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
                   label="Tokens", render_plain=render_token_count_plain, header="TOK", name="Token Count",
-                  description="Total tokens used (input + output + cache)",
-                  sort_key=_if_stats(lambda ctx: ctx.claude_stats.total_tokens),
+                  description="Tokens used (input + output); ↺ since its trip reset (hover: the total)",
+                  sort_key=_if_stats(shown_tokens),
                   sort_desc=True, hover=hover_spend,
                   virtual_render=render_virtual_tokens),
     SummaryColumn(id="joules", group="llm_usage", detail_levels=set(), render=render_joules,
                   header="ENRG", name="Energy (Joules)",
-                  description="Estimated energy: tokens x a guess at the model's GPU energy (config: energy)",
-                  sort_key=_if_stats(lambda ctx: ctx.session.stats.estimated_energy_j),
-                  sort_desc=True),
+                  description="Estimated energy: tokens x a guess at the model's GPU energy "
+                              "(config: energy); ↺ since its trip reset",
+                  sort_key=_if_stats(shown_energy),
+                  sort_desc=True, hover=hover_spend),
     SummaryColumn(id="cost", group="llm_usage", detail_levels=set(), render=render_cost,
                   label="Cost", render_plain=render_cost_plain, header="$", name="Cost",
-                  description="Estimated spend in dollars, from token usage and model pricing",
-                  sort_key=_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd),
+                  description="Estimated spend in dollars, from token usage and model pricing; "
+                              "↺ since its trip reset (hover: the total, which budgets count)",
+                  sort_key=_if_stats(shown_cost),
                   sort_desc=True, hover=hover_spend,
                   virtual_render=render_virtual_cost),
     SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
@@ -412,9 +422,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   render_plain=render_subtree_cost_plain,
                   visible=lambda ctx: ctx.fleet.any_has_subtree_cost,
                   placeholder_width=8, header="SUB$", name="Subtree Cost",
-                  description="Cost of this agent plus all its children",
-                  sort_key=lambda ctx: ctx.subtree_cost_usd or None,
-                  sort_desc=True),
+                  description="Cost of this agent plus all its children; ↺ the sum of "
+                              "their rows while a trip was reset",
+                  sort_key=lambda ctx: shown_subtree_cost(ctx) or None,
+                  sort_desc=True, hover=hover_subtree_cost),
     # Subscription quota (cost model Phase B): optional ($ cycler "quota"
     # mode, or the column configurator); never shown without a subscription.
     SummaryColumn(id="quota", group="llm_usage", detail_levels=set(), render=render_quota,

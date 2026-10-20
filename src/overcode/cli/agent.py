@@ -149,16 +149,19 @@ def _lock_if_renamed(sessions, session_id: str, new_name: str) -> None:
         sessions.update_session(session_id, name_source=HUMAN)
 
 
-def _list_json(session_data) -> str:
-    """``overcode list --json``: each agent's identity, name history and status."""
+def _list_json(session_data, daemon_state=None) -> str:
+    """``overcode list --json``: each agent's identity, name history, status
+    and spend (its total and its trip, ``trip.py``)."""
     import json
+    from .trip import trip_report
     return json.dumps([
         {"id": sess.id, "name": sess.name, "name_source": sess.name_source,
          "name_forced": sess.name_forced, "previous_names": list(sess.previous_names),
          "status": status, "activity": activity,
          "parent_session_id": sess.parent_session_id, "repo": sess.repo_name,
          "branch": sess.branch, "backend": sess.backend, "model": sess.model,
-         "is_remote": bool(getattr(sess, "is_remote", False))}
+         "is_remote": bool(getattr(sess, "is_remote", False)),
+         "spend": trip_report(sess, daemon_state)}
         for sess, status, activity, *_ in session_data
     ], indent=2)
 
@@ -915,7 +918,7 @@ def list_agents(
         session_data.append((sess, status, activity, claude_stats, git_diff, git_untracked))
 
     if as_json:
-        typer.echo(_list_json(session_data))
+        typer.echo(_list_json(session_data, daemon_state if use_daemon else None))
         return
 
     # Pull structured 2-column status detail off the detector when available
@@ -969,6 +972,16 @@ def list_agents(
         return quota if isinstance(quota, dict) else None
 
     quotas = {sess.id: _quota(sess) for sess, *_ in session_data}
+
+    # Each agent's trip counter (trip.py): the daemon's, else from its record
+    def _trip(sess):
+        from ..trip import trip_view
+        ds = daemon_state.get_session(sess.id) if use_daemon else None
+        if ds is not None:
+            return ds.trip, ds.subtree_trip_cost_usd
+        return trip_view(sess, sess.stats), None
+
+    trips = {sess.id: _trip(sess) for sess, *_ in session_data}
 
     # Which fleet-gated columns show, by the same rule as the TUI
     fleet = compute_fleet_flags(
@@ -1031,6 +1044,8 @@ def list_agents(
             child_rollup=child_rollup(children.get(sess.id, ())),
             swarm_rollup=swarms[sess.id],
             quota=quotas[sess.id],
+            trip=trips[sess.id][0],
+            subtree_trip_cost_usd=trips[sess.id][1],
         )
         ctx.status_color = f"bold {status_color}"
         ctx.show_cost = "joules" if joules else ("cost" if cost else "tokens")

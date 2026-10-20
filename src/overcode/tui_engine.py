@@ -212,6 +212,7 @@ def window_burn(view: AgentView, hours: float) -> Optional[WindowBurnStats]:
         cache_read_tokens=entry.get("cache_read_tokens", 0),
         cost_usd=entry.get("cost_usd", 0.0),
         energy_j=entry.get("energy_j", 0.0),
+        quota_pp=entry.get("quota_pp"),
     )
 
 
@@ -230,6 +231,8 @@ def fleet_burn(agents: Mapping[str, AgentView], hours: float) -> Optional[Window
         total.cache_read_tokens += burn.cache_read_tokens
         total.cost_usd += burn.cost_usd
         total.energy_j += burn.energy_j
+        if burn.quota_pp is not None:
+            total.quota_pp = (total.quota_pp or 0.0) + burn.quota_pp
         total.per_session[sid] = burn
     return total
 
