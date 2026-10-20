@@ -63,7 +63,7 @@ MIN_RENAME_GAP_SECONDS = 600     # auto names change at least this far apart
 RETRY_GAP_SECONDS = 600          # after a call that failed or was skipped
 REFINE_FACTOR = 10               # the refinement comes at 10x the first's work
 HUMAN_QUIET_SECONDS = 30         # no rename this soon after a TUI keypress
-TITLE_RETRY_SECONDS = 30         # an idle agent's lagging title is tried again this often
+TITLE_RETRY_SECONDS = 10         # an idle agent's lagging title is tried again this often
 ARCHIVED_HOURS = 24              # archived agents the model sees
 FLEET_LINES = 120                # at most this many fleet lines in the prompt
 PANE_LINES = 60                  # a hookless agent's fallback input
@@ -999,13 +999,16 @@ class Namer:
     def _align(self, session_id: str) -> None:
         """Type ``/rename <name>`` into a Claude agent whose title lags its name (worker).
 
-        Only into an idle agent with an empty input line, not while a person
-        is typing in the TUI; otherwise the next Stop or idle retry tries
-        again. A title never recorded is the launch's ``--name``.
+        Only into an idle agent with an empty input line; otherwise the next
+        Stop or idle retry tries again. Keys typed into the agent's pane go
+        to tmux, not the TUI, so the empty line is the guard against typing
+        over a draft, not the TUI's keypress age (that one keeps auto
+        renames from moving rows under the cursor). A title never recorded
+        is the launch's ``--name``.
         """
         from .backends import get_backend, session_backend_name
         session = self.session_manager.get_session(session_id)
-        if session is None or self.tmux is None or self._human_typing():
+        if session is None or self.tmux is None:
             return
         tmux_session = session.tmux_session or self.tmux_session
         state = load_state(tmux_session, session_id)
