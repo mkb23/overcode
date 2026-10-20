@@ -69,7 +69,7 @@ class TestEditing:
         self._press(m, "tab")
         self._press(m, "space", " ")
         assert (m.selected_index, m.force, m.value) == (1, True, "alpha")
-        self._press(m, "tab")
+        self._press(m, "shift+tab")
         self._press(m, "g", "g")
         assert m.value == "alphag"
 
@@ -79,7 +79,7 @@ class TestEditing:
         m.post_message = posted.append
         self._press(m, "tab")
         self._press(m, "space", " ")
-        self._press(m, "tab")
+        self._press(m, "shift+tab")
         self._press(m, "2", "2")
         self._press(m, "enter")
         assert len(posted) == 1

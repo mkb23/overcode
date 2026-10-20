@@ -949,6 +949,148 @@ def get_billing_config() -> dict:
     return {"codes": codes, "warnings": warnings}
 
 
+NAMING_MAX_LENGTH_DEFAULT = 18
+_NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "max_renames",
+                "cost_cap_per_day", "provider")
+_NAMING_RULE_KEYS = ("pattern", "max_length", "forbid", "require", "no_repo_prefix",
+                     "recent_archived_hours", "llm_check", "warn_humans")
+_NAMING_FIRST_AFTER = {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000}
+
+
+def _positive_int(value) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _regex_or_none(value, where: str, warnings: List[str]) -> Optional[str]:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        warnings.append(f"{where}: should be a regex string — ignored")
+        return None
+    try:
+        re.compile(value)
+    except re.error as e:
+        warnings.append(f"{where}: invalid regex ({e}) — ignored")
+        return None
+    return value
+
+
+def get_naming_config() -> dict:
+    """Auto-naming and the naming policy (#542, docs/design/auto-naming.md §2a, §6).
+
+    Config format in ~/.overcode/config.yaml:
+        naming:
+          enabled: false        # the namer (not built yet); the policy check runs regardless
+          advice: |             # free text: the primary policy, read by the namer
+            kebab-case, 1-3 words, what the work is about
+          max_length: 18        # the namer's target length
+          rules:                # optional deterministic checks on names parents give
+            pattern: null       # a regex the name must match
+            max_length: null    # a hard limit (none by default)
+            forbid: []          # words the name may not contain
+            require: null       # a regex the name must contain
+            no_repo_prefix: false
+            recent_archived_hours: 0   # refuse names archived this recently (0 = off)
+            llm_check: false    # ask the summarizer model whether the name follows the advice
+            warn_humans: false  # warn (never refuse) a human's -n too
+          first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
+          max_renames: 2
+          cost_cap_per_day: 0.50
+
+    Every rule is off unless set: only overcode's name pattern and a name
+    already taken are always refused. Unknown keys and bad values are
+    ignored with a warning; this never raises.
+
+    Returns:
+        Dict with the keys above (``rules`` and ``first_after`` as dicts,
+        ``forbid`` a list of lower-cased words) and ``warnings`` (list).
+    """
+    warnings: List[str] = []
+    cfg = _get_config_value("naming", {})
+    if not isinstance(cfg, dict):
+        warnings.append("naming: should be a mapping — ignored")
+        cfg = {}
+    for key in cfg:
+        if key not in _NAMING_KEYS:
+            warnings.append(f"naming: unknown key '{key}' — ignored")
+
+    advice = cfg.get("advice")
+    if advice is not None and not isinstance(advice, str):
+        warnings.append("naming.advice: should be text — ignored")
+        advice = None
+    max_length = _positive_int(cfg.get("max_length", NAMING_MAX_LENGTH_DEFAULT))
+    if max_length is None:
+        warnings.append("naming.max_length: should be a positive number — using "
+                        f"{NAMING_MAX_LENGTH_DEFAULT}")
+        max_length = NAMING_MAX_LENGTH_DEFAULT
+
+    raw_rules = cfg.get("rules") or {}
+    if not isinstance(raw_rules, dict):
+        warnings.append("naming.rules: should be a mapping — ignored")
+        raw_rules = {}
+    for key in raw_rules:
+        if key not in _NAMING_RULE_KEYS:
+            warnings.append(f"naming.rules: unknown key '{key}' — ignored")
+    forbid_raw = raw_rules.get("forbid") or []
+    if isinstance(forbid_raw, str):
+        forbid_raw = [forbid_raw]
+    if not isinstance(forbid_raw, list):
+        warnings.append("naming.rules.forbid: should be a list of words — ignored")
+        forbid_raw = []
+    forbid: List[str] = []
+    for word in forbid_raw:
+        if isinstance(word, (int, float)) and not isinstance(word, bool):
+            word = str(word)
+        if not isinstance(word, str) or not word.strip():
+            warnings.append(f"naming.rules.forbid: {word!r} is not a word — ignored")
+            continue
+        if word.strip().lower() not in forbid:
+            forbid.append(word.strip().lower())
+    rule_max = raw_rules.get("max_length")
+    if rule_max is not None:
+        rule_max = _positive_int(rule_max)
+        if rule_max is None:
+            warnings.append("naming.rules.max_length: should be a positive number — ignored")
+    rules = {
+        "pattern": _regex_or_none(raw_rules.get("pattern"), "naming.rules.pattern", warnings),
+        "max_length": rule_max,
+        "forbid": forbid,
+        "require": _regex_or_none(raw_rules.get("require"), "naming.rules.require", warnings),
+        "no_repo_prefix": raw_rules.get("no_repo_prefix") is True,
+        "recent_archived_hours": _non_negative(raw_rules.get("recent_archived_hours", 0), 0.0),
+        "llm_check": raw_rules.get("llm_check") is True,
+        "warn_humans": raw_rules.get("warn_humans") is True,
+    }
+
+    raw_first = cfg.get("first_after") or {}
+    if not isinstance(raw_first, dict):
+        warnings.append("naming.first_after: should be a mapping — ignored")
+        raw_first = {}
+    first_after = {k: _non_negative(raw_first.get(k, d), d) for k, d in _NAMING_FIRST_AFTER.items()}
+    max_renames = cfg.get("max_renames", 2)
+    max_renames = max_renames if isinstance(max_renames, int) and not isinstance(
+        max_renames, bool) and max_renames >= 0 else 2
+    provider = cfg.get("provider") if isinstance(cfg.get("provider"), dict) else None
+
+    return {
+        "enabled": cfg.get("enabled") is True,
+        "advice": (advice or "").strip(),
+        "max_length": max_length,
+        "rules": rules,
+        "first_after": first_after,
+        "max_renames": max_renames,
+        "cost_cap_per_day": _non_negative(cfg.get("cost_cap_per_day", 0.50), 0.50),
+        "provider": provider,
+        "warnings": warnings,
+    }
+
+
 def get_monitor_daemon_config() -> dict:
     """The monitor daemon's loop interval while nobody is watching.
 

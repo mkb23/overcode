@@ -346,9 +346,12 @@ class CommandBarMixin:
         )
 
         try:
+            from ..name_source import DEFAULT, HUMAN, is_fork_default
             launcher.launch_fork(
                 name=fork_name,
                 source_session=source_session,
+                name_source=(DEFAULT if is_fork_default(fork_name, source_session.name)
+                             else HUMAN),
             )
             self.notify(f"Forked '{source_session.name}' → '{fork_name}'", severity="information")
             self.refresh_sessions()

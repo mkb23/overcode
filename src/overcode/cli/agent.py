@@ -113,6 +113,69 @@ def _resolve_child_settings(preset: Optional[str], is_child: bool, on_stuck: Opt
     return chosen, policy, timeout_seconds, archive_seconds, budget
 
 
+def _json_stdout(command):
+    """With ``--json``, ``command``'s human-readable lines go to stderr and
+    stdout carries only what ``_echo_json`` prints."""
+    import contextlib
+    import functools
+    import sys
+
+    @functools.wraps(command)
+    def run(*args, **kwargs):
+        if not kwargs.get("as_json"):
+            return command(*args, **kwargs)
+        _json_out.append(sys.stdout)
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                return command(*args, **kwargs)
+        finally:
+            _json_out.pop()
+    return run
+
+
+_json_out: list = []
+
+
+def _echo_json(text: str) -> None:
+    import sys
+    print(text, file=_json_out[-1] if _json_out else sys.stdout, flush=True)
+
+
+def _lock_if_renamed(sessions, session_id: str, new_name: str) -> None:
+    """Mark the name a human's (locked) once the record carries ``new_name``."""
+    from ..name_source import HUMAN
+    current = sessions.get_session(session_id)
+    if current is not None and current.name == new_name:
+        sessions.update_session(session_id, name_source=HUMAN)
+
+
+def _list_json(session_data) -> str:
+    """``overcode list --json``: each agent's identity, name history and status."""
+    import json
+    return json.dumps([
+        {"id": sess.id, "name": sess.name, "name_source": sess.name_source,
+         "name_forced": sess.name_forced, "previous_names": list(sess.previous_names),
+         "status": status, "activity": activity,
+         "parent_session_id": sess.parent_session_id, "repo": sess.repo_name,
+         "branch": sess.branch, "backend": sess.backend, "model": sess.model,
+         "is_remote": bool(getattr(sess, "is_remote", False))}
+        for sess, status, activity, *_ in session_data
+    ], indent=2)
+
+
+def _naming_enabled() -> bool:
+    from ..config import get_naming_config
+    return get_naming_config()["enabled"]
+
+
+def _launch_json(result) -> str:
+    """A launched (or forked) agent as ``--json`` prints it."""
+    import json
+    return json.dumps({"ok": True, "id": result.id, "name": result.name,
+                       "name_source": result.name_source, "name_forced": result.name_forced,
+                       "parent_session_id": result.parent_session_id})
+
+
 def _check_skill_staleness() -> None:
     """Warn if installed skills are modified (#290)."""
     from ..bundled_skills import any_skills_stale
@@ -220,6 +283,7 @@ def _get_sessions_to_cleanup(launcher, done: bool) -> tuple[int, int]:
 
 
 @app.command()
+@_json_stdout
 def launch(
     name: Annotated[str, typer.Option("--name", "-n", help="Name for the agent")],
     directory: Annotated[
@@ -363,9 +427,25 @@ def launch(
         Optional[str],
         typer.Option("--sister", "-S", help="Launch on a remote sister machine (by name from config)"),
     ] = None,
+    force_name: Annotated[
+        bool,
+        typer.Option(
+            "--force-name",
+            help="From inside an agent: launch with a name the naming policy refuses "
+                 "(not one that is taken or invalid)",
+        ),
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print the result (or a refused name) as JSON")
+    ] = False,
     session: SessionOption = "agents",
 ):
-    """Launch a new agent."""
+    """Launch a new agent.
+
+    From inside an agent, the name is checked against the naming policy
+    (`overcode name policy`); a refused name exits 3 with the rule it
+    broke and a suggestion.
+    """
     import os
 
     # --claude-arg is the pre-Phase-6 spelling of --backend-arg; both fold
@@ -453,6 +533,9 @@ def launch(
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
 
+    from .naming import check_launch_name
+    name_source, name_forced = check_launch_name(name, working_dir, force_name, as_json)
+
     launcher = AgentLauncher(session)
 
     try:
@@ -477,11 +560,15 @@ def launch(
             no_parent=no_parent,
             skill_profile=skills,
             billing_code=billing_code,
+            name_source=name_source,
+            name_forced=name_forced,
         )
     except LaunchError as e:
         print(e)
         raise typer.Exit(code=1)
 
+    if result and as_json:
+        _echo_json(_launch_json(result))
     if result:
         rprint(f"\n[green]✓[/green] Agent '[bold]{name}[/bold]' launched")
         if result.parent_session_id:
@@ -528,6 +615,7 @@ def launch(
 
 
 @app.command()
+@_json_stdout
 def fork(
     source: Annotated[str, typer.Argument(help="Name of agent to fork from")],
     name: Annotated[
@@ -542,6 +630,16 @@ def fork(
             "--normal-permissions",
             help="Run the fork in normal permission mode instead of the source's",
         ),
+    ] = False,
+    force_name: Annotated[
+        bool,
+        typer.Option(
+            "--force-name",
+            help="From inside an agent: fork with a name the naming policy refuses",
+        ),
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print the result (or a refused name) as JSON")
     ] = False,
     session: SessionOption = "agents",
 ):
@@ -583,6 +681,13 @@ def fork(
 
     # Default fork name
     fork_name = name if name else f"{source}-fork"
+    if name:
+        from .naming import check_launch_name
+        name_source, name_forced = check_launch_name(
+            name, source_session.start_directory, force_name, as_json, sessions=sm)
+    else:
+        from ..name_source import DEFAULT
+        name_source, name_forced = DEFAULT, False
 
     launcher = AgentLauncher(session)
     try:
@@ -591,12 +696,16 @@ def fork(
             source_session=source_session,
             initial_prompt=prompt,
             normal_permissions=normal_permissions,
+            name_source=name_source,
+            name_forced=name_forced,
         )
     except LaunchError as e:
         print(e)
         rprint(f"[red]Error: Failed to fork '{source}'[/red]")
         raise typer.Exit(code=1)
 
+    if as_json:
+        _echo_json(_launch_json(result))
     rprint(f"\n[green]✓[/green] Forked '[bold]{source}[/bold]' → '[bold]{fork_name}[/bold]'")
     rprint(f"  Directory: {result.start_directory}")
     if result.agent_persona:
@@ -635,6 +744,9 @@ def list_agents(
     sort: Annotated[
         str, typer.Option("--sort", "-s", help="Sort mode: alphabetical, by_status, by_value, by_tree")
     ] = "by_tree",
+    as_json: Annotated[
+        bool, typer.Option("--json", help="One JSON object per agent: identity, name source, status")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """List running agents with status.
@@ -654,6 +766,7 @@ def list_agents(
         pad_and_join_cells, render_header_cells, render_summary_cells,
     )
     from ..tui_logic import compute_tree_metadata, sort_sessions
+    from ..name_source import name_marker
     from rich.console import Console
 
     # Resolve detail level (mutually exclusive flags, default full)
@@ -681,6 +794,9 @@ def list_agents(
             sessions = sessions + remote_sessions
 
     if not sessions:
+        if as_json:
+            typer.echo("[]")
+            return
         rprint("[dim]No running agents[/dim]")
         return
 
@@ -783,6 +899,10 @@ def list_agents(
                 pass
 
         session_data.append((sess, status, activity, claude_stats, git_diff, git_untracked))
+
+    if as_json:
+        typer.echo(_list_json(session_data))
+        return
 
     # Pull structured 2-column status detail off the detector when available
     # (#TBD). Detector may be None when daemon state alone supplies status.
@@ -905,8 +1025,9 @@ def list_agents(
         # Handle tree indentation (#244) using compute_tree_metadata
         depth = meta.depth if meta else 0
         indent = "  " * depth
-        available = name_width - len(indent)
-        ctx.display_name = (indent + sess.name[:available]).ljust(name_width)
+        marker = name_marker(sess.name_source)
+        available = name_width - len(indent) - len(marker)
+        ctx.display_name = (indent + marker + sess.name[:available]).ljust(name_width)
 
         row_contexts.append(ctx)
         # The result's full reason, which the column truncates
@@ -1108,13 +1229,23 @@ def follow(
 @app.command()
 def rename(
     name: Annotated[str, typer.Argument(help="Current name of agent")],
-    new_name: Annotated[str, typer.Argument(help="New name for the agent")],
+    new_name: Annotated[
+        Optional[str], typer.Argument(help="New name for the agent (not with --auto / --lock)")
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
             "--force",
             help="Rename even if the agent is mid-turn (its turn is cancelled)",
         ),
+    ] = False,
+    auto: Annotated[
+        bool,
+        typer.Option("--auto", help="Let overcode name this agent (keeps the name for now)"),
+    ] = False,
+    lock: Annotated[
+        bool,
+        typer.Option("--lock", help="Keep this name: overcode never renames it"),
     ] = False,
     session: SessionOption = "agents",
 ):
@@ -1130,12 +1261,25 @@ def rename(
     renamed, because stopping it would cancel its turn; wait until it is
     idle, or pass --force. A terminated agent just has its record renamed.
 
+    A rename locks the name: overcode's auto-naming never changes a name
+    a person chose. --auto hands it back to overcode, and --lock locks
+    the current name without changing it.
+
     Examples:
         overcode rename bugfix-1 auth-refactor
+        overcode rename bugfix-1 --auto
     """
     from ..exceptions import AgentBusyError, InvalidSessionNameError
     from ..launcher import AgentLauncher
+    from ..name_source import AUTO, HUMAN
     from ..protocols import TmuxTimeoutError
+
+    if auto and lock:
+        rprint("[red]Error: --auto and --lock are opposites; pass one[/red]")
+        raise typer.Exit(code=1)
+    if (auto or lock) == (new_name is not None):
+        rprint("[red]Error: give a new name, or --auto / --lock (not both)[/red]")
+        raise typer.Exit(code=1)
 
     launcher = AgentLauncher(session)
     sess = find_agent(launcher.sessions, name)
@@ -1143,6 +1287,15 @@ def rename(
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
     name = sess.name
+
+    if auto or lock:
+        launcher.sessions.update_session(sess.id, name_source=AUTO if auto else HUMAN)
+        if auto:
+            rprint(f"[green]'{name}' is named by overcode now[/green]"
+                   f"{'' if _naming_enabled() else ' [dim](naming.enabled is off)[/dim]'}")
+        else:
+            rprint(f"[green]'{name}' keeps its name[/green]")
+        return
 
     try:
         renamed = launcher.rename(sess, new_name, force=force)
@@ -1170,6 +1323,8 @@ def rename(
                f"try again in a moment[/red]")
         raise typer.Exit(code=1)
 
+    # A person chose this name: the namer leaves it alone from now on
+    _lock_if_renamed(launcher.sessions, sess.id, new_name)
     if not renamed:
         current = launcher.sessions.get_session(sess.id)
         if current is not None and current.name == new_name:

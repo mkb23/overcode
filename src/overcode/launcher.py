@@ -268,6 +268,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         backend: str = DEFAULT_BACKEND,
         skill_profile: Optional[str] = None,
         billing_code: Optional[str] = None,
+        name_source: str = "human",
+        name_forced: bool = False,
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -294,6 +296,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             skill_profile=skill_profile,
             launcher_version=get_full_version(),
             billing_code=billing_code or name,
+            name_source=name_source,
+            name_forced=name_forced,
         )
 
     def _build_launch_cmd_str(
@@ -367,6 +371,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         no_parent: bool = False,
         skill_profile: Optional[str] = None,
         billing_code: Optional[str] = None,
+        name_source: str = "human",
+        name_forced: bool = False,
     ) -> Session:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -403,6 +409,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             billing_code: The billing code the ledger files this agent's spend
                 under (default: its name). A child always takes its
                 parent's, whatever is passed (a warning says so).
+            name_source: Where ``name`` came from (name_source.py): human
+                by default; the CLI passes parent from inside an agent, the
+                TUI modal default for an untouched directory name.
+            name_forced: The name was let past the naming policy (--force-name).
 
         Returns:
             The new Session, or the existing one if an agent called ``name``
@@ -556,6 +566,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             agent_persona=agent_persona, model=model, provider=provider,
             wrapper=resolved_wrapper, backend=agent_backend.name,
             skill_profile=skill_profile, billing_code=billing_code,
+            name_source=name_source, name_forced=name_forced,
         )
 
         session = self.sessions.create_session(**metadata)
@@ -659,6 +670,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         source_session: Session,
         initial_prompt: Optional[str] = None,
         normal_permissions: bool = False,
+        name_source: str = "human",
+        name_forced: bool = False,
     ) -> Session:
         """Launch a forked agent from an existing session's context.
 
@@ -676,6 +689,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             initial_prompt: Optional prompt to send after the fork starts
             normal_permissions: Run the fork in normal permission mode instead
                 of the source's (everything else is still inherited)
+            name_source: Where ``name`` came from (as for ``launch``)
+            name_forced: The name was let past the naming policy
 
         Returns:
             The new Session, or the existing one if an agent called ``name``
@@ -753,6 +768,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             wrapper=source_session.wrapper, backend=agent_backend.name,
             skill_profile=getattr(source_session, "skill_profile", None),
             billing_code=self._parent_billing_code(source_session),
+            name_source=name_source, name_forced=name_forced,
         )
 
         session = self.sessions.create_session(**metadata)

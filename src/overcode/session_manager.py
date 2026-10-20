@@ -138,6 +138,12 @@ class Session:
     # agent — with a notice — instead of "not found". An old name belongs
     # to one agent at a time, and a live agent's own name always wins.
     previous_names: List[str] = field(default_factory=list)
+    # Where the name came from (#542, name_source.py): default, parent,
+    # auto or human. parent and human lock it against the namer. A record
+    # from before the field gets name_source.infer_legacy's answer.
+    name_source: str = "human"
+    # Launched with --force-name past the naming policy (2a)
+    name_forced: bool = False
 
     # Backend session ids owned by this overcode session (#119)
     # Used to accurately calculate context window for this specific agent
@@ -323,6 +329,11 @@ class Session:
         for new_key, old_key in LEGACY_SESSION_KEYS.items():
             if new_key not in filtered and old_key in data:
                 filtered[new_key] = data[old_key]
+
+        # Backward compat: no name_source before #542
+        if not isinstance(filtered.get('name_source'), str):
+            from .name_source import infer_legacy
+            filtered['name_source'] = infer_legacy(data)
 
         try:
             return cls(**filtered)
@@ -817,7 +828,9 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                       wrapper: Optional[str] = None,
                       skill_profile: Optional[str] = None,
                       launcher_version: str = "",
-                      billing_code: Optional[str] = None) -> Session:
+                      billing_code: Optional[str] = None,
+                      name_source: str = "human",
+                      name_forced: bool = False) -> Session:
         """Create and register a new session.
 
         Args:
@@ -833,6 +846,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             agent_persona: Agent persona name passed as --agent
             backend: Agent CLI backend name (see overcode.backends)
             session_id: Optional pre-generated session ID (used when ID must be known before window creation)
+            name_source: Where the name came from (name_source.py)
+            name_forced: Launched with --force-name past the naming policy
         """
         if self._skip_git_detection:
             repo_name, branch = None, None
@@ -862,6 +877,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             skill_profile=skill_profile,
             launcher_version=launcher_version,
             billing_code=billing_code or name,
+            name_source=name_source,
+            name_forced=name_forced,
         )
 
         with self._locked_state() as state:
