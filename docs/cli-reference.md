@@ -405,7 +405,7 @@ overcode billing --ids           # add each code's id
 | Subcommand | Does |
 |------------|------|
 | `overcode billing rename OLD NEW` | Renames a code (by name, previous name or id). Every report, past spend included, shows the new name; the ledger is not touched. Refuses a name another code has. |
-| `overcode billing merge A B` | Folds code A into B: A's rows report under B, A's names resolve to B, A's agents bill to B. Recorded in `ledger/codes.json`, no row rewritten. |
+| `overcode billing merge CODE... --into TARGET [--dry-run] [-y]` | Folds the codes into TARGET (which must exist): their rows report under it, their names resolve to it, their agents bill to it. One write to `ledger/codes.json`, no row rewritten. A quoted pattern (`'shirka*'`) matches current names of unmerged codes, never TARGET, and asks first unless `-y`; `--dry-run` lists the codes with their spend. `merge A B` is `merge A --into B`. |
 | `overcode billing unmerge CODE` | Undoes a merge or collapse: the code (by name, previous name or id) reports its own spend again, past and future. Live agents the merge moved stay on the other code. |
 | `overcode billing collapse [CODE]... [--under USD] [--idle 30d] [--dry-run] [-y]` | Merges codes into `billing.default_code` (`general`, created as needed). With no codes, every code the filters pick (and it asks first unless `-y`); given codes are filtered too. `--under`: less than that spend in total; `--idle`: no running agent and no ledger row for that long (`30d`, `2w`, or days). The default code never collapses. |
 | `overcode billing codes` | Lists codes: name, id, source (`default`/`human`), live agents, agents and spend, previous names (`--json`; `--merged` adds merged codes and what they merged into). |

@@ -404,19 +404,26 @@ new agents' codes come from and names the default code (★ in the list).
 | `a` or `→` | The code's agents and their spend (`Esc`/`←` back) |
 | `/` | Filter as you type (names and previous names); `Esc` clears |
 | `Space` | Mark or unmark the code |
+| `*` | Mark every code the list shows (after a `/` filter, the matching ones); again unmarks them |
+| `M` | Merge into…: the marked codes, else the highlighted one. Type to filter the existing codes, `↑`/`↓` and `Enter` to pick one (an exact typed name wins); the confirm states the result — "merge 19 codes ($2,832.88, 32 agents) into shirka? ↵ confirm · esc cancel" |
 | `$` / `i` | Mark every code under $X total / idle N days (no running agent, no ledger row since); type the number, `Enter` |
 | `c` | Collapse the marked codes, else the highlighted one, into the default code; a second `c` confirms (it shows how many and their spend) |
 | `m` | Show or hide merged codes |
 | `u` | On a merged code: unmerge it; a second `u` confirms. Its live agents stay on the code it was merged into |
 | `s` | Where new agents' codes come from: opens New agent defaults on its Billing code and Default code rows, and comes back |
+| `?` | The keys the bottom border has no room for |
 | `Esc` / `q` | Close (`Esc` clears a filter, then marks, first) |
 
 A rename is `overcode billing rename`: every report, past spend included,
 shows the new name, and the old one becomes a previous name that still
-works. The name is checked as you type: empty or id-shaped names are
-refused, and the name of another code offers a merge instead — `Enter`
-asks "merge X into Y? press Enter again", and a second `Enter` runs
-`overcode billing merge` (X's spend, past and future, reports under Y).
+works. The name is checked as you type: empty or id-shaped names, and
+another code's name ("taken by 'shirka' — press M to merge into it"), are
+refused. Merging is its own action, `M`: `overcode billing merge` (the
+codes' spend, past and future, reports under the one picked). It only
+folds into a code that exists — the default code too — never one of the
+codes being merged, and never makes a new code (that is a rename).
+To merge a family of codes: `/` to filter (`shirka`), `*` to mark them,
+`Space` to unmark the one to keep, `M`, pick it, `Enter`, `Enter`.
 Collapsing is `overcode billing collapse`: a merge into the default code
 (`billing.default_code`), which can't itself be collapsed. A merge or
 collapse only changes the code registry, so `u` (or `overcode billing

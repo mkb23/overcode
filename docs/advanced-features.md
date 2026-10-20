@@ -151,7 +151,7 @@ up under the code its root was launched with. `overcode rebill <agent>
 where it was), and `overcode billing` prints spend per code (`--since 30d`,
 `--month 2026-09`). A code has a fixed id and a name you can change:
 `overcode billing rename` renames it in every report, past ones included,
-and `overcode billing merge` folds one code into another. In the TUI, the new-agent dialog and the "Billing
+and `overcode billing merge` folds codes into another (several at once, or a quoted pattern). In the TUI, the new-agent dialog and the "Billing
 code…" palette command cycle a `billing.codes` shortlist from config.yaml
 with `Space` ([TUI guide](tui-guide.md#billing-codes)). Codes have no
 limits of their own: budgets stay per agent. Details:

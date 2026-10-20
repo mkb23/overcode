@@ -796,8 +796,8 @@ moves one back).
 codes (one-off agents, experiments) that clutter the report. The default
 code itself never collapses.
 In the TUI, the "Billing codes & spend…" dialog (`m`, or the `/` palette) lists every code
-with its spend (total, this month, last month), renames or merges them
-in place, collapses marked codes and undoes merges ([TUI guide](tui-guide.md#billing-codes)).
+with its spend (total, this month, last month), renames codes in place,
+merges or collapses marked codes and undoes merges ([TUI guide](tui-guide.md#billing-codes)).
 
 ```bash
 overcode launch -n research --billing-code client-x   # set it at launch
@@ -806,6 +806,7 @@ overcode billing                                      # spend per code, all time
 overcode billing --since 30d                          # or --month 2026-09, --json, --ids
 overcode billing rename client-y acme                 # every report says acme from now on
 overcode billing merge acme-v2 acme                   # fold acme-v2's spend into acme
+overcode billing merge 'acme-*' --into acme --dry-run  # a family of codes (drop --dry-run; asks first)
 overcode billing unmerge acme-v2                      # undo it
 overcode billing collapse --under 1.00 --idle 30d     # small, idle codes into general (asks first)
 overcode billing codes                                # name, id, source, agents, spend, old names

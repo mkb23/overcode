@@ -8,8 +8,10 @@ once in a worker when the dialog opens (``load_code_rows``), never per key.
 
 A rename is ``overcode billing rename``: the registry only, so every report,
 past and future, shows the new name, and the old one goes in the code's
-previous names. Typing the name of another code offers ``overcode billing
-merge`` instead, applied on a second Enter.
+previous names. Another code's current name is refused; merging is its own
+action. ``M`` is ``overcode billing merge``: the marked codes, else the
+highlighted one, into a code picked by type-ahead (existing codes only),
+on a confirm that states the result.
 
 Collapsing is ``overcode billing collapse``: a merge into the default code
 (``billing.default_code``, marked ★), which itself never collapses. ``c``
@@ -22,10 +24,12 @@ defaults dialog).
 Keys:
     j / k / ↑ / ↓     move                    a / →    the code's agents
     Enter / r         rename (Enter applies)   /        filter as you type
+    M                 merge into… (picker)     *        mark / unmark every shown code
     space             mark                     $ / i    mark under $X / idle N days
     c                 collapse into default    m        show merged codes
     u                 unmerge (a merged code)  s        new-agent billing settings
-    Esc               cancel / back / close    q        close
+    ?                 the other keys           Esc      cancel / back / close
+    q                 close
 """
 
 from __future__ import annotations
@@ -122,10 +126,11 @@ class BillingCodesModal(ModalBase):
             self.new = new
 
     class MergeRequested(Message):
-        def __init__(self, code_id: str, name: str, into_id: str, into_name: str) -> None:
+        def __init__(self, code_ids: List[str], names: List[str], into_id: str,
+                     into_name: str) -> None:
             super().__init__()
-            self.code_id = code_id
-            self.name = name
+            self.code_ids = code_ids
+            self.names = names
             self.into_id = into_id
             self.into_name = into_name
 
@@ -159,11 +164,16 @@ class BillingCodesModal(ModalBase):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.rows: Optional[List[CodeRow]] = None   # None: still reading the ledger
-        self.mode = "list"                          # list | edit | filter | agents
+        self.mode = "list"                          # list | edit | filter | agents | prompt | merge
         self.filter = ""
         self.value = ""
         self.cursor = 0
-        self._merge_into: Optional[CodeRow] = None  # Enter again merges into it
+        self.query = ""                             # the merge picker's type-ahead
+        self._pick = 0                              # its highlighted target
+        self._pick_scroll = 0
+        self._sources: List[CodeRow] = []           # what M merges
+        self._target: Optional[CodeRow] = None      # picked: Enter again merges
+        self._taken: Optional[Tuple[str, str]] = None  # (code, name) a rename was refused
         self._scroll = 0
         self._list_scroll = 0                       # the list's, while showing agents
         self._message: Optional[Text] = None
@@ -182,7 +192,8 @@ class BillingCodesModal(ModalBase):
         self.rows = None
         self.mode = "list"
         self.filter = ""
-        self._merge_into = None
+        self._target = None
+        self._taken = None
         self._scroll = 0
         self._message = None
         self._chosen = None
@@ -261,7 +272,7 @@ class BillingCodesModal(ModalBase):
             self._scroll = self.selected_index - h + 1
 
     def collapsible(self, row: Optional[CodeRow]) -> bool:
-        """A code ``c`` may fold into the default: registered, not merged, not the default."""
+        """A code that may be marked, merged or collapsed: registered, not merged, not the default."""
         return (row is not None and row.registered and row.merged_into is None
                 and row.id != self.default_id and row.name != self.settings["default_code"])
 
@@ -321,7 +332,75 @@ class BillingCodesModal(ModalBase):
             return "a billing code cannot be empty"
         if is_code_id(new):
             return "that looks like a code id; pick another name"
+        owner = self._owner_of(new, previous=False)
+        if owner is not None:
+            return f"taken by '{owner.name}' — press M to merge into it"
         return None
+
+    # ── merge ────────────────────────────────────────────────────────────
+
+    def _merge_sources(self) -> List[CodeRow]:
+        """What ``M`` merges: the marked codes, else the highlighted one."""
+        if self.marks:
+            return [r for r in self.rows or () if r.id in self.marks]
+        row = self.current
+        return [row] if self.collapsible(row) else []
+
+    def candidates(self) -> List[CodeRow]:
+        """Codes the picker offers: live ones, not being merged; names starting with the query first."""
+        skip = {r.id for r in self._sources}
+        rows = [r for r in self.rows or () if r.registered and r.merged_into is None
+                and r.id not in skip]
+        needle = self.query.strip().lower()
+        if not needle:
+            return rows
+        hits = [r for r in rows if needle in r.name.lower()
+                or any(needle in n.lower() for n in r.previous_names)]
+        return sorted(hits, key=lambda r: not r.name.lower().startswith(needle))
+
+    def _sources_label(self) -> str:
+        return self._sources[0].name if len(self._sources) == 1 else f"{len(self._sources)} codes"
+
+    def merge_summary(self) -> str:
+        """The confirm: what merges, with its spend and agents, into what."""
+        agents = sum(r.agents for r in self._sources)
+        return (f"merge {self._sources_label()} ({money(sum(r.total for r in self._sources))}, "
+                f"{agents} agent{'s' if agents != 1 else ''}) into {self._target.name}? "
+                "↵ confirm · esc cancel")
+
+    def _start_merge(self) -> None:
+        row = self.current
+        sources = self._merge_sources()
+        if not sources:
+            self._message = Text(
+                "the default code can't be merged away; M on another code merges into it"
+                if row is not None and row.id == self.default_id
+                else "nothing to merge here" if row is None
+                else f"{row.name} can't be merged", style=ds.WARN)
+            return
+        self._sources, self._target = sources, None
+        taken, self._taken = self._taken, None
+        self.query = taken[1] if taken and row is not None and taken[0] == row.id else ""
+        self.mode, self._pick, self._pick_scroll = "merge", 0, 0
+        self._message = None
+
+    def _pick_target(self) -> None:
+        """Enter in the picker: an exact name wins, else the highlighted code."""
+        typed = self.query.strip()
+        exact = next((r for r in self.rows or () if r.name == typed), None) if typed else None
+        if exact is not None and exact.merged_into is None and exact.registered:
+            if exact.id in {r.id for r in self._sources}:
+                self._message = Text(f"{exact.name} is one of the codes being merged",
+                                     style=ds.ERROR)
+                return
+            self._target = exact
+            return
+        cands = self.candidates()
+        if not cands:
+            self._message = Text(f"no code called '{typed}' · merge never makes a code "
+                                 "(r renames)", style=ds.ERROR)
+            return
+        self._target = cands[min(self._pick, len(cands) - 1)]
 
     # ── render ───────────────────────────────────────────────────────────
 
@@ -334,9 +413,16 @@ class BillingCodesModal(ModalBase):
             return ds.hints(("esc ←", "back"), ("q", "close"))
         if self.mode == "prompt":
             return ds.hints(("↵", "mark"), ("esc", "cancel"))
-        return ds.hints(("↵", "rename"), ("a", "agents"), ("space $ i", "mark"),
-                        ("c", "collapse"), ("m", "merged"), ("s", "settings"), ("/", "filter"),
-                        ("esc", "close"))
+        if self.mode == "merge":
+            if self._target is not None:
+                return ds.hints(("↵", "confirm"), ("esc", "cancel"))
+            return ds.hints(("type", "filter"), ("↑↓", "choose"), ("↵", "pick"), ("esc", "cancel"))
+        # The border has no room for every key: ? names the rest
+        return ds.hints(("r", "rename"), ("M", "merge"), ("c", "collapse"), ("u", "unmerge"),
+                        ("/", "filter"), ("*", "mark shown"), ("space", "mark")) + " · ? · esc"
+
+    OTHER_KEYS = ("↵ rename · a agents · $ i mark under $X / idle · m merged · s settings · "
+                  "esc close")
 
     def _name_w(self, w: int) -> int:
         return max(12, w - 1 - self._MARK_W - 3 * self._MONEY_W - 2 * self._COUNT_W
@@ -371,10 +457,11 @@ class BillingCodesModal(ModalBase):
             if row.merged_into is not None:
                 style = f"italic {ds.STATE_OTHER}"
             name = Text(row.name, style=style)
-            if self.filter.strip() and self.mode != "agents":
-                at = row.name.lower().find(self.filter.strip().lower())
+            needle = (self.query if self.mode == "merge" else self.filter).strip()
+            if needle and self.mode != "agents":
+                at = row.name.lower().find(needle.lower())
                 if at >= 0:
-                    name.stylize(ds.MATCH, at, at + len(self.filter.strip()))
+                    name.stylize(ds.MATCH, at, at + len(needle))
             if row.id == self.default_id:
                 name.append(" ★", style=ds.ACCENT)
         mark = Text(f"{ds.CHECK_ON} " if row.id in self.marks else "  ", style=ds.STATE_ON)
@@ -419,19 +506,24 @@ class BillingCodesModal(ModalBase):
                 return ds.tip(w, Text(problem, style=ds.ERROR))
             if new == row.name:
                 return ds.tip(w, Text("unchanged · type a new name", style=ds.MUTED))
-            if self._merge_into is not None:
-                return ds.tip(w, Text(f"merge {row.name} into {self._merge_into.name}? "
-                                      "press Enter again", style=f"bold {ds.WARN}"))
-            owner = self._owner_of(new, previous=False)
-            if owner is not None:
-                return ds.tip(w, Text(f"'{new}' is another code: ↵ merges {row.name} into it "
-                                      "(its spend reports there from now on)", style=ds.WARN))
             owner = self._owner_of(new, previous=True)
             if owner is not None:
                 return ds.tip(w, Text(f"'{new}' was a name of {owner.name}; "
                                       f"it will mean this code", style=ds.WARN))
             return ds.tip(w, Text(f"↵ renames {row.name} to {new} in every report, "
                                   "past and future", style=ds.MUTED))
+        if self.mode == "merge":
+            if self._target is not None:
+                return ds.tip(w, Text(self.merge_summary(), style=f"bold {ds.WARN}"))
+            if self._message is not None:
+                return ds.tip(w, self._message)
+            cands = self.candidates()
+            if not cands:
+                return ds.tip(w, Text("no code matches · merge only folds into an existing code",
+                                      style=ds.MUTED))
+            pick = cands[min(self._pick, len(cands) - 1)]
+            return ds.tip(w, Text(f"↵ merges {self._sources_label()} into {pick.name}",
+                                  style=ds.MUTED))
         if self._confirm == "c":
             targets = self._targets()
             what = (targets[0].name if len(targets) == 1
@@ -485,6 +577,8 @@ class BillingCodesModal(ModalBase):
             return t
         t.append_text(self._settings_line(w))
         t.append("\n")
+        if self.mode == "merge":
+            return self._render_picker(t, w)
         if self.mode == "prompt":
             line = Text(" ")
             line.append("mark codes under $" if self.prompt == "under"
@@ -524,12 +618,35 @@ class BillingCodesModal(ModalBase):
         t.append_text(self._tip(w))
         return t
 
+    def _render_picker(self, t: Text, w: int) -> Text:
+        """``M``: the codes to merge into, filtered by the type-ahead line."""
+        line = Text(" ")
+        line.append(f"merge {self._sources_label()} into  ", style=f"bold {ds.TEXT}")
+        line.append_text(ds.text_value(self.query, len(self.query) if self._target is None
+                                       else None))
+        t.append_text(ds.finish(line, w))
+        t.append("\n")
+        t.append_text(self._header(w))
+        t.append("\n")
+        t.append_text(ds.rule(w))
+        t.append("\n")
+        cands = self.candidates()
+        pick = (cands.index(self._target) if self._target in cands
+                else min(self._pick, max(0, len(cands) - 1)))
+        h = self._visible_rows()
+        for i in range(self._pick_scroll, min(len(cands), self._pick_scroll + h)):
+            t.append_text(self._row(cands[i], i == pick, w))
+            t.append("\n")
+        t.append_text(self._tip(w))
+        return t
+
     # ── keys ─────────────────────────────────────────────────────────────
 
     def on_key(self, event: events.Key) -> None:
         event.stop()  # a modal swallows every key
         handler = {"edit": self._edit_key, "filter": self._filter_key,
                    "agents": self._agents_key, "prompt": self._prompt_key,
+                   "merge": self._merge_key,
                    }.get(self.mode, self._list_key)
         handler(event.key, event.character)
         self.update_frame()
@@ -577,6 +694,15 @@ class BillingCodesModal(ModalBase):
             elif row is not None:
                 self._message = Text(f"{row.name} cannot be collapsed", style=ds.MUTED)
             return
+        if character == "M":
+            self._start_merge()
+            return
+        if character == "*":
+            self._mark_shown()
+            return
+        if character == "?":
+            self._message = Text(self.OTHER_KEYS, style=ds.MUTED)
+            return
         if character in ("$", "i"):
             self.mode, self.prompt, self.value = "prompt", "under" if character == "$" else "idle", ""
             self._message = None
@@ -601,7 +727,6 @@ class BillingCodesModal(ModalBase):
             self.mode = "edit"
             self.value = self.current.name
             self.cursor = len(self.value)
-            self._merge_into = None
             self._message = None
         elif key in ("a", "right") and self.current is not None:
             self.mode = "agents"
@@ -615,6 +740,64 @@ class BillingCodesModal(ModalBase):
             self.marks = set()
         elif key in ("escape", "q"):
             self._close()
+
+    def _mark_shown(self) -> None:
+        """``*``: mark every code the list shows (after a filter); again unmarks them."""
+        markable = [r for r in self.shown if self.collapsible(r)]
+        if not markable:
+            self._message = Text("no code here can be marked", style=ds.MUTED)
+            return
+        ids = {r.id for r in markable}
+        if ids <= self.marks:
+            self.marks -= ids
+            what = f"unmarked {len(ids)} shown code{'s' if len(ids) != 1 else ''}"
+        else:
+            self.marks |= ids
+            what = f"marked {len(ids)} shown code{'s' if len(ids) != 1 else ''}"
+        marked = [r for r in self.rows or () if r.id in self.marks]
+        tail = (f" · {len(marked)} marked, {money(sum(r.total for r in marked))} · M merges, "
+                "c collapses" if marked else "")
+        self._message = Text(what + tail, style=ds.MUTED)
+
+    def _merge_key(self, key: str, character: Optional[str]) -> None:
+        if self._target is not None:
+            if key == "enter":
+                ids, names = [r.id for r in self._sources], [r.name for r in self._sources]
+                target = self._target
+                self.post_message(self.MergeRequested(ids, names, target.id, target.name))
+                self._message = Text(f"merging {self._sources_label()} into {target.name}…",
+                                     style=ds.MUTED)
+                self._chosen = target.id
+                self.marks = set()
+                self._sources, self._target, self.mode = [], None, "list"
+                return
+            self._target = None  # esc goes back to the picker; typing edits the query
+            if key == "escape":
+                return
+        if key == "escape":
+            self.mode, self._sources = "list", []
+            return
+        self._message = None
+        cands = self.candidates()
+        if key == "enter":
+            self._pick_target()
+            return
+        if key in ("down", "up") and cands:
+            step = 1 if key == "down" else -1
+            self._pick = (min(self._pick, len(cands) - 1) + step) % len(cands)
+            h = self._visible_rows()
+            if self._pick < self._pick_scroll:
+                self._pick_scroll = self._pick
+            elif self._pick >= self._pick_scroll + h:
+                self._pick_scroll = self._pick - h + 1
+            return
+        if key == "backspace":
+            self.query = self.query[:-1]
+        elif character and character.isprintable():
+            self.query += character
+        else:
+            return
+        self._pick, self._pick_scroll = 0, 0
 
     def _prompt_key(self, key: str, character: Optional[str]) -> None:
         if key == "escape":
@@ -666,12 +849,10 @@ class BillingCodesModal(ModalBase):
     def _edit_key(self, key: str, character: Optional[str]) -> None:
         if key == "escape":
             self.mode = "list"
-            self._merge_into = None
             return
         if key == "enter":
             self._submit()
             return
-        before = self.value
         val, pos = self.value, self.cursor
         if key == "backspace":
             if pos > 0:
@@ -688,28 +869,24 @@ class BillingCodesModal(ModalBase):
             self.cursor = len(val)
         elif character and character.isprintable():
             self.value, self.cursor = val[:pos] + character + val[pos:], pos + 1
-        if self.value != before:
-            self._merge_into = None
 
     def _submit(self) -> None:
         row, new = self.current, self.value.strip()
-        if row is None or self.error() is not None:
-            return  # the red line already says why
+        if row is None:
+            return
+        problem = self.error()
+        if problem is not None:
+            if problem.startswith("taken by"):
+                # Refused: back to the list, where M merges (its picker starts on the name)
+                self._taken = (row.id, new)
+                self._message = Text(f"can't rename {row.name}: {problem}", style=ds.ERROR)
+                self.mode = "list"
+            return  # else the red line already says why
         if new == row.name:
             self.mode = "list"
             return
-        owner = self._owner_of(new, previous=False)
-        if owner is not None:
-            if self._merge_into is not owner:
-                self._merge_into = owner  # the tip asks for a second Enter
-                return
-            self.post_message(self.MergeRequested(row.id, row.name, owner.id, owner.name))
-            self._chosen = owner.id
-            self._message = Text(f"merging {row.name} into {owner.name}…", style=ds.MUTED)
-        else:
-            self.post_message(self.RenameRequested(row.id, row.name, new))
-            self._chosen = row.id
-            self._message = Text(f"renaming {row.name} to {new}…", style=ds.MUTED)
-        self._merge_into = None
+        self.post_message(self.RenameRequested(row.id, row.name, new))
+        self._chosen = row.id
+        self._message = Text(f"renaming {row.name} to {new}…", style=ds.MUTED)
         self.mode = "list"
 

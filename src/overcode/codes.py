@@ -22,7 +22,8 @@
   string (``adopt``) and maps it in ``legacy``; readers map id-less rows
   through it. A string stays mapped to its code after a rename, so a new
   code given the old name later gets a fresh id and none of the old spend.
-- ``merged_into``: ``merge(A, B)`` folds A into B without touching a row.
+- ``merged_into``: ``merge(A, B)`` folds A into B without touching a row
+  (``merge_many``: several codes, one write).
   A's rows report under B, and A's names resolve to B. ``unmerge(A)``
   undoes it (``merge_added``: the names the merge gave B). ``collapse``
   merges codes into ``billing.default_code``.
@@ -340,8 +341,8 @@ class CodeRegistry:
             code_id = self._target(data, what)
             for other, entry in data["codes"].items():
                 if other != code_id and not entry.get("merged_into") and entry.get("name") == new:
-                    raise CodeError(f"another billing code is called '{new}' "
-                                    f"(overcode billing merge folds one into the other)")
+                    raise CodeError(f"'{new}' is taken by another billing code "
+                                    f"(overcode billing merge CODE --into {new} folds into it)")
             old = self._rename(data, code_id, new)
             data["codes"][code_id]["source"] = HUMAN
         return code_id, old
@@ -352,12 +353,34 @@ class CodeRegistry:
         No row changes: ``what``'s rows report under ``into``, and its
         names become previous names of ``into``.
         """
+        target, folded = self.merge_many([what], into)
+        return folded[0][0], target
+
+    def merge_many(self, whats: Iterable[str], into: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """Fold every code in ``whats`` into the existing code ``into`` (one write).
+
+        Refuses (nothing merged) an unknown code, or one that is ``into``
+        itself. Returns ``(into id, [(id, name)...])`` of the codes folded.
+        """
         with self._editing() as data:
-            source, target = self._target(data, what), self._target(data, into)
-            if source == target:
-                raise CodeError(f"'{what}' and '{into}' are the same billing code")
-            self._merge(data, source, target)
-        return source, target
+            target = self._target(data, into)
+            return target, self._fold(
+                data, whats, target, lambda what: f"'{what}' and '{into}' are the same billing code")
+
+    def _fold(self, data: dict, whats: Iterable[str], target: str, same) -> List[Tuple[str, str]]:
+        """Merge ``whats`` into ``target`` inside one edit; ``same(what)`` words the refusal."""
+        sources = []
+        for what in whats:
+            code_id = self._target(data, what)
+            if code_id == target:
+                raise CodeError(same(what))
+            if code_id not in sources:
+                sources.append(code_id)
+        folded = []
+        for code_id in sources:
+            folded.append((code_id, data["codes"][code_id]["name"]))
+            self._merge(data, code_id, target)
+        return folded
 
     @staticmethod
     def _merge(data: dict, source: str, target: str) -> None:
@@ -386,18 +409,9 @@ class CodeRegistry:
         if not into:
             raise CodeError("no default billing code to collapse into")
         target = self.resolve(into, source=HUMAN)
-        folded: List[Tuple[str, str]] = []
         with self._editing() as data:
-            sources = []
-            for what in whats:
-                code_id = self._target(data, what)
-                if code_id == target:
-                    raise CodeError(f"'{what}' is the default billing code; it cannot be collapsed")
-                if code_id not in sources:
-                    sources.append(code_id)
-            for code_id in sources:
-                folded.append((code_id, data["codes"][code_id]["name"]))
-                self._merge(data, code_id, target)
+            folded = self._fold(data, whats, target,
+                                lambda what: f"'{what}' is the default billing code; it cannot be collapsed")
         return target, folded
 
     def find_merged(self, what: str) -> Optional[str]:
