@@ -104,13 +104,22 @@ chooses it. `overcode launch` and `fork`, run from inside an agent
 (`OVERCODE_SESSION_ID` set), check `-n` against the naming policy and
 refuse a name that breaks it.
 
-- **What can be checked without a model** goes in a `naming.rules` block:
-  `max_length`, `pattern` (a regex, default lowercase kebab), `forbid`
-  (words such as `test`, `agent`, `child`, `tmp`), `require` (a regex such
-  as an issue-number suffix, off by default), `no_repo_prefix`, and the
-  fleet checks from section 5 (taken, an alias, near-duplicate). The CLI
+- **The advice is the policy.** The free-text advice (`naming.advice`, or
+  the prompt file) is where naming conventions live. Deterministic rules
+  are an optional supplement for what is worth enforcing exactly.
+- **Only two checks are built in:** overcode's name pattern, and a name that
+  is already taken (a live name or a live alias). Neither can be configured
+  away.
+- **Every other rule is opt-in** in a `naming.rules` block, and the defaults
+  reject nothing a person would reasonably choose: `max_length` (no limit),
+  `pattern` (none), `forbid` (empty), `require` (none), `no_repo_prefix`
+  (off), `avoid_recent` (off; names archived in the last 24 h). The CLI
   checks these with no API call and no delay, so they apply whether or not
   auto-naming is on.
+- **No similarity rule.** Numbered series (`wiki1`, `wiki2`, `wiki3`) are
+  deliberate, legitimate names, and an edit-distance rule would reject
+  them. Telling confusable names apart is left to the model, which sees the
+  fleet.
 - **The free-text advice** can be checked by the model with
   `naming.rules.llm_check: true`, off by default. That is one call per
   child launch. A failed or timed-out call lets the name through, so it
@@ -188,13 +197,11 @@ The model returns JSON: `{"candidates": ["jwt-refresh", "auth-refresh",
 the current name still fits, which is how refinements stay rare. Overcode
 then decides on its own, without the model:
 
-1. Normalise each candidate to the name pattern (lowercase kebab, `[a-z0-9-]`).
-   Drop any over `max_length`, and any that repeats the repo name when the
-   repo column is showing.
-2. Drop any equal to a live name, a live alias, or an archived name from the
-   last 24 h (so `send` to a recent name can't reach the wrong agent).
-   Drop any within edit distance 1 of a live name (`api-fix` next to
-   `api-fx`).
+1. Normalise each candidate to overcode's name pattern. Drop any that
+   breaks a configured rule (2a), using the same checker as the CLI.
+2. Drop any equal to a live name or a live alias. Nothing more: numbered
+   series stay legal, and `naming.max_length` is a target given to the
+   model, not a rejection, unless `rules.max_length` is set.
 3. Take the first survivor. If none survive, add the shortest disambiguator
    to the first candidate (`-2`, then `-3`), or the parent's issue number if
    advice asks for one.
@@ -214,13 +221,15 @@ naming:
   advice: |                 # inline, or put it in ~/.overcode/prompts/naming.md
     kebab-case, 1-3 words, what the work is about, not how.
     Put an issue number last when there is one: fix-jwt-542.
-  max_length: 18
-  rules:                    # checked by the CLI when a parent names a child (2a)
-    pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
-    forbid: [test, agent, child, tmp, new]
-    require: null           # e.g. '-[0-9]+$' for an issue-number suffix
-    no_repo_prefix: true
-    llm_check: false
+  max_length: 18             # a target for the namer, not a rule
+  rules:                     # all optional; the defaults reject nothing (2a)
+    max_length: null
+    pattern: null            # e.g. '^[a-z0-9]+(-[a-z0-9]+)*$'
+    forbid: []               # e.g. [test, tmp]
+    require: null            # e.g. '-[0-9]+$' for an issue-number suffix
+    no_repo_prefix: false
+    avoid_recent: false      # names archived in the last 24 h
+    llm_check: false         # check the advice with the model too
     warn_humans: false
   first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
   max_renames: 2
