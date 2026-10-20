@@ -42,6 +42,7 @@ from .activity import _action_name
 READ_ONLY_BLOCKED = frozenset({
     "kill_focused", "restart_focused", "fork_focused", "rename_focused",
     "name_by_overcode", "keep_name",
+    "new_agent_in_worktree",
     "send_escape_to_focused", "send_ctrl_o_to_focused",
     "send_1_to_focused", "send_2_to_focused", "send_3_to_focused",
     "send_4_to_focused", "send_5_to_focused",

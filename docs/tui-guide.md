@@ -323,6 +323,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `1-5` | Send numbered option to agent |
 | `n` | Create new agent (Host field picks local or a remote sister) |
 | `F` | Fork agent (with conversation context) |
+| `g` | New agent in a git worktree of its own: a clear context, on a new branch from the focused agent's commit, in `<repo>-wt/<name>` beside the main checkout |
 | `Ctrl+N` | Rename agent (it keeps running, even mid-turn; the old name stays an alias), and choose who names it: you or overcode (see [Agent names](#agent-names)) |
 | `Ctrl+R` | Cycle the focused agent's focal repo (multi-repo workspaces) |
 | `R` | Restart agent (double-press to confirm) |

@@ -861,6 +861,66 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             self._remove_prompt_file(prompt_file)
         return session
 
+    def launch_in_worktree(self, name: str, source_session: Session):
+        """Launch a fresh agent beside ``source_session``, in a new git worktree.
+
+        The opposite of a fork: a clear context, its own branch and
+        checkout (``agent_worktree``), started from the commit the source
+        has checked out. It is the source's peer, not its child, and it
+        runs the way the source does: backend, model, provider, wrapper,
+        permissions, persona, allowed tools, extra CLI args, skill profile.
+
+        Returns:
+            ``(session, worktree)``.
+
+        Raises:
+            LaunchError: the worktree or the agent could not be made. A
+                worktree made for an agent that then failed to launch is
+                removed again.
+        """
+        from .agent_worktree import WorktreeError, create_agent_worktree, remove_agent_worktree
+        from .overagent import OVERAGENT_BACKEND
+
+        try:
+            validate_session_name(name)
+        except InvalidSessionNameError as e:
+            raise LaunchError(str(e)) from e
+        # launch() hands back a live agent of this name; check first, so no
+        # worktree is made for it.
+        existing = self.sessions.get_session_by_name(name)
+        if existing and self._window_alive(existing):
+            raise LaunchError(f"an agent called '{name}' already exists")
+
+        try:
+            worktree = create_agent_worktree(source_session.start_directory, name)
+        except WorktreeError as e:
+            raise LaunchError(str(e)) from e
+
+        perm = source_session.permissiveness_mode or "normal"
+        backend = source_session.backend or None
+        try:
+            session = self.launch(
+                name=name,
+                start_directory=worktree.start_directory,
+                # The overagent is one per install: its sibling is an
+                # ordinary agent.
+                backend=None if backend == OVERAGENT_BACKEND else backend,
+                model=None if backend == OVERAGENT_BACKEND else source_session.model,
+                provider=source_session.provider,
+                wrapper=source_session.wrapper,
+                agent_teams=bool(source_session.agent_teams),
+                skip_permissions=perm == "permissive",
+                dangerously_skip_permissions=perm == "bypass",
+                allowed_tools=source_session.allowed_tools,
+                extra_cli_args=source_session.extra_cli_args or None,
+                agent_persona=source_session.agent_persona,
+                skill_profile=getattr(source_session, "skill_profile", None),
+            )
+        except BaseException:
+            remove_agent_worktree(worktree)
+            raise
+        return session, worktree
+
     def _send_launch_for_session(
         self,
         session: Session,

@@ -196,6 +196,7 @@ class TestToggleIsViewOnly:
 
     @pytest.mark.parametrize("action", [
         "kill_focused", "restart_focused", "sync_to_main_and_clear", "fork_focused",
+        "new_agent_in_worktree",
         "toggle_sleep", "send_enter_to_focused", "send_1_to_focused", "send_escape_to_focused",
         "toggle_summarizer", "toggle_web_server", "supervisor_start", "monitor_restart", "quit",
     ])
