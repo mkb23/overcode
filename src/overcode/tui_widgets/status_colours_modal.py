@@ -1,8 +1,8 @@
 """
 Status colours dialog ("Status colours…" in the palette, Settings).
 
-The preset on top, then one row per light: ←/→ steps the selected row
-(a preset, or that light's glyph through status_theme.GLYPHS), r puts a
+The preset on top, then one row per light and per idle badge (📥 / 😴):
+←/→ steps the selected row (a preset, or that row's glyph), r puts a
 light back to its preset's glyph (on the preset row: every light). A
 sample fleet under the rows shows the theme as it stands, and the tip
 warns when two main lights look the same. Each change is saved to
@@ -18,9 +18,10 @@ from textual.message import Message
 
 from . import dialog_style as ds
 from .modal_base import ModalBase
+from ..status_constants import BADGE_KINDS
 from ..status_theme import (
-    GLYPHS, LIGHT_NAMES, LIGHTS, MAIN_LIGHTS, PRESET_NAMES, PRESETS, StatusTheme,
-    cycle_glyph, sample_line,
+    BADGE_GLYPHS, BADGE_PRESETS, GLYPHS, IDLE_BADGE_NAMES, IDLE_BADGES, LIGHT_NAMES, LIGHTS,
+    PRESET_NAMES, PRESETS, StatusTheme, cycle_badge, cycle_glyph, sample_line,
 )
 
 
@@ -51,7 +52,11 @@ class StatusColoursModal(ModalBase):
 
     @property
     def _rows(self) -> int:
-        return 1 + len(LIGHTS)
+        return 1 + len(LIGHTS) + len(IDLE_BADGES)
+
+    def _key(self, index: int) -> str:
+        """The light or idle badge on row ``index`` (row 0 is the preset)."""
+        return (LIGHTS + IDLE_BADGES)[index - 1]
 
     def _glyph_text(self, light: str) -> Text:
         glyph = self.theme.glyph(light)
@@ -86,6 +91,20 @@ class StatusColoursModal(ModalBase):
             line.append(f" {LIGHT_NAMES[light]:<{self._LABEL_W - 1}}",
                         style="bold" if i == self.selected_index else ds.TEXT)
             line.append_text(self._glyph_text(light))
+            text.append_text(ds.finish(line, w))
+            text.append("\n")
+        text.append_text(ds.section("Idle badges", w))
+        text.append("\n")
+        for i, kind in enumerate(IDLE_BADGES, start=1 + len(LIGHTS)):
+            line = ds.item(i == self.selected_index)
+            line.append(f" {IDLE_BADGE_NAMES[kind]:<{self._LABEL_W - 1}}",
+                        style="bold" if i == self.selected_index else ds.TEXT)
+            glyph = self.theme.badge(kind)
+            shown = BADGE_KINDS[kind][2] if self.emoji_free else glyph + " " * (2 - cell_len(glyph))
+            line.append(f"{shown} {BADGE_GLYPHS.get(glyph, glyph)}",
+                        style="dim" if kind == "drowsy" else self.theme.colour("input"))
+            if kind in self.theme.overrides:
+                line.append("  changed", style=ds.WARN)
             text.append_text(ds.finish(line, w))
             text.append("\n")
         text.append_text(ds.section("Sample", w))
@@ -128,7 +147,8 @@ class StatusColoursModal(ModalBase):
 
     def _set(self, preset: str, overrides: dict) -> None:
         # An override equal to the preset's glyph is no override
-        overrides = {k: v for k, v in overrides.items() if v != PRESETS[preset].get(k)}
+        overrides = {k: v for k, v in overrides.items()
+                     if v != PRESETS[preset].get(k) and v != BADGE_PRESETS[preset].get(k)}
         self.theme = StatusTheme(preset, overrides)
         self.post_message(self.Changed(self.theme))
         self.refresh()
@@ -139,16 +159,17 @@ class StatusColoursModal(ModalBase):
             i = names.index(self.theme.preset) if self.theme.preset in names else 0
             self._set(names[(i + direction) % len(names)], dict(self.theme.overrides))
             return
-        light = LIGHTS[self.selected_index - 1]
-        glyph = cycle_glyph(self.theme.glyph(light), direction)
-        self._set(self.theme.preset, {**self.theme.overrides, light: glyph})
+        key = self._key(self.selected_index)
+        glyph = (cycle_badge(self.theme.badge(key), direction) if key in IDLE_BADGES
+                 else cycle_glyph(self.theme.glyph(key), direction))
+        self._set(self.theme.preset, {**self.theme.overrides, key: glyph})
 
     def _reset(self) -> None:
         if self.selected_index == 0:
             self._set(self.theme.preset, {})
             return
-        light = LIGHTS[self.selected_index - 1]
-        self._set(self.theme.preset, {k: v for k, v in self.theme.overrides.items() if k != light})
+        key = self._key(self.selected_index)
+        self._set(self.theme.preset, {k: v for k, v in self.theme.overrides.items() if k != key})
 
     def show(self, theme: StatusTheme, emoji_free: bool = False, app_ref: Optional[Any] = None) -> None:
         """Open on the active theme."""
@@ -157,5 +178,3 @@ class StatusColoursModal(ModalBase):
         self._save_focus(app_ref)
         self._show(self.selected_index if 0 <= self.selected_index < self._rows else 0)
 
-
-__all__ = ["StatusColoursModal", "MAIN_LIGHTS"]

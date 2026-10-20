@@ -205,6 +205,17 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
         statuses += status(theme.glyph(entry.key), get_agent_timeline_char(lead),
                            theme.colour(entry.key), entry.name, desc)
     if not compact:
+        # The idle stages beside needs input (idle_stages.py)
+        from ..config import get_idle_config
+        from ..idle_stages import format_after
+        idle = get_idle_config()
+        line = Text()
+        line.append(f"{_safe_emoji(theme.badge('awaiting_input'))} idle", style=C_TEXT)
+        line.append(f" → {_safe_emoji(theme.badge('drowsy'))} a while "
+                    f"({format_after(idle['drowsy_after'])})", style=C_MUTED)
+        line.append(f" → {_safe_emoji(theme.glyph('asleep'))} put to sleep "
+                    f"({format_after(idle['sleep_after'])}; wakes when it works)", style=C_MUTED)
+        statuses.append(line)
         statuses.append(Text(f"Status colours: {theme.label()} (palette: Status colours)",
                              style=C_MUTED))
 

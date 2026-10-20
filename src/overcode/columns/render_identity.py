@@ -62,7 +62,10 @@ def _badge_glyph(kind: str, emoji_free: bool) -> str:
     if spec is None:
         return "?"
     emoji, _, ascii_fb = spec
-    return ascii_fb if emoji_free else emoji
+    if emoji_free:
+        return ascii_fb
+    from ..status_theme import IDLE_BADGES, active_theme
+    return active_theme().badge(kind) if kind in IDLE_BADGES else emoji
 
 
 def _render_status_detail(ctx: "ColumnContext", detail: StatusDetail) -> ColumnOutput:
@@ -77,9 +80,11 @@ def _render_status_detail(ctx: "ColumnContext", detail: StatusDetail) -> ColumnO
     from ..status_theme import BUCKET_LIGHTS, active_theme
     light = BUCKET_LIGHTS.get(detail.color)
     color = active_theme().colour(light) if light else "yellow"
+    badges = detail.badges
+    if badges and badges[0].kind == "drowsy":
+        color = "dim"  # idle a while: no urgency
     style = f"{color}{ctx.bg}"
 
-    badges = detail.badges
     if not badges:
         return None
 

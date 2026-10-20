@@ -20,6 +20,13 @@ from tests.tui_harness import ready, three_agents
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def own_config(tmp_path, monkeypatch):
+    """A config.yaml of this test's own: OVERCODE_DIR is shared by the run
+    (a TUI test's make_tui gives it one of its own anyway)."""
+    monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+
+
 def _write_config(section):
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)

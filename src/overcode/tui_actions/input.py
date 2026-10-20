@@ -102,7 +102,7 @@ class InputActionsMixin:
             return False
 
         # Wake the agent - persist to disk
-        self.session_manager.update_session(session.id, is_asleep=False)
+        self.session_manager.update_session(session.id, is_asleep=False, asleep_auto=False)
         session.is_asleep = False
 
         # Update widget display immediately (don't wait for next refresh cycle)

@@ -110,6 +110,18 @@ _GLYPH_BY_NAME = {g.name: ch for ch, g in GLYPHS.items()}
 
 CLASSIC: Dict[str, str] = {e.key: e.glyph for e in LIGHT_LEGEND}
 
+# The idle badges (idle_stages.py) beside the needs-input light: fresh,
+# then drowsy. Themed like a light, from their own glyphs; their
+# emoji-free forms are fixed (BADGE_KINDS: "In", "zz").
+IDLE_BADGES: Tuple[str, ...] = ("awaiting_input", "drowsy")
+IDLE_BADGE_NAMES: Dict[str, str] = {"awaiting_input": "Idle", "drowsy": "Idle a while"}
+BADGE_GLYPHS: Dict[str, str] = {
+    "📥": "inbox", "😴": "sleepy face", "💬": "speech balloon", "🔕": "muted bell",
+    "💭": "thought balloon", "◇": "open diamond", "z": "z",
+}
+_BADGE_BY_NAME = {name: ch for ch, name in BADGE_GLYPHS.items()}
+CLASSIC_BADGES: Dict[str, str] = {"awaiting_input": "📥", "drowsy": "😴"}
+
 PRESETS: Dict[str, Dict[str, str]] = {
     "classic": CLASSIC,
     # Idle is not an alarm: needs input goes neutral blue, and red is kept
@@ -136,6 +148,10 @@ PRESETS: Dict[str, Dict[str, str]] = {
     },
 }
 PRESET_NAMES: Tuple[str, ...] = tuple(PRESETS)
+BADGE_PRESETS: Dict[str, Dict[str, str]] = {
+    name: CLASSIC_BADGES for name in PRESETS
+}
+BADGE_PRESETS["shapes"] = {"awaiting_input": "◇", "drowsy": "z"}
 
 
 @dataclass(frozen=True)
@@ -147,6 +163,10 @@ class StatusTheme:
 
     def glyph(self, light: str) -> str:
         return self.overrides.get(light) or PRESETS[self.preset].get(light) or CLASSIC.get(light, "❔")
+
+    def badge(self, kind: str) -> str:
+        """An idle badge's glyph (IDLE_BADGES)."""
+        return self.overrides.get(kind) or BADGE_PRESETS[self.preset].get(kind) or CLASSIC_BADGES[kind]
 
     def colour(self, light: str) -> str:
         g = GLYPHS.get(self.glyph(light))
@@ -204,6 +224,16 @@ def lookup_glyph(value) -> Optional[str]:
     return _GLYPH_BY_NAME.get(text.lower())
 
 
+def lookup_badge(value) -> Optional[str]:
+    """An idle badge's glyph from config: the glyph or its name; None if neither."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().replace("\ufe0f", "")
+    if text in BADGE_GLYPHS:
+        return text
+    return _BADGE_BY_NAME.get(text.lower())
+
+
 def resolve(section) -> Tuple[StatusTheme, List[str]]:
     """The theme config.yaml's ``status_theme`` names, and what it got wrong.
 
@@ -228,9 +258,16 @@ def resolve(section) -> Tuple[StatusTheme, List[str]]:
         warnings.append(f"{CONFIG_KEY}.overrides: expected a mapping of light to glyph")
         raw = {}
     for light, value in raw.items():
+        if light in IDLE_BADGES:
+            glyph = lookup_badge(value)
+            if glyph is None:
+                warnings.append(f"{CONFIG_KEY}.overrides.{light}: unknown glyph {value!r}")
+            elif glyph != BADGE_PRESETS[preset][light]:
+                overrides[light] = glyph
+            continue
         if light not in LIGHTS:
             warnings.append(f"{CONFIG_KEY}.overrides: unknown light {light!r} "
-                            f"(known: {', '.join(LIGHTS)})")
+                            f"(known: {', '.join(LIGHTS + IDLE_BADGES)})")
             continue
         glyph = lookup_glyph(value)
         if glyph is None:
@@ -290,6 +327,13 @@ def next_preset(preset: str) -> str:
 def cycle_glyph(current: str, step: int = 1) -> str:
     """The glyph before or after ``current`` in GLYPHS (the dialog's ←/→)."""
     order = list(GLYPHS)
+    i = order.index(current) if current in order else 0
+    return order[(i + step) % len(order)]
+
+
+def cycle_badge(current: str, step: int = 1) -> str:
+    """The badge glyph before or after ``current`` (the dialog's ←/→)."""
+    order = list(BADGE_GLYPHS)
     i = order.index(current) if current in order else 0
     return order[(i + step) % len(order)]
 

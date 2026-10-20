@@ -74,7 +74,7 @@ class CommandBarMixin:
 
         # Local agent — auto-wake sleeping agent if needed (#168)
         if session and session.is_asleep:
-            self.session_manager.update_session(session.id, is_asleep=False)
+            self.session_manager.update_session(session.id, is_asleep=False, asleep_auto=False)
             # Update widget display immediately
             for widget in self.query(SessionSummary):
                 if widget.session.id == session.id:

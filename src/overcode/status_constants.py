@@ -510,6 +510,7 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
 
     # ---- RED (needs input) ----
     "awaiting_input":  ("📥", STATUS_COLOR_RED,   "In"),   # Stop fired, no obligations, awaiting next prompt
+    "drowsy":          ("😴", STATUS_COLOR_RED,   "zz"),   # awaiting input past idle.drowsy_after (views only)
     "error":           ("❗", STATUS_COLOR_RED,   "!W"),    # API/hook error needing intervention
     "overdue":         ("⌛", STATUS_COLOR_RED,   "Od"),    # a wakeup well past its time never came
 
@@ -539,6 +540,7 @@ BADGE_MEANINGS: dict[str, str] = {
     "plan_approval":   "plan waiting for approval",
     "ask_question":    "asking you a question",
     "awaiting_input":  "waiting for your next prompt",
+    "drowsy":          "idle a while (idle.drowsy_after), nothing pending",
     "error":           "error needs attention",
     "overdue":         "a scheduled wakeup never came",
     "conv_adopted":    "resumed a conversation overcode did not start; now tracked as this agent's",

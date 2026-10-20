@@ -2,7 +2,8 @@
 Agent visibility dialog (d, or "Agent visibility…" in the palette).
 
 One place for what the table shows. Agents: killed ones (ghost rows),
-sleeping ones, and finished overcode child agents. Subagents (the work an
+sleeping ones, the idle stages (when 📥 turns 😴, and when an idle agent
+is put to sleep: config.yaml ``idle``), and finished overcode child agents. Subagents (the work an
 agent hands out inside its session): whose open by themselves (the f
 rule), what a finished one shows as (its row and ✅/❌ count, only the ❌
 ones, or nothing) and how long a finished one keeps its row (config.yaml
@@ -18,6 +19,7 @@ from textual.message import Message
 
 from . import dialog_style as ds
 from .modal_base import ModalBase
+from ..idle_stages import DROWSY_CHOICES, SLEEP_CHOICES, format_after
 
 # (section, setting, label, [(value, shown as)], tip for the selected row).
 # Every agent row offers "shown" first, whichever way its setting reads.
@@ -27,7 +29,13 @@ _ROWS: List[Tuple[str, str, str, Sequence[Tuple[Any, str]], str]] = [
      "Ghost rows for killed agents (revive with overcode revive)"),
     ("Agents", "hide_asleep", "Sleeping agents",
      ((False, "shown"), (True, "hidden")),
-     "Agents put to sleep (z)"),
+     "Agents put to sleep (z, or by the engine after a long idle)"),
+    ("Agents", "idle_drowsy_after", "Idle: drowsy after",
+     DROWSY_CHOICES,
+     "An idle agent's 📥 turns a dim 😴: waiting a while, no hurry · config.yaml idle"),
+    ("Agents", "idle_sleep_after", "Idle: asleep after",
+     SLEEP_CHOICES,
+     "Then the engine puts it to sleep (💤); it wakes when it works again · config.yaml idle"),
     ("Agents", "show_done", "Done child agents",
      ((True, "shown"), (False, "hidden")),
      "Child agents that reported back (overcode report)"),
@@ -92,7 +100,8 @@ class AgentVisibilityModal(ModalBase):
             current = shown[j] if j >= 0 else None
             # A value set by hand in config.yaml that is not one of the choices
             if j < 0 and isinstance(self._values.get(setting), (int, float)):
-                shown = shown + [f"{self._values.get(setting):g}s"]
+                value = self._values.get(setting)
+                shown = shown + [format_after(value) if setting.startswith("idle_") else f"{value:g}s"]
                 current = shown[-1]
             line.append_text(ds.options(shown, current, w - 1 - self._LABEL_W))
             text.append_text(ds.finish(line, w))

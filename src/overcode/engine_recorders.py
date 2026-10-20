@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from .clock import SYSTEM_CLOCK, Clock
+from .clock import SYSTEM_CLOCK, Clock, to_epoch
 from .episodes import EpisodeRecorder, append_episode, status_detail_view
 from .monitor_daemon_state import SessionDaemonState
 from .status_constants import (
@@ -76,6 +76,7 @@ class RecorderStore:
                now: datetime, *, detector, engine=None) -> None:
         """Feed this tick's colour to the agent's recorder; publish, log, ring (#507)."""
         from .hook_status_detector import augment_with_legacy_heartbeat
+        from .idle_stages import idle_since
 
         try:
             detail = detector.get_status_detail(session.name)
@@ -87,6 +88,7 @@ class RecorderStore:
             # detected at all, so whatever detail is cached is stale.
             detail = StatusDetail(STATUS_COLOR_REST, [], effective_status)
         ts = now.timestamp()
+        state.idle_since = idle_since(effective_status, detail, to_epoch(state.status_since, near=now))
         # Lifecycle states (and not knowing) hold the record where it was
         colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN) \
             else (detail.color if detail else None)

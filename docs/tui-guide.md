@@ -510,6 +510,27 @@ Shades of those: 💚 working (a heartbeat started this turn), 💛 waiting on a
 heartbeat that will re-prompt it, 🟣 an API or hook error needs attention,
 💤 asleep (paused by you, left out of stats).
 
+### Idle stages
+
+An agent that just needs input (🔴, its turn over and nothing pending)
+shows 📥 in the status detail. Left alone it moves on:
+
+| Stage | Shows | When |
+|-------|-------|------|
+| Idle | 📥 | from the end of its turn |
+| Idle a while | 😴, dim | after `idle.drowsy_after` (default 1h) |
+| Put to sleep | 💤 | after `idle.sleep_after` (default never) |
+
+At the last stage the engine puts the agent to sleep as `z` does (left out
+of stats, hidden while Sleeping agents is hidden), and it wakes by itself as
+soon as it works again (a prompt, a child's report) or asks for approval. A
+`z` sleep is yours: it stays until you wake it. Only plain idle counts: an
+approval or question, a heartbeat wait, a child at rest, an error or an
+unknown status never moves through the stages, and sisters' agents follow
+their own machine. Set both in **Agent visibility** (`d`, the two Idle rows)
+or in [config.yaml](configuration.md#idle-stages); `overcode list` shows
+the same badge, and `?` says the stages in use.
+
 A question (Claude's AskUserQuestion menu) is an approval: 🟠 with ❓ in the
 status detail, where a permission shows 🔐 and a plan 📋.
 
