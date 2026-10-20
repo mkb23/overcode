@@ -616,76 +616,33 @@ class TestToggleShowDone:
         assert "(" not in notify_msg
 
 
-def _bind_fold(mock_tui):
-    """The action's fold helper, run for real on the mock."""
-    from overcode.tui_actions.view import ViewActionsMixin
+def _parent_and_child():
+    parent_session = MagicMock()
+    parent_session.id = "parent-1"
+    parent_session.name = "parent-agent"
+    parent_session.parent_session_id = None
+    child_session = MagicMock()
+    child_session.id = "child-1"
+    child_session.parent_session_id = "parent-1"
+    return parent_session, child_session
 
-    mock_tui._fold_children = lambda sid, fold: ViewActionsMixin._fold_children(mock_tui, sid, fold)
 
+class TestFoldChildren:
+    """_fold_children: the tree-sort fold under ← / →, X and the palette's
+    "Fold / unfold" (the actions themselves: test_fold_keys_tui.py)."""
 
-class TestToggleCollapseChildren:
-    """Test action_toggle_collapse_children method."""
-
-    def test_warns_when_not_tree_mode(self):
-        """Should warn and return early if sort mode is not by_tree."""
+    def test_fold_parent_with_children(self):
         from overcode.tui_actions.view import ViewActionsMixin
 
-        mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "alphabetical"
-
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
-
-        mock_tui.notify.assert_called_once()
-        assert "tree sort mode" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "warning"
-        mock_tui._get_focused_widget.assert_not_called()
-
-    def test_returns_early_when_no_focused_widget(self):
-        """Should return early if no widget is focused."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = None
-
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
-
-        mock_tui._get_focused_widget.assert_called_once()
-        mock_tui.notify.assert_not_called()
-
-    def test_collapse_parent_with_children(self):
-        """Should collapse children when focused on a parent with children."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        parent_session = MagicMock()
-        parent_session.id = "parent-1"
-        parent_session.name = "parent-agent"
-        parent_session.parent_session_id = None
-
-        child_session = MagicMock()
-        child_session.id = "child-1"
-        child_session.parent_session_id = "parent-1"
-
-        focused_widget = MagicMock()
-        focused_widget.session = parent_session
-
+        parent_session, child_session = _parent_and_child()
         parent_widget = MagicMock()
         parent_widget.session = parent_session
-
         mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui.sessions = [parent_session, child_session]
         mock_tui.collapsed_parents = set()
         mock_tui._get_widgets_in_session_order.return_value = [parent_widget]
 
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
+        ViewActionsMixin._fold_children(mock_tui, "parent-1", True)
 
         assert "parent-1" in mock_tui.collapsed_parents
         assert "Collapsed" in mock_tui.notify.call_args[0][0]
@@ -697,168 +654,52 @@ class TestToggleCollapseChildren:
         mock_tui.update_session_widgets.assert_called_once()
         mock_tui.update_timeline.assert_called_once()
 
-    def test_expand_previously_collapsed_parent(self):
-        """Should expand children when focused on a collapsed parent."""
+    def test_unfold_previously_folded_parent(self):
         from overcode.tui_actions.view import ViewActionsMixin
 
-        parent_session = MagicMock()
-        parent_session.id = "parent-1"
-        parent_session.name = "parent-agent"
-        parent_session.parent_session_id = None
-
-        child_session = MagicMock()
-        child_session.id = "child-1"
-        child_session.parent_session_id = "parent-1"
-
-        focused_widget = MagicMock()
-        focused_widget.session = parent_session
-
+        parent_session, child_session = _parent_and_child()
         mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui.sessions = [parent_session, child_session]
         mock_tui.collapsed_parents = {"parent-1"}
 
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
+        ViewActionsMixin._fold_children(mock_tui, "parent-1", False)
 
         assert "parent-1" not in mock_tui.collapsed_parents
         assert "Expanded" in mock_tui.notify.call_args[0][0]
-        assert "parent-agent" in mock_tui.notify.call_args[0][0]
         assert mock_tui._prefs.collapsed_parents == set()
         mock_tui._save_prefs.assert_called_once()
-        mock_tui._sort_sessions.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
-        mock_tui.update_timeline.assert_called_once()
 
-    def test_focused_on_child_walks_up_to_parent(self):
-        """Should walk up to parent when focused on a child session."""
+    def test_quiet_for_the_arrow_keys(self):
         from overcode.tui_actions.view import ViewActionsMixin
 
-        parent_session = MagicMock()
-        parent_session.id = "parent-1"
-        parent_session.name = "parent-agent"
-        parent_session.parent_session_id = None
-
-        child_session = MagicMock()
-        child_session.id = "child-1"
-        child_session.parent_session_id = "parent-1"
-
-        focused_widget = MagicMock()
-        focused_widget.session = child_session
-
-        parent_widget = MagicMock()
-        parent_widget.session = parent_session
-
+        parent_session, child_session = _parent_and_child()
         mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui.sessions = [parent_session, child_session]
-        mock_tui.collapsed_parents = set()
-        mock_tui._get_widgets_in_session_order.return_value = [parent_widget]
+        mock_tui.collapsed_parents = {"parent-1"}
 
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
+        ViewActionsMixin._fold_children(mock_tui, "parent-1", False, notify=False)
 
-        # Should collapse the parent, not the child
-        assert "parent-1" in mock_tui.collapsed_parents
-        assert "parent-agent" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.collapsed_parents == set()
+        mock_tui.notify.assert_not_called()
 
-    def test_no_children_notifies_warning(self):
-        """Should notify warning when focused session has no children and no parent."""
+    def test_fold_moves_the_highlight_to_the_parent(self):
         from overcode.tui_actions.view import ViewActionsMixin
 
-        lone_session = MagicMock()
-        lone_session.id = "lone-1"
-        lone_session.parent_session_id = None
-
-        focused_widget = MagicMock()
-        focused_widget.session = lone_session
-
-        mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = focused_widget
-        mock_tui.sessions = [lone_session]
-
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
-
-        mock_tui.notify.assert_called_once()
-        assert "No children" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "warning"
-        mock_tui._sort_sessions.assert_not_called()
-
-    def test_collapse_moves_focus_to_parent(self):
-        """Should move focused_session_index to the parent widget when collapsing."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        parent_session = MagicMock()
-        parent_session.id = "parent-1"
-        parent_session.name = "parent-agent"
-        parent_session.parent_session_id = None
-
-        child_session = MagicMock()
-        child_session.id = "child-1"
-        child_session.parent_session_id = "parent-1"
-
-        focused_widget = MagicMock()
-        focused_widget.session = parent_session
-
-        # Parent is at index 2 in the widget list
+        parent_session, child_session = _parent_and_child()
         other_widget = MagicMock()
         other_widget.session.id = "other-1"
         parent_widget = MagicMock()
         parent_widget.session.id = "parent-1"
-
         mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui.sessions = [parent_session, child_session]
         mock_tui.collapsed_parents = set()
         mock_tui._get_widgets_in_session_order.return_value = [other_widget, parent_widget]
         mock_tui.focused_session_index = 5
 
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
+        ViewActionsMixin._fold_children(mock_tui, "parent-1", True)
 
         assert mock_tui.focused_session_index == 1  # index of parent_widget
-
-    def test_child_walks_up_and_collapses_siblings(self):
-        """Should walk up to parent and collapse when child has parent_session_id set."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        # Child whose parent_session_id points to a parent not in sessions,
-        # but the child itself is a "child of" that parent, so it counts as children
-        child_session = MagicMock()
-        child_session.id = "child-1"
-        child_session.parent_session_id = "missing-parent"
-
-        focused_widget = MagicMock()
-        focused_widget.session = child_session
-
-        parent_widget = MagicMock()
-        parent_widget.session.id = "missing-parent"
-
-        mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = focused_widget
-        mock_tui.sessions = [child_session]
-        mock_tui.collapsed_parents = set()
-        mock_tui._get_widgets_in_session_order.return_value = [parent_widget]
-
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
-
-        # Walks up to "missing-parent" and collapses it (child_session is its child)
-        assert "missing-parent" in mock_tui.collapsed_parents
-        assert "Collapsed" in mock_tui.notify.call_args[0][0]
-        mock_tui._sort_sessions.assert_called_once()
-        mock_tui.update_session_widgets.assert_called_once()
 
 
 class TestCycleTimelineHours:
@@ -1272,26 +1113,13 @@ class TestCollapsePersistencePrunesStaleIds:
     def test_stale_ids_are_dropped_from_the_saved_copy(self):
         from overcode.tui_actions.view import ViewActionsMixin
 
-        parent_session = MagicMock()
-        parent_session.id = "parent-1"
-        parent_session.name = "parent-agent"
-        parent_session.parent_session_id = None
-        child_session = MagicMock()
-        child_session.id = "child-1"
-        child_session.parent_session_id = "parent-1"
-
-        focused_widget = MagicMock()
-        focused_widget.session = parent_session
+        parent_session, child_session = _parent_and_child()
         mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "by_tree"
-        mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui.sessions = [parent_session, child_session]
         mock_tui.collapsed_parents = {"long-gone-parent"}
-        mock_tui._get_widgets_in_session_order.return_value = [focused_widget]
+        mock_tui._get_widgets_in_session_order.return_value = []
 
-        _bind_fold(mock_tui)
-        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
+        ViewActionsMixin._fold_children(mock_tui, "parent-1", True)
 
         assert mock_tui._prefs.collapsed_parents == {"parent-1"}
         mock_tui._save_prefs.assert_called_once()

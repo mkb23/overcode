@@ -204,43 +204,38 @@ class ViewActionsMixin:
         self.notify(f"Sort: {label}", severity="information")
 
     def action_toggle_collapse_children(self) -> None:
-        """Toggle collapse/expand children for the focused parent in tree view (#244)."""
-        if self._prefs.sort_mode != "by_tree":
-            self.notify("Collapse only works in tree sort mode (press S, pick Tree)", severity="warning")
+        """Fold / unfold the focused row, every kind of child at once (→ / ←
+        as one key, #244); on a leaf child, its parent's."""
+        widget = self._get_focused_widget()
+        if widget is None:
             return
-
-        focused_widget = self._get_focused_widget()
-        if not focused_widget:
+        if self.swarm_cursor is not None:
+            self.swarm_cursor = None
+            self._sync_swarm_rows()
+        has, opened, _ = self._node_state(widget)
+        parent_id = widget.session.parent_session_id
+        if not has and self._tree_mode() and parent_id:
+            for parent in self._get_widgets_in_session_order():
+                if parent.session.id == parent_id:
+                    widget = parent
+                    has, opened, _ = self._node_state(widget)
+                    break
+        if not has:
+            self.notify("No children or delegated work to fold", severity="warning")
             return
+        self._set_node(widget, not opened)
 
-        session_id = focused_widget.session.id
-
-        # Check if this session has children — if not, walk up to the parent
-        # Use self.sessions (not session_manager) so remote sessions are included
-        children = [s for s in self.sessions if s.parent_session_id == session_id]
-        if not children:
-            parent_id = focused_widget.session.parent_session_id
-            if parent_id:
-                # Focused on a child — collapse/expand the parent's children instead
-                session_id = parent_id
-                children = [s for s in self.sessions if s.parent_session_id == session_id]
-
-        if not children:
-            self.notify("No children to collapse", severity="warning")
-            return
-
-        self._fold_children(session_id, session_id not in self.collapsed_parents)
-
-    def _fold_children(self, session_id: str, fold: bool) -> None:
-        """Fold (hide) or unfold a parent's children in tree sort, persisted.
-
-        The palette's "Fold / unfold children" and ← / → on a tree row."""
+    def _fold_children(self, session_id: str, fold: bool, notify: bool = True) -> None:
+        """Fold (hide) or unfold a parent's children in tree sort, persisted
+        (← / →, X and the palette's "Fold / unfold", via the tree model in
+        tui_actions/swarm.py)."""
         parent_session = next((s for s in self.sessions if s.id == session_id), None)
         parent_name = parent_session.name if parent_session else session_id[:8]
 
         if not fold:
             self.collapsed_parents.discard(session_id)
-            self.notify(f"Expanded children of {parent_name}", severity="information")
+            if notify:
+                self.notify(f"Expanded children of {parent_name}", severity="information")
         else:
             self.collapsed_parents.add(session_id)
             # Move focus to the parent so the user isn't left on a now-hidden widget
@@ -251,7 +246,8 @@ class ViewActionsMixin:
                     # away; unfolding brings the highlight back to the child
                     self.focused_session_index = i
                     break
-            self.notify(f"Collapsed children of {parent_name}", severity="information")
+            if notify:
+                self.notify(f"Collapsed children of {parent_name}", severity="information")
 
         # Persist so the fold survives a TUI restart (#464). Prune ids of
         # agents that no longer exist so the set can't grow without bound.

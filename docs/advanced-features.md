@@ -254,8 +254,8 @@ parent-agent    🟢  2.5h  ...
 └─child-2       ⚪   0.8h  ✅ all tests pass ...
 ```
 
-- **`←` / `→`** — Fold / unfold the focused agent's children (`←` on a child moves to its parent)
-- **`X`** — Fold or unfold every parent at once (also expands or collapses all delegated work)
+- **`←` / `→`** — Fold / unfold the focused agent: its children, 🌙 background sessions and delegated work together. `→` on an open agent steps onto its first child; `←` on a closed one moves to its parent ([TUI guide → Folding](tui-guide.md#folding))
+- **`X`** — Close everything open, or with nothing open, open everything
 - **`d`** (Agent visibility) — Show/hide "done" child agents (hidden by default)
 
 The child count column (👶) shows how many direct children each agent has, then how they stand: `👶 5 2▶ 1📭 1✅ 1❌` (▶ still working, 📭 stopped without a report, ✅ success, ❌ failure or timeout; zero counts are left out). A parent whose turn ended while its children still work shows 🟡 ("Waiting on N children"), not 🔴.

@@ -17,9 +17,42 @@ overcode monitor    # an alias, kept for old habits and scripts
 ### Agent List
 Shows all agents as single-line summaries with live status, metrics, and a content area. The focused agent's terminal is the bottom pane of the split. A sister agent (one on another machine) has no local terminal, so selecting one zooms the dashboard and shows a preview pane of its polled output instead; jobs view (`J`) does the same for the focused job.
 
-When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `←` on a parent to fold its children and `→` to unfold them (`←` on a child moves to its parent); `X` folds or unfolds every parent at once. Folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
+When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). `←` / `→` / `X` work like a tree view over every kind of row (see [Folding](#folding)); `←` on a parent folds its children, `→` unfolds them. Folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
 
 The agent you last moved the highlight to is remembered the same way: quit and reopen `overcode tmux` and the highlight comes back on it, with the bottom pane on its window. If that agent has gone, the first agent is highlighted.
+
+### Folding
+
+`←`, `→` and `X` treat the agent list as one tree, whatever kind of row
+the highlight is on. An agent's children are its overcode child agents
+and 🌙 background sessions (nested in tree sort) and its delegated work
+(👥 subagents, 🧩 workflows: the virtual rows below); a subagent row's
+child is its detail line.
+
+- `→` on a closed row opens it: children and delegated work together. On
+  an open row it moves the highlight onto the first row under it (the
+  delegated work, drawn first, else the first child). On a row with
+  nothing under it: "Nothing to expand".
+- `←` on an open row closes it, all kinds together. On a closed row or a
+  leaf it moves to the parent (a child agent or 🌙 session to its agent, a
+  virtual row to the agent that owns it); at a top-level agent it does
+  nothing.
+- `X`: anything open anywhere → close everything; nothing open → open
+  everything.
+- Only children the visibility settings would show count: an agent whose
+  only child is a hidden done agent is a leaf. Done, killed and sleeping
+  children you show (`d`) fold with their parent.
+- If the agent you chose is folded away, its nearest shown ancestor is
+  highlighted meanwhile; unfold it and the highlight goes back to it.
+- Folded children are remembered in `tui_preferences.json`; what
+  delegated work is open is remembered as described below.
+- In the other sorts children stay grouped under their parent but are
+  never folded: `←` / `→` / `X` open and close delegated work only, and
+  `←` on a child does not move to its parent. The ▶ fold marker shows in
+  tree sort only.
+- **Fold / unfold row** in the `/` palette (no default key;
+  `toggle_collapse_children` in `keys:` config) toggles the focused row,
+  or a leaf child's parent.
 
 ### Delegated work (👥, 🧩)
 
@@ -101,7 +134,8 @@ takes no width at all:
 - `→` on a member opens a detail line under the NAME column (model, type,
   phase, start time, tokens, cost, last tool, result). `←` closes what the
   highlight is on, or goes back to the agent's row; on the agent's own row
-  it collapses the whole thing.
+  it closes the whole thing (children too, in tree sort). See
+  [Folding](#folding).
 - Virtual rows are read only. With the highlight on one, the agent keys
   (send, kill, restart, rename, …) say so and do nothing; `Enter` moves to
   the parent's pane, where a subagent's permission prompt is answered.
@@ -125,9 +159,9 @@ takes no width at all:
   **hide**: live work only); how long a finished subagent keeps its row
   (0s, 10s, 30s, 2m, saved in config.yaml). Changes apply as you make
   them; `Esc` closes it.
-- `X` expands every agent that has delegated work (and, in tree sort,
-  unfolds every parent's children); with something open, it collapses
-  everything instead. It does not change the `f` rule.
+- `X` opens every agent's delegated work and, in tree sort, every
+  parent's children; with something open, it closes everything instead.
+  It does not change the `f` rule.
 - What is open (agents, opened `+k more` lists, and the `f`
   rule) is remembered in `tui_preferences.json`, so it comes back after
   restarting the TUI. Entries for agents that are gone are dropped, and so
@@ -225,8 +259,9 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 |-----|--------|
 | `j` / `↓` | Move to next agent |
 | `k` / `↑` | Move to previous agent |
-| `→` / `←` | Expand / collapse the row: an agent's delegated work, one level at a time ([above](#delegated-work--)), and its children in tree sort |
-| `X` | Expand / collapse all (delegated work, and children in tree sort) |
+| `→` | Open the row (its children, 🌙 sessions and delegated work at once); on an open row, step onto its first child ([Folding](#folding)) |
+| `←` | Close the row (all of it at once); on a closed row, go to its parent |
+| `X` | Close everything open; with nothing open, open everything |
 | `f` | Cycle which agents' delegated work opens by itself: off → groups → needs you |
 | `b` | Jump to next agent needing attention |
 | `Ctrl+P` | Jump to an agent by name (fuzzy search) |
