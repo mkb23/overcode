@@ -601,6 +601,9 @@ class SessionSummary(Static, can_focus=True):
             swarm_expanded=self.swarm_expanded,
             subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
             quota=self.engine.get("quota") if self.engine else None,
+            trip=self.engine.get("trip") if self.engine else None,
+            subtree_trip_cost_usd=(self.engine.get("subtree_trip_cost_usd")
+                                   if self.engine else None),
             status_changed_at=self._status_changed_at,
             max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),

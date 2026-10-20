@@ -205,6 +205,8 @@ EMOJI_ASCII = {
     "❓": "??",
     "📥": "In",
     "👥": "Sa",
+    # A reset trip counter on the spend cells (trip.py; "~" marks an auto name)
+    "↺": "*",
 }
 
 

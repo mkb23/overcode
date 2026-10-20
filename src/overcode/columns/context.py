@@ -181,6 +181,9 @@ class ColumnContext:
     subagent_cost_usd: Optional[float] = None
     # Its subscription quota estimate (engine: quota): pp7d, pp5h, w7, w5, conf
     quota: Optional[dict] = None
+    # Its trip counter (engine: trip, trip.trip_view): spend since its trip
+    # was reset; the spend cells show it, marked ↺. None if never reset.
+    trip: Optional[dict] = None
 
     # Fleet-wide column gates, the same for every row
     fleet: FleetFlags = field(default_factory=FleetFlags)
@@ -198,6 +201,8 @@ class ColumnContext:
 
     # Subtree cost (parent + all descendants)
     subtree_cost_usd: float = 0.0
+    # SUB$ as its rows show it while a member has a trip, else None
+    subtree_trip_cost_usd: Optional[float] = None
 
     # PR number (widget var, not session — survives session replacement)
     pr_number: Optional[int] = None
@@ -289,6 +294,8 @@ def build_cli_context(
     child_rollup: Optional[dict] = None,
     swarm_rollup: Optional[dict] = None,
     quota: Optional[dict] = None,
+    trip: Optional[dict] = None,
+    subtree_trip_cost_usd: Optional[float] = None,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed).
 
@@ -356,6 +363,8 @@ def build_cli_context(
         child_rollup=child_rollup,
         swarm_rollup=swarm_rollup,
         quota=quota,
+        trip=trip,
+        subtree_trip_cost_usd=subtree_trip_cost_usd,
         status_changed_at=status_changed_at,
         max_name_width=max_name_width,
         max_repo_width=max_repo_width,

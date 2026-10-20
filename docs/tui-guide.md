@@ -327,6 +327,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `U` | Sister visibility |
 | `/` → "Rebill this agent…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
 | `/` → "Naming lab…" | Try naming advice on the whole fleet (no default key; see [Agent names](#agent-names)) |
+| `/` → "Reset trip counter" | Zero the agent's row spend; "Reset trip + children" and "Reset all trip counters" do its tree or every agent (no default key; see [Trip counters](#trip-counters)) |
 | `m` | Billing codes & spend: every code's spend; rename, merge, collapse or unmerge codes (see [Billing codes](#billing-codes)) |
 
 ### Daemon Control
@@ -485,12 +486,41 @@ prediction from the agent's tokens, because Claude reports the window only
 in whole percents; the cell is dim until the model has been fitted to your
 account. Hover it for the agent's share of the current 5-hour window, the
 account's own weekly and 5-hour percentages and the model's confidence. In
-this mode the status bar's Σ sums the agents' points; the Usage section
+this mode the burn column and the status bar's 🔥 show weekly-quota
+points per hour (`🔥0.42%/h`): the burn window's tokens priced with the
+same model, at each agent's model; `-` without a quota estimate. The
+status bar's Σ sums the agents' points; the Usage section
 shows the account's percentages as the engine last read them. The column
 can also be switched on in the column configurator (`C`), and never shows
 for a fleet with no subscription agent. See
 [Subscription Quota](configuration.md#subscription-quota) and
 `overcode usage model`.
+
+### Trip counters
+
+Like a car's trip meter: resetting an agent's trip zeroes the spend its row
+shows (TOK, ENRG, `$`, `Q%`) while the odometer keeps counting everything.
+`/` then "Reset trip counter" (the highlighted agent), "Reset trip +
+children" (it and every agent under it; its delegated subagents are inside
+its own spend already) or "Reset all trip counters". No key is bound by
+default; bind `reset_trip` under `keys:` if you want one.
+
+A reset row leads its spend cells with `↺` (`*` emoji-free), so a small
+number is not mistaken for a cheap agent. Hover `$`, TOK or ENRG for the
+trip beside the total and when it was reset; hover `Q%` for the trip's
+points beside this week's. `Q%` restarts each quota week anyway: within the
+week of the reset its trip is the points since, after the week rolls over
+it is simply this week's points.
+
+**Budgets count the total**: a reset never gives an agent more budget, and
+the `$` cell still turns yellow and red on the total. The ledger, billing
+codes, `overcode billing`, the billing dialog (`m`) and the status bar's Σ
+keep counting all spend. `SUB$` follows the rows: while any agent in the
+subtree has a trip it is the sum of what their rows show, marked `↺`, with
+the subtree's total in the hover.
+
+The engine publishes the trip, so `overcode list` shows the same values;
+`overcode trip reset` / `overcode trip show` do it from a shell.
 
 ## Command Bar
 

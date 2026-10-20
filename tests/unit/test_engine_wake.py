@@ -438,7 +438,7 @@ class TestEngineOwnsTheNumbers:
 
         asked = []
 
-        def fake_burn(sessions, asleep, hours, now=None):
+        def fake_burn(sessions, asleep, hours, now=None, quota_pp_of=None):
             asked.append(hours)
             stats = WindowBurnStats(window_hours=hours)
             stats.per_session["s1"] = WindowBurnStats(window_hours=hours, input_tokens=100,

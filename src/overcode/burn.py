@@ -6,7 +6,7 @@ each agent's share; views sum it for the fleet.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, Set
+from typing import Any, Callable, Mapping, Optional, Set
 
 from .clock import local_naive
 
@@ -24,6 +24,9 @@ class WindowBurnStats:
     cache_read_tokens: int = 0
     cost_usd: float = 0.0
     energy_j: float = 0.0  # estimated, see energy.py (#522)
+    # Points of the weekly subscription quota the window's tokens are worth
+    # (the engine's quota model); None without a quota estimate
+    quota_pp: Optional[float] = None
     per_session: dict = None  # Optional[Dict[str, WindowBurnStats]]
 
     def __post_init__(self):
@@ -53,18 +56,27 @@ class WindowBurnStats:
             return 0.0
         return self.cost_usd / self.window_hours
 
+    @property
+    def pp_per_hour(self) -> Optional[float]:
+        """Weekly-quota points per hour, None without a quota estimate."""
+        if self.quota_pp is None or self.window_hours <= 0:
+            return None
+        return self.quota_pp / self.window_hours
+
 
 def compute_window_burn(
     sessions,  # iterable of full Session objects (NOT SessionDaemonState)
     asleep_session_ids: Set[str],
     hours: float,
     now: Optional[datetime] = None,
+    quota_pp_of: Optional[Callable[[Any, Mapping], Optional[float]]] = None,
 ) -> WindowBurnStats:
     """Aggregate token burn across sessions over the past ``hours`` window (#174).
 
     Re-parses each session's transcript files filtered by the window's start
     timestamp, sums tokens, and computes cost using each session's per-model
-    pricing. Skips asleep sessions and sessions without start_directory or
+    pricing. ``quota_pp_of(session, usage)`` prices a session's window in
+    weekly-quota points (``QuotaEngine.window_pp``). Skips asleep sessions and sessions without start_directory or
     agent_session_ids.
 
     Designed to run on a worker thread — does file I/O proportional to
@@ -128,6 +140,10 @@ def compute_window_burn(
         )
         stats.energy_j += energy
 
+        pp = quota_pp_of(session, u) if quota_pp_of is not None else None
+        if pp is not None:
+            stats.quota_pp = (stats.quota_pp or 0.0) + pp
+
         # Per-session breakdown for the burn-rate column (#174)
         stats.per_session[session.id] = WindowBurnStats(
             window_hours=hours,
@@ -137,6 +153,7 @@ def compute_window_burn(
             cache_read_tokens=u["cache_read_tokens"],
             cost_usd=cost,
             energy_j=energy,
+            quota_pp=pp,
         )
 
     return stats
