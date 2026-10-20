@@ -212,3 +212,28 @@ def hover_status_detail(ctx: ColumnContext):
             meaning += f", in {format_duration(int(b.eta_seconds))}"
         rows.append((_badge_glyph(b.kind, ctx.emoji_free), meaning))
     return _emoji_legend("Status detail", rows)
+
+
+_NAME_SOURCE_TEXT = {
+    "default": "a default name (its directory or fork); overcode may rename it",
+    "parent": "named by its parent agent",
+    "auto": "named by overcode; it may refine it",
+    "human": "named by you; overcode never renames it",
+}
+
+
+def hover_agent_name(ctx: ColumnContext):
+    """NAME: who chose the name (#542), and the names it had before."""
+    from rich.text import Text
+    session = ctx.session
+    source = getattr(session, "name_source", None)
+    if getattr(session, "is_remote", False) or source not in _NAME_SOURCE_TEXT:
+        return None
+    text = Text(session.name, style="bold")
+    text.append(f"\n{_NAME_SOURCE_TEXT[source]}")
+    if getattr(session, "name_forced", False):
+        text.append("\nlaunched with --force-name past the naming policy", style="yellow")
+    previous = getattr(session, "previous_names", None) or []
+    if previous:
+        text.append(f"\nwas: {', '.join(reversed(previous))}", style="dim")
+    return text

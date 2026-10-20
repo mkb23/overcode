@@ -7,6 +7,7 @@ from ..clock import seconds_since
 from .column import ALL, HIGH_PLUS, MED_PLUS, SummaryColumn
 from .context import ColumnContext
 from .hover import (
+    hover_agent_name,
     hover_allowed_tools,
     hover_available_skills,
     hover_child_count,
@@ -302,8 +303,9 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   virtual_render=render_virtual_kind),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
                   header="NAME", name="Agent Name",
-                  description="Agent name (tree connectors show parent/child in tree sort)",
-                  sort_key=lambda ctx: ctx.session.name.lower(),
+                  description="Agent name (tree connectors show parent/child in tree sort); "
+                              "dim: a default name, ~: named by overcode",
+                  sort_key=lambda ctx: ctx.session.name.lower(), hover=hover_agent_name,
                   virtual_render=render_virtual_name, virtual_hover=hover_virtual_name),
     # An expanded agent's delegated agents of two or more types: each
     # one's type (subagent type, fork, workflow and phase, teammate); the

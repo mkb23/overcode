@@ -94,6 +94,7 @@ class NewAgentModal(ModalBase):
             extra_cli_args: List[str],
             skill_profile: Optional[str] = None,
             billing_code: Optional[str] = None,
+            name_auto: bool = False,
         ) -> None:
             super().__init__()
             self.host = host
@@ -110,6 +111,8 @@ class NewAgentModal(ModalBase):
             self.skill_profile = skill_profile
             # None: the launcher's default (the name; a child's parent's code)
             self.billing_code = billing_code
+            # The name is the directory's, untouched (name_source "default", #542)
+            self.name_auto = name_auto
 
     class Cancelled(Message):
         pass
@@ -371,6 +374,7 @@ class NewAgentModal(ModalBase):
             extra_cli_args=extra_cli_args,
             skill_profile=d.get("skills"),
             billing_code=self._launch_billing_code(),
+            name_auto=self._field("name").auto,
         ))
         self._hide()
 

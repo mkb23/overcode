@@ -308,6 +308,10 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        "learn learning progress tips skills achievements tutorial discover"),
     _C("new_agent", "New agent…", "Agent", "launch create start remote"),
     _C("rename_focused", "Rename agent…", "Agent", "name", agent=True),
+    # "Let overcode name this agent" is one cell too wide for the palette
+    _C("name_by_overcode", "Let overcode name it", "Agent",
+       "this agent auto naming rename unlock namer", agent=True),
+    _C("keep_name", "Keep this name", "Agent", "lock naming rename human", agent=True),
     _C("fork_focused", "Fork agent", "Agent", "clone copy child", agent=True),
     _C("restart_focused", "Restart agent", "Agent", "revive", agent=True),
     _C("revive_dead_agents", "Revive all dead agents", "Agent",

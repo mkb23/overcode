@@ -35,11 +35,19 @@ async def _settle(pilot) -> None:
     await pilot.pause()
 
 
+def _named_agents():
+    """three_agents with every kind of name: dim default, "~" auto, plain human (#542)."""
+    agents = three_agents()
+    for session, source in zip(agents, ("default", "auto", "human")):
+        session.name_source = source
+    return agents
+
+
 @pytest.mark.parametrize("width", WIDTHS)
 async def test_layout_holds_at_every_detail_level_and_mode(make_tui, width):
     engine = GridEngine()
     engine.publish(engine.snapshot_now())
-    app = make_tui(three_agents(), engine=engine, size=(width, 40))
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
     async with app.run_test(size=(width, 40)) as pilot:
         rows = await _open(pilot, engine)
         # A member's detail line too
@@ -77,7 +85,7 @@ async def test_layout_follows_a_resize(make_tui):
     """Narrowing the terminal re-crops every row; widening it again restores them."""
     engine = GridEngine()
     engine.publish(engine.snapshot_now())
-    app = make_tui(three_agents(), engine=engine, size=(260, 40))
+    app = make_tui(_named_agents(), engine=engine, size=(260, 40))
     async with app.run_test(size=(260, 40)) as pilot:
         await _open(pilot, engine)
         app._set_summary_level("full")

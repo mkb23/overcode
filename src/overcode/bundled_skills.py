@@ -62,7 +62,13 @@ A child that never reports is never counted as done.
   out after 1 h, window closed 10 min after it ends). Flags such as
   `--oversight-timeout` override it; `overcode config presets` lists them.
 - Name children after their task (`fix-jwt-refresh`, not `child-1`). The user
-  sees these names.
+  sees these names, and overcode never renames a name you chose. Run
+  `overcode name policy` once before naming children: it prints the user's
+  naming advice (follow it) and any rules. A name that breaks a rule is
+  refused with exit code 3, the rule, the advice and a suggested name: retry
+  with the suggestion or a better name. `--force-name` launches anyway, but
+  never with a name another agent has. `overcode name check <name>` tries a
+  name without launching.
 
 Children inherit your permission mode, model, provider and wrapper, and
 always your billing code. Add `--bypass-permissions` only when the user wants

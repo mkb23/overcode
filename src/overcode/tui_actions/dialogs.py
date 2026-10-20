@@ -151,6 +151,7 @@ class DialogsMixin:
         else:
             # Launch locally
             from ..exceptions import LaunchError
+            from ..name_source import DEFAULT, HUMAN
             launcher = AgentLauncher(
                 tmux_session=self.tmux_session,
                 session_manager=self.session_manager,
@@ -168,6 +169,7 @@ class DialogsMixin:
                     extra_cli_args=message.extra_cli_args or None,
                     skill_profile=message.skill_profile,
                     billing_code=message.billing_code,
+                    name_source=DEFAULT if message.name_auto else HUMAN,
                 )
                 parts = [f"Created agent: {name}"]
                 if message.wrapper:
@@ -202,14 +204,28 @@ class DialogsMixin:
         if session is None:
             self.notify(f"Agent '{message.old_name}' no longer exists", severity="error")
             return
+        source = getattr(message, "name_source", "human")
+        if message.new_name == session.name:
+            self._set_name_source(session, source)
+            return
         self.notify(f"Renaming '{message.old_name}' → '{message.new_name}'...")
         threading.Thread(
             target=self._run_rename,
-            args=(session, message.new_name, message.force),
+            args=(session, message.new_name, message.force, source),
             daemon=True,
         ).start()
 
-    def _run_rename(self, session: "Session", new_name: str, force: bool) -> None:
+    def _set_name_source(self, session: "Session", source: str) -> None:
+        """Hand the name to overcode's namer ("auto") or keep it ("human"), name unchanged (#542)."""
+        self.session_manager.update_session(session.id, name_source=source)
+        if source == "auto":
+            self.notify(f"overcode names '{session.name}' now", severity="information")
+        else:
+            self.notify(f"'{session.name}' keeps its name", severity="information")
+        self.refresh_sessions()
+
+    def _run_rename(self, session: "Session", new_name: str, force: bool,
+                    name_source: str = "human") -> None:
         """Worker thread for a TUI rename; reports back through notify."""
         from ..exceptions import AgentBusyError, InvalidSessionNameError
         from ..launcher import AgentLauncher
@@ -234,6 +250,9 @@ class DialogsMixin:
             return
 
         current = self.session_manager.get_session(session.id)
+        if current is not None and current.name == new_name:
+            # A person chose it: locked, unless they handed it to overcode
+            self.session_manager.update_session(session.id, name_source=name_source)
         if renamed:
             self.call_from_thread(
                 self.notify, f"Renamed '{old_name}' → '{new_name}'", severity="information",

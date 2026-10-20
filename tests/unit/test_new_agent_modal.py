@@ -257,6 +257,16 @@ class TestLaunchDirectoryAutoCreate:
         assert not notified
         assert hidden == [True]
 
+    def test_the_name_source_rides_along(self, tmp_path):
+        """An untouched directory name is a default one; a typed one a person's (#542)."""
+        modal, posted, _, _ = self._make_launchable_modal(str(tmp_path))
+        modal._launch()
+        assert posted[0].name_auto is True
+        modal, posted, _, _ = self._make_launchable_modal(str(tmp_path))
+        modal._field("name").auto = False
+        modal._launch()
+        assert posted[0].name_auto is False
+
     def test_missing_local_dir_is_created(self, tmp_path):
         missing = tmp_path / "nested" / "new-project"
         modal, posted, notified, hidden = self._make_launchable_modal(str(missing))

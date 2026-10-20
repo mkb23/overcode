@@ -121,7 +121,17 @@ class SummarizerClient:
         else:
             return self._call_openai(prompt, max_tokens)
 
-    def _call_anthropic(self, prompt: str, max_tokens: int) -> Optional[str]:
+    def complete(self, prompt: str, max_tokens: int = 150,
+                 timeout: float = 15.0) -> Optional[str]:
+        """One call with a ready prompt (the naming check); None on error."""
+        if not self.available:
+            return None
+        if self.api_type == "anthropic":
+            return self._call_anthropic(prompt, max_tokens, timeout)
+        return self._call_openai(prompt, max_tokens, timeout)
+
+    def _call_anthropic(self, prompt: str, max_tokens: int,
+                        timeout: float = 15.0) -> Optional[str]:
         """Call the Anthropic Messages API."""
         self.last_input_tokens = 0
         self.last_output_tokens = 0
@@ -144,7 +154,7 @@ class SummarizerClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=15.0) as response:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 if response.status == 200:
                     result = json.loads(response.read().decode("utf-8"))
                     content = result["content"][0]["text"]
@@ -165,7 +175,8 @@ class SummarizerClient:
             logger.warning(f"Summarizer API error: {e}")
             return None
 
-    def _call_openai(self, prompt: str, max_tokens: int) -> Optional[str]:
+    def _call_openai(self, prompt: str, max_tokens: int,
+                     timeout: float = 15.0) -> Optional[str]:
         """Call the OpenAI Chat Completions API."""
         self.last_input_tokens = 0
         self.last_output_tokens = 0
@@ -188,7 +199,7 @@ class SummarizerClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=15.0) as response:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 if response.status == 200:
                     result = json.loads(response.read().decode("utf-8"))
                     content = result["choices"][0]["message"]["content"]

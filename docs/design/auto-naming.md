@@ -1,7 +1,7 @@
 # Auto-naming agents (#542)
 
 Status: proposal, 2026-10-20; owner decisions taken the same day (end of file).
-Section 1 (P0) is built. Builds on `overcode rename` (#478) and the
+Section 1 (P0) and sections 2 and 2a (P1) are built. Builds on `overcode rename` (#478) and the
 per-agent directories keyed by session id (quality review item 35).
 
 ## Goal
@@ -86,6 +86,11 @@ refusal and the 3 s gap from every manual rename.
 
 ### 2. Where a name came from
 
+**Built (P1, branch name-policy).** As designed, except: the palette title
+is "Let overcode name it" (the longer one does not fit the palette), and
+old records read as `default` only for an exact made-up default
+(`name_source.infer_legacy`), else `human`.
+
 A new `Session.name_source`, kept in sessions.json. Loaders default it for
 old records.
 
@@ -111,6 +116,17 @@ locks the name. Per agent:
 
 ### 2a. Checking the names parents give
 
+**Built (P1, branch name-policy),** with the owner's change of 2026-10-20:
+no edit-distance or other similarity check (a numbered series such as
+`wiki1`, `wiki2` is deliberate), and every rule opt-in with defaults that
+reject nothing. Only the base name pattern and a taken name (live name or
+alias) are always checked; `max_length`, `pattern`, `forbid`, `require`,
+`no_repo_prefix` and recent archived names (`recent_archived_hours`) are
+off by default. `naming.max_length` (18) is the namer's target, separate
+from the hard `naming.rules.max_length` (unset). The free-text advice is
+the primary policy. Code: `naming_policy.py` (`check`, `choose`),
+`cli/naming.py`.
+
 A parent's name is never renamed, so it is checked once, when the parent
 chooses it. `overcode launch` and `fork`, run from inside an agent
 (`OVERCODE_SESSION_ID` set), check `-n` against the naming policy and
@@ -125,7 +141,7 @@ refuse a name that breaks it.
 - **Every other rule is opt-in** in a `naming.rules` block, and the defaults
   reject nothing a person would reasonably choose: `max_length` (no limit),
   `pattern` (none), `forbid` (empty), `require` (none), `no_repo_prefix`
-  (off), `avoid_recent` (off; names archived in the last 24 h). The CLI
+  (off), `recent_archived_hours` (0, off; refuse names archived that recently). The CLI
   checks these with no API call and no delay, so they apply whether or not
   auto-naming is on.
 - **No similarity rule.** Numbered series (`wiki1`, `wiki2`, `wiki3`) are
@@ -240,7 +256,7 @@ naming:
     forbid: []               # e.g. [test, tmp]
     require: null            # e.g. '-[0-9]+$' for an issue-number suffix
     no_repo_prefix: false
-    avoid_recent: false      # names archived in the last 24 h
+    recent_archived_hours: 0 # refuse names archived this recently (0: off)
     llm_check: false         # check the advice with the model too
     warn_humans: false
   first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
@@ -370,3 +386,8 @@ Tests:
    notice, the enhanced-context line, and the CLI's own session name kept
    in step (section 7).
 5. **No sister awareness.** Sister support is semi-deprecated.
+6. **Permissive rules, advice first** (later the same day). No
+   edit-distance or similarity check: `wiki1`, `wiki2`, `wiki3` are
+   deliberate names. Every deterministic rule is opt-in; only overcode's
+   name pattern and a taken name are always refused. The free-text advice
+   is the primary policy, the rules a supplement.

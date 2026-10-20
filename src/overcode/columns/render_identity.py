@@ -187,10 +187,14 @@ def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
 _render_plain_agent_name = _make_simple_render("display_name", colored_style="bold cyan")
 # The overagent's name stands out from every agent's (#484): its own colour.
 _render_overagent_name = _make_simple_render("display_name", colored_style="bold #ff87ff")
+# A name overcode made up and nobody chose (name_source "default", #542): dim
+_render_default_agent_name = _make_simple_render("display_name", colored_style="dim cyan")
 
 def render_agent_name(ctx: ColumnContext) -> ColumnOutput:
     if getattr(ctx.session, "backend", None) == "overagent":
         return _render_overagent_name(ctx)
+    if getattr(ctx.session, "name_source", None) == "default":
+        return _render_default_agent_name(ctx)
     return _render_plain_agent_name(ctx)
 
 

@@ -98,6 +98,11 @@ ledger:
 billing:
   codes: []                       # e.g. [client-a, client-b, internal]
 
+# Naming advice and the optional naming rules; see "Naming" below
+naming:
+  advice: ""                      # free text: the naming policy
+  rules: {}                       # optional checks on names parents give children
+
 # Children presets for `overcode launch --preset`; see "Children Presets" below
 children:
   preset: supervised              # default for children: supervised | balanced | autonomous | yours
@@ -753,6 +758,64 @@ ledger:
 
 There are no per-code limits: the per-agent budget (`overcode budget`) and
 the child-spend rollup are unchanged.
+
+## Naming
+
+How agents are named (#542). Every agent records where its name came from
+(`name_source` in sessions.json, shown by `overcode list --json`):
+`default` (the new-agent dialog's directory name or a fork's `-fork`,
+untouched), `parent` (a parent agent's `-n`), `auto` (overcode named it) or
+`human` (you typed it). `parent` and `human` names are never renamed by
+overcode. Records from before this field read as `default` only when the
+name is exactly a default overcode would have made up (the record's
+directory name, with the dialog's `2`-`99` or `_new` suffix, or a name
+ending in `-fork`); everything else reads as `human`.
+
+```yaml
+naming:
+  advice: |                 # the naming policy, in your words
+    kebab-case, 1-3 words, what the work is about, not how.
+    Put an issue number last when there is one: fix-jwt-542.
+  max_length: 18            # the length the namer aims for (not a check)
+  rules:                    # optional checks; every one is off by default
+    pattern: null           # a regex the name must match, e.g. '^[a-z0-9]+(-[a-z0-9]+)*$'
+    max_length: null        # a hard limit on length
+    forbid: []              # words a name may not contain, e.g. [test, agent, child, tmp]
+    require: null           # a regex the name must contain, e.g. '-[0-9]+$'
+    no_repo_prefix: false   # refuse a name starting with its repo's while the repo column shows
+    recent_archived_hours: 0  # refuse a name an agent archived this recently had (0: off)
+    llm_check: false        # also ask the summarizer model whether the name follows the advice
+    warn_humans: false      # warn (never refuse) when a name you type breaks the rules
+  enabled: false            # auto-naming (not built yet; read but unused)
+  first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}   # unused yet
+  max_renames: 2            # unused yet
+  cost_cap_per_day: 0.50    # unused yet
+```
+
+**The advice is the policy.** It is free text, read by a model: the
+auto-namer, and `llm_check` when it is on. Say in it what you want names to
+look like. A repo can add its own conventions in `<repo>/.overcode/naming.md`,
+appended after yours. `overcode name policy` prints both.
+
+**The rules are an optional supplement**, checked with no model and no delay
+when an agent launches a child (`overcode launch -n` / `fork -n` with
+`OVERCODE_SESSION_ID` set). Their defaults reject nothing: a numbered series
+such as `wiki1`, `wiki2`, `wiki3` is always fine. Two checks always apply,
+rules or not: overcode's name pattern (letters, digits, `-` and `_`, at most
+64) and a name another live agent has, or had before a rename. A refused
+name exits 3 with the rule, the advice and a suggested name;
+`--force-name` launches anyway, except past those two. `llm_check` costs one
+summarizer call per child launch, waits at most 5 s, and lets the name
+through if the call fails.
+
+**The namer's prompt** is `~/.overcode/prompts/naming.md` once saved (the
+naming lab will edit it); until then a built-in default. Its placeholders are
+`{advice}`, `{brief}`, `{prompts}`, `{repo}`, `{branch}`, `{files}`,
+`{current_name}`, `{name_source}`, `{fleet}`, `{siblings}` and
+`{max_length}`.
+
+An unknown key or a bad value under `naming:` is ignored with a warning
+(`overcode name policy` prints it).
 
 ## Usage Log
 

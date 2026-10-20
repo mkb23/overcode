@@ -2573,6 +2573,8 @@ class TestRenameCommand:
         calls = {}
 
         class _Sessions:
+            updates = []  # update_session's fields (name_source, #542)
+
             def resolve_session_name(self, name):
                 return sess
 
@@ -2582,6 +2584,9 @@ class TestRenameCommand:
                 return SimpleNamespace(
                     id=sess.id, name=name_after if name_after else sess.name,
                 )
+
+            def update_session(self, session_id, **fields):
+                self.updates.append(fields)
 
         class _Launcher:
             def __init__(self, tmux_session="agents"):

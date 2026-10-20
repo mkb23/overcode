@@ -15,6 +15,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..clock import from_iso
+from ..name_source import name_marker
 from ..session_manager import Session
 from ..status_patterns import extract_from_pane, extract_sleep_duration
 from ..history_reader import AgentSessionStats, synthesize_remote_stats
@@ -525,6 +526,8 @@ class SessionSummary(Static, can_focus=True):
         if getattr(s, "kind", None) == "claude_bg":
             from ..claude_bg import MARKER, MARKER_ASCII
             marker = (MARKER_ASCII if ef else MARKER) + " "
+        # An auto name leads with "~" (#542), taken off the name's cells too
+        marker += name_marker(getattr(s, "name_source", None))
         marker_cells = cell_len(marker)
 
         # Apply tree indentation when in tree sort mode (#244)

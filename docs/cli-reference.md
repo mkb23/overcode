@@ -35,7 +35,20 @@ overcode launch --name <name> [options]
 | `--no-inherit` | | Don't inherit settings from the parent agent (see below) |
 | `--skills` | | Skill profile to switch on; `none` for none. Default: the parent's, then the folder's pinned profile. See [Skill Profiles](skill-profiles.md) |
 | `--billing-code` | | Bill this agent's spend to this code (default: its name). A child always takes its parent's. See [Billing Codes](configuration.md#billing-codes) |
+| `--force-name` | | From inside an agent: launch with a name the naming policy refuses. Recorded on the agent (`name_forced`). Never gets past a taken name or overcode's name pattern |
+| `--json` | | Print the launched agent (`id`, `name`, `name_source`, `parent_session_id`) as JSON, or a refused name as a structured error; everything else goes to stderr |
 | `--session` | | Tmux session name (default: `agents`) |
+
+**Naming policy (#542):** run from inside an agent (`OVERCODE_SESSION_ID`
+set), `launch` and `fork` check `-n` against the naming policy before
+launching: overcode's name pattern and names already taken (a live agent's
+name or old name) always, plus any `naming.rules` you set (see
+[Naming](configuration.md#naming)). A refused name exits **3**, with the
+rule it broke, the naming advice and a suggested name on stderr, for
+example `name 'child-1' breaks the naming policy (forbidden word 'child');
+try '...', or pass --force-name`. A name from a human shell is never
+refused (a warning only, with `naming.rules.warn_humans`). A name given by a
+parent is never auto-renamed, and neither is one a human chose.
 
 **Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only. Permission mode is inherited too: a child of a bypass parent launched without any permission flag runs in bypass. Use `--normal-permissions` for a normal-mode child that keeps the rest of the parent's settings (`--no-inherit` also gives normal mode, but drops everything else too). A child's billing code always comes from its parent, even with `--no-inherit`.
 
@@ -97,8 +110,9 @@ overcode list [name] [--show-done] [--session <session>]
 |--------|-------------|
 | `name` | Optional. Show only this agent and its descendants |
 | `--show-done` | Include "done" child agents |
+| `--json` | One JSON object per agent: `id`, `name`, `name_source` (`default`, `parent`, `auto` or `human`), `name_forced`, `previous_names`, `status`, `activity`, `parent_session_id`, `repo`, `branch`, `backend`, `model`, `is_remote` |
 
-Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity. In tree mode, children are indented under their parent.
+Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity. In tree mode, children are indented under their parent. A name overcode chose (auto-naming) is shown as `~name`.
 
 ### `overcode attach`
 
@@ -209,11 +223,17 @@ Rename an agent, keeping its conversation, status history and costs.
 
 ```bash
 overcode rename <agent-name> <new-name> [--force] [--session <session>]
+overcode rename <agent-name> --auto | --lock
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--force` | Agents launched before 0.6 only: rename even if busy (its turn is cancelled). Ignored otherwise |
+| `--auto` | Hand the name to overcode's auto-naming; the name stays as it is until the namer changes it |
+| `--lock` | Keep the current name: overcode never renames it |
+
+A rename locks the name (its source becomes `human`): auto-naming never
+changes a name a person chose. `--auto` undoes that.
 
 The agent keeps running, even mid-turn: its tmux window and its record take
 the new name, and with its next prompt it is told it was renamed. Its
@@ -234,6 +254,28 @@ An agent launched before 0.6 finds itself by its launch name, so it is
 stopped and resumed under the new name instead, in the same window with the
 same conversation. While it is busy (working, or showing a permission
 dialog) that would cancel its turn, so it is refused unless `--force`.
+
+### `overcode name`
+
+The naming policy (#542; see [Naming](configuration.md#naming)).
+
+```bash
+overcode name policy [--directory <dir>] [--json]
+overcode name check <name> [--directory <dir>] [--json]
+```
+
+`name policy` prints the naming advice first (the policy proper: free text
+a model reads, from `naming.advice` and the repo's `.overcode/naming.md`),
+then the checks that always apply and the optional `naming.rules` that are
+set. A parent agent reads it before naming its children.
+
+`name check` runs the check `launch -n` runs from inside an agent, without
+launching: exit 0 when the name passes, 3 with the failed rules, the advice
+and a suggested name when it does not. `--json` prints
+`{name, ok, hard, failures: [{rule, message, hard}], suggestion, advice}`;
+`hard` failures (`base_pattern`, `reserved`, `taken`) are the ones
+`--force-name` cannot get past. `--directory` picks the repo (for its
+advice file and `no_repo_prefix`), default the current directory.
 
 ### `overcode cleanup`
 

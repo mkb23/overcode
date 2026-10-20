@@ -69,17 +69,18 @@ class TestEditing:
         self._press(m, "tab")
         self._press(m, "space", " ")
         assert (m.selected_index, m.force, m.value) == (1, True, "alpha")
-        self._press(m, "tab")
+        self._press(m, "shift+tab")
         self._press(m, "g", "g")
         assert m.value == "alphag"
 
     def test_an_agent_renamed_in_place_has_no_force_row(self):
         m = _modal(restarts=False)
-        self._press(m, "tab")
+        assert m.fields == ("name", "source")
         self._press(m, "g", "g")
-        assert (m.selected_index, m.force, m.value) == (0, False, "alphag")
         shown = str(m.render())
         assert "Force" not in shown and "keeps running" in shown
+        self._press(m, "tab")
+        assert (m.field, m.force, m.value) == ("source", False, "alphag")
 
     def test_enter_with_a_valid_name_posts_the_request(self):
         m = _modal()
@@ -87,7 +88,7 @@ class TestEditing:
         m.post_message = posted.append
         self._press(m, "tab")
         self._press(m, "space", " ")
-        self._press(m, "tab")
+        self._press(m, "shift+tab")
         self._press(m, "2", "2")
         self._press(m, "enter")
         assert len(posted) == 1
@@ -315,3 +316,107 @@ class TestHelpCoversEveryBinding:
         text = HelpOverlay().render_text(200).plain
         assert re.search(r"\^N\s+Rename agent", text)
         assert re.search(r"\^R\s+Cycle focal repo", text)
+
+
+class TestNamedBy:
+    """The dialog's "Named by" toggle (#542): auto-naming on or off, name kept or changed.
+
+    An agent renamed in place: the rows are New name and Named by.
+    """
+
+    _press = staticmethod(TestEditing._press)
+
+    def _modal(self, source):
+        m = RenameAgentModal(id="m")
+        m.show(session_id="sid-1", name="alpha", existing_names={"alpha"}, name_source=source)
+        posted = []
+        m.post_message = posted.append
+        return m, posted
+
+    @pytest.mark.parametrize("source, by_overcode", [
+        ("default", True), ("auto", True), ("human", False), ("parent", False), (None, False),
+    ])
+    def test_opens_on_the_agents_source(self, source, by_overcode):
+        m, _ = self._modal(source)
+        assert m.by_overcode is by_overcode
+        assert "Named by" in m.render().plain
+
+    def test_handing_the_name_to_overcode_keeps_the_name(self):
+        m, posted = self._modal("human")
+        self._press(m, "tab")
+        self._press(m, "space", " ")
+        assert m.error() is None  # same name, new source
+        self._press(m, "enter")
+        assert [(p.new_name, p.name_source) for p in posted] == [("alpha", "auto")]
+
+    def test_typing_a_name_makes_it_yours(self):
+        m, posted = self._modal("auto")
+        self._press(m, "2", "2")
+        assert m.by_overcode is False
+        self._press(m, "enter")
+        assert [(p.new_name, p.name_source) for p in posted] == [("alpha2", "human")]
+
+    def test_a_typed_name_can_still_go_to_overcode(self):
+        m, posted = self._modal("human")
+        self._press(m, "2", "2")
+        self._press(m, "up")
+        self._press(m, "space", " ")
+        assert m.field == "source" and m.by_overcode
+        self._press(m, "enter")
+        assert [(p.new_name, p.name_source) for p in posted] == [("alpha2", "auto")]
+
+
+class TestNameSourceActions:
+    """Palette: "Let overcode name it" / "Keep this name" (rename --auto / --lock)."""
+
+    def _app(self, remote=False):
+        from overcode.tui_actions.dialogs import DialogsMixin
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        tui = MagicMock()
+        widget = MagicMock(spec=SessionSummary)
+        widget.session = SimpleNamespace(name="alpha", id="sid-1")
+        tui.focused = widget
+        tui._is_remote = lambda s: remote
+        tui._set_name_source = lambda s, src: DialogsMixin._set_name_source(tui, s, src)
+        return tui, SessionActionsMixin
+
+    @pytest.mark.parametrize("action, source", [
+        ("action_name_by_overcode", "auto"), ("action_keep_name", "human"),
+    ])
+    def test_sets_the_source(self, action, source):
+        tui, mixin = self._app()
+        tui._set_focused_name_source = lambda src: mixin._set_focused_name_source(tui, src)
+        getattr(mixin, action)(tui)
+        tui.session_manager.update_session.assert_called_once_with("sid-1", name_source=source)
+        tui.refresh_sessions.assert_called_once()
+
+    def test_remote_agent(self):
+        tui, mixin = self._app(remote=True)
+        mixin._set_focused_name_source(tui, "auto")
+        assert "rename alpha --auto" in tui.notify.call_args[0][0]
+        tui.session_manager.update_session.assert_not_called()
+
+    def test_in_the_palette(self):
+        from overcode.command_palette import COMMANDS
+        titles = {c.action: c.title for c in COMMANDS}
+        assert titles["name_by_overcode"] == "Let overcode name it"
+        assert titles["keep_name"] == "Keep this name"
+
+
+class TestRenameWorkerSetsTheSource:
+
+    def test_a_rename_by_a_person_is_locked(self):
+        from overcode.tui import SupervisorTUI
+
+        tui = MagicMock()
+        tui.tmux_session = "agents"
+        tui.call_from_thread = lambda fn, *a, **kw: fn(*a, **kw)
+        tui.session_manager.get_session.return_value = SimpleNamespace(name="beta")
+        session = SimpleNamespace(id="sid-1", name="alpha")
+        launcher = MagicMock()
+        launcher.rename.return_value = True
+        with patch("overcode.launcher.AgentLauncher", return_value=launcher):
+            SupervisorTUI._run_rename(tui, session, "beta", False)
+        tui.session_manager.update_session.assert_called_once_with("sid-1", name_source="human")

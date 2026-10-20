@@ -151,12 +151,16 @@ def render_prompt(
     JSON) must still work rather than raise on every call. Substitution is
     a single pass, so braces inside the pane content are never expanded.
     """
-    values = {
+    return substitute(template, {
         "pane_content": pane_content,
         "lines": str(lines),
         "previous_summary": previous_summary or "(no previous summary)",
         "status": status,
-    }
+    })
+
+
+def substitute(template: str, values: Dict[str, str]) -> str:
+    """``render_prompt``'s safe one-pass substitution, for any placeholders."""
     out = []
     i = 0
     while True:
@@ -187,3 +191,72 @@ def unknown_placeholders(template: str) -> list:
 def missing_pane_content(template: str) -> bool:
     """True when the template never includes the terminal text."""
     return "{pane_content}" not in template
+
+
+# ── the namer's prompt (#542, docs/design/auto-naming.md §6) ──────────────
+#
+# ~/.overcode/prompts/naming.md holds the namer's full template once saved
+# (the naming lab, P3); until then this default. The naming advice
+# (naming.advice in config.yaml, then <repo>/.overcode/naming.md) goes in
+# at {advice}: it is the primary naming policy.
+
+NAMING_PLACEHOLDERS = ("advice", "brief", "prompts", "repo", "branch", "files",
+                       "current_name", "name_source", "fleet", "siblings", "max_length")
+
+DEFAULT_NAMING_PROMPT = """Name this coding agent. The name is how people and other agents refer to it.
+
+## Naming advice (follow it):
+{advice}
+
+## Its task:
+{brief}
+
+## Its first prompts:
+{prompts}
+
+## Where it works: repo {repo}, branch {branch}
+Files it edits most: {files}
+
+## Its name now: {current_name} ({name_source})
+
+## The other agents (a new name must differ from all of them):
+{fleet}
+
+## Its siblings (children of the same parent):
+{siblings}
+
+RULES:
+- At most {max_length} characters, lowercase kebab-case
+- Name the work, not the tool or the agent
+- Reply with JSON only: {"candidates": ["best", "next", "third"], "keep": false, "why": "..."}
+- "keep": true when the current name still fits"""
+
+DEFAULT_NAMING_ADVICE = "kebab-case, 1-3 words, what the work is about, not how."
+
+
+def naming_prompt_path() -> Path:
+    """Where the namer's prompt is saved: ~/.overcode/prompts/naming.md."""
+    return overcode_dir() / "prompts" / "naming.md"
+
+
+def load_naming_prompt() -> str:
+    """The namer's prompt: the saved file when there is a non-blank one, else the default."""
+    path = naming_prompt_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return DEFAULT_NAMING_PROMPT
+    return text if text.strip() else DEFAULT_NAMING_PROMPT
+
+
+def naming_prompt_customised() -> bool:
+    """True when a saved naming.md overrides the default prompt."""
+    return load_naming_prompt() != DEFAULT_NAMING_PROMPT
+
+
+def render_naming_prompt(template: str, **values: str) -> str:
+    """Fill the namer's placeholders (``NAMING_PLACEHOLDERS``); a missing one reads "(none)"."""
+    return substitute(template, {
+        name: (str(values[name]) if values.get(name) not in (None, "") else "(none)")
+        for name in NAMING_PLACEHOLDERS
+    })

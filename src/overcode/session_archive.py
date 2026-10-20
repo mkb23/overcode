@@ -57,7 +57,7 @@ except ImportError:
 # needs the identity fields; the rest is what history, the journey's
 # counts, the ledger backfill, a report and ``overcode export`` read.
 ARCHIVE_KEYS = (
-    "id", "name", "previous_names", "tmux_session", "tmux_window",
+    "id", "name", "previous_names", "name_source", "name_forced", "tmux_session", "tmux_window",
     "parent_session_id", "billing_code", "billing_seg", "billing_base_cost",
     "billing_base_tokens", "billing_base_usage", "tags",
     "backend", "model", "provider", "skill_profile", "wrapper",

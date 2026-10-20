@@ -613,6 +613,28 @@ class SessionActionsMixin:
             app_ref=self,
         )
 
+    def action_name_by_overcode(self) -> None:
+        """Hand the focused agent's name to overcode's auto-naming (palette, #542)."""
+        self._set_focused_name_source("auto")
+
+    def action_keep_name(self) -> None:
+        """Lock the focused agent's name: overcode never renames it (palette, #542)."""
+        self._set_focused_name_source("human")
+
+    def _set_focused_name_source(self, source: str) -> None:
+        """``overcode rename --auto`` / ``--lock`` for the focused agent."""
+        focused = _get_focused_session(self)
+        if not focused:
+            self.notify("No agent focused", severity="warning")
+            return
+        session = focused.session
+        if self._is_remote(session):
+            flag = "--auto" if source == "auto" else "--lock"
+            self.notify(f"Run overcode rename {session.name} {flag} on its own machine",
+                        severity="warning")
+            return
+        self._set_name_source(session, source)
+
     def action_rename_focused(self) -> None:
         """Open the rename dialog for the focused agent (Ctrl+N, #478)."""
         from ..tui_widgets import RenameAgentModal
@@ -645,6 +667,7 @@ class SessionActionsMixin:
             existing_names=existing_names,
             restarts=not renames_in_place(session.tmux_session or self.tmux_session, session.id),
             app_ref=self,
+            name_source=getattr(session, "name_source", None),
         )
 
     def action_set_billing_code(self) -> None:
