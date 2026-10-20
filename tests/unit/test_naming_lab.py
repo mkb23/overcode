@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 from rich.cells import cell_len
+from rich.text import Text
 
 from overcode import naming_lab as nl
 from overcode import summarizer_prompts as sp
@@ -481,8 +482,11 @@ class TestLabInTUI:
             lab = await self._open(pilot)
             await _until(pilot, lambda: lab._runner.calls >= 4)
             await app.workers.wait_for_complete()
+            assert "A all" in Text.from_markup(str(lab.border_subtitle)).plain
             await pilot.press("ctrl+n")              # the rows: A is a key, not text
             await pilot.press("A")
+            assert "y rename default/auto names" in str(lab.border_subtitle).replace("  ", " ")
+            assert "naming today" not in lab.render_rows().plain   # the question's whole line
             tip = lab.render_rows().plain
             assert "rename 2 agents (default/auto names) to their picks? y: yes" in tip
             assert "a: all 3, with 1 people named" in tip
@@ -490,6 +494,7 @@ class TestLabInTUI:
             assert lab._confirm_all is None and renames == []
             await pilot.press("A")
             await pilot.press("a")                   # every name: asks again
+            assert "rename ALL" in str(lab.border_subtitle)
             assert "rename ALL 3 agents, with 1 named by people" in lab.render_rows().plain
             assert renames == []
             await pilot.press("a")

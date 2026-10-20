@@ -246,15 +246,30 @@ class NamingLab(Vertical):
         self.editor.styles.height = editor_h
         self.rows_widget.styles.height = self._rows_h + 3
         self.border_title = self.TITLE
-        self.border_subtitle = ds.hints(*(
-            (k, what) for k, what in (
+        self._draw()
+
+    def _legend(self) -> str:
+        """The keys along the bottom border; while A asks, its answers."""
+        close = self._key("close").replace("Esc", "esc")
+        if self._confirm_all == "ask":
+            keys = (("y", "rename default/auto names"), ("a", "all names…"), (close, "cancel"))
+        elif self._confirm_all == "all":
+            keys = (("a", "rename ALL, names people chose too"), (close, "cancel"))
+        else:
+            keys = [
                 (self._key("save"), "save"), (self._key("switch_view"), "live/archived"),
                 (self._key("switch_text"), "advice/prompt"), (self._key("pin"), "pin A"),
-                (self._key("switch_focus"), "rows"), (self._key("revert"), "revert"),
-                (self._key("load_default"), "default"),
-                (self._key("close").replace("Esc", "esc"), "close"),
-            ) if k))
-        self._draw()
+                (self._key("switch_focus"), "rows"), (self._key("apply"), "rename"),
+                (self._key("apply_all"), "all"), (self._key("revert"), "revert"),
+                (self._key("load_default"), "default"), (close, "close"),
+            ]
+            # A narrow lab drops the keys least needed first: they stay in the help
+            for least in ("default", "revert", "pin A"):
+                if cell_len(Text.from_markup(ds.hints(*((k, w) for k, w in keys if k))).plain) \
+                        <= self._inner_width - 2:
+                    break
+                keys = [(k, w) for k, w in keys if w != least]
+        return ds.hints(*((k, what) for k, what in keys if k))
 
     @staticmethod
     def _key(action: str) -> str:
@@ -543,6 +558,7 @@ class NamingLab(Vertical):
             return
         head.update(self.render_head())
         rows.update(self.render_rows())
+        self.border_subtitle = self._legend()
 
     def render_head(self) -> Text:
         w = self._inner_width
@@ -650,7 +666,9 @@ class NamingLab(Vertical):
             t.append_text(self._row(agent, picks_b[i], picks_a[i] if picks_a else None,
                                     clash.get(agent.id), i == self.selected, name_w, pick_w, w))
         t.append("\n")
-        t.append_text(ds.tip(w, self._tip_line(picks_b), self._cost()))
+        # A's question gets the whole line: its y / a must not be cropped
+        cost = Text("") if self._confirm_all is not None else self._cost()
+        t.append_text(ds.tip(w, self._tip_line(picks_b), cost))
         return t
 
     def _cost(self) -> Text:
