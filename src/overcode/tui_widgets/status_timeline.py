@@ -15,13 +15,13 @@ from .. import swarm_history
 from ..presence_logger import read_presence_history
 from ..settings import get_agent_history_path, get_swarm_history_path
 from ..status_constants import WORKFLOW_ASCII, emoji_or_ascii
+from ..status_theme import SWARM_LIGHTS, active_theme
 from ..status_history import read_agent_status_history
 from ..config import get_timeline_config
 from ..tui_helpers import (
     presence_state_to_char,
     get_presence_color,
     agent_status_to_char,
-    get_agent_timeline_color,
     truncate_name,
     build_timeline_slots,
 )
@@ -57,8 +57,9 @@ def read_swarm_data(tmux_session: str, hours: float) -> dict:
     return swarm_history.read_swarm_history(get_swarm_history_path(tmux_session), hours)
 
 
-# Light -> the strip's colour (design §5: 🟠 > 🟢 > 🟡)
-STRIP_COLOURS = {"orange": "orange1", "green": "green", "yellow": "yellow", "idle": "grey50"}
+# A strip's slot takes its light's colour in the active status theme
+# (design §5: 🟠 > 🟢 > 🟡); idle is drawn dimmer than the at-rest light
+STRIP_IDLE = "grey50"
 
 Strip = Tuple[str, str, list]  # (marker, title, points)
 
@@ -233,6 +234,10 @@ class StatusTimeline(Static):
         content = Text()
         now = datetime.now()
         width = self.timeline_width
+        theme = active_theme()
+        # The heartbeat start's glyph, two cells as the slot pair it fills
+        heartbeat = theme.glyph("heartbeat")
+        heartbeat += " " * (2 - cell_len(heartbeat))
 
         # Calculate baseline slot position if baseline > 0
         try:
@@ -323,11 +328,11 @@ class StatusTimeline(Static):
                         status = slot_states[i]
                         if status == "heartbeat_start":
                             # 💚 is 2 cells wide — skip next slot to keep alignment
-                            content.append("💚")
+                            content.append(heartbeat, style=theme.colour("heartbeat"))
                             skip_next = True
                         else:
                             char = agent_status_to_char(status)
-                            color = get_agent_timeline_color(status)
+                            color = theme.colour_for(status)
                             content.append(char, style=color)
                         total_slots += 1
                         if is_green_status(status):
@@ -394,6 +399,7 @@ class StatusTimeline(Static):
             return False
         strips = swarm_strips(sid, self._swarm_histories, sid in self.swarm_expanded)
         emoji_free = self._emoji_free()
+        theme = active_theme()
         for marker, title, points in strips:
             label = _fit(_strip_label(marker, title, emoji_free), label_w)
             content.append(f"  {label} ", style="dim cyan")
@@ -407,8 +413,10 @@ class StatusTimeline(Static):
                     content.append(glyph if glyph.strip() else "▁", style="bold red underline")
                 elif slot.light is None:
                     content.append(glyph, style="dim")
+                elif slot.light == "idle":
+                    content.append(glyph, style=STRIP_IDLE)
                 else:
-                    content.append(glyph, style=STRIP_COLOURS[slot.light])
+                    content.append(glyph, style=theme.colour(SWARM_LIGHTS[slot.light]))
             peak = swarm_history.peak_live(points)
             content.append(f" ↑{peak:<3}"[:5], style="dim")
             content.append("\n")

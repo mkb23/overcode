@@ -3,6 +3,7 @@
 from typing import Optional
 
 from ..status_constants import WORKFLOW_ASCII, WORKFLOW_GLYPH
+from ..swarm_view import count_glyph
 from ..tui_helpers import format_duration
 from .context import ColumnContext, ColumnOutput
 
@@ -98,7 +99,8 @@ def render_child_count(ctx: ColumnContext) -> ColumnOutput:
 # are left out. ▶ working, 🟡 waiting on a background shell of its own
 # (its row's light), 🟠 waiting for approval (the light's glyph), ⚪ idle
 # teammates (at rest, listening), ✅ finished, ❌ failed: the same glyphs
-# and order as the summary lines under it (swarm_view.COUNT_GLYPHS).
+# and order as the summary lines under it (swarm_view.COUNT_GLYPHS). The
+# lit ones are drawn in the active status theme (swarm_view.count_glyph).
 # Workflow runs (🧩) come last. No total: the states partition it (the
 # hover says it).
 SUBAGENT_SEGMENTS = (("running", "▶"), ("yellow", "🟡"), ("waiting", "🟠"), ("idle", "⚪"),
@@ -128,8 +130,8 @@ def render_subagents(ctx: ColumnContext) -> ColumnOutput:
     # The fold marker in the leading space: → expands it into rows
     fold = ("▾" if ctx.swarm_expanded else "▸") if ctx.is_list_mode and not ctx.is_remote else " "
     text = f"{fold}{ctx.e('👥')}"
-    parts = [f"{ctx.e(glyph).rstrip()}{rollup[key]}"
-             for key, glyph in SUBAGENT_SEGMENTS if rollup.get(key)]
+    parts = [f"{count_glyph(key, ctx.emoji_free).rstrip()}{rollup[key]}"
+             for key, _ in SUBAGENT_SEGMENTS if rollup.get(key)]
     if rollup.get("workflows"):
         parts.append(f"{swarm_workflow_glyph(ctx)}{rollup['workflows']}")
     # Every count zero can't happen (a rollup has some work), but an odd
@@ -145,7 +147,7 @@ def render_subagents_plain(ctx: ColumnContext) -> Optional[str]:
     if not rollup:
         live = ctx.live_subagent_count
         return f"👥 ▶{live} subagents running" if live > 0 else None
-    parts = [f"{glyph}{rollup[key]}" for key, glyph in SUBAGENT_SEGMENTS if rollup.get(key)]
+    parts = [f"{count_glyph(key)}{rollup[key]}" for key, _ in SUBAGENT_SEGMENTS if rollup.get(key)]
     if rollup.get("workflows"):
         parts.append(f"{WORKFLOW_GLYPH}{rollup['workflows']}")
     total = rollup.get("total") or 0

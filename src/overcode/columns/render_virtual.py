@@ -32,7 +32,7 @@ from rich.cells import cell_len, set_cell_size
 
 from ..status_constants import RESULT_FAILURE, RESULT_SUCCESS, emoji_or_ascii
 from ..swarm_view import (
-    COUNT_GLYPHS, SwarmLine, light_glyph, marker_glyph, run_seconds,
+    SwarmLine, count_glyph, light_glyph, marker_glyph, run_seconds,
 )
 from ..tui_helpers import format_cost, format_duration, format_tokens
 from .context import ColumnContext, ColumnOutput
@@ -155,8 +155,7 @@ def hover_virtual_result(ctx: ColumnContext):
 
 
 def _count_text(ctx: ColumnContext, key: str, n: int) -> str:
-    glyph = dict(COUNT_GLYPHS)[key]
-    return f"{glyph}{n}" if key == "more" else f"{ctx.e(glyph).rstrip()}{n}"
+    return f"{count_glyph(key, ctx.emoji_free).rstrip()}{n}"
 
 
 def render_virtual_subagents(ctx: ColumnContext) -> ColumnOutput:

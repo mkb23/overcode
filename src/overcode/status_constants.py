@@ -90,8 +90,12 @@ PRESENCE_STATE_NAMES = {
 
 
 # =============================================================================
-# Status to Symbol+Color (single source of truth for emoji + color)
+# Status to Symbol+Color: the classic status theme
 # =============================================================================
+#
+# What a status shows comes from the active theme (status_theme.py,
+# get_status_symbol below); these tables are the classic one, for readers
+# that need a fixed glyph (the supervisor's prompt, old tests).
 
 STATUS_SYMBOLS = {
     STATUS_RUNNING: ("🟢", "green"),
@@ -111,7 +115,7 @@ STATUS_SYMBOLS = {
 
 
 # =============================================================================
-# Derived Emoji and Color Mappings
+# Derived Emoji and Color Mappings (classic theme)
 # =============================================================================
 
 STATUS_EMOJIS = {k: v[0] for k, v in STATUS_SYMBOLS.items()}
@@ -314,20 +318,24 @@ def get_permissiveness_emoji(mode: str, emoji_free: bool = False) -> str:
 
 
 def get_status_emoji(status: str, emoji_free: bool = False) -> str:
-    """Get emoji for an agent status."""
-    e = STATUS_EMOJIS.get(status, "❔")
-    return emoji_or_ascii(e, emoji_free)
+    """The status's glyph in the active status theme (status_theme.py)."""
+    return get_status_symbol(status, emoji_free)[0]
 
 
 def get_status_color(status: str) -> str:
-    """Get color name for an agent status."""
-    return STATUS_COLORS.get(status, "dim")
+    """The status's colour in the active status theme."""
+    from .status_theme import active_theme
+    return active_theme().colour_for(status)
 
 
 def get_status_symbol(status: str, emoji_free: bool = False) -> Tuple[str, str]:
-    """Get (emoji, color) tuple for an agent status."""
-    symbol, color = STATUS_SYMBOLS.get(status, ("❔", "dim"))
-    return (emoji_or_ascii(symbol, emoji_free), color)
+    """(glyph, colour) for a status in the active status theme.
+
+    STATUS_SYMBOLS above is the classic theme, kept for its readers; what
+    a status shows comes from here, so a theme change shows at once.
+    """
+    from .status_theme import active_theme
+    return active_theme().symbol_for(status, emoji_free)
 
 
 # =============================================================================
@@ -498,8 +506,9 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     # as nothing (the light says at rest). Drop after one release.
     "oversight":       ("", STATUS_COLOR_REST, ""),
 
+    "ask_question":    ("❓", STATUS_COLOR_ORANGE, "??"),  # AskUserQuestion open: a question is an approval
+
     # ---- RED (needs input) ----
-    "ask_question":    ("❓", STATUS_COLOR_RED,   "??"),   # AskUserQuestion open
     "awaiting_input":  ("📥", STATUS_COLOR_RED,   "In"),   # Stop fired, no obligations, awaiting next prompt
     "error":           ("❗", STATUS_COLOR_RED,   "!W"),    # API/hook error needing intervention
     "overdue":         ("⌛", STATUS_COLOR_RED,   "Od"),    # a wakeup well past its time never came
@@ -553,34 +562,37 @@ class LegendEntry:
     meaning: str
     statuses: Tuple[str, ...] = ()
     variant: bool = False  # a shade of a main light (heartbeat, error, asleep)
+    key: str = ""    # the light's name in a status theme (status_theme.py)
+    ascii: str = ""  # its emoji-free form, whatever glyph a theme gives it
 
 
 # The traffic light answers one question: what is the agent doing, and
 # does it need me?
 LIGHT_LEGEND: Tuple[LegendEntry, ...] = (
     LegendEntry("🟢", "Working", "generating or running a tool",
-                (STATUS_RUNNING,)),
+                (STATUS_RUNNING,), key="working", ascii="[R]"),
     LegendEntry("🟡", "Waiting on something automatic",
                 "background work, a wakeup or child agents will resume it",
-                (STATUS_BUSY_SLEEPING,)),
-    LegendEntry("🟠", "Needs approval", "a permission prompt or a plan to approve",
-                (STATUS_WAITING_APPROVAL,)),
+                (STATUS_BUSY_SLEEPING,), key="automatic", ascii="[S]"),
+    LegendEntry("🟠", "Needs approval", "a permission prompt, a question or a plan to approve",
+                (STATUS_WAITING_APPROVAL,), key="approval", ascii="[A]"),
     LegendEntry("🔴", "Needs input", "its turn is over and it waits for you",
-                (STATUS_WAITING_USER,)),
+                (STATUS_WAITING_USER,), key="input", ascii="[W]"),
     LegendEntry("⚪", "At rest", "a child agent that stopped, reported or not",
-                (STATUS_DONE, STATUS_WAITING_OVERSIGHT)),
+                (STATUS_DONE, STATUS_WAITING_OVERSIGHT), key="rest", ascii="[.]"),
     LegendEntry("❔", "Unknown", "starting up, or its status cannot be read",
-                (STATUS_UNKNOWN,)),
+                (STATUS_UNKNOWN,), key="unknown", ascii="[?]"),
     LegendEntry("⚫", "Gone", "the agent exited or its window is gone",
-                (STATUS_TERMINATED,)),
+                (STATUS_TERMINATED,), key="gone", ascii="[X]"),
     LegendEntry("💚", "Working (heartbeat)", "a heartbeat started this turn",
-                (STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START), variant=True),
+                (STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START), variant=True,
+                key="heartbeat", ascii="[H]"),
     LegendEntry("💛", "Waiting on a heartbeat", "a heartbeat will re-prompt it",
-                (STATUS_WAITING_HEARTBEAT,), variant=True),
+                (STATUS_WAITING_HEARTBEAT,), variant=True, key="heartbeat_waiting", ascii="[h]"),
     LegendEntry("🟣", "Error", "an API or hook error needs attention",
-                (STATUS_ERROR,), variant=True),
+                (STATUS_ERROR,), variant=True, key="error", ascii="[E]"),
     LegendEntry("💤", "Asleep", "paused by you, left out of stats",
-                (STATUS_ASLEEP,), variant=True),
+                (STATUS_ASLEEP,), variant=True, key="asleep", ascii="[Z]"),
 )
 
 
