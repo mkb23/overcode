@@ -1032,31 +1032,30 @@ class TestUpdateInterventionCounts:
                 daemon = SupervisorDaemon(tmux_session="test")
         return daemon
 
+    @staticmethod
+    def _session(sid, name, steers):
+        session = Mock()
+        session.name = name
+        session.id = sid
+        session.stats = Mock()
+        session.stats.steers_count = steers
+        return session
+
+    def _with_sessions(self, daemon, *sessions):
+        by_id = {s.id: s for s in sessions}
+        daemon.session_manager.get_session = Mock(side_effect=by_id.get)
+        daemon.session_manager.update_stats = Mock()
+
     def test_updates_steers_count_for_sessions(self, tmp_path, monkeypatch):
         """Should update steers_count for sessions with interventions."""
         daemon = self._make_daemon(tmp_path, monkeypatch)
-
-        # Mock count_interventions_from_log
         daemon.count_interventions_from_log = Mock(return_value={"agent-1": 3, "agent-2": 1})
+        self._with_sessions(daemon, self._session("id-1", "agent-1", 5),
+                            self._session("id-2", "agent-2", 2))
 
-        # Mock session_manager.list_sessions
-        mock_session_1 = Mock()
-        mock_session_1.name = "agent-1"
-        mock_session_1.id = "id-1"
-        mock_session_1.stats = Mock()
-        mock_session_1.stats.steers_count = 5
+        daemon.update_intervention_counts({"id-1": "agent-1", "id-2": "agent-2"})
 
-        mock_session_2 = Mock()
-        mock_session_2.name = "agent-2"
-        mock_session_2.id = "id-2"
-        mock_session_2.stats = Mock()
-        mock_session_2.stats.steers_count = 2
-
-        daemon.session_manager.list_sessions = Mock(return_value=[mock_session_1, mock_session_2])
-        daemon.session_manager.update_stats = Mock()
-
-        daemon.update_intervention_counts(["agent-1", "agent-2"])
-
+        daemon.count_interventions_from_log.assert_called_once_with(["agent-1", "agent-2"])
         daemon.session_manager.update_stats.assert_any_call("id-1", steers_count=8)
         daemon.session_manager.update_stats.assert_any_call("id-2", steers_count=3)
         assert daemon.session_manager.update_stats.call_count == 2
@@ -1067,7 +1066,7 @@ class TestUpdateInterventionCounts:
         daemon.count_interventions_from_log = Mock(return_value={})
         daemon.session_manager.update_stats = Mock()
 
-        daemon.update_intervention_counts(["agent-1"])
+        daemon.update_intervention_counts({"id-1": "agent-1"})
 
         daemon.session_manager.update_stats.assert_not_called()
 
@@ -1075,20 +1074,22 @@ class TestUpdateInterventionCounts:
         """Should skip intervention counts for sessions not found in session manager."""
         daemon = self._make_daemon(tmp_path, monkeypatch)
         daemon.count_interventions_from_log = Mock(return_value={"agent-1": 2, "unknown-agent": 1})
+        self._with_sessions(daemon, self._session("id-1", "agent-1", 0))
 
-        mock_session = Mock()
-        mock_session.name = "agent-1"
-        mock_session.id = "id-1"
-        mock_session.stats = Mock()
-        mock_session.stats.steers_count = 0
-
-        daemon.session_manager.list_sessions = Mock(return_value=[mock_session])
-        daemon.session_manager.update_stats = Mock()
-
-        daemon.update_intervention_counts(["agent-1", "unknown-agent"])
+        daemon.update_intervention_counts({"id-1": "agent-1", "id-gone": "unknown-agent"})
 
         # Only agent-1 should be updated, unknown-agent is not in session_manager
         daemon.session_manager.update_stats.assert_called_once_with("id-1", steers_count=2)
+
+    def test_credits_an_agent_renamed_meanwhile(self, tmp_path, monkeypatch):
+        """The log uses the name daemon claude was shown; the count follows the id."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.count_interventions_from_log = Mock(return_value={"old-name": 2})
+        self._with_sessions(daemon, self._session("id-1", "new-name", 1))
+
+        daemon.update_intervention_counts({"id-1": "old-name"})
+
+        daemon.session_manager.update_stats.assert_called_once_with("id-1", steers_count=3)
 
 
 class TestSyncDaemonClaudeTokens:

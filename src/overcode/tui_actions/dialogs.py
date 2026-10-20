@@ -194,8 +194,8 @@ class DialogsMixin:
     ) -> None:
         """Rename the agent the dialog was opened for (#478).
 
-        Off the UI thread: a live agent is stopped, waited on (seconds) and
-        relaunched, and the busy check captures its pane.
+        Off the UI thread: tmux and sessions.json writes, and for a pre-0.6
+        agent a stop, a wait (seconds) and a relaunch.
         """
         self._dialog_did_close()
         session = self.session_manager.get_session(message.session_id)
@@ -217,7 +217,7 @@ class DialogsMixin:
         old_name = session.name
         launcher = AgentLauncher(self.tmux_session, session_manager=self.session_manager)
         try:
-            renamed = launcher.rename(session, new_name, force=force)
+            renamed = launcher.rename(session, new_name, force=force, source="human")
         except AgentBusyError as e:
             state = "could not be checked" if e.status == "unknown" else f"is busy ({e.status})"
             self.call_from_thread(
@@ -246,8 +246,7 @@ class DialogsMixin:
             )
         else:
             self.call_from_thread(
-                self.notify,
-                f"tmux refused the rename; '{old_name}' was restarted under its old name",
+                self.notify, f"tmux refused the rename; '{old_name}' keeps its name",
                 severity="error",
             )
         self.call_from_thread(self.refresh_sessions)

@@ -36,6 +36,8 @@ from .backends.claude_code import (  # noqa: F401  (compat re-export)
 )
 from .backends.shell import SHELL_BACKEND
 from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
+from .tmux_utils import AGENT_ID_OPTION
+from .agent_identity import current_agent, env_agent_id, env_agent_name, in_agent
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
 from .launch_settings import NORMAL_PERMISSIONS_CONFLICT, LaunchArgs, resolve_launch_settings
@@ -420,24 +422,27 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         if normal_permissions and (skip_permissions or dangerously_skip_permissions):
             raise LaunchError(NORMAL_PERMISSIONS_CONFLICT)
 
-        # Auto-detect parent from env var if not explicitly set (#244)
+        # Auto-detect parent from env var if not explicitly set (#244): the
+        # calling agent by its id, which a rename keeps (agent_identity)
         parent_session = None
         if no_parent:
             if parent_name is not None:
                 raise LaunchError("--no-parent and --parent are mutually exclusive")
-            caller_name = os.environ.get("OVERCODE_SESSION_NAME")
-            if caller_name:
+            if in_agent():
                 from .overagent import OVERAGENT_BACKEND
-                caller = self._resolve(caller_name)
+                caller = current_agent(self.sessions)
                 if caller is None or caller.backend != OVERAGENT_BACKEND:
                     raise LaunchError("only the overagent may launch with --no-parent")
-        elif parent_name is None:
-            env_parent_name = os.environ.get("OVERCODE_SESSION_NAME")
-            if env_parent_name:
-                parent_name = env_parent_name
+        elif parent_name is None and in_agent():
+            parent_session = current_agent(self.sessions)
+            if not parent_session:
+                raise LaunchError(
+                    f"parent agent '{env_agent_name() or env_agent_id()}' not found")
+            parent_name = parent_session.name
 
         if parent_name:
-            parent_session = self._resolve(parent_name)
+            if parent_session is None:
+                parent_session = self._resolve(parent_name)
             if not parent_session:
                 raise LaunchError(f"parent agent '{parent_name}' not found")
 
@@ -535,7 +540,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         window_name = f"{name}-{session_id[:4]}"
 
         # Create window
-        window_name = self.tmux.create_window(window_name, start_directory)
+        window_name = self.tmux.create_window(
+            window_name, start_directory, options={AGENT_ID_OPTION: session_id})
         if window_name is None:
             raise LaunchError(f"failed to create tmux window '{name}'")
 
@@ -731,7 +737,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         # Create tmux window in source's directory
         session_id = str(uuid.uuid4())
         window_name = f"{name}-{session_id[:4]}"
-        window_name = self.tmux.create_window(window_name, source_session.start_directory)
+        window_name = self.tmux.create_window(
+            window_name, source_session.start_directory, options={AGENT_ID_OPTION: session_id})
         if window_name is None:
             raise LaunchError(f"failed to create tmux window '{name}'", "fork")
 
@@ -1051,7 +1058,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         # Reuse the overcode session id as the window suffix (stable across
         # revives, so listings stay consistent).
         window_label = f"{session.name}-{session.id[:4]}"
-        window_name = self.tmux.create_window(window_label, session.start_directory)
+        window_name = self.tmux.create_window(
+            window_label, session.start_directory, options={AGENT_ID_OPTION: session.id})
         if window_name is None:
             return False
 

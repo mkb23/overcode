@@ -227,7 +227,7 @@ def record_cli_invocation(argv: list[str], groups: frozenset[str] | set[str] = f
                           internal: frozenset[str] | set[str] = frozenset()) -> None:
     """One `cli` record per overcode command: the command path and flag names, never values.
 
-    Calls made by an agent overcode launched (OVERCODE_SESSION_NAME set)
+    Calls made by an agent overcode launched (``agent_identity.in_agent``)
     are only counted (count_agent_cli): they are never the person's own use,
     and an agent polling the CLI would otherwise fill the log.
     """
@@ -236,7 +236,9 @@ def record_cli_invocation(argv: list[str], groups: frozenset[str] | set[str] = f
     if (not cmd or words[0] in _INTERNAL_COMMANDS or words[0] in internal
             or any(w.startswith("_") for w in words) or not recording_enabled()):
         return
-    if os.environ.get("OVERCODE_SESSION_NAME"):
+    from .agent_identity import in_agent
+
+    if in_agent():
         count_agent_cli(cmd)
         return
     flags = sorted({a.split("=", 1)[0] for a in argv if a.startswith("-")})

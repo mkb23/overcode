@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .paths import agent_dir, agent_file, legacy_agent_file
+from .tmux_utils import AGENT_ID_OPTION
 from . import conversation_warning, hook_dialects
 from . import swarm
 
@@ -512,8 +513,9 @@ def _conversation_owner(session_id: str, session_name: str) -> str:
         from .claude_pid import is_session_id_owned_by_others
         from .session_manager import SessionManager
 
-        sessions = SessionManager(skip_git_detection=True).list_sessions()
-        own = next((s for s in sessions if s.name == session_name), None)
+        sm = SessionManager(skip_git_detection=True)
+        sessions = sm.list_sessions()
+        own = _own_session(sm, session_name)
         if own is None or not is_session_id_owned_by_others(session_id, own.id, sessions):
             return ""
         for s in sessions:
@@ -524,31 +526,34 @@ def _conversation_owner(session_id: str, session_name: str) -> str:
     return ""
 
 
-def _detect_from_tmux_pane() -> tuple[str | None, str | None]:
-    """Detect agent name and tmux session from the current tmux pane.
+def _detect_from_tmux_pane() -> tuple[str | None, str | None, str | None]:
+    """Detect the agent and tmux session from the current tmux pane.
 
     Fallback for when OVERCODE_SESSION_NAME / OVERCODE_TMUX_SESSION env vars
     are missing (e.g. after a manual session restart with --session-id).
 
-    Returns (session_name, tmux_session) or (None, None) if detection fails.
+    The agent's id is the window's ``@overcode_id`` option (set at launch,
+    kept by a rename). The name is parsed from the window name, for an
+    agent whose window predates the option and for its name-keyed files.
+
+    Returns (session_name, tmux_session, session_id); (None, None, None)
+    if detection fails, and session_id None when the window has no option.
     """
     pane_id = os.environ.get("TMUX_PANE")
     if not pane_id:
-        return None, None
+        return None, None, None
     try:
-        window_name = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", pane_id, "#{window_name}"],
+        out = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", pane_id,
+             f"#{{session_name}}\t#{{{AGENT_ID_OPTION}}}\t#{{window_name}}"],
             capture_output=True, text=True, timeout=2,
-        ).stdout.strip()
-        tmux_session = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", pane_id, "#{session_name}"],
-            capture_output=True, text=True, timeout=2,
-        ).stdout.strip()
+        ).stdout.rstrip("\n")
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None, None
+        return None, None, None
+    tmux_session, session_id, window_name = (out.split("\t", 2) + ["", ""])[:3]
 
     if not window_name or not tmux_session:
-        return None, None
+        return None, None, None
 
     # Strip oc-view- prefix from split-view session names
     if tmux_session.startswith("oc-view-"):
@@ -562,7 +567,19 @@ def _detect_from_tmux_pane() -> tuple[str | None, str | None]:
     else:
         session_name = window_name
 
-    return session_name, tmux_session
+    return session_name, tmux_session, session_id.strip() or None
+
+
+def _own_session(sm, session_name: str):
+    """This agent's record in ``sm``: by its id, else (pre-0.6) by ``session_name``.
+
+    The id survives a rename; the launch name in the environment does not
+    (auto-naming §1). An agent with no id is found by name, following renames.
+    """
+    sid = _agent_session_id()
+    if sid:
+        return sm.get_session(sid)
+    return sm.resolve_session_name(session_name)
 
 
 def _agent_session_id() -> str | None:
@@ -900,7 +917,7 @@ def _sync_agent_session_id(
         from .session_manager import SessionManager
 
         sm = SessionManager()
-        session = sm.get_session_by_name(session_name)
+        session = _own_session(sm, session_name)
         if not session:
             # Not an overcode-managed agent, or not registered yet. Nothing to
             # write, and retrying would never change that.
@@ -1159,12 +1176,13 @@ def handle_hook_event(backend: str | None = None) -> None:
     if not session_name or not tmux_session:
         # Fallback: detect from tmux pane when env vars are missing
         # (e.g. after manual session restart with --session-id)
-        session_name, tmux_session = _detect_from_tmux_pane()
+        session_name, tmux_session, window_sid = _detect_from_tmux_pane()
         if not session_name or not tmux_session:
             return
         if not _agent_session_id():
-            # The files are keyed by session id: find it from the record
-            sid = _session_id_for_name(tmux_session, session_name)
+            # The files are keyed by session id: the window's, else the
+            # record's (a window launched before @overcode_id)
+            sid = window_sid or _session_id_for_name(tmux_session, session_name)
             if sid:
                 os.environ["OVERCODE_SESSION_ID"] = sid
 
@@ -1380,7 +1398,7 @@ def handle_hook_event(backend: str | None = None) -> None:
         # Block prompt if agent has exceeded its cost budget (#246)
         state = _load_daemon_state(tmux_session)
         if state:
-            session_data = _find_session_in_state(state, session_name)
+            session_data = _find_session_in_state(state, session_name, _agent_session_id())
             if session_data and session_data.get("budget_exceeded", False):
                 budget = session_data.get("cost_budget_usd", 0)
                 cost = session_data.get("estimated_cost_usd", 0)

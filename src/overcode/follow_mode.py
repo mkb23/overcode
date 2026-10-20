@@ -67,10 +67,10 @@ def _check_session_terminated(
 def _lookup(
     sessions: SessionManager, name: str, session_id: Optional[str],
 ) -> Optional[Session]:
-    """The followed agent: by id when known (survives renames), else by name."""
+    """The followed agent: by id when known, else by name; both survive renames."""
     if session_id is not None:
         return sessions.get_session(session_id)
-    return sessions.get_session_by_name(name)
+    return sessions.resolve_session_name(name)
 
 
 def _current_identity(

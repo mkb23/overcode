@@ -63,8 +63,8 @@ def _store_oversight_policy(result, policy: str, timeout_seconds: float,
 
 def _launches_child(parent: Optional[str], no_parent: bool) -> bool:
     """Whether this launch makes a child (the launcher's rule: --parent, or run inside an agent)."""
-    import os
-    return parent is not None or (not no_parent and bool(os.environ.get("OVERCODE_SESSION_NAME")))
+    from ..agent_identity import in_agent
+    return parent is not None or (not no_parent and in_agent())
 
 
 def _resolve_child_settings(preset: Optional[str], is_child: bool, on_stuck: Optional[str],
@@ -485,7 +485,8 @@ def launch(
     if result:
         rprint(f"\n[green]✓[/green] Agent '[bold]{name}[/bold]' launched")
         if result.parent_session_id:
-            rprint(f"  Parent: {parent or os.environ.get('OVERCODE_SESSION_NAME', '?')}")
+            parent_record = launcher.sessions.get_session(result.parent_session_id)
+            rprint(f"  Parent: {parent_record.name if parent_record else parent or '?'}")
         if result.skill_profile:
             rprint(f"  Skills: {result.skill_profile}")
         if prompt:
@@ -744,7 +745,7 @@ def list_agents(
             status = "done"
             activity = "(completed)"
         elif use_daemon:
-            ds = daemon_state.get_session_by_name(sess.name)
+            ds = daemon_state.get_session(sess.id)
             if ds:
                 status = ds.current_status
                 activity = ds.current_activity
@@ -811,7 +812,7 @@ def list_agents(
     # published, else what this command's own detection read
     def _swarm_rollup(sess):
         if use_daemon:
-            ds = daemon_state.get_session_by_name(sess.name)
+            ds = daemon_state.get_session(sess.id)
             if ds is not None:
                 return ds.swarm_rollup if isinstance(ds.swarm_rollup, dict) else None
         getter = getattr(detector, "get_swarm_rollup", None)
@@ -830,7 +831,7 @@ def list_agents(
     def _quota(sess):
         if not use_daemon:
             return None
-        ds = daemon_state.get_session_by_name(sess.name)
+        ds = daemon_state.get_session(sess.id)
         quota = getattr(ds, "quota", None) if ds is not None else None
         return quota if isinstance(quota, dict) else None
 
@@ -868,7 +869,7 @@ def list_agents(
         oversight_deadline = None
         in_session_mode = ""
         if use_daemon:
-            ds = daemon_state.get_session_by_name(sess.name)
+            ds = daemon_state.get_session(sess.id)
             if ds:
                 oversight_deadline = ds.oversight_deadline
                 in_session_mode = ds.in_session_mode
@@ -1113,22 +1114,23 @@ def rename(
         bool,
         typer.Option(
             "--force",
-            help="Rename even if the agent is mid-turn (its turn is cancelled)",
+            help="Pre-0.6 agents only (they restart): rename even mid-turn. "
+                 "Ignored otherwise",
         ),
     ] = False,
     session: SessionOption = "agents",
 ):
     """Rename an agent, keeping its conversation and history.
 
-    A live agent is briefly stopped and resumed under the new name, in the
-    same window with the same conversation; it is told its new name with
-    its next prompt. The old name keeps working as an alias — `send`,
-    `follow`, `kill` and the rest reach the agent and say it was renamed —
-    so a parent or script still using it is not broken.
+    The agent keeps running, even mid-turn: its window and record take the
+    new name, and it is told its new name with its next prompt. The old
+    name keeps working as an alias — `send`, `follow`, `kill` and the rest
+    reach the agent and say it was renamed — so a parent or script still
+    using it is not broken.
 
-    An agent that is busy (working, or showing a permission dialog) is not
-    renamed, because stopping it would cancel its turn; wait until it is
-    idle, or pass --force. A terminated agent just has its record renamed.
+    An agent launched before 0.6 is briefly stopped and resumed under the
+    new name instead (same window, same conversation). While it is busy
+    that would cancel its turn, so it is refused unless --force.
 
     Examples:
         overcode rename bugfix-1 auth-refactor
@@ -1145,7 +1147,7 @@ def rename(
     name = sess.name
 
     try:
-        renamed = launcher.rename(sess, new_name, force=force)
+        renamed = launcher.rename(sess, new_name, force=force, source="human")
     except InvalidSessionNameError:
         rprint(
             f"[red]Error: '{new_name}' is not a valid agent name "
@@ -1179,8 +1181,8 @@ def rename(
             )
         else:
             rprint(
-                f"[red]Error: tmux refused to rename the window; '{name}' was "
-                "restarted under its old name.[/red]"
+                f"[red]Error: tmux refused to rename the window; '{name}' keeps "
+                "its name.[/red]"
             )
         raise typer.Exit(code=1)
 
@@ -1236,10 +1238,12 @@ def report(
     }
     report_file.write_text(json.dumps(report_data, indent=2))
 
-    # Also update session fields for persistence
+    # Also update session fields for persistence: the agent by its id (its
+    # launch name is stale after a rename), by name only for a pre-0.6 agent
+    from ..agent_identity import current_agent
     from ..session_manager import SessionManager
     sm = SessionManager()
-    session = find_agent(sm, agent_name)
+    session = current_agent(sm)
     if session:
         sm.update_session(
             session.id,
@@ -1483,7 +1487,7 @@ def show(
     daemon_state = get_monitor_daemon_state(session)
     daemon_session = None
     if daemon_state and not daemon_state.is_stale():
-        daemon_session = daemon_state.get_session_by_name(name)
+        daemon_session = daemon_state.get_session(sess.id)
 
     # Get status/activity from daemon state, falling back to detection
     pane_content_raw = ""

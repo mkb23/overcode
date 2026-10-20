@@ -1,29 +1,46 @@
 """
 Renaming an agent (#478).
 
-An agent's name is load-bearing for its tmux window and its session record
-(and the ``OVERCODE_SESSION_NAME`` baked into its process). ``RenameMixin``
-is the part of ``AgentLauncher`` that stops a live agent, renames those and
-resumes it under the new name. It uses the launcher's ``tmux``,
-``sessions``, ``tmux_session``, ``backend_for``, ``_send_graceful_exit`` and
-``_send_launch_for_session``.
+An agent is its session id (auto-naming §1): its files live in its own
+directory (``agents/<id>/``, quality review item 35), its window carries
+``@overcode_id``, and everything that runs inside it finds it by
+``OVERCODE_SESSION_ID``. Renaming a live agent therefore renames its tmux
+window and its record and leaves it a notice; it keeps running. An agent
+launched before per-agent directories looks itself up by the
+``OVERCODE_SESSION_NAME`` baked into its process, so it is stopped and
+resumed under the new name, as every rename used to be.
 
-The agent's files are not renamed: they live in its own directory, keyed by
-its session id (``agents/<id>/``, quality review item 35).
+``RenameMixin`` is the part of ``AgentLauncher`` that does this. It uses the
+launcher's ``tmux``, ``sessions``, ``tmux_session``, ``backend_for``,
+``_send_graceful_exit`` and ``_send_launch_for_session``.
 """
+
+from typing import Optional
 
 from .exceptions import AgentBusyError
 from .session_manager import Session
 from .status_constants import GREEN_STATUSES, STATUS_WAITING_APPROVAL
+from .tmux_utils import AGENT_ID_OPTION
+
+
+def renames_in_place(tmux_session: str, session_id: str) -> bool:
+    """Whether a rename of this agent leaves it running (see module docstring).
+
+    Every launch since per-agent directories creates ``agents/<id>/`` and
+    puts ``OVERCODE_SESSION_ID`` in the agent's environment.
+    """
+    from .paths import agent_dir
+
+    return agent_dir(tmux_session, session_id).is_dir()
 
 
 class RenameMixin:
     """Rename a live or stopped agent (see module docstring)."""
 
-    # Renaming a live agent stops and resumes it. In these statuses that
+    # Renaming a pre-0.6 agent stops and resumes it. In these statuses that
     # would cut into work — it is acting, or a permission dialog is open
-    # (which the exit gesture would answer) — so rename refuses without
-    # force (#478).
+    # (which the exit gesture would answer) — so that rename refuses
+    # without force (#478).
     RENAME_BUSY_STATUSES = GREEN_STATUSES | {STATUS_WAITING_APPROVAL}
 
     # Names overcode treats specially: the supervisor excludes an agent
@@ -58,37 +75,38 @@ class RenameMixin:
         new_name: str,
         *,
         force: bool = False,
+        source: Optional[str] = None,
         graceful_exit_wait: float = 3.0,
     ) -> bool:
         """Rename an agent, preserving its conversation and telemetry (#478).
 
-        An agent's name is load-bearing: the tmux window name, the files
-        keyed by it (hook state and event log, which the running process
-        writes under the ``OVERCODE_SESSION_NAME`` baked into it, and the
-        ``overcode report`` file), and the session record. Renaming therefore
-        stops a live agent, rekeys all of those, and relaunches it in place —
-        same window, same conversation (resume, not fresh) — under the new
-        name. The old name stays on the record as an alias
-        (``previous_names``), so anyone still using it reaches the agent with
-        a notice, and the agent is told its new name with its next prompt.
+        The window becomes ``<new_name>-<id4>``, the record takes the new
+        name (the old one stays on it as an alias, ``previous_names``, so
+        anyone still using it reaches the agent with a notice), and the
+        agent is told its new name with its next prompt. A live agent keeps
+        running: its process finds itself by id (auto-naming §1).
 
-        A busy agent (``RENAME_BUSY_STATUSES``) is refused unless ``force``:
-        the stop would cancel its turn and kill whatever it was running, and
-        the resumed agent would not pick the task back up.
+        An agent launched before per-agent directories finds itself by the
+        name in its environment, so it is stopped and resumed in place under
+        the new name (``_rename_with_restart``); ``force`` applies only to
+        it. Elsewhere ``force`` is accepted and ignored.
+
+        ``source`` says who chose the name (``human``, ``auto``, ...). It is
+        not stored yet.
 
         Failure leaves the agent as it was: if the window rename fails, or a
-        concurrent rename takes ``new_name`` first, everything is put back
-        and the agent is relaunched under its old name.
+        concurrent rename takes ``new_name`` first, the window keeps (or
+        gets back) its old name.
 
         Returns:
             True if the rename completed. False if tmux refused the window
-            rename (agent restored under its old name), or if the relaunch
-            under the new name could not be sent (the rename itself stands;
-            ``restart`` picks it up).
+            rename (nothing changed), or, for a restarted agent, if the
+            relaunch under the new name could not be sent (the rename
+            itself stands; ``restart`` picks it up).
 
         Raises:
             InvalidSessionNameError: ``new_name`` fails the name pattern.
-            AgentBusyError: the agent is busy and ``force`` is False.
+            AgentBusyError: a pre-0.6 agent is busy and ``force`` is False.
             ValueError: ``new_name`` is taken, reserved, or unchanged.
         """
         from .launcher import validate_session_name
@@ -106,13 +124,53 @@ class RenameMixin:
 
         # The agent lives in its own tmux session, which need not be the one
         # this launcher was built for (the CLI's --session default): its
-        # window, its hook files and the relaunch all belong to that one.
+        # window and its files belong to that one.
         owner = self.for_agent(session)
         if owner is not self:
             return owner.rename(
-                session, new_name, force=force, graceful_exit_wait=graceful_exit_wait,
+                session, new_name, force=force, source=source,
+                graceful_exit_wait=graceful_exit_wait,
             )
+        if not renames_in_place(self.tmux_session, session.id):
+            return self._rename_with_restart(
+                session, new_name, force=force, graceful_exit_wait=graceful_exit_wait)
 
+        old_name = session.name
+        old_window = session.tmux_window
+        new_window = f"{new_name}-{session.id[:4]}"
+        window_exists = self.tmux.window_exists(old_window)
+        if window_exists:
+            if not self.tmux.rename_window(old_window, new_window):
+                return False
+            # Kept by rename-window; set for a window launched before it
+            self.tmux.set_window_option(new_window, AGENT_ID_OPTION, session.id)
+
+        # Locked duplicate check + write: a concurrent rename of another
+        # agent to `new_name` cannot slip between check and update.
+        if not self.sessions.rename_session(
+            session.id, new_name, tmux_window=new_window
+        ):
+            if window_exists:
+                self.tmux.rename_window(new_window, old_window)
+            raise ValueError(f"an agent named '{new_name}' already exists")
+
+        self._write_rename_notice(session, old_name, new_name)
+        self._drop_name_keyed_files(old_name)  # an older overcode's leftovers
+        return True
+
+    def _rename_with_restart(
+        self, session: Session, new_name: str, *, force: bool, graceful_exit_wait: float,
+    ) -> bool:
+        """Rename an agent launched before per-agent directories (see ``rename``).
+
+        Its process carries the old name as its identity, so a live one is
+        stopped, renamed, and relaunched in place — same window, same
+        conversation (resume, not fresh). A busy one
+        (``RENAME_BUSY_STATUSES``) is refused unless ``force``: the stop
+        would cancel its turn and kill whatever it was running, and the
+        resumed agent would not pick the task back up. On failure the agent
+        is relaunched under its old name.
+        """
         old_name = session.name
         old_window = session.tmux_window
         window_exists = self.tmux.window_exists(old_window)
@@ -137,10 +195,8 @@ class RenameMixin:
             self._send_launch_for_session(session, old_window, fresh=False)
             return False
 
-        # Locked duplicate check + write: a concurrent rename of another
-        # agent to `new_name` cannot slip between check and update. The
-        # agent's files are in its own directory (agents/<id>/, item 35),
-        # keyed by its id, so nothing on disk moves.
+        # Locked duplicate check + write; the relaunch and the rename notice
+        # move the agent into its own directory (agents/<id>/, item 35).
         if not self.sessions.rename_session(
             session.id, new_name, tmux_window=new_window
         ):
@@ -184,7 +240,7 @@ class RenameMixin:
 
         Delivered as prompt context by the UserPromptSubmit hook
         (``hook_handler._emit_rename_notice``), so it costs no extra turn;
-        its resumed conversation otherwise still calls it ``old_name``.
+        its conversation otherwise still calls it ``old_name``.
         Written in the agent's own directory, created here if it has none
         yet (an agent launched before them moves to it with this rename).
         """

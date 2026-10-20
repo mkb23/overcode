@@ -300,7 +300,7 @@ class TestPollForReport:
     def test_returns_0_on_success_report(self):
         mock_sessions = MagicMock()
         mock_session = MagicMock()
-        mock_sessions.get_session_by_name.return_value = mock_session
+        mock_sessions.resolve_session_name.return_value = mock_session
 
         report = {"status": "success"}
 
@@ -315,7 +315,7 @@ class TestPollForReport:
 
     def test_returns_1_on_failure_report(self):
         mock_sessions = MagicMock()
-        mock_sessions.get_session_by_name.return_value = MagicMock()
+        mock_sessions.resolve_session_name.return_value = MagicMock()
 
         report = {"status": "failure", "reason": "tests failed"}
 
@@ -330,7 +330,7 @@ class TestPollForReport:
 
     def test_returns_2_on_timeout(self):
         mock_sessions = MagicMock()
-        mock_sessions.get_session_by_name.return_value = MagicMock()
+        mock_sessions.resolve_session_name.return_value = MagicMock()
 
         # First time() sets deadline, second time() checks against it
         times = iter([
@@ -356,7 +356,7 @@ class TestPollForReport:
 
         session = MagicMock(oversight_deadline=(datetime.now() - timedelta(seconds=1)).isoformat())
         mock_sessions = MagicMock()
-        mock_sessions.get_session_by_name.return_value = session
+        mock_sessions.resolve_session_name.return_value = session
 
         with patch("overcode.follow_mode._check_report", return_value=None), \
                 patch("overcode.follow_mode._check_session_terminated", return_value=False), \
@@ -388,7 +388,7 @@ class TestPollForReport:
                 session = MagicMock(oversight_deadline=stamp(due), oversight_deadline_at=deadline_at)
                 assert session.oversight_deadline == "2026-11-01T01:10:00"
                 mock_sessions = MagicMock()
-                mock_sessions.get_session_by_name.return_value = session
+                mock_sessions.resolve_session_name.return_value = session
                 reports = iter([None, {"status": "success"}])
                 with patch("overcode.follow_mode._check_report", side_effect=lambda *a: next(reports)), \
                         patch("overcode.follow_mode._check_session_terminated", return_value=False), \
@@ -407,7 +407,7 @@ class TestPollForReport:
 
     def test_returns_1_on_terminated(self):
         mock_sessions = MagicMock()
-        mock_sessions.get_session_by_name.return_value = MagicMock()
+        mock_sessions.resolve_session_name.return_value = MagicMock()
 
         with patch("overcode.follow_mode._check_report", return_value=None):
             with patch("overcode.follow_mode._check_session_terminated", return_value=True):
@@ -422,7 +422,7 @@ class TestPollForReport:
 
     def test_streams_output_while_waiting(self, capsys):
         mock_sessions = MagicMock()
-        mock_sessions.get_session_by_name.return_value = MagicMock()
+        mock_sessions.resolve_session_name.return_value = MagicMock()
 
         call_count = [0]
 

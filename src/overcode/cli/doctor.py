@@ -270,7 +270,8 @@ def doctor(
         from ..session_manager import SessionManager
         sm = SessionManager()
         for r in broken:
-            sess = sm.get_session_by_name(r.name)
+            sess = (sm.get_session(r.session_id) if r.session_id
+                    else sm.resolve_session_name(r.name))
             if sess is None:
                 rprint(f"  [yellow]skip {r.name} — session vanished[/yellow]")
                 continue

@@ -13,9 +13,9 @@ import pytest
 from overcode.tui_widgets.rename_agent_modal import RenameAgentModal
 
 
-def _modal(name="alpha", taken=("alpha", "beta")) -> RenameAgentModal:
+def _modal(name="alpha", taken=("alpha", "beta"), restarts=True) -> RenameAgentModal:
     m = RenameAgentModal(id="m")
-    m.show(session_id="sid-1", name=name, existing_names=set(taken))
+    m.show(session_id="sid-1", name=name, existing_names=set(taken), restarts=restarts)
     return m
 
 
@@ -72,6 +72,14 @@ class TestEditing:
         self._press(m, "tab")
         self._press(m, "g", "g")
         assert m.value == "alphag"
+
+    def test_an_agent_renamed_in_place_has_no_force_row(self):
+        m = _modal(restarts=False)
+        self._press(m, "tab")
+        self._press(m, "g", "g")
+        assert (m.selected_index, m.force, m.value) == (0, False, "alphag")
+        shown = str(m.render())
+        assert "Force" not in shown and "keeps running" in shown
 
     def test_enter_with_a_valid_name_posts_the_request(self):
         m = _modal()
@@ -169,7 +177,7 @@ class TestAction:
         tui.query_one.assert_not_called()
 
     def test_opens_the_modal_for_the_focused_agent(self):
-        tui, mixin = self._tui(SimpleNamespace(name="alpha", id="sid-1"))
+        tui, mixin = self._tui(SimpleNamespace(name="alpha", id="sid-1", tmux_session="agents"))
         tui.session_manager.list_sessions.return_value = [
             SimpleNamespace(name="alpha"), SimpleNamespace(name="beta"),
         ]
@@ -179,7 +187,17 @@ class TestAction:
         assert kwargs["session_id"] == "sid-1"
         assert kwargs["name"] == "alpha"
         assert kwargs["existing_names"] == {"alpha", "beta"}
+        assert kwargs["restarts"] is True  # no agent dir: launched before 0.6
         tui._dialog_will_open.assert_called_once()
+
+    def test_an_agent_with_its_own_directory_renames_in_place(self):
+        from overcode.paths import agent_dir
+
+        agent_dir("agents", "sid-1").mkdir(parents=True)
+        tui, mixin = self._tui(SimpleNamespace(name="alpha", id="sid-1", tmux_session="agents"))
+        tui.session_manager.list_sessions.return_value = []
+        mixin.action_rename_focused(tui)
+        assert tui.query_one.return_value.show.call_args.kwargs["restarts"] is False
 
 
 class TestRenameWorker:
@@ -201,7 +219,7 @@ class TestRenameWorker:
             launcher.rename.return_value = outcome
         with patch("overcode.launcher.AgentLauncher", return_value=launcher):
             SupervisorTUI._run_rename(tui, session, "beta", force)
-        launcher.rename.assert_called_once_with(session, "beta", force=force)
+        launcher.rename.assert_called_once_with(session, "beta", force=force, source="human")
         return tui
 
     @staticmethod
@@ -227,7 +245,7 @@ class TestRenameWorker:
 
     def test_refused_window_rename(self):
         text, severity = self._said(self._run(False, name_after="alpha"))
-        assert "restarted under its old name" in text and severity == "error"
+        assert "keeps its name" in text and severity == "error"
 
     def test_relaunch_failure_after_the_rename(self):
         text, severity = self._said(self._run(False, name_after="beta"))

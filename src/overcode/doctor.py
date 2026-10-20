@@ -99,6 +99,7 @@ class AgentHealth:
     verdict: str
     details: str
     data_findings: List[Finding] = field(default_factory=list)
+    session_id: str = ""  # the agent, should it be renamed while inspected
 
     @property
     def ok(self) -> bool:
@@ -626,6 +627,7 @@ def inspect_agent(
     """
     base = dict(
         name=session.name,
+        session_id=session.id,
         tmux_window=session.tmux_window,
         launcher_version=session.launcher_version or "",
     )

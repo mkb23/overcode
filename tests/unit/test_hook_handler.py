@@ -105,10 +105,22 @@ class TestAgentDirectory:
         session = sm.create_session(name="my-agent", tmux_session="agents",
                                     tmux_window="my-agent-abcd", command=["claude"])
         with patch("overcode.hook_handler._detect_from_tmux_pane",
-                   return_value=("my-agent", "agents")), \
+                   return_value=("my-agent", "agents", None)), \
                 patch("sys.stdin.read", return_value=json.dumps({"hook_event_name": "Stop"})):
             handle_hook_event()
         own = state / "agents" / "agents" / session.id / "hook_state.json"
+        assert json.loads(own.read_text())["event"] == "Stop"
+
+    def test_pane_fallback_prefers_the_window_option(self, state, monkeypatch):
+        """@overcode_id names the agent even when the window name says otherwise."""
+        monkeypatch.delenv("OVERCODE_SESSION_ID")
+        monkeypatch.delenv("OVERCODE_SESSION_NAME", raising=False)
+        monkeypatch.delenv("OVERCODE_TMUX_SESSION", raising=False)
+        with patch("overcode.hook_handler._detect_from_tmux_pane",
+                   return_value=("unparseable", "agents", "sid-from-window")), \
+                patch("sys.stdin.read", return_value=json.dumps({"hook_event_name": "Stop"})):
+            handle_hook_event()
+        own = state / "agents" / "agents" / "sid-from-window" / "hook_state.json"
         assert json.loads(own.read_text())["event"] == "Stop"
 
 

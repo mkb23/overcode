@@ -635,12 +635,15 @@ class SessionActionsMixin:
         except NoMatches:
             self.notify("Rename modal not found", severity="error")
             return
+        from ..rename import renames_in_place
+
         existing_names = {s.name for s in self.session_manager.list_sessions()}
         self._dialog_will_open()
         modal.show(
             session_id=session.id,
             name=session.name,
             existing_names=existing_names,
+            restarts=not renames_in_place(session.tmux_session or self.tmux_session, session.id),
             app_ref=self,
         )
 

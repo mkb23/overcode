@@ -2,8 +2,10 @@
 
 - SessionManager: the old name becomes an alias (``previous_names``) that
   ``resolve_session_name`` follows; an alias belongs to one agent at a time.
-- AgentLauncher.rename on MockTmux: the busy guard, what moves, what is left
-  behind, what is sent to the window, and every failure path's rollback.
+- AgentLauncher.rename on MockTmux: a 0.6+ agent is renamed in place (no
+  exit, no relaunch, busy or not); a pre-0.6 agent is restarted under the new
+  name, with the busy guard, what moves, what is left behind, what is sent to
+  the window, and every failure path's rollback.
 - AgentLauncher.rename and ``rename_tmux_window`` on a *real* tmux server
   (isolated socket): libtmux's ``Server.cmd`` does not raise on a tmux error
   and a bare ``session:name`` target prefix-matches, which MockTmux cannot
@@ -156,15 +158,154 @@ class TestAliases:
 # ── AgentLauncher.rename (MockTmux) ─────────────────────────────────
 
 
-class TestLauncherRename:
+def _launcher(tmp_path, status="waiting_user", legacy=False):
+    """A launcher on MockTmux. ``legacy``: its launches look pre-0.6 (no agent dir)."""
+    tm = TmuxManager("agents", tmux=MockTmux())
+    sm = _sm(tmp_path)
+    launcher = AgentLauncher("agents", tm, sm)
+    launcher._live_status = lambda session: status
+    if legacy:
+        real_launch = launcher.launch
+
+        def launch_without_agent_dir(**kw):
+            from overcode.paths import agent_dir
+
+            session = real_launch(**kw)
+            shutil.rmtree(agent_dir("agents", session.id))
+            return session
+
+        launcher.launch = launch_without_agent_dir
+    return launcher, sm
+
+
+class TestRenameInPlace:
+    """A 0.6+ agent finds itself by id, so it keeps running (auto-naming §1)."""
+
+    @pytest.mark.parametrize("status", ["running", "waiting_approval", "waiting_user"])
+    def test_a_live_agent_is_renamed_without_exit_or_relaunch(self, tmp_path, status):
+        launcher, sm = _launcher(tmp_path, status=status)
+        launcher._live_status = MagicMock(side_effect=AssertionError("no busy check"))
+        launcher.sleep = MagicMock(side_effect=AssertionError("no wait"))
+        sess = launcher.launch(name="alpha")
+        sent_before = list(launcher.tmux.client.sent_keys)
+
+        assert launcher.rename(sess, "beta") is True
+
+        assert launcher.tmux.client.sent_keys == sent_before  # no exit gesture, no relaunch
+        renamed = sm.get_session(sess.id)
+        assert renamed.name == "beta" and renamed.previous_names == ["alpha"]
+        new_window = f"beta-{sess.id[:4]}"
+        assert renamed.tmux_window == new_window
+        windows = [w["name"] for w in launcher.tmux.list_windows()]
+        assert new_window in windows and sess.tmux_window not in windows
+
+    def test_force_and_source_are_accepted(self, tmp_path):
+        launcher, sm = _launcher(tmp_path, status="running")
+        sess = launcher.launch(name="alpha")
+        assert launcher.rename(sess, "beta", force=True, source="auto") is True
+        assert sm.get_session(sess.id).name == "beta"
+
+    def test_the_window_carries_the_agent_id(self, tmp_path):
+        from overcode.tmux_utils import AGENT_ID_OPTION
+
+        launcher, _ = _launcher(tmp_path)
+        sess = launcher.launch(name="alpha")
+        options = launcher.tmux.client.window_options
+        assert options[("agents", sess.tmux_window)][AGENT_ID_OPTION] == sess.id
+
+        launcher.rename(sess, "beta")
+        assert options[("agents", f"beta-{sess.id[:4]}")][AGENT_ID_OPTION] == sess.id
+
+    def test_the_agent_gets_a_note_and_keeps_its_files(self, tmp_path):
+        from overcode.child_lifecycle import read_report
+        from overcode.hook_handler import get_rename_notice_path
+        from overcode.paths import agent_file
+
+        launcher, _ = _launcher(tmp_path)
+        sess = launcher.launch(name="alpha")
+        agent_file("agents", sess.id, "report").write_text('{"status": "success"}')
+
+        assert launcher.rename(sess, "beta") is True
+
+        note = get_rename_notice_path("agents", "beta", sess.id).read_text()
+        assert "renamed from 'alpha' to 'beta'" in note
+        assert read_report("agents", "beta", sess.id) == {"status": "success"}
+
+    def test_window_rename_refused_changes_nothing(self, tmp_path):
+        launcher, sm = _launcher(tmp_path)
+        sess = launcher.launch(name="alpha")
+        launcher.tmux.rename_window = lambda old, new: False
+
+        assert launcher.rename(sess, "beta") is False
+
+        unchanged = sm.get_session(sess.id)
+        assert unchanged.name == "alpha" and unchanged.previous_names == []
+        assert unchanged.tmux_window == sess.tmux_window
+
+    def test_losing_the_race_renames_the_window_back(self, tmp_path):
+        launcher, sm = _launcher(tmp_path)
+        sess = launcher.launch(name="alpha")
+        other = launcher.launch(name="other")
+        real_rename = sm.rename_session
+
+        def someone_else_wins(session_id, new_name, **fields):
+            real_rename(other.id, new_name)
+            return real_rename(session_id, new_name, **fields)
+
+        sm.rename_session = someone_else_wins
+        sent_before = list(launcher.tmux.client.sent_keys)
+
+        with pytest.raises(ValueError, match="already exists"):
+            launcher.rename(sess, "beta")
+
+        assert sm.get_session(sess.id).name == "alpha"
+        assert sess.tmux_window in [w["name"] for w in launcher.tmux.list_windows()]
+        assert launcher.tmux.client.sent_keys == sent_before
+
+    def test_dead_agent_has_its_record_renamed(self, tmp_path):
+        launcher, sm = _launcher(tmp_path)
+        sess = launcher.launch(name="alpha")
+        launcher.tmux.kill_window(sess.tmux_window)
+
+        assert launcher.rename(sess, "beta") is True
+
+        assert sm.get_session(sess.id).tmux_window == f"beta-{sess.id[:4]}"
+
+    def test_agent_in_another_tmux_session_is_renamed_there(self, tmp_path):
+        """The launcher's own session is only the CLI's --session default."""
+        from overcode.paths import agent_file
+
+        mock = MockTmux()
+        sm = _sm(tmp_path)
+        other = AgentLauncher("work", TmuxManager("work", tmux=mock), sm)
+        sess = other.launch(name="alpha")
+        agent_file("work", sess.id, "hook_state").write_text('{"event": "Stop"}')
+
+        launcher = AgentLauncher("agents", TmuxManager("agents", tmux=mock), sm)
+        assert launcher.rename(sess, "beta") is True
+
+        assert f"beta-{sess.id[:4]}" in mock.sessions["work"]
+        assert agent_file("work", sess.id, "hook_state").exists()
+        assert agent_file("work", sess.id, "rename_notice").exists()
+        assert not (tmp_path / "agents" / "agents").exists()
+
+    @pytest.mark.parametrize("bad, match", [
+        ("daemon_claude", "reserved"),
+        ("alpha", "already called"),
+    ])
+    def test_reserved_or_unchanged_names_are_refused(self, tmp_path, bad, match):
+        launcher, _ = _launcher(tmp_path)
+        sess = launcher.launch(name="alpha")
+        with pytest.raises(ValueError, match=match):
+            launcher.rename(sess, bad)
+
+
+class TestLegacyRestartRename:
+    """A pre-0.6 agent (no agent dir) finds itself by name: stopped and resumed."""
 
     @staticmethod
     def _launcher(tmp_path, status="waiting_user"):
-        tm = TmuxManager("agents", tmux=MockTmux())
-        sm = _sm(tmp_path)
-        launcher = AgentLauncher("agents", tm, sm)
-        launcher._live_status = lambda session: status
-        return launcher, sm
+        return _launcher(tmp_path, status=status, legacy=True)
 
     @staticmethod
     def _sent(launcher):
@@ -199,21 +340,6 @@ class TestLauncherRename:
         assert "OVERCODE_SESSION_NAME=beta" in keys
         assert "--resume" in keys  # same conversation, not a fresh one
         assert sm.get_session(sess.id).stats.current_task == "Renamed from alpha"
-
-    def test_the_agents_files_stay_in_its_directory(self, tmp_path):
-        """Item 35: files are keyed by session id, so nothing moves."""
-        from overcode.child_lifecycle import hook_stopped, read_report
-        from overcode.paths import agent_file
-
-        launcher, _ = self._launcher(tmp_path)
-        sess = launcher.launch(name="alpha")
-        agent_file("agents", sess.id, "hook_state").write_text('{"event": "Stop"}')
-        agent_file("agents", sess.id, "report").write_text('{"status": "success"}')
-
-        assert launcher.rename(sess, "beta", graceful_exit_wait=0) is True
-
-        assert hook_stopped("agents", "beta", sess.id)
-        assert read_report("agents", "beta", sess.id) == {"status": "success"}
 
     def test_leftover_files_under_the_new_name_are_not_inherited(self, tmp_path):
         """A stale report_<new>.json would mark the renamed agent done."""
@@ -346,36 +472,6 @@ class TestLauncherRename:
         relaunch = [k for k in self._sent(launcher)[sent_before:] if "OVERCODE_SESSION_NAME" in k[2]]
         assert relaunch and "OVERCODE_SESSION_NAME=alpha" in relaunch[-1][2]
 
-    def test_agent_in_another_tmux_session_is_renamed_there(self, tmp_path):
-        """The launcher's own session is only the CLI's --session default."""
-        mock = MockTmux()
-        sm = _sm(tmp_path)
-        other = AgentLauncher("work", TmuxManager("work", tmux=mock), sm)
-        other._live_status = lambda session: "waiting_user"
-        sess = other.launch(name="alpha")
-        from overcode.paths import agent_file
-        agent_file("work", sess.id, "hook_state").write_text('{"event": "Stop"}')
-
-        launcher = AgentLauncher("agents", TmuxManager("agents", tmux=mock), sm)
-        with patch.object(AgentLauncher, "_live_status", lambda self, s: "waiting_user"):
-            assert launcher.rename(sess, "beta", graceful_exit_wait=0) is True
-
-        assert f"beta-{sess.id[:4]}" in mock.sessions["work"]
-        assert agent_file("work", sess.id, "hook_state").exists()
-        assert agent_file("work", sess.id, "rename_notice").exists()
-        assert not (tmp_path / "agents" / "agents").exists()
-
-    @pytest.mark.parametrize("bad, match", [
-        ("daemon_claude", "reserved"),
-        ("alpha", "already called"),
-    ])
-    def test_reserved_or_unchanged_names_are_refused(self, tmp_path, bad, match):
-        launcher, _ = self._launcher(tmp_path)
-        sess = launcher.launch(name="alpha")
-        with pytest.raises(ValueError, match=match):
-            launcher.rename(sess, bad, graceful_exit_wait=0)
-
-
 # ── Real tmux ────────────────────────────────────────────────────────
 
 
@@ -431,6 +527,41 @@ class TestRealTmux:
             "agents", "missing", "x",
         ) is False
         assert TmuxManager("agents").rename_window("missing", "x") is False
+
+    def test_window_option_is_set_and_survives_a_rename(self, real_tmux):
+        from overcode.implementations import RealTmux
+        from overcode.tmux_utils import AGENT_ID_OPTION
+
+        real_tmux.cmd("new-window", "-d", "-t", "agents", "-n", "foo-1234", "sh")
+        tmux = RealTmux(socket_name=os.environ["OVERCODE_TMUX_SOCKET"])
+        assert tmux.set_window_option("agents", "foo-1234", AGENT_ID_OPTION, "sid-1") is True
+        assert tmux.set_window_option("agents", "missing", AGENT_ID_OPTION, "x") is False
+        assert tmux.rename_window("agents", "foo-1234", "bar-1234") is True
+        shown = real_tmux.cmd("display-message", "-p", "-t", "agents:=bar-1234",
+                              f"#{{{AGENT_ID_OPTION}}}").stdout
+        assert shown == ["sid-1"]
+
+    def test_end_to_end_in_place_on_a_real_server(self, real_tmux, tmp_path):
+        """A 0.6+ agent: window renamed and tagged, nothing typed into it."""
+        from overcode.paths import agent_dir
+        from overcode.tmux_utils import AGENT_ID_OPTION
+
+        sm = _sm(tmp_path)
+        sess = _new(sm, "alpha")
+        agent_dir("agents", sess.id).mkdir(parents=True)
+        real_tmux.cmd("new-window", "-d", "-t", "agents", "-n", sess.tmux_window, "sh")
+
+        launcher = AgentLauncher("agents", session_manager=sm)
+        launcher._send_graceful_exit = MagicMock(side_effect=AssertionError("no exit"))
+        launcher._send_launch_for_session = MagicMock(side_effect=AssertionError("no relaunch"))
+
+        assert launcher.rename(sess, "beta") is True
+
+        new_window = f"beta-{sess.id[:4]}"
+        assert new_window in _window_names(real_tmux)
+        shown = real_tmux.cmd("display-message", "-p", "-t", f"agents:={new_window}",
+                              f"#{{{AGENT_ID_OPTION}}}").stdout
+        assert shown == [sess.id]
 
     def test_end_to_end_on_a_real_server(self, real_tmux, tmp_path):
         """Window renamed exactly, a look-alike window untouched, files rekeyed,
@@ -590,6 +721,7 @@ class TestRenameNoticeHook:
         path = hook_handler.get_rename_notice_path("agents", "beta")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("[overcode] renamed from 'alpha' to 'beta'\n")
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "home"))  # config, inside an "agent"
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "beta")
         monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({
@@ -629,10 +761,10 @@ class TestFollowAcrossRename:
         from overcode.follow_mode import _check_session_terminated
 
         sm = MagicMock()
-        sm.get_session_by_name.return_value = None  # the old name is gone
+        sm.resolve_session_name.return_value = None  # no agent answers to the name
         sm.get_session.return_value = SimpleNamespace(status="running")
         assert _check_session_terminated(sm, "alpha", "sid-1") is False
-        assert _check_session_terminated(sm, "alpha") is True  # the old, name-only view
+        assert _check_session_terminated(sm, "alpha") is True  # the name-only view
 
     def test_poll_for_report_finds_the_report_under_the_new_name(self, capsys):
         from overcode import follow_mode

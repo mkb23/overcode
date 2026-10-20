@@ -17,6 +17,8 @@ class MockTmux:
         self._next_window = 1
         # Every new_window call's arguments, in order
         self.windows_created: List[Dict[str, Any]] = []
+        # (session, window) -> {option: value}, from set_window_option
+        self.window_options: Dict[tuple, Dict[str, str]] = {}
         # True: a wedged server, as a timed RealTmux reports it — the reads
         # whose empty answer means "gone" raise TmuxTimeoutError and
         # list_panes answers None.
@@ -67,6 +69,8 @@ class MockTmux:
             "session": session, "name": name, "command": command, "cwd": cwd,
             "wait_for_prompt": wait_for_prompt, "options": dict(options or {}),
         })
+        if options:
+            self.window_options[(session, name)] = dict(options)
         return name
 
     def kill_window(self, session: str, window: str) -> bool:
@@ -92,6 +96,15 @@ class MockTmux:
         if windows is None or window not in windows:
             return False
         windows[new_name] = windows.pop(window)
+        if (session, window) in self.window_options:
+            self.window_options[(session, new_name)] = self.window_options.pop((session, window))
+        return True
+
+    def set_window_option(self, session: str, window: str, option: str, value: str) -> bool:
+        """Record the option; False when the window does not exist."""
+        if window not in self.sessions.get(session, {}):
+            return False
+        self.window_options.setdefault((session, window), {})[option] = value
         return True
 
     def kill_session(self, session: str) -> bool:
