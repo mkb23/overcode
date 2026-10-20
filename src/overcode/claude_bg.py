@@ -193,6 +193,7 @@ class FleetAgent:
     name: str
     directory: Optional[str] = None
     conversations: FrozenSet[str] = frozenset()   # its own agent session ids
+    active: Optional[str] = None                  # ... the one it is in now
     foreign: FrozenSet[str] = frozenset()         # other conversations its hooks saw
     repo_name: Optional[str] = None
     branch: Optional[str] = None
@@ -420,6 +421,90 @@ def transcript_path(job: Mapping[str, Any]) -> Optional[Path]:
     return Path(os.path.expanduser(path))
 
 
+# ── An agent's own conversation in Claude's background worker ──────────
+
+# What ``/fork`` (copy this conversation into a background session and keep
+# working here) writes into the job; a continuation has none of them
+_FORK_FIELDS = ("forkSessionId", "forkSourceAlive", "forkBoundaryAt", "forkParentSessionId")
+# How much of a transcript's end is searched for its last message
+_TAIL_BYTES = 256 * 1024
+_SCAN_CHUNK = 1 << 20
+
+
+def _last_uuid(path: Path) -> Optional[str]:
+    """The ``uuid`` of the last record of ``path`` that has one, or None."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - _TAIL_BYTES))
+            tail = f.read()
+    except OSError:
+        return None
+    for line in reversed(tail.splitlines()):
+        if b'"uuid"' not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue  # the cut first line, or one mid-write
+        uuid = record.get("uuid") if isinstance(record, dict) else None
+        if isinstance(uuid, str) and uuid:
+            return uuid
+    return None
+
+
+def _holds(path: Path, needle: bytes) -> Optional[bool]:
+    """Whether ``path`` contains ``needle`` (read in chunks); None: unreadable."""
+    try:
+        with open(path, "rb") as f:
+            carry = b""
+            while True:
+                chunk = f.read(_SCAN_CHUNK)
+                if not chunk:
+                    return False
+                if needle in carry + chunk:
+                    return True
+                carry = chunk[-len(needle):]
+    except OSError:
+        return None
+
+
+def continues(job: Mapping[str, Any], agent_session_id: Optional[str]) -> Optional[bool]:
+    """Whether ``job`` is the agent's own conversation, moved into Claude's background worker.
+
+    Claude Code moves an interactive session's conversation into its
+    background daemon (a message from another device, Remote Control;
+    ``/background``): the job is seeded from the REPL
+    (``interactiveLineage: true``), gets a new ``sessionId`` and a
+    transcript that opens with a full copy of the conversation, and the
+    old transcript stops. Background work the agent starts is not that:
+    ``claude --bg`` and Agent background sessions have no interactive
+    lineage, and ``/fork`` (which keeps working here) records the fork
+    (``_FORK_FIELDS``). So: interactive lineage, no fork, and its
+    transcript holds the last message of ``agent_session_id``'s (the
+    agent's active conversation, beside it in the same project directory).
+    That last check also keeps a nested Claude's own ``/background`` out.
+
+    None when it can't be told yet (a transcript not written yet).
+    """
+    if not isinstance(job, Mapping) or job.get("interactiveLineage") is not True:
+        return False
+    if any(job.get(k) for k in _FORK_FIELDS):
+        return False
+    if not isinstance(agent_session_id, str) or not agent_session_id:
+        return None
+    if job.get("sessionId") == agent_session_id:
+        return True  # handed off under the same id
+    path = transcript_path(job)
+    if path is None:
+        return False
+    last = _last_uuid(path.with_name(f"{agent_session_id}.jsonl"))
+    if last is None:
+        return None
+    return _holds(path, f'"{last}"'.encode())
+
+
 # ── Rows ───────────────────────────────────────────────────────────────
 
 
@@ -440,6 +525,7 @@ def build_rows(
     keep_seconds: float,
     since: Optional[Dict[str, Tuple[tuple, float]]] = None,
     spend: Optional[Mapping[str, dict]] = None,
+    continued: FrozenSet[str] = frozenset(),
 ) -> Tuple[List[BgRow], Optional[float]]:
     """The fleet's background sessions as agent states, and when they next change.
 
@@ -448,6 +534,11 @@ def build_rows(
     state every time. ``spend`` is ``BgSpend.values`` (tokens, cost, model
     by session id). The deadline is the earliest time a finished row's
     ``keep_seconds`` runs out (None: no finished row on show).
+
+    A job that is its agent's own conversation gets no row: one of the
+    agent's conversations, or one ``continued`` lists (``continues``,
+    before the hook handler has adopted it). The agent's row is that
+    conversation, and its spend is the agent's.
     """
     from .clock import stamp
     from .monitor_daemon_state import SessionDaemonState
@@ -465,7 +556,7 @@ def build_rows(
         if not isinstance(sid, str) or not sid:
             continue
         match = attribute(job, agents)
-        if match is None:
+        if match is None or sid in match[0].conversations or sid in continued:
             continue
         light = job_light(job)
         if light.ended_at is not None:
@@ -701,6 +792,47 @@ class ClaudeBgSource:
         self._since: Dict[str, Tuple[tuple, float]] = {}
         self._built_for: Optional[Tuple[FleetAgent, ...]] = None
         self.builds = 0
+        # session id -> whether it is its agent's own conversation (``continues``)
+        self._continues: Dict[str, bool] = {}
+        self.continued: FrozenSet[str] = frozenset()
+
+    def owned(self) -> FrozenSet[str]:
+        """Every conversation that is an agent's own: billed as the agent's, never as a 🌙 row's."""
+        out = set(self.continued)
+        for agent in self.agents:
+            out |= agent.conversations
+        return frozenset(out)
+
+    def _find_continued(self) -> FrozenSet[str]:
+        """The jobs that are their agent's own conversation in Claude's background worker.
+
+        Asked once per job (``continues``; an answer it can't give yet is
+        asked again at the next rebuild); a job with no interactive
+        lineage costs nothing.
+        """
+        out = set()
+        live = set()
+        for job in self.scanner.jobs.values():
+            if not isinstance(job, dict) or job.get("interactiveLineage") is not True:
+                continue
+            sid = job.get("sessionId")
+            if not isinstance(sid, str) or not sid:
+                continue
+            live.add(sid)
+            known = self._continues.get(sid)
+            if known is None:
+                match = attribute(job, self.agents)
+                if match is None:
+                    continue
+                known = continues(job, match[0].active)
+                if known is None:
+                    continue
+                self._continues[sid] = known
+            if known:
+                out.add(sid)
+        for sid in [s for s in self._continues if s not in live]:
+            del self._continues[sid]
+        return frozenset(out)
 
     def ids(self) -> set:
         return {row.state.session_id for row in self.rows}
@@ -735,6 +867,7 @@ class ClaudeBgSource:
             # No fleet agent: no fleet repo, so nothing could be shown
             self.rows, self.deadline, self._built_for = [], None, None
             self._since.clear()
+            self.continued = frozenset()
             return
         jobs_moved = self.scanner.scan()
         stale = (jobs_moved or self._built_for != self.agents
@@ -745,14 +878,15 @@ class ClaudeBgSource:
             return  # the rows as built stand: nothing to read, nothing to rebuild
         self._built_for = self.agents
         keep = self.keep_seconds()
+        self.continued = self._find_continued()
         rows, deadline = build_rows(self.scanner.jobs, self.agents, wall_now, keep,
-                                    self._since, self.spend.values)
+                                    self._since, self.spend.values, self.continued)
         jobs_by_sid = {job.get("sessionId"): job for job in self.scanner.jobs.values()
                        if isinstance(job, dict) and isinstance(job.get("sessionId"), str)}
         wanted = row_reads(rows, jobs_by_sid, self.agents)
         if self.spend.sync(wanted, wall_now, stats_every):
             rows, deadline = build_rows(self.scanner.jobs, self.agents, wall_now, keep,
-                                        self._since, self.spend.values)
+                                        self._since, self.spend.values, self.continued)
         self.builds += 1
         self.rows, self.deadline = rows, deadline
 
@@ -797,6 +931,7 @@ def fleet_agents(sessions: Iterable[Any], foreign_of=None) -> List[FleetAgent]:
             conversations=frozenset(x for x in (list(getattr(s, "agent_session_ids", None) or ())
                                                 + [getattr(s, "active_agent_session_id", None)])
                                     if isinstance(x, str) and x),
+            active=getattr(s, "active_agent_session_id", None) or None,
             foreign=frozenset(k for k in (foreign or {}) if isinstance(k, str)),
             repo_name=getattr(s, "repo_name", None),
             branch=getattr(s, "branch", None),

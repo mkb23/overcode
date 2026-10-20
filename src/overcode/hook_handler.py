@@ -369,6 +369,9 @@ _FOREIGN_RECHECK_SECONDS = 30.0
 # Only the agent's own CLI may steer its status, obligations and swarm:
 #
 # * ``bg``       a registered Claude background session (``claude_bg``)
+# * ``continued`` the agent's own conversation moved into Claude's background
+#                worker (``claude_bg.continues``), or moved back to the CLI in
+#                its pane: this IS the agent
 # * ``nested``   a Claude the agent's own Claude started (``claude -p`` in
 #                its Bash tool inherits the agent's OVERCODE_* environment):
 #                its CLI process descends from the agent's
@@ -384,10 +387,11 @@ _FOREIGN_RECHECK_SECONDS = 30.0
 # no such id (codex, opencode, grok, hermes) is not placed: its foreign
 # events behave as they always have (#500).
 FOREIGN_BG = "bg"
+FOREIGN_CONTINUED = "continued"
 FOREIGN_NESTED = "nested"
 FOREIGN_OWN = "own"
 FOREIGN_UNPLACED = "unplaced"
-_SETTLED_KINDS = frozenset({FOREIGN_BG, FOREIGN_NESTED, FOREIGN_OWN})
+_SETTLED_KINDS = frozenset({FOREIGN_BG, FOREIGN_CONTINUED, FOREIGN_NESTED, FOREIGN_OWN})
 
 # The warning an agent carries when a conversation overcode never saw ran
 # under its name (``conversation_warning``; see that module)
@@ -436,12 +440,19 @@ def _descends_from(pid: int, ancestor: int) -> bool | None:
     return False
 
 
-def _place(entry: dict, cli_pid: int | None, agent_pid: int | None) -> str | None:
-    """How a foreign conversation's CLI relates to the agent's own (see FOREIGN_*)."""
+def _place(entry: dict, cli_pid: int | None, agent_pid: int | None,
+           pane_pid: int | None = None) -> str | None:
+    """How a foreign conversation's CLI relates to the agent's own (see FOREIGN_*).
+
+    ``pane_pid`` is the CLI in the agent's pane while its conversation runs
+    in Claude's background worker (``bg_worker`` in hook state).
+    """
     if entry.get("bg"):
-        return FOREIGN_BG
+        return FOREIGN_CONTINUED if entry.get("continues") else FOREIGN_BG
     if cli_pid is None:
         return None  # no process id to tell by: behave as before
+    if pane_pid is not None and cli_pid == pane_pid:
+        return FOREIGN_CONTINUED  # back from the worker to the agent's own pane
     if agent_pid is not None and cli_pid == agent_pid:
         return FOREIGN_OWN
     if agent_pid is None:
@@ -465,20 +476,30 @@ def _note_foreign_session(prev_state: dict, session_id: str, now: float,
     is the CLI that sent this event, compared with the agent's own
     (``cli_pid`` in its hook state).
     """
-    from .claude_bg import find_job
+    from .claude_bg import continues, find_job
 
     known = prev_state.get("foreign_sessions")
     foreign = dict(known) if isinstance(known, dict) else {}
     entry = dict(foreign.get(session_id) or {})
     due = now - float(entry.get("checked") or 0.0) >= _FOREIGN_RECHECK_SECONDS
-    if not entry.get("bg") and due:
+    job = None
+    if due and (not entry.get("bg") or "continues" not in entry):
         try:
-            entry["bg"] = find_job(session_id) is not None
+            job = find_job(session_id)
         except Exception:  # noqa: BLE001 — a hook must never fail the agent's turn
-            entry["bg"] = False
-    if entry.get("kind") not in _SETTLED_KINDS and (due or "kind" not in entry):
+            job = None
+        entry["bg"] = entry.get("bg") or job is not None
+    if job is not None and "continues" not in entry:
         try:
-            kind = _place(entry, cli_pid, _int_or_none(prev_state.get("cli_pid")))
+            continued = continues(job, prev_state.get("agent_session_id"))
+        except Exception:  # noqa: BLE001
+            continued = None
+        if continued is not None:
+            entry["continues"] = continued
+    if not _settled(entry) and (due or "kind" not in entry):
+        try:
+            kind = _place(entry, cli_pid, _int_or_none(prev_state.get("cli_pid")),
+                          _pane_pid(prev_state))
         except Exception:  # noqa: BLE001
             kind = None
         if kind is None:
@@ -496,6 +517,23 @@ def _note_foreign_session(prev_state: dict, session_id: str, now: float,
         for stale in newest[:-_MAX_FOREIGN_SESSIONS]:
             del foreign[stale]
     return foreign
+
+
+def _settled(entry: dict) -> bool:
+    """Whether a foreign conversation's placement is final.
+
+    A background session is not until it is known not to continue the
+    agent's own conversation (an entry written before that was asked).
+    """
+    kind = entry.get("kind")
+    return kind in _SETTLED_KINDS and not (kind == FOREIGN_BG
+                                           and entry.get("continues") is not False)
+
+
+def _pane_pid(state: dict) -> int | None:
+    """The CLI in the agent's pane while its conversation is in the background worker."""
+    note = state.get("bg_worker")
+    return _int_or_none(note.get("pane_pid")) if isinstance(note, dict) else None
 
 
 def _int_or_none(value) -> int | None:
@@ -1092,6 +1130,7 @@ def write_hook_state(
     prev_foreign: dict | None = None
     prev_cli_pid = None
     prev_warning = None
+    prev_bg_worker = None
     try:
         prev = prev_state if prev_state is not None else json.loads(state_path.read_text())
         prev_foreign = prev.get("foreign_sessions") if isinstance(
@@ -1106,6 +1145,7 @@ def write_hook_state(
         prev_swarm = prev.get("swarm")
         prev_cli_pid = prev.get("cli_pid")
         prev_warning = prev.get("conversation_warning")
+        prev_bg_worker = prev.get("bg_worker")
     except (json.JSONDecodeError, FileNotFoundError, OSError):
         pass
 
@@ -1172,6 +1212,8 @@ def write_hook_state(
         state["cli_pid"] = resolved_cli_pid
     if isinstance(prev_warning, dict):
         state["conversation_warning"] = prev_warning
+    if isinstance(prev_bg_worker, dict):
+        state["bg_worker"] = prev_bg_worker
 
     synced = synced_session_id or prev_synced_agent_session_id
     if synced:
@@ -1365,7 +1407,8 @@ def handle_hook_event(backend: str | None = None) -> None:
         foreign_known = prev_state.get("foreign_sessions")
         known = foreign_known.get(session_id) if (
             session_id and isinstance(foreign_known, dict)) else None
-        if isinstance(known, dict) and known.get("kind") in (FOREIGN_BG, FOREIGN_NESTED):
+        if isinstance(known, dict) and known.get("kind") in (FOREIGN_BG, FOREIGN_NESTED) \
+                and _settled(known):
             # A background session's or nested CLI's event: the record is not
             # asked (it could only refuse), the agent's own id stands
             effective_session_id = prev_state.get("agent_session_id") or None
@@ -1394,8 +1437,10 @@ def handle_hook_event(backend: str | None = None) -> None:
                 and session_id not in (prev_state.get("agent_session_ids") or [])):
             # Another conversation running under this agent's name: a nested
             # CLI, a Claude background session that inherited the agent's
-            # environment (/bg from its Claude), or the agent's own CLI in a
-            # conversation overcode never saw (_place). Noted, so the engine
+            # environment (/fork from its Claude), the agent's own
+            # conversation moved into Claude's background worker, or the
+            # agent's own CLI in a conversation overcode never saw (_place).
+            # Noted, so the engine
             # can nest a background session's row under this agent
             # (claude_bg.attribute).
             now = time.time()
@@ -1411,7 +1456,37 @@ def handle_hook_event(backend: str | None = None) -> None:
                         "kind": WARN_UNPLACED, "session_id": session_id, "at": now}
                 _write_state_file(_get_hook_state_path(tmux_session, session_name), quiet)
                 return
-            if kind == FOREIGN_OWN:
+            if kind == FOREIGN_CONTINUED and not entry.get("bg"):
+                # Back in the agent's pane: the worker no longer has it, and
+                # another agent's conversation is still only shared
+                prev_state = {k: v for k, v in prev_state.items() if k != "bg_worker"}
+                if "owner" not in entry:
+                    entry["owner"] = _conversation_owner(session_id, session_name)
+                if entry["owner"]:
+                    kind = FOREIGN_OWN
+            if kind == FOREIGN_CONTINUED:
+                # The agent's own conversation, moved into Claude's background
+                # worker (or from it back to the agent's pane): it IS the
+                # agent, so it steers and the record follows it, no warning
+                adopted, durable = _sync_agent_session_id(
+                    session_name, session_id, data.get("transcript_path"),
+                    event=event, source=data.get("source"), adopt=True,
+                )
+                if adopted == session_id:
+                    foreign.pop(session_id, None)
+                    effective_session_id = session_id
+                    if durable:
+                        synced_session_id = session_id
+                    pending_session_id = None if durable else session_id
+                prev_state = dict(prev_state, foreign_sessions=foreign)
+                if entry.get("bg"):
+                    pane = _pane_pid(prev_state) or _int_or_none(prev_state.get("cli_pid"))
+                    prev_state["bg_worker"] = {"session_id": session_id, "pane_pid": pane,
+                                               "at": now}
+                else:
+                    prev_state.pop("bg_worker", None)
+                own_event = effective_session_id == session_id
+            elif kind == FOREIGN_OWN:
                 # The agent's own CLI in a conversation overcode never saw
                 # (/resume into it): it IS the agent, so it steers, and the
                 # record follows it unless another agent owns that conversation
@@ -1443,6 +1518,10 @@ def handle_hook_event(backend: str | None = None) -> None:
                 # agent's own id (#500)
                 own_event = False
                 prev_state = dict(prev_state, foreign_sessions=foreign)
+
+        if own_event and cli_pid is not None and cli_pid == _pane_pid(prev_state):
+            # The CLI in the agent's pane drives its conversation again
+            prev_state = {k: v for k, v in prev_state.items() if k != "bg_worker"}
 
         # Write state file for status detection (snapshot) and append to the
         # event log (#448 — preserves bursts hidden by overwrite).

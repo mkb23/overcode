@@ -1481,6 +1481,14 @@ def get_session_stats(
     # than start_directory (e.g., when the directory doesn't exist or Claude
     # chooses a different project root).
     session_ids = conversation_order(interactions)
+    # Active session ID for context window after /clear (#116)
+    active_session_id = getattr(session, 'active_agent_session_id', None)
+    if (active_session_id and active_session_id not in session_ids
+            and active_session_id in (getattr(session, 'agent_session_ids', None) or ())):
+        # The conversation it is in now, though no prompt of it is in the
+        # history yet (one Claude moved into its background worker): the
+        # newest, so a copy of the earlier ones' history is left out
+        session_ids.append(active_session_id)
     sid_to_project: Dict[str, str] = {}
     for e in interactions:
         if e.session_id and e.project:
@@ -1489,8 +1497,6 @@ def get_session_stats(
     # the ones a later conversation may have been forked from
     began_before: List[Path] = []
 
-    # Active session ID for context window after /clear (#116)
-    active_session_id = getattr(session, 'active_agent_session_id', None)
 
     # Sum token usage and work times across session files
     total_input = 0
@@ -1852,6 +1858,10 @@ def get_session_window_token_usage(
     mtime_floor = _window_mtime_floor(since)
     aware = getattr(since, "tzinfo", None) is not None
     since_key = None if aware else datetime_key(since)
+    # The agent's transcripts so far: a later one that opens with a copy of
+    # their history (a fork, its conversation moved into Claude's background
+    # worker) does not count that copy again
+    began_before: List[Path] = []
     for sid in sids:
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
@@ -1863,8 +1873,14 @@ def get_session_window_token_usage(
         reads: List[dict] = []
         if st.st_mtime >= mtime_floor:
             reads.append(read_window_token_usage(session_file, since))
+            if since_key is not None and began_before:
+                copied = _transcripts.fork_prefix(session_file, began_before)
+                if copied:
+                    _take_off_prefix(reads[0], _transcripts.prefix_usage(
+                        session_file, copied, since_key))
         else:
             reads.append(empty_window())
+        began_before.append(session_file)
 
         # Include subagent files (parallel workflows, workflow agents),
         # skipping duplicate compaction/side-question logs that copy

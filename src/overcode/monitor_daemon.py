@@ -1241,7 +1241,8 @@ class MonitorDaemon:
             return 0
         try:
             return self.claude_bg_ledger.sync(source.rows, source.agents, ledger,
-                                              self.clock.time(), reread=source.read_spend_of)
+                                              self.clock.time(), reread=source.read_spend_of,
+                                              owned=source.owned())
         except Exception as e:  # the ledger must never stop the engine
             self.log.warn(f"background-session spend not billed: {e}")
             return 0

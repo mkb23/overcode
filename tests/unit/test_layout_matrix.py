@@ -265,3 +265,46 @@ async def test_layout_holds_in_every_status_theme(make_tui, width, preset, tmp_p
                     raise AssertionError(f"{preset}, {width} cols, {level}, "
                                          f"emoji-free {emoji_free}: {e}") from e
                 _shot(app, f"layout-{preset}-{width}-{level}-{'ascii' if emoji_free else 'emoji'}")
+
+
+class WorkerEngine(GridEngine):
+    """GridEngine with alpha's conversation in Claude's background worker:
+    its status detail carries the 🌙 badge, beside a tool and a 🔀."""
+
+    def snapshot_now(self):
+        snap = super().snapshot_now()
+        snap.agents["id-alpha"]["status_detail"] = {
+            "color": "color_green", "legacy_status": "running",
+            "badges": [{"kind": "tool"}, {"kind": "bg_worker", "label": "df7bb2f5"},
+                       {"kind": "conv_adopted", "label": "b08316a9"}]}
+        snap.agents["id-bravo"]["status_detail"] = {
+            "color": "color_rest", "legacy_status": "waiting_user",
+            "badges": [{"kind": "bg_worker", "label": "0f0f0f0f"}]}
+        return snap
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_layout_holds_with_the_background_worker_badge(make_tui, width):
+    engine = WorkerEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _open(pilot, engine)
+        seen = set()
+        for emoji_free in (False, True):
+            if emoji_free:
+                app.action_toggle_emoji_free()
+            for level in app.SUMMARY_LEVELS:
+                app._set_summary_level(level)
+                await _settle(pilot)
+                try:
+                    assert_layout_invariants(app)
+                except AssertionError as e:
+                    raise AssertionError(f"{width} cols, {level}, emoji-free {emoji_free}: "
+                                         f"{e}") from e
+                _shot(app, f"layout-worker-{width}-{level}-{emoji_free}")
+                bravo = next(w for w in app._get_widgets_in_session_order()
+                             if w.session.name == "bravo")
+                line = bravo.render().plain
+                seen |= {mark for mark in ("🌙", "Bw") if mark in line}
+        assert seen == {"🌙", "Bw"}

@@ -860,6 +860,70 @@ else the shortest directory path, then the name. A directory that holds the
 session still wins (rule 3 before rule 4). The row is `via: "repo"` and
 takes the agent's repo name, with no branch.
 
+**4. An agent's own conversation in Claude's background worker**
+(2026-10-20, Claude Code 2.1.304, live on the owner's fleet; `claude_bg.continues`,
+`hook_handler` `FOREIGN_CONTINUED`). Messaging an interactive session from
+another device (Remote Control), or `/background` (`/bg`), moves its
+conversation into Claude's daemon: a job with `template: "bg"`, `backend:
+"daemon"`, `interactiveLineage: true`, `bridgeSessionId`, `intent` (the
+message) and Claude's auto `name`; a new `sessionId` (= `resumeSessionId`)
+whose transcript is a full copy of the old one (every record's `uuid`,
+`message.id`, timestamp and usage, `sessionId` rewritten) plus the new
+turns, while the old transcript stops; the turns run in `claude bg-spare`
+under the daemon, which inherited the agent's OVERCODE_* environment and
+hooks (`respawnFlags` carry overcode's `--settings`). The agent's pane keeps
+its `claude` as a viewer. overcode filed the new id as foreign background
+work (`kind: bg`): the agent's light went stale and a 🌙 row flickered under
+it with the job's working/idle.
+
+- *Signals.* From the 2.1.304 binary: the job writer sets
+  `interactiveLineage: origin === "repl" ? true : undefined`, and the REPL
+  hand-off writes it `true`; `claude --bg` (origin `shell`) and Agent
+  background sessions don't. `/fork` ("copy this conversation into a new
+  background session and keep working here") also comes from the REPL but
+  records the fork: `forkSourceAlive`, `forkBoundaryAt`, `forkSessionId`,
+  `forkParentSessionId`. So a continuation is: interactive lineage, none
+  of the fork fields, and its transcript holds the last record `uuid` of the
+  agent's active conversation (its transcript beside the job's: one tail read
+  and one chunked byte search, about 1 ms on a 5 MB transcript; asked once
+  per job). The last check keeps a nested Claude's own `/background` out
+  (its history is not the agent's). Not used: process ancestry (the
+  daemon is spawned by whichever CLI needed it first, often the agent's, so
+  genuine background work descends from it too) and the worker's
+  environment (a nested Claude inherits OVERCODE_* as well).
+- *Hook handler.* A registered job is asked `continues` once (`foreign_sessions[sid].continues`);
+  `true` places it `continued`, which adopts the id like `own` (aged now,
+  record and `agent_session_ids` follow, `restart` resumes it) but with no
+  🔀 warning, and writes `bg_worker: {session_id, pane_pid, at}` into hook
+  state (`pane_pid`: the agent's CLI before the move). Its events then are
+  the agent's own (status, obligations, swarm; `cli_pid` is the worker).
+  Back to the pane: an own event from `pane_pid` drops the note (same id),
+  and a new conversation from `pane_pid` is placed `continued` too (no
+  warning). An entry already filed `kind: bg` without `continues` (written
+  before this) is placed again once.
+- *Engine.* `build_rows` gives no 🌙 row to a job whose `sessionId` is one
+  of its agent's conversations, nor to one `ClaudeBgSource` found to
+  continue its agent's active conversation (`FleetAgent.active`; once per
+  job), so there is no flash between the job appearing and its first hook
+  event. The ledger restates a segment opened for such a session (a 🌙 row
+  billed before this) to nothing with a `correction` row when its row goes,
+  instead of closing it at what it spent: the agent's own spend counts it.
+- *Spend.* The agent reads the new transcript as one of its own
+  conversations, after the one it copied: the fork dedup leaves the copy
+  out (`read_tree_stats`' `earlier`), so the history counts once and the new
+  turns once. The active conversation is read even before `history.jsonl`
+  lists a prompt of it. The burn-rate window (`get_session_window_token_usage`)
+  now leaves out a later conversation's copied prefix the same way; it read
+  every owned transcript whole, so any full copy counted twice in the window.
+- *The agent row* shows 🌙 (`Bw`; badge `bg_worker`) in its status detail,
+  beside the light, while `bg_worker` names the current conversation; the
+  hover says "running in Claude's background worker (Remote Control,
+  /background); still this agent".
+- Known gaps: an older Claude whose `/fork` recorded no fork fields would read
+  as a continuation if the agent had written nothing since the copy; a nested
+  Claude that resumed the agent's own conversation and then sent it to the
+  background reads as the agent.
+
 ---
 
 ## Phase 4 as built
