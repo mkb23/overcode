@@ -525,7 +525,11 @@ Choices where the design left room, or the data disagreed:
    (so a `keys:` entry naming it still works; nothing goes in
    `REMOVED_ACTIONS`). The swarm-detail cycle (§4.4's `v`) is on `f`
    (`cycle_swarm_detail`): `v` is the VSCode preset's ctrl+o, and `f` was
-   free in both presets. `off` (default: only what `→` opens), `groups`
+   free in both presets. *Since fold-keys (2026-10-20):* one tree model
+   over every row kind: `→` opens children and delegated work together,
+   then steps onto the first child row; `←` closes all of it, then moves
+   to the parent; `toggle_collapse_children` toggles the same
+   (tui-guide → Folding). `off` (default: only what `→` opens), `groups`
    (every agent whose rollup has live work: running, waiting, idle or a
    running workflow; it closes again when the work ends) and `needs_you`
    (agents whose rollup has a 🟠, with only the groups and phases holding
