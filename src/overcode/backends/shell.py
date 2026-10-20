@@ -70,6 +70,9 @@ SHELL_PATTERNS = StatusPatterns(
     # A shell reporting "command not found" is the user's typo, not a
     # failed agent spawn.
     spawn_failure_patterns=[],
+    # No question menu in its corpus
+    question_patterns=[],
+
     approval_patterns=[],
     error_patterns=[],
     permission_chrome_markers=[],

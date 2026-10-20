@@ -371,7 +371,8 @@ TURN_ENDS_WITHOUT_STOP_IDLE_PROMPT = Scenario(
 )
 
 # #536: Claude routes a question and a plan through PermissionRequest (seen
-# in live hook logs). A question is red (it needs an answer), a plan orange.
+# in live hook logs). A question is an approval (orange, its ❓ badge
+# tells it from a permission), as a plan is.
 ASK_USER_QUESTION = Scenario(
     "ask_user_question",
     steps=[
@@ -383,7 +384,7 @@ ASK_USER_QUESTION = Scenario(
         frame(20.05, claude_pane(body="⏺ User answered")),
         ev(22.0, "Stop"),
     ],
-    expect=[(0.0, 0.75, GREEN), (1.25, 19.75, RED), (20.25, 21.75, GREEN), (24.0, 30.0, RED)],
+    expect=[(0.0, 0.75, GREEN), (1.25, 19.75, ORANGE), (20.25, 21.75, GREEN), (24.0, 30.0, RED)],
 )
 
 # Under bypass permissions no PermissionRequest fires: PreToolUse, then the
@@ -399,7 +400,7 @@ ASK_USER_QUESTION_BYPASS = Scenario(
         frame(20.05, claude_pane(body="⏺ User answered")),
         ev(22.0, "Stop"),
     ],
-    expect=[(0.0, 0.75, GREEN), (1.25, 19.75, RED), (20.25, 21.75, GREEN), (24.0, 30.0, RED)],
+    expect=[(0.0, 0.75, GREEN), (1.25, 19.75, ORANGE), (20.25, 21.75, GREEN), (24.0, 30.0, RED)],
 )
 
 EXIT_PLAN_MODE = Scenario(

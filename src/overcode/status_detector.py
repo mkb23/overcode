@@ -190,6 +190,11 @@ class PollingStatusDetector:
         if result is not None:
             return result
 
+        # Phase 4b: a question menu waits on an answer, however the pane moves
+        if matches_any(last_few, self.patterns.question_patterns):
+            self._last_detect_phase[session.id] = "P4b:question"
+            return STATUS_WAITING_APPROVAL, "Question: waiting for your answer", content
+
         # Phase 5: Content changing = active work (#214, #216)
         # But if a user prompt is visible, the agent is waiting — content
         # changes from TUI refreshes or status-bar updates shouldn't override

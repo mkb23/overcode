@@ -93,6 +93,13 @@ class StatusPatterns:
         "tell claude what to do differently",  # Option 3 text
     ])
 
+    # A question menu (Claude's AskUserQuestion: "Enter to select ·
+    # ↑/↓ to navigate · Esc to cancel"): an approval, as the hook path
+    # says. Matched against the last few lines (lowercased).
+    question_patterns: List[str] = field(default_factory=lambda: [
+        "enter to select",
+    ])
+
     # Active work indicators - checked when content hasn't changed
     # These indicate Claude is busy even if the prompt appears visible.
     # Matched against the last few lines of output (lowercased).

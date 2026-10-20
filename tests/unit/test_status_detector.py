@@ -301,6 +301,20 @@ class TestApprovalDetection:
         )
 
 
+    def test_a_question_menu_is_an_approval(self):
+        """Claude's AskUserQuestion menu: orange, as the hook path says."""
+        pane = ("⏺ I need one answer first.\n\n☐ Approach\n\nWhich one?\n\n"
+                "❯ 1. This\n  2. That\n\nEnter to select · ↑/↓ to navigate · Esc to cancel")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+        for _ in range(2):  # changing or not, it waits on an answer
+            status, activity, _ = detector.detect_status(session)
+            assert (status, activity) == (STATUS_WAITING_APPROVAL, "Question: waiting for your answer")
+        from overcode.hook_status_detector import synthesize_status_detail_from_legacy
+        detail = synthesize_status_detail_from_legacy(status, activity)
+        assert [b.kind for b in detail.badges] == ["ask_question"]
+
 class TestStatusDetectorAutocomplete:
     """Test handling of autocomplete suggestions"""
 

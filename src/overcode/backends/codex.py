@@ -204,6 +204,9 @@ CODEX_PATTERNS = StatusPatterns(
     command_menu_pattern=NEVER,
 
     # codex has no plan-mode / "approve this plan" stage.
+    # No question menu in its corpus
+    question_patterns=[],
+
     approval_patterns=[NEVER],
 
     # UNVERIFIED: the only error-shaped capture (error_bad_model.txt) is a

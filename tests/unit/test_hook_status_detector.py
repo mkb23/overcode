@@ -1084,10 +1084,10 @@ class TestRules:
         ("dead shell", "Stop", {"dead_shell": True, "monitors": 1}, "dead_shell",
          None, None, STATUS_TERMINATED),
         ("question", "PermissionRequest", {"state": {"tool_name": "AskUserQuestion"}}, "question",
-         STATUS_COLOR_RED, "ask_question", STATUS_WAITING_USER),
+         STATUS_COLOR_ORANGE, "ask_question", STATUS_WAITING_APPROVAL),
         ("question, monitors do not lift it", "PermissionRequest",
          {"state": {"tool_name": "AskUserQuestion"}, "monitors": 1}, "question",
-         STATUS_COLOR_RED, "ask_question", STATUS_WAITING_USER),
+         STATUS_COLOR_ORANGE, "ask_question", STATUS_WAITING_APPROVAL),
         ("plan", "PermissionRequest", {"state": {"tool_name": "ExitPlanMode"}}, "base",
          STATUS_COLOR_ORANGE, "plan_approval", STATUS_WAITING_APPROVAL),
         ("answered permission", "PermissionRequest",
@@ -1178,7 +1178,7 @@ class TestRules:
         (STATUS_COLOR_ORANGE, "plan_approval", STATUS_WAITING_APPROVAL),
         (STATUS_COLOR_RED, "error", STATUS_ERROR),
         (STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
-        (STATUS_COLOR_RED, "ask_question", STATUS_WAITING_USER),
+        (STATUS_COLOR_ORANGE, "ask_question", STATUS_WAITING_APPROVAL),
         (STATUS_COLOR_RED, "overdue", STATUS_WAITING_USER),
     ])
     def test_legacy_table(self, color, lead, legacy):
