@@ -386,6 +386,33 @@ line is the daemon log (the `d` panel): `namer: auto-named 'a' → 'b'
 
 `overcode name suggest` is built (P2); the lab and `name lab` are P3.
 
+**Built (P3, branch naming-lab),** in `naming_lab.py` (UI-free: agents,
+runner, spend, stats), `tui_widgets/naming_lab.py` and `overcode name lab`.
+Differences from the text below:
+
+- The editor holds the **advice** (the policy, and what people tune);
+  `Ctrl+O` switches it to the whole `naming.md` template. The advice saves
+  to `~/.overcode/prompts/naming-advice.md`, a new file that stands in for
+  `naming.advice` (`naming_policy.user_advice`), so the lab never rewrites
+  config.yaml; a repo's `.overcode/naming.md` is still appended per agent.
+- Keys: `Ctrl+N` moves between the editor and the rows (Tab is tmux's pane
+  toggle in the split), `Ctrl+O` advice/prompt (`Ctrl+P` is forbidden by
+  the vscode preset). `Ctrl+D` is a priority binding, so the editor loses
+  delete-right on it (Delete still works).
+- A call is keyed by the prompt it renders, so a settled draft, a pinned A
+  and a draft you return to cost nothing. Inputs are read when the lab
+  opens or switches view, not polled.
+- Archived agents (the last 30; `--archived N` in the CLI) are checked
+  against each other, as if they were the fleet; one with no bundle has no
+  inputs and is shown, not run. `gather_inputs(files=)` reads a bundle member
+  (`bundle_files`).
+- Collisions are two agents getting the same pick (each pick is chosen alone
+  against current names, so a pick never equals another's current name).
+  Changed and mean length count the names the draft would leave: a locked
+  agent keeps its name.
+- Enter (twice) on a live row renames through the TUI's rename path with
+  `source="human"`; archived rows can't be applied.
+
 Opened from the palette as "Naming lab…". It is a TUI modal with the same
 skeleton as the summary prompt lab: an editor above, results below, and
 Ctrl+S save, Ctrl+R revert, Ctrl+L load the default, Esc to close (twice
@@ -423,7 +450,7 @@ overcode name lab --archived 50 --advice-file a.md --vs b.md --csv out.csv
 | P0 | Restartless rename: id-first identity, alias-aware lookups, `@overcode_id` window option | yes, rename gets better for everyone |
 | P1 | `name_source`, TUI marker, `--auto` / `--lock`, migration for old records; the policy check on parent-given names (2a), `name check` / `name policy` | yes |
 | P2 | Brief and prompt capture, daemon namer, triggers, choosing the name, notices, ledger spend | needs P0 and P1 |
-| P3 | Naming lab, `overcode name suggest` / `name lab` | needs P2 |
+| P3 | Naming lab, `overcode name suggest` / `name lab` (built) | needs P2 |
 | P4 | opencode notices (#533), parent notices, CLI name alignment (Claude `--name` / `/rename` / `custom-title`) | parallel |
 
 Tests:
