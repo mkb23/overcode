@@ -146,6 +146,12 @@ can't be fixed by renaming once both have spend.
   unwired; the auto-namer must also refresh the session name copies
   (the daemon pass does it within one housekeeping interval).
 - `overcode billing --json` keys `codes` by id, each entry with `name`.
+- **Later (branch `billing-defaults`):** `follow_agent_name` is wired by
+  the auto-namer on every auto rename of a root (still only a `default`
+  code of one tree). `billing.new_agent_code` (`name` | `folder` |
+  `default`) picks a root's code; `folder` and `default` codes are minted
+  `human`, so they never follow. `merge` records `merge_added`, so
+  `unmerge` can undo it; `collapse` merges into `billing.default_code`.
 
 ## Timing
 

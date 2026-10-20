@@ -309,14 +309,36 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             billing_code_id=billing_code_id,
         )
 
-    def _root_billing_code(self, billing_code: Optional[str], name: str, session_id: str) -> str:
-        """The code a new root agent bills to: the code ``billing_code`` (else
-        ``name``) names, a new one only for an unknown name, so every launch
-        under one name rolls up into one code."""
-        from .codes import DEFAULT, HUMAN
+    def _root_billing_code(self, billing_code: Optional[str], name: str, session_id: str,
+                           start_directory: Optional[str] = None) -> Tuple[str, str]:
+        """``(id, name)`` of the code a new root agent bills to.
 
-        return self.sessions.ledger.codes.resolve(
-            billing_code or name, source=HUMAN if billing_code else DEFAULT, root=session_id)
+        ``billing_code`` if given, else ``billing.new_agent_code``: the
+        agent's name (a ``default`` code, which may follow its auto name),
+        its folder's repository, or ``billing.default_code`` (both
+        ``human``: they never follow a rename). A new code only for an
+        unknown name, so every launch under one name rolls up into one code.
+        """
+        from .codes import DEFAULT, HUMAN
+        from .config import get_billing_defaults
+
+        if billing_code:
+            code, source = billing_code, HUMAN
+        else:
+            settings = get_billing_defaults()
+            for warning in settings["warnings"]:
+                print(f"Warning: config.yaml: {warning}", file=sys.stderr)
+            mode = settings["new_agent_code"]
+            if mode == "folder" and start_directory:
+                from .git_context import repo_name
+                code, source = repo_name(start_directory) or name, HUMAN
+            elif mode == "default":
+                code, source = settings["default_code"], HUMAN
+            else:
+                code, source = name, DEFAULT
+        codes = self.sessions.ledger.codes
+        code_id = codes.resolve(code, source=source, root=session_id)
+        return code_id, codes.name_of(code_id)
 
     def _build_launch_cmd_str(
         self,
@@ -580,6 +602,9 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         # never re-implemented per caller.
         # command is left empty; the helper fills it in via update_session.
         default_instructions = "" if is_shell else get_default_standing_instructions()
+        if billing_code_id is None:
+            billing_code_id, billing_code = self._root_billing_code(
+                billing_code, name, session_id, start_directory)
         metadata = self._build_session_metadata(
             name=name, tmux_window=window_name, command=[],
             start_directory=start_directory, session_id=session_id,
@@ -589,8 +614,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             agent_persona=agent_persona, model=model, provider=provider,
             wrapper=resolved_wrapper, backend=agent_backend.name,
             skill_profile=skill_profile, billing_code=billing_code,
-            billing_code_id=billing_code_id or self._root_billing_code(
-                billing_code, name, session_id),
+            billing_code_id=billing_code_id,
             name_source=name_source, name_forced=name_forced,
         )
 

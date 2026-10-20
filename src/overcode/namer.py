@@ -898,7 +898,7 @@ class Namer:
         save_state(tmux_session, session_id, state)
         self._info(f"namer: auto-named '{session.name}' → '{renamed}'"
                    + (f" ({result.why})" if result.why else ""))
-        if state.renames == 1 and not session.parent_session_id:
+        if not session.parent_session_id:
             self._follow_code(session, renamed)
         if cfg.get("cli_title", True) and self._is_claude(session):
             self._align(session_id)
@@ -927,7 +927,11 @@ class Namer:
         return None
 
     def _follow_code(self, session, name: str) -> None:
-        """A billing code made just for this agent takes its first auto name (owner decision 3)."""
+        """A billing code made just for this agent takes its auto name (owner decision 3).
+
+        Each auto rename, while the code is still ``default`` and only this
+        tree's (``follow_agent_name``): a folder or default code is ``human``.
+        """
         code_id = getattr(session, "billing_code_id", None)
         ledger = getattr(self.session_manager, "ledger", None)
         if not code_id or ledger is None:

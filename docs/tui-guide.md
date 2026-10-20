@@ -322,12 +322,12 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `H` | Configure heartbeat |
 | `K` | Toggle detection mode (hooks/polling) |
 | `Ctrl+T` | Toggle time context |
-| `G` | New agent defaults |
+| `G` | New agent defaults (backend, permissions, skill profile, where billing codes come from) |
 | `W` | Skill profiles: build named sets of skills, pin them to folders ([guide](skill-profiles.md)) |
 | `U` | Sister visibility |
 | `/` → "Rebill this agent…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
 | `/` → "Naming lab…" | Try naming advice on the whole fleet (no default key; see [Agent names](#agent-names)) |
-| `m` | Billing codes & spend: every code's spend; rename or merge codes (see [Billing codes](#billing-codes)) |
+| `m` | Billing codes & spend: every code's spend; rename, merge, collapse or unmerge codes (see [Billing codes](#billing-codes)) |
 
 ### Daemon Control
 
@@ -354,10 +354,12 @@ Backends guide. Unsupported actions are grayed out for that agent.
 
 ### Billing codes
 
-Every agent bills its spend to a code — its name unless chosen otherwise
-(see [Billing Codes](configuration.md#billing-codes)). The TUI sets it in
-two places, both cycling with `Space` through the agent's own name (shown
-as `(name)`) and then the `billing.codes` shortlist from config.yaml:
+Every agent bills its spend to a code — by default its name, its repo or
+the default code, per `billing.new_agent_code` (see [Billing Codes](configuration.md#billing-codes)).
+The TUI sets it in two places, both cycling with `Space` through the
+default (shown in brackets: the agent's name, `(myrepo)` or `(general)`
+in the new-agent dialog; the agent's own name when rebilling) and then
+the `billing.codes` shortlist from config.yaml:
 
 ```yaml
 billing:
@@ -378,7 +380,8 @@ billing:
 first: its name, total, this month, last month, agents (and how many are
 running) and source, with the totals underneath; the highlighted code's
 previous names and id are in the foot. The figures are read from the
-ledger once, when the dialog opens.
+ledger once, when the dialog opens. The line above the table says where
+new agents' codes come from and names the default code (★ in the list).
 
 | Key | In the billing codes dialog |
 |-----|-----------------------------|
@@ -386,7 +389,13 @@ ledger once, when the dialog opens.
 | `Enter` or `r` | Rename the code in place; `Enter` applies, `Esc` cancels |
 | `a` or `→` | The code's agents and their spend (`Esc`/`←` back) |
 | `/` | Filter as you type (names and previous names); `Esc` clears |
-| `Esc` / `q` | Close |
+| `Space` | Mark or unmark the code |
+| `$` / `i` | Mark every code under $X total / idle N days (no running agent, no ledger row since); type the number, `Enter` |
+| `c` | Collapse the marked codes, else the highlighted one, into the default code; a second `c` confirms (it shows how many and their spend) |
+| `m` | Show or hide merged codes |
+| `u` | On a merged code: unmerge it; a second `u` confirms. Its live agents stay on the code it was merged into |
+| `s` | Where new agents' codes come from: opens New agent defaults on its Billing code and Default code rows, and comes back |
+| `Esc` / `q` | Close (`Esc` clears a filter, then marks, first) |
 
 A rename is `overcode billing rename`: every report, past spend included,
 shows the new name, and the old one becomes a previous name that still
@@ -394,6 +403,10 @@ works. The name is checked as you type: empty or id-shaped names are
 refused, and the name of another code offers a merge instead — `Enter`
 asks "merge X into Y? press Enter again", and a second `Enter` runs
 `overcode billing merge` (X's spend, past and future, reports under Y).
+Collapsing is `overcode billing collapse`: a merge into the default code
+(`billing.default_code`), which can't itself be collapsed. A merge or
+collapse only changes the code registry, so `u` (or `overcode billing
+unmerge`) undoes it: the code reports its own spend again, past and future.
 Codes are local: a sister's are renamed on its own machine.
 
 The Billing column (BILL; hidden below full detail, shown by

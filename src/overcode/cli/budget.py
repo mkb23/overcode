@@ -255,9 +255,10 @@ def billing(
 ):
     """Spend per billing code, from the ledger.
 
-    Every agent is billed to a code: the code named after its launch name
-    unless launched with --billing-code, and always its parent's for a
-    child. Launches under one name share one code. A code has an id and a
+    Every agent is billed to a code: --billing-code if given, else per
+    billing.new_agent_code (its name by default, its folder, or
+    billing.default_code), and always its parent's for a child. Launches
+    under one name share one code. A code has an id and a
     name; rename and merge change how past spend reports, never the
     ledger. With no filter, everything ever recorded; --since and --month
     narrow it to a period.
@@ -408,14 +409,159 @@ def billing_merge(
     rprint(f"[green]✓[/green] Billing code {names[0]} folded into [bold]{names[1]}[/bold]")
 
 
+def _idle_days(text: str) -> float:
+    """``--idle``: ``30d``, ``2w``, ``12h`` or a bare number of days."""
+    from datetime import datetime
+
+    from ..session_archive import parse_since
+
+    text = text.strip()
+    if text.replace(".", "", 1).isdigit():
+        return float(text)
+    if text[-1:].lower() not in "dwh" or not text[:-1].isdigit():
+        raise ValueError(f"not a duration (30d, 2w, 12h): {text!r}")
+    now = datetime.now()
+    return (now - parse_since(text, now)).total_seconds() / 86400
+
+
+@billing_app.command("collapse")
+def billing_collapse(
+    codes_: Annotated[
+        Optional[list[str]],
+        typer.Argument(metavar="[CODE]...", help="Codes to collapse (default: every code the filters pick)"),
+    ] = None,
+    under: Annotated[
+        Optional[float], typer.Option("--under", help="Only codes with less than this spend in total ($)"),
+    ] = None,
+    idle: Annotated[
+        Optional[str], typer.Option("--idle", help="Only codes with no running agent and no spend for this long: 30d, 2w"),
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="List what would collapse; change nothing")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Don't ask before collapsing codes the filters picked")] = False,
+):
+    """Collapse codes into the default code (billing.default_code, "general").
+
+    A merge into the default code: the codes' spend, past and future,
+    reports under it, their names resolve to it and their live agents bill
+    to it. The ledger is not touched; `overcode billing unmerge` undoes one
+    (its live agents stay on the default code). With no codes, every code
+    the filters pick; given codes are filtered too. The default code itself
+    never collapses.
+
+    Examples:
+        overcode billing collapse scratch try-1
+        overcode billing collapse --under 1.00 --idle 30d --dry-run
+    """
+    from datetime import datetime
+
+    from ..codes import CodeError
+    from ..config import get_billing_defaults
+    from ..ledger import collapsible
+    from ..session_manager import SessionManager
+
+    if not codes_ and under is None and idle is None:
+        rprint("[red]Error: name codes to collapse, or pick them with --under / --idle[/red]")
+        raise typer.Exit(code=1)
+    try:
+        idle_days = _idle_days(idle) if idle is not None else None
+    except ValueError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    settings = get_billing_defaults()
+    for warning in settings["warnings"]:
+        rprint(f"[yellow]config.yaml: {warning}[/yellow]")
+    default = settings["default_code"]
+    manager = SessionManager()
+    ledger = manager.ledger
+    codes = ledger.codes
+    default_id = codes.find(default)
+    if codes_:
+        picked = []
+        for what in codes_:
+            code_id = codes.find(what)
+            if code_id is None:
+                rprint(f"[red]Error: no billing code '{what}'[/red]")
+                raise typer.Exit(code=1)
+            if code_id == default_id:
+                rprint(f"[red]Error: '{what}' is the default billing code; it cannot be collapsed[/red]")
+                raise typer.Exit(code=1)
+            if code_id not in picked:
+                picked.append(code_id)
+    else:
+        picked = [cid for cid, e in codes.codes().items()
+                  if not e.get("merged_into") and cid != default_id]
+    now = datetime.now()
+    rows = list(ledger.iter_rows())
+    totals = ledger.totals(now=now)
+    last = ledger.last_activity(rows) if idle_days is not None else {}
+    chosen = []
+    for code_id in picked:
+        spent = totals.get(code_id) or {}
+        if collapsible(float(spent.get("cost", 0) or 0), int(spent.get("running", 0) or 0),
+                       last.get(code_id), now, under=under, idle_days=idle_days):
+            chosen.append((code_id, float(spent.get("cost", 0) or 0)))
+    if not chosen:
+        rprint("[dim]No billing code to collapse[/dim]")
+        return
+    width = max(12, *(len(codes.name_of(c)) for c, _ in chosen))
+    verb = "Would collapse" if dry_run else "Collapsing"
+    total = sum(cost for _, cost in chosen)
+    rprint(f"{verb} {len(chosen)} code{'s' if len(chosen) != 1 else ''} "
+           f"(${total:,.2f}) into [bold]{default}[/bold]:")
+    for code_id, cost in chosen:
+        print(f"  {codes.name_of(code_id):<{width}}  ${cost:>9.2f}")
+    if dry_run:
+        return
+    if not codes_ and not yes and not typer.confirm("Collapse them?"):
+        raise typer.Exit(code=1)
+    try:
+        _, folded = codes.collapse([c for c, _ in chosen], default)
+    except CodeError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    _refresh_names(manager)
+    rprint(f"[green]✓[/green] {len(folded)} code{'s' if len(folded) != 1 else ''} collapsed into "
+           f"[bold]{default}[/bold] [dim](undo one: overcode billing unmerge <code>)[/dim]")
+
+
+@billing_app.command("unmerge")
+def billing_unmerge(
+    code: Annotated[str, typer.Argument(help="The merged code: its name, a previous name, or its id")],
+):
+    """Undo a merge or collapse: the code reports its own spend again.
+
+    Registry only, like the merge: its rows report under it again, past and
+    future, and its names resolve to it. Live agents moved to the other code
+    at the merge stay there (`overcode rebill` moves one back).
+
+    Examples:
+        overcode billing unmerge api-v2
+    """
+    from ..codes import CodeError
+    from ..session_manager import SessionManager
+
+    manager = SessionManager()
+    try:
+        code_id, name, into = manager.ledger.codes.unmerge(code)
+    except CodeError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    _refresh_names(manager)
+    rprint(f"[green]✓[/green] Billing code [bold]{name}[/bold] reports its own spend again "
+           f"(no longer merged into {into}) [dim]({code_id})[/dim]")
+    rprint(f"  [dim]Agents moved to {into} at the merge stay on it[/dim]")
+
+
 @billing_app.command("codes")
 def billing_codes(
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON")] = False,
+    merged: Annotated[bool, typer.Option("--merged", help="Also list merged codes (and what into)")] = False,
 ):
     """List billing codes: name, id, source, agents, spend, previous names.
 
     source: default (named after a launch) or human (given with
-    --billing-code, a rebill, a rename).
+    --billing-code, a rebill, a rename, billing.new_agent_code folder or
+    default). --merged adds merged codes, which `billing unmerge` restores.
     """
     import json
 
@@ -431,13 +577,15 @@ def billing_codes(
             live[key] = live.get(key, 0) + 1
     out = []
     for code_id, entry in codes.codes().items():
-        if entry.get("merged_into"):
+        if entry.get("merged_into") and not merged:
             continue
         spent = totals.get(code_id) or {}
         out.append({"id": code_id, "name": entry.get("name"), "source": entry.get("source"),
                     "created": entry.get("created"), "live": live.get(code_id, 0),
                     "agents": spent.get("agents", 0), "cost": spent.get("cost", 0.0),
                     "previous_names": list(entry.get("previous_names") or ())})
+        if entry.get("merged_into"):
+            out[-1]["merged_into"] = codes.name_of(entry["merged_into"])
     out.sort(key=lambda c: (-c["cost"], str(c["name"])))
     if as_json:
         print(json.dumps(out, indent=2))
@@ -450,7 +598,8 @@ def billing_codes(
           "  previous names")
     for c in out:
         print(f"  {c['name']:<{width}}  {c['id']:<34}  {c['source'] or '-':<7}  {c['live']:>4}"
-              f"  {c['agents']:>6}  ${c['cost']:>9.2f}  {', '.join(c['previous_names']) or '-'}")
+              f"  {c['agents']:>6}  ${c['cost']:>9.2f}  {', '.join(c['previous_names']) or '-'}"
+              + (f"  (merged into {c['merged_into']})" if c.get("merged_into") else ""))
 
 
 def _refresh_names(manager) -> None:

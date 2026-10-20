@@ -94,9 +94,11 @@ agent_history:
 ledger:
   checkpoint_minutes: 60
 
-# Billing codes the TUI cycles with Space; see "Billing Codes" below
+# Billing codes; see "Billing Codes" below
 billing:
-  codes: []                       # e.g. [client-a, client-b, internal]
+  new_agent_code: name            # a new agent's code: name | folder | default
+  default_code: general           # the code `default` bills to; collapse folds codes into it
+  codes: []                       # the TUI's Space shortlist, e.g. [client-a, client-b, internal]
 
 # Naming advice, the optional naming rules and auto-naming; see "Naming" below
 naming:
@@ -695,11 +697,30 @@ presets` lists the presets in effect and the warnings. See
 ## Billing Codes
 
 Every agent's spend is filed under a billing code, kept in a ledger for
-ever. The code is the one named after the agent's launch name unless set at
-launch, so every run named `shirka` rolls up under one `shirka` code; a
-child or a fork always takes its parent's code (also with `--no-inherit`; a
-child's own `--billing-code` is ignored with a warning). The code is
-sticky: renaming the agent keeps it.
+ever. A new root agent's code is `--billing-code` if given, else what
+`billing.new_agent_code` says:
+
+| `new_agent_code` | A new agent bills to |
+|---|---|
+| `name` (default) | The code named after its launch name, so every run named `shirka` rolls up under one `shirka` code. With [auto-naming](#naming), a code only that agent's tree has used follows each of its auto names (until someone renames the code). |
+| `folder` | Its git repository's name (a worktree's main repository, so a project's worktrees roll up together), else its directory's name. Never follows a rename. |
+| `default` | `billing.default_code` (`general` unless set), created on first use. |
+
+```yaml
+billing:
+  new_agent_code: folder   # name | folder | default
+  default_code: general    # for `default`, and what collapse folds codes into
+```
+
+A value that isn't one of these is ignored with a warning (at launch and in
+the TUI's billing dialog). In the TUI, "New agent defaults…" (`G`) sets
+both, and `s` in the billing codes dialog opens it on those rows; the new-agent
+dialog's Billing row shows the code the mode picks.
+
+A child or a fork always takes its parent's code (also with
+`--no-inherit`; a child's own `--billing-code` is ignored with a warning).
+A `folder` or `default` code, or one given by hand, is sticky: renaming the
+agent keeps it.
 
 A code has an id (`c_…`, fixed) and a name (yours to change). Renaming a
 code changes how every report shows it, past spend included, without
@@ -707,9 +728,17 @@ touching the ledger; its old name still works wherever a code is typed
 (launch, rebill, the TUI), unless another code takes it. Two codes that
 should have been one can be merged: the first one's spend, past and
 future, reports under the second.
+A merge is recorded, never applied to the ledger, so it can be undone:
+`overcode billing unmerge` gives the code back its own spend, past and
+future (live agents the merge moved stay where they are; `overcode rebill`
+moves one back).
+
+**Collapsing** is a merge into `billing.default_code`: for the small, old
+codes (one-off agents, experiments) that clutter the report. The default
+code itself never collapses.
 In the TUI, the "Billing codes & spend…" dialog (`m`, or the `/` palette) lists every code
-with its spend (total, this month, last month) and renames or merges them
-in place ([TUI guide](tui-guide.md#billing-codes)).
+with its spend (total, this month, last month), renames or merges them
+in place, collapses marked codes and undoes merges ([TUI guide](tui-guide.md#billing-codes)).
 
 ```bash
 overcode launch -n research --billing-code client-x   # set it at launch
@@ -718,12 +747,15 @@ overcode billing                                      # spend per code, all time
 overcode billing --since 30d                          # or --month 2026-09, --json, --ids
 overcode billing rename client-y acme                 # every report says acme from now on
 overcode billing merge acme-v2 acme                   # fold acme-v2's spend into acme
+overcode billing unmerge acme-v2                      # undo it
+overcode billing collapse --under 1.00 --idle 30d     # small, idle codes into general (asks first)
 overcode billing codes                                # name, id, source, agents, spend, old names
 ```
 
 The codes live in `~/.overcode/ledger/codes.json`. A code's `source` is
 `default` (created for a launch under its name) or `human` (given with
-`--billing-code`, a rebill, a rename). Ledgers written before codes had ids
+`--billing-code`, a rebill, a rename, or created by `new_agent_code:
+folder`/`default`). Only a `default` code follows its agent's auto name. Ledgers written before codes had ids
 (0.6.0) are not rewritten: the first start gives each code string a code
 of its own, and reports map the old rows to it, so a renamed code keeps its
 history and a new code later given its old name starts from nothing.
@@ -757,7 +789,8 @@ agents whose transcripts are gone keep their figures.
 
 In the TUI, the new-agent dialog's Billing row and the "Rebill this agent…"
 palette command (which rebills, exactly as `overcode rebill` does) cycle
-with `Space` through the agent's own name and a shortlist from config.yaml;
+with `Space` through the default code (the agent's own name in the rebill
+dialog) and a shortlist from config.yaml;
 any other code can be typed. See [TUI guide → Billing codes](tui-guide.md#billing-codes).
 
 ```yaml

@@ -144,6 +144,7 @@ class NewAgentModal(ModalBase):
         billing_codes: List[str] | None = None,
         parent_billing_code: Optional[str] = None,
         app_ref: Optional[Any] = None,
+        billing_defaults: Optional[dict] = None,
     ) -> None:
         """Populate the form and display it.
 
@@ -159,7 +160,10 @@ class NewAgentModal(ModalBase):
             parent_billing_code: Launching a child: its parent's code, which
                 it always takes; the Billing row shows it, locked.
             app_ref: The Textual app, for focus save/restore.
+            billing_defaults: config.get_billing_defaults(): what the Billing
+                row's default is (the agent's name, its repo, the default code).
         """
+        self._billing_defaults = billing_defaults or {}
         self._existing_names = existing_names
         self._local_hostname = local_hostname
 
@@ -282,17 +286,32 @@ class NewAgentModal(ModalBase):
         except StopIteration:
             return ""
 
+    def _default_billing(self) -> str:
+        """The code "" launches with (billing.new_agent_code): its name, its repo, the default code."""
+        mode = getattr(self, "_billing_defaults", {}).get("new_agent_code")
+        if mode == "default":
+            return self._billing_defaults.get("default_code") or "general"
+        if mode == "folder":
+            from ..git_context import repo_name
+            try:
+                directory = self._field("directory").value
+            except StopIteration:
+                directory = ""
+            if directory:
+                return repo_name(str(Path(directory).expanduser()))
+        return self._agent_name()
+
     def _billing_value(self, typed: str) -> str:
-        """A typed billing code, with blank or the agent's name as "" (the default)."""
+        """A typed billing code, with blank or the default code as "" (the default)."""
         typed = typed.strip()
-        return "" if typed == self._agent_name() else typed
+        return "" if typed == self._default_billing() else typed
 
     def _cycle(self, f: FormField) -> None:
         if not f.options or f.locked:
             return
         if f.key == "billing":
             from .billing_code_modal import next_in_cycle
-            name = self._agent_name()
+            name = self._default_billing()
             f.value = next_in_cycle([""] + [c for c in f.options if c and c != name], f.value)
             self.refresh()
             return
@@ -379,8 +398,8 @@ class NewAgentModal(ModalBase):
         self._hide()
 
     def _launch_billing_code(self) -> Optional[str]:
-        """The code to launch with; None for the launcher's default (the
-        agent's name, or a child's parent's code, which always wins)."""
+        """The code to launch with; None for the launcher's default
+        (billing.new_agent_code, or a child's parent's code, which always wins)."""
         try:
             f = self._field("billing")
         except StopIteration:
@@ -407,7 +426,7 @@ class NewAgentModal(ModalBase):
         "host": "Machine to launch on: this one or a sister",
         "directory": "Working directory; ~ expands, and a missing local directory is created",
         "name": "Agent name; follows the directory until you edit it",
-        "billing": "Billing code for its spend: space cycles (its name) and billing.codes; ↵ types one",
+        "billing": "Billing code: space cycles the default (billing.new_agent_code) and billing.codes; ↵ types one",
         "agent": "Agent persona to launch as (from the backend's agents directory)",
         "perms": "bypass skips every permission prompt",
         "teams": "Let the agent run agent teams",
@@ -462,7 +481,7 @@ class NewAgentModal(ModalBase):
             t = Text(f.value, style=ds.STATE_OTHER)
             t.append("  inherited from its parent", style=f"italic {ds.STATE_OTHER}")
             return t
-        name = self._agent_name()
+        name = self._default_billing()
         codes = [c for c in f.options if c and c != name]
         if f.value and f.value not in codes:
             t = Text(f.value, style=ds.STATE_CUR)

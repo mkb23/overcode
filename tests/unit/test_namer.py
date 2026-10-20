@@ -422,7 +422,7 @@ class TestSpend:
 
 class TestBillingCode:
 
-    def test_a_root_agents_own_code_follows_its_first_auto_name(self, tmp_path):
+    def test_a_root_agents_own_code_follows_its_auto_names(self, tmp_path):
         fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-fix"), _reply("db-move")))
         a = fleet.add("work")
         codes = fleet.sm.ledger.codes
@@ -434,7 +434,35 @@ class TestBillingCode:
         for _ in range(20):
             fleet.turn(a)
         assert fleet.get(a).name == "db-move"
-        assert codes.name_of(code) == "jwt-fix"  # the first auto name only
+        assert codes.name_of(code) == "db-move"  # later auto renames too
+        assert codes.get(code)["source"] == "default"
+
+    def test_a_code_renamed_by_hand_stops_following(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-fix"), _reply("db-move")))
+        a = fleet.add("work")
+        codes = fleet.sm.ledger.codes
+        code = codes.resolve("work", root=a.id)
+        fleet.sm.update_session(a.id, billing_code_id=code, billing_code="work")
+        fleet.turn(a)
+        fleet.turn(a)
+        codes.rename(code, "auth")
+        for _ in range(20):
+            fleet.turn(a)
+        assert fleet.get(a).name == "db-move" and codes.name_of(code) == "auth"
+
+    def test_folder_and_default_codes_never_follow(self, tmp_path):
+        # billing.new_agent_code folder / default resolve as human codes
+        fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-fix"), _reply("ui-fix")))
+        codes = fleet.sm.ledger.codes
+        a, b = fleet.add("work"), fleet.add("other")
+        folder = codes.resolve("myrepo", source="human", root=a.id)
+        general = codes.resolve("general", source="human", root=b.id)
+        fleet.sm.update_session(a.id, billing_code_id=folder, billing_code="myrepo")
+        fleet.sm.update_session(b.id, billing_code_id=general, billing_code="general")
+        fleet.turn(a, b)
+        fleet.turn(a, b)
+        assert {fleet.get(a).name, fleet.get(b).name} == {"jwt-fix", "ui-fix"}
+        assert codes.name_of(folder) == "myrepo" and codes.name_of(general) == "general"
 
     def test_a_human_code_and_a_childs_code_stay(self, tmp_path):
         fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-fix"), _reply("ui-fix")))

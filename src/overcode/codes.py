@@ -23,7 +23,9 @@
   through it. A string stays mapped to its code after a rename, so a new
   code given the old name later gets a fresh id and none of the old spend.
 - ``merged_into``: ``merge(A, B)`` folds A into B without touching a row.
-  A's rows report under B, and A's names resolve to B.
+  A's rows report under B, and A's names resolve to B. ``unmerge(A)``
+  undoes it (``merge_added``: the names the merge gave B). ``collapse``
+  merges codes into ``billing.default_code``.
 
 A **code key** is what a row or record is grouped by before this registry
 is consulted: its id, else its legacy string (``ledger.billing_code_of``).
@@ -354,17 +356,102 @@ class CodeRegistry:
             source, target = self._target(data, what), self._target(data, into)
             if source == target:
                 raise CodeError(f"'{what}' and '{into}' are the same billing code")
-            entry, kept = data["codes"][source], data["codes"][target]
-            previous = list(kept.get("previous_names") or ())
-            for name in [entry["name"], *(entry.get("previous_names") or ())]:
-                if name not in previous and name != kept["name"]:
-                    previous.append(name)
-            kept["previous_names"] = previous
-            for root in entry.get("roots") or ():
-                self._add_root(kept, root)
-            entry["merged_into"] = target
-            entry["merged"] = datetime.now().isoformat(timespec="seconds")
+            self._merge(data, source, target)
         return source, target
+
+    @staticmethod
+    def _merge(data: dict, source: str, target: str) -> None:
+        entry, kept = data["codes"][source], data["codes"][target]
+        previous = list(kept.get("previous_names") or ())
+        added = []
+        for name in [entry["name"], *(entry.get("previous_names") or ())]:
+            if name not in previous and name != kept["name"]:
+                previous.append(name)
+                added.append(name)
+        kept["previous_names"] = previous
+        for root in entry.get("roots") or ():
+            CodeRegistry._add_root(kept, root)
+        entry["merged_into"] = target
+        entry["merged"] = datetime.now().isoformat(timespec="seconds")
+        entry["merge_added"] = added  # what unmerge takes back off ``target``
+
+    def collapse(self, whats: Iterable[str], into: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """Merge every code in ``whats`` into the code named ``into`` (one write).
+
+        ``into`` is ``billing.default_code``, created as a ``human`` code on
+        first use. Refuses (nothing merged) a code that is ``into`` itself
+        or unknown. Returns ``(into id, [(id, name)...])`` of the codes folded.
+        """
+        into = (into or "").strip()
+        if not into:
+            raise CodeError("no default billing code to collapse into")
+        target = self.resolve(into, source=HUMAN)
+        folded: List[Tuple[str, str]] = []
+        with self._editing() as data:
+            sources = []
+            for what in whats:
+                code_id = self._target(data, what)
+                if code_id == target:
+                    raise CodeError(f"'{what}' is the default billing code; it cannot be collapsed")
+                if code_id not in sources:
+                    sources.append(code_id)
+            for code_id in sources:
+                folded.append((code_id, data["codes"][code_id]["name"]))
+                self._merge(data, code_id, target)
+        return target, folded
+
+    def find_merged(self, what: str) -> Optional[str]:
+        """The merged code ``what`` names (its id, name or a previous name); the latest merge wins."""
+        return self._find_merged(self.load(), what)
+
+    @staticmethod
+    def _find_merged(data: dict, what: str) -> Optional[str]:
+        what = (what or "").strip()
+        codes = data["codes"]
+        if what in codes:
+            return what if codes[what].get("merged_into") else None
+        merged = sorted(((cid, e) for cid, e in codes.items() if e.get("merged_into")),
+                        key=lambda kv: str(kv[1].get("merged", "")), reverse=True)
+        for cid, entry in merged:
+            if entry.get("name") == what:
+                return cid
+        for cid, entry in merged:
+            if what in (entry.get("previous_names") or ()):
+                return cid
+        return None
+
+    def unmerge(self, what: str) -> Tuple[str, str, str]:
+        """Undo a merge: the code reports its own rows again; returns ``(id, name, was merged into)``.
+
+        Registry only, like the merge. Its names come back off the code it
+        was merged into; agents moved over at the merge stay there. A name
+        another code has taken since gets ``~2``, ``~3``...
+        """
+        with self._editing() as data:
+            code_id = self._find_merged(data, what)
+            if code_id is None:
+                raise CodeError(f"no merged billing code '{what}'")
+            entry = data["codes"][code_id]
+            into = entry["merged_into"]
+            kept = data["codes"].get(into)
+            names = entry.get("merge_added")
+            if names is None:  # merged before merges recorded it
+                names = [entry["name"], *(entry.get("previous_names") or ())]
+            if kept is not None:
+                kept["previous_names"] = [n for n in kept.get("previous_names") or ()
+                                          if n not in names]
+            for key in ("merged_into", "merged", "merge_added"):
+                entry.pop(key, None)
+            taken = {e.get("name") for cid, e in data["codes"].items()
+                     if cid != code_id and not e.get("merged_into")}
+            base, name, n = entry["name"], entry["name"], 1
+            while name in taken:
+                n += 1
+                name = f"{base}~{n}"
+            if name != base:
+                self._rename(data, code_id, name)
+            into_name = kept["name"] if kept is not None else into
+        return code_id, name, into_name
 
     def follow_agent_name(self, code_id: str, name: str) -> bool:
         """Rename a ``default`` code to its agent's new name, if that is safe; True if it now has it.

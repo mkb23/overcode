@@ -11,9 +11,20 @@ past and future, shows the new name, and the old one goes in the code's
 previous names. Typing the name of another code offers ``overcode billing
 merge`` instead, applied on a second Enter.
 
+Collapsing is ``overcode billing collapse``: a merge into the default code
+(``billing.default_code``, marked ★), which itself never collapses. ``c``
+collapses the marked codes, else the highlighted one, on a second ``c``.
+Merged codes are hidden until ``m``; ``u`` on one undoes its merge (its
+live agents stay where the merge moved them). The line above the table is
+where new agents' codes come from; ``s`` changes it (the New agent
+defaults dialog).
+
 Keys:
     j / k / ↑ / ↓     move                    a / →    the code's agents
     Enter / r         rename (Enter applies)   /        filter as you type
+    space             mark                     $ / i    mark under $X / idle N days
+    c                 collapse into default    m        show merged codes
+    u                 unmerge (a merged code)  s        new-agent billing settings
     Esc               cancel / back / close    q        close
 """
 
@@ -46,6 +57,8 @@ class CodeRow:
     running: int = 0
     registered: bool = True      # False: a legacy string the registry does not map
     members: List[Tuple[str, float, bool]] = field(default_factory=list)  # (name, cost, running)
+    last: Optional[datetime] = None      # its latest ledger row
+    merged_into: Optional[str] = None    # merged: the name of the code it reports under
 
 
 def month_starts(now: datetime) -> Tuple[datetime, datetime]:
@@ -59,6 +72,7 @@ def load_code_rows(ledger, now: Optional[datetime] = None) -> List[CodeRow]:
 
     The total is ``totals()`` (what ``overcode billing`` shows); the two
     months and each code's agents are ``report`` over one read of the rows.
+    Merged codes are rows too (``merged_into``), with no spend of their own.
     """
     now = now or datetime.now()
     this_start, last_start = month_starts(now)
@@ -68,12 +82,15 @@ def load_code_rows(ledger, now: Optional[datetime] = None) -> List[CodeRow]:
     ledger.report(rows=rows, agents=members)
     this_month = ledger.report(since=this_start, rows=rows)
     last_month = ledger.report(since=last_start, until=this_start, rows=rows)
+    last = ledger.last_activity(rows)
     out: Dict[str, CodeRow] = {}
     for code_id, entry in ledger.codes.codes().items():
-        if not entry.get("merged_into"):
-            out[code_id] = CodeRow(code_id, str(entry.get("name") or code_id),
-                                   source=str(entry.get("source") or "-"),
-                                   previous_names=list(entry.get("previous_names") or ()))
+        out[code_id] = CodeRow(code_id, str(entry.get("name") or code_id),
+                               source=str(entry.get("source") or "-"),
+                               previous_names=list(entry.get("previous_names") or ()),
+                               last=last.get(code_id))
+        if entry.get("merged_into"):
+            out[code_id].merged_into = ledger.codes.name_of(code_id)
     for key in set(totals) | set(this_month) | set(last_month):
         if key not in out:
             out[key] = CodeRow(key, ledger.codes.name_of(key), registered=False)
@@ -112,6 +129,22 @@ class BillingCodesModal(ModalBase):
             self.into_id = into_id
             self.into_name = into_name
 
+    class CollapseRequested(Message):
+        def __init__(self, code_ids: List[str], names: List[str]) -> None:
+            super().__init__()
+            self.code_ids = code_ids
+            self.names = names
+
+    class UnmergeRequested(Message):
+        def __init__(self, code_id: str, name: str, into: str) -> None:
+            super().__init__()
+            self.code_id = code_id
+            self.name = name
+            self.into = into
+
+    class SettingsRequested(Message):
+        """``s``: the New agent defaults dialog, on its billing rows."""
+
     class Closed(Message):
         pass
 
@@ -120,7 +153,8 @@ class BillingCodesModal(ModalBase):
     _MONEY_W = 12
     _COUNT_W = 8
     _SOURCE_W = 9
-    _CHROME = 8  # border, header, rule, tip
+    _CHROME = 9  # border, settings, header, rule, tip
+    _MARK_W = 2
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -134,6 +168,12 @@ class BillingCodesModal(ModalBase):
         self._list_scroll = 0                       # the list's, while showing agents
         self._message: Optional[Text] = None
         self._chosen: Optional[str] = None          # the highlighted code, by id
+        self.marks: set = set()                     # marked code ids
+        self.show_merged = False
+        self.settings: dict = {"new_agent_code": "name", "default_code": "general", "warnings": []}
+        self.default_id: Optional[str] = None       # the code collapse folds into, once it exists
+        self._confirm: Optional[str] = None         # "c" / "u": pressed once, press again
+        self.prompt = ""                            # "under" / "idle", in prompt mode
 
     # ── public api ───────────────────────────────────────────────────────
 
@@ -146,13 +186,26 @@ class BillingCodesModal(ModalBase):
         self._scroll = 0
         self._message = None
         self._chosen = None
+        self.marks = set()
+        self._confirm = None
         self._save_focus(app_ref)
         self._show(0)
 
     def set_rows(self, rows: List[CodeRow], message: Optional[str] = None,
-                 style: str = ds.MUTED) -> None:
-        """The codes read from the ledger; the highlight stays on its code."""
+                 style: str = ds.MUTED, *, settings: Optional[dict] = None,
+                 default_id: Optional[str] = None) -> None:
+        """The codes read from the ledger; the highlight stays on its code.
+
+        ``settings``: ``config.get_billing_defaults()``; ``default_id``: the
+        default code's id (None until it exists).
+        """
         self.rows = rows
+        if settings is not None:
+            self.settings = settings
+        self.default_id = default_id
+        live = {r.id for r in rows if r.merged_into is None}
+        self.marks &= live
+        self._confirm = None
         if message is not None:
             self._message = Text(message, style=style)
         self._reselect()
@@ -173,7 +226,7 @@ class BillingCodesModal(ModalBase):
 
     @property
     def shown(self) -> List[CodeRow]:
-        rows = self.rows or []
+        rows = [r for r in self.rows or [] if self.show_merged or r.merged_into is None]
         needle = self.filter.strip().lower()
         if not needle:
             return rows
@@ -207,11 +260,47 @@ class BillingCodesModal(ModalBase):
         elif self.selected_index >= self._scroll + h:
             self._scroll = self.selected_index - h + 1
 
+    def collapsible(self, row: Optional[CodeRow]) -> bool:
+        """A code ``c`` may fold into the default: registered, not merged, not the default."""
+        return (row is not None and row.registered and row.merged_into is None
+                and row.id != self.default_id and row.name != self.settings["default_code"])
+
+    def _targets(self) -> List[CodeRow]:
+        """What ``c`` collapses: the marked codes, else the highlighted one."""
+        if self.marks:
+            return [r for r in self.rows or () if r.id in self.marks]
+        row = self.current
+        return [row] if self.collapsible(row) else []
+
+    def _mark_where(self, kind: str, text: str) -> None:
+        """``$``/``i``: mark every collapsible code under $X total, or idle N days."""
+        from ..ledger import collapsible
+
+        try:
+            value = float(text.strip().lstrip("$"))
+        except ValueError:
+            self._message = Text(f"not a number: {text!r}", style=ds.ERROR)
+            return
+        now = datetime.now()
+        under = value if kind == "under" else None
+        idle = value if kind == "idle" else None
+        picked = [r for r in self.shown if self.collapsible(r)
+                  and collapsible(r.total, r.running, r.last, now, under=under, idle_days=idle)]
+        self.marks |= {r.id for r in picked}
+        what = f"under {money(value)}" if under is not None else f"idle {value:g}+ days"
+        if not picked:
+            self._message = Text(f"no code {what}", style=ds.MUTED)
+            return
+        marked = [r for r in self.rows or () if r.id in self.marks]
+        self._message = Text(f"marked {len(picked)} code{'s' if len(picked) != 1 else ''} {what}"
+                             f" · {len(marked)} marked, {money(sum(r.total for r in marked))}"
+                             f" · c collapses them", style=ds.MUTED)
+
     def _owner_of(self, name: str, *, previous: bool) -> Optional[CodeRow]:
         """The other code called ``name`` (or, with ``previous``, that once was)."""
         me = self.current
         for row in self.rows or ():
-            if row is me or not row.registered:
+            if row is me or not row.registered or row.merged_into is not None:
                 continue
             if (name in row.previous_names) if previous else row.name == name:
                 return row
@@ -226,6 +315,8 @@ class BillingCodesModal(ModalBase):
             return "no code"
         if not row.registered:
             return f"'{row.name}' is not in the code registry (overcode doctor)"
+        if row.merged_into is not None:
+            return f"'{row.name}' is merged into {row.merged_into}; u unmerges it"
         if not new:
             return "a billing code cannot be empty"
         if is_code_id(new):
@@ -241,13 +332,20 @@ class BillingCodesModal(ModalBase):
             return ds.hints(("↵", "keep filter"), ("esc", "clear"))
         if self.mode == "agents":
             return ds.hints(("esc ←", "back"), ("q", "close"))
-        return ds.hints(("↵ r", "rename"), ("a →", "agents"), ("/", "filter"), ("esc", "close"))
+        if self.mode == "prompt":
+            return ds.hints(("↵", "mark"), ("esc", "cancel"))
+        return ds.hints(("↵", "rename"), ("a", "agents"), ("space $ i", "mark"),
+                        ("c", "collapse"), ("m", "merged"), ("s", "settings"), ("/", "filter"),
+                        ("esc", "close"))
 
     def _name_w(self, w: int) -> int:
-        return max(12, w - 1 - 3 * self._MONEY_W - 2 * self._COUNT_W - self._SOURCE_W)
+        return max(12, w - 1 - self._MARK_W - 3 * self._MONEY_W - 2 * self._COUNT_W
+                   - self._SOURCE_W)
 
-    def _cells(self, w: int, name: Text, cells: List[str], style: str) -> Text:
+    def _cells(self, w: int, name: Text, cells: List[str], style: str,
+               mark: Optional[Text] = None) -> Text:
         line = Text()
+        line.append_text(mark if mark is not None else Text(" " * self._MARK_W))
         line.append_text(ds.fit(name, self._name_w(w)))
         widths = [self._MONEY_W] * 3 + [self._COUNT_W] * 2
         for value, width in zip(cells, widths):
@@ -270,17 +368,36 @@ class BillingCodesModal(ModalBase):
             name = ds.text_value(self.value, self.cursor)
         else:
             style = ("bold" if selected else ds.TEXT) if row.registered else ds.WARN
+            if row.merged_into is not None:
+                style = f"italic {ds.STATE_OTHER}"
             name = Text(row.name, style=style)
             if self.filter.strip() and self.mode != "agents":
                 at = row.name.lower().find(self.filter.strip().lower())
                 if at >= 0:
                     name.stylize(ds.MATCH, at, at + len(self.filter.strip()))
-        line.append_text(self._cells(
-            w, name,
-            [money(row.total), money(row.this_month), money(row.last_month),
-             str(row.agents), str(row.running) if row.running else "-",
-             row.source if row.registered else "legacy"],
-            ds.TEXT if selected else ds.MUTED))
+            if row.id == self.default_id:
+                name.append(" ★", style=ds.ACCENT)
+        mark = Text(f"{ds.CHECK_ON} " if row.id in self.marks else "  ", style=ds.STATE_ON)
+        if row.merged_into is not None:
+            cells = ["-", "-", "-", "-", "-", "merged"]
+        else:
+            cells = [money(row.total), money(row.this_month), money(row.last_month),
+                     str(row.agents), str(row.running) if row.running else "-",
+                     row.source if row.registered else "legacy"]
+        line.append_text(self._cells(w, name, cells, ds.TEXT if selected else ds.MUTED, mark))
+        return ds.finish(line, w)
+
+    def _settings_line(self, w: int) -> Text:
+        """Where new agents' codes come from (``s`` changes it)."""
+        mode = self.settings.get("new_agent_code", "name")
+        default = self.settings.get("default_code", "general")
+        line = Text(" new agents bill to ", style=ds.MUTED)
+        line.append({"name": "their name", "folder": "their repo",
+                     "default": default}.get(mode, mode), style=ds.TEXT)
+        line.append(" · default code ", style=ds.MUTED)
+        line.append(default, style=ds.ACCENT)
+        if self.settings.get("warnings"):
+            line.append(f" · config.yaml: {self.settings['warnings'][0]}", style=ds.WARN)
         return ds.finish(line, w)
 
     def _member(self, member: Tuple[str, float, bool], w: int) -> Text:
@@ -315,6 +432,18 @@ class BillingCodesModal(ModalBase):
                                       f"it will mean this code", style=ds.WARN))
             return ds.tip(w, Text(f"↵ renames {row.name} to {new} in every report, "
                                   "past and future", style=ds.MUTED))
+        if self._confirm == "c":
+            targets = self._targets()
+            what = (targets[0].name if len(targets) == 1
+                    else f"{len(targets)} codes")
+            return ds.tip(w, Text(
+                f"collapse {what} ({money(sum(r.total for r in targets))}) into "
+                f"{self.settings['default_code']}? press c again · undo: m, then u",
+                style=f"bold {ds.WARN}"))
+        if self._confirm == "u" and row is not None:
+            return ds.tip(w, Text(
+                f"unmerge {row.name} from {row.merged_into}? press u again · its live "
+                f"agents stay on {row.merged_into}", style=f"bold {ds.WARN}"))
         if self._message is not None:
             return ds.tip(w, self._message)
         if self.rows is None:
@@ -324,6 +453,10 @@ class BillingCodesModal(ModalBase):
             return ds.tip(w, Text(text, style=ds.MUTED))
         prev = ", ".join(row.previous_names)
         left = Text(f"previously: {prev}" if prev else "no previous names", style=ds.MUTED)
+        if row.merged_into is not None:
+            left = Text(f"merged into {row.merged_into} · u unmerges", style=ds.MUTED)
+        elif row.id == self.default_id:
+            left = Text("★ the default code: c folds codes into it", style=ds.MUTED)
         right = Text(row.id if row.registered else "not in the registry", style=ds.STATE_OTHER)
         return ds.tip(w, left, right)
 
@@ -350,7 +483,16 @@ class BillingCodesModal(ModalBase):
                 t.append("\n")
             t.append_text(ds.tip(w, Text("spend by agent, all time", style=ds.MUTED)))
             return t
-        if self.mode == "filter" or self.filter:
+        t.append_text(self._settings_line(w))
+        t.append("\n")
+        if self.mode == "prompt":
+            line = Text(" ")
+            line.append("mark codes under $" if self.prompt == "under"
+                        else "mark codes idle for days ", style=f"bold {ds.TEXT}")
+            line.append_text(ds.text_value(self.value, len(self.value), placeholder=""))
+            t.append_text(ds.finish(line, w))
+            t.append("\n")
+        elif self.mode == "filter" or self.filter:
             line = Text(" ")
             line.append("filter  ", style=f"bold {ds.TEXT}")
             line.append_text(ds.text_value(self.filter, len(self.filter) if self.mode == "filter"
@@ -368,9 +510,13 @@ class BillingCodesModal(ModalBase):
             t.append("\n")
         if self.rows:
             total = sum(r.total for r in rows)
+            count = sum(1 for r in rows if r.merged_into is None)
+            label = f"{count} code{'s' if count != 1 else ''}"
+            if self.marks:
+                label += f" · {len(self.marks)} marked"
             foot = Text(" ")
             foot.append_text(self._cells(
-                w, Text(f"{len(rows)} code{'s' if len(rows) != 1 else ''}", style=ds.MUTED),
+                w, Text(label, style=ds.MUTED),
                 [money(total), money(sum(r.this_month for r in rows)),
                  money(sum(r.last_month for r in rows)), "", "", ""], f"bold {ds.MUTED}"))
             t.append_text(ds.finish(foot, w))
@@ -383,7 +529,8 @@ class BillingCodesModal(ModalBase):
     def on_key(self, event: events.Key) -> None:
         event.stop()  # a modal swallows every key
         handler = {"edit": self._edit_key, "filter": self._filter_key,
-                   "agents": self._agents_key}.get(self.mode, self._list_key)
+                   "agents": self._agents_key, "prompt": self._prompt_key,
+                   }.get(self.mode, self._list_key)
         handler(event.key, event.character)
         self.update_frame()
         self.refresh()
@@ -394,6 +541,56 @@ class BillingCodesModal(ModalBase):
 
     def _list_key(self, key: str, character: Optional[str]) -> None:
         rows = self.shown
+        confirm, self._confirm = self._confirm, None
+        if key == "c":
+            targets = self._targets()
+            if not targets:
+                row = self.current
+                self._message = Text(
+                    "the default code cannot be collapsed" if row is not None
+                    and row.id == self.default_id else "nothing to collapse here", style=ds.WARN)
+            elif confirm == "c":
+                self.post_message(self.CollapseRequested([r.id for r in targets],
+                                                         [r.name for r in targets]))
+                self._message = Text(f"collapsing into {self.settings['default_code']}…",
+                                     style=ds.MUTED)
+                self.marks = set()
+            else:
+                self._confirm = "c"
+            return
+        if key == "u":
+            row = self.current
+            if row is None or row.merged_into is None:
+                self._message = Text("u unmerges a merged code (m shows them)", style=ds.MUTED)
+            elif confirm == "u":
+                self.post_message(self.UnmergeRequested(row.id, row.name, row.merged_into))
+                self._message = Text(f"unmerging {row.name}…", style=ds.MUTED)
+            else:
+                self._confirm = "u"
+            return
+        if key == "space":
+            row = self.current
+            if row is not None and row.id in self.marks:
+                self.marks.discard(row.id)
+            elif self.collapsible(row):
+                self.marks.add(row.id)
+            elif row is not None:
+                self._message = Text(f"{row.name} cannot be collapsed", style=ds.MUTED)
+            return
+        if character in ("$", "i"):
+            self.mode, self.prompt, self.value = "prompt", "under" if character == "$" else "idle", ""
+            self._message = None
+            return
+        if key == "m":
+            self.show_merged = not self.show_merged
+            self._reselect()
+            self._message = Text("merged codes shown · u unmerges one" if self.show_merged
+                                 else "merged codes hidden", style=ds.MUTED)
+            return
+        if key == "s":
+            self._hide()
+            self.post_message(self.SettingsRequested())
+            return
         if key in ("j", "down", "k", "up") and rows:
             step = 1 if key in ("j", "down") else -1
             self.selected_index = (self.selected_index + step) % len(rows)
@@ -414,8 +611,22 @@ class BillingCodesModal(ModalBase):
         elif key == "escape" and self.filter:
             self.filter = ""
             self._reselect()
+        elif key == "escape" and self.marks:
+            self.marks = set()
         elif key in ("escape", "q"):
             self._close()
+
+    def _prompt_key(self, key: str, character: Optional[str]) -> None:
+        if key == "escape":
+            self.mode = "list"
+        elif key == "enter":
+            self.mode = "list"
+            if self.value.strip():
+                self._mark_where(self.prompt, self.value)
+        elif key == "backspace":
+            self.value = self.value[:-1]
+        elif character and (character.isdigit() or character in ".$"):
+            self.value += character
 
     def _agents_key(self, key: str, character: Optional[str]) -> None:
         row = self.current

@@ -83,6 +83,43 @@ def read_git_context_from_disk(directory: str) -> Optional[tuple[Optional[str], 
     return None, None
 
 
+def repo_name(directory: str) -> str:
+    """The name a folder's spend goes under (``billing.new_agent_code: folder``).
+
+    The git repository's: the directory holding ``.git``, or for a worktree
+    its main repository's (so every worktree of a project rolls up into
+    one code). Outside a repository, the directory's own name. No
+    subprocess: the new-agent dialog calls it while it renders.
+    """
+    try:
+        path = Path(directory).expanduser().resolve()
+    except OSError:
+        return Path(directory).name
+    for candidate in (path, *path.parents):
+        dot_git = candidate / ".git"
+        try:
+            if dot_git.is_dir():
+                return candidate.name
+            if not dot_git.is_file():
+                continue
+            text = dot_git.read_text().strip()
+            if not text.startswith("gitdir:"):
+                return candidate.name
+            git_dir = Path(text[len("gitdir:"):].strip())
+            if not git_dir.is_absolute():
+                git_dir = (candidate / git_dir).resolve()
+            common_file = git_dir / "commondir"
+            if not common_file.is_file():
+                return candidate.name  # a submodule: its own repository
+            common = (git_dir / common_file.read_text().strip()).resolve()
+        except OSError:
+            return candidate.name
+        if common.name == ".git":
+            return common.parent.name
+        return common.name[:-len(".git")] if common.name.endswith(".git") else common.name
+    return path.name
+
+
 def detect_focal_repo_candidates(start_directory: Optional[str]) -> List[str]:
     """Return one-layer-deep git-repo subdir names under ``start_directory`` (#170).
 
