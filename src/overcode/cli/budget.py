@@ -381,32 +381,98 @@ def billing_rename(
 
 @billing_app.command("merge")
 def billing_merge(
-    code: Annotated[str, typer.Argument(help="The code to fold away")],
-    into: Annotated[str, typer.Argument(help="The code it folds into")],
+    codes_: Annotated[
+        list[str],
+        typer.Argument(metavar="CODE...", help="Codes to fold away: names, previous names, ids, "
+                       "or quoted patterns ('shirka*')"),
+    ],
+    into: Annotated[Optional[str], typer.Option("--into", help="The code they fold into "
+                                                "(it must exist)")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="List what would merge; change nothing")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Don't ask before merging codes a pattern picked")] = False,
 ):
-    """Fold one billing code into another: its spend, past and future, reports under the other.
+    """Fold billing codes into another: their spend, past and future, reports under it.
 
-    For two codes that should have been one once both have spend. Recorded
-    in the code registry, never by rewriting the ledger; the folded code's
-    names become previous names of the other, and its agents bill to the
-    other from now on.
+    For codes that should have been one once they have spend. Recorded in
+    the code registry (one write), never by rewriting the ledger; the folded
+    codes' names become previous names of the other, and their agents bill
+    to it from now on. A pattern (*, ?, [..]; quote it) matches current
+    names of unmerged codes, never the target; it asks first unless -y.
+    `merge A B` (no --into) folds A into B. `overcode billing unmerge`
+    undoes one.
 
     Examples:
         overcode billing merge api-v2 api
+        overcode billing merge 'shirka*' --into shirka --dry-run
+        overcode billing merge shirka2 shirka-fork1 --into shirka
     """
+    from fnmatch import fnmatchcase
+
     from ..codes import CodeError
     from ..session_manager import SessionManager
 
+    if into is None:
+        if len(codes_) != 2:
+            rprint("[red]Error: name the code to merge into with --into[/red]")
+            raise typer.Exit(code=1)
+        codes_, into = codes_[:1], codes_[1]
     manager = SessionManager()
-    codes = manager.ledger.codes
+    ledger = manager.ledger
+    codes = ledger.codes
+    target = codes.find(into)
+    if target is None:
+        rprint(f"[red]Error: no billing code '{into}' (merge never makes one; "
+               f"`overcode billing rename` renames)[/red]")
+        raise typer.Exit(code=1)
+    live = {cid: e for cid, e in codes.codes().items() if not e.get("merged_into")}
+    picked: list = []
+    patterned = False
+    for what in codes_:
+        if any(ch in what for ch in "*?["):
+            patterned = True
+            hits = sorted((cid for cid, e in live.items()
+                           if cid != target and fnmatchcase(str(e.get("name", "")), what)),
+                          key=lambda cid: live[cid]["name"])
+            if not hits:
+                rprint(f"[red]Error: no billing code matches '{what}'[/red]")
+                raise typer.Exit(code=1)
+        else:
+            code_id = codes.find(what)
+            if code_id is None:
+                rprint(f"[red]Error: no billing code '{what}'[/red]")
+                raise typer.Exit(code=1)
+            if code_id == target:
+                rprint(f"[red]Error: '{what}' and '{into}' are the same billing code[/red]")
+                raise typer.Exit(code=1)
+            hits = [code_id]
+        picked += [cid for cid in hits if cid not in picked]
+    totals = ledger.totals()
+    spend = {cid: totals.get(cid) or {} for cid in picked}
+    cost = sum(float(e.get("cost", 0) or 0) for e in spend.values())
+    agents = sum(int(e.get("agents", 0) or 0) for e in spend.values())
+    into_name = codes.name_of(target)
+    if len(picked) > 1 or patterned or dry_run:
+        width = max(12, *(len(codes.name_of(c)) for c in picked))
+        rprint(f"{'Would merge' if dry_run else 'Merging'} {len(picked)} "
+               f"code{'s' if len(picked) != 1 else ''} (${cost:,.2f}, {agents} "
+               f"agent{'s' if agents != 1 else ''}) into [bold]{into_name}[/bold]:")
+        for cid in picked:
+            e = spend[cid]
+            print(f"  {codes.name_of(cid):<{width}}  ${float(e.get('cost', 0) or 0):>9.2f}"
+                  f"  {int(e.get('agents', 0) or 0):>4} agents")
+    if dry_run:
+        return
+    if patterned and not yes and not typer.confirm("Merge them?"):
+        raise typer.Exit(code=1)
     try:
-        names = (codes.name_of(codes.find(code) or code), codes.name_of(codes.find(into) or into))
-        codes.merge(code, into)
+        _, folded = codes.merge_many(picked, target)
     except CodeError as e:
         rprint(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
     _refresh_names(manager)
-    rprint(f"[green]✓[/green] Billing code {names[0]} folded into [bold]{names[1]}[/bold]")
+    what = f"Billing code {folded[0][1]}" if len(folded) == 1 else f"{len(folded)} billing codes"
+    rprint(f"[green]✓[/green] {what} folded into [bold]{into_name}[/bold] "
+           f"[dim](undo one: overcode billing unmerge <code>)[/dim]")
 
 
 def _idle_days(text: str) -> float:
