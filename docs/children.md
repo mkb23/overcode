@@ -25,6 +25,11 @@ overcode launch -n fix-jwt-refresh --parent api-work -p "<prompt>"
   child of that agent. `--parent <name>` names the parent explicitly. Only
   the overagent can use `--no-parent` from inside an agent, for agents you
   will drive yourself.
+- A name a parent gives its child is checked against the naming policy
+  (`overcode name policy`): a refused name exits 3 with the rule, the
+  advice and a suggestion, and `--force-name` launches it anyway unless
+  another agent has it. overcode never renames a name a parent chose. See
+  [Naming](configuration.md#naming).
 - Trees go at most 5 levels deep.
 - `overcode list <parent>` shows a parent and its children.
   `overcode kill <parent>` kills its descendants too, deepest first;

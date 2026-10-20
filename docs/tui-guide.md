@@ -275,7 +275,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `1-5` | Send numbered option to agent |
 | `n` | Create new agent (Host field picks local or a remote sister) |
 | `F` | Fork agent (with conversation context) |
-| `Ctrl+N` | Rename agent (keeps its conversation; the old name stays an alias) |
+| `Ctrl+N` | Rename agent (keeps its conversation; the old name stays an alias), and choose who names it: you or overcode (see [Agent names](#agent-names)) |
 | `Ctrl+R` | Cycle the focused agent's focal repo (multi-repo workspaces) |
 | `R` | Restart agent (double-press to confirm) |
 | `x` | Kill agent (double-press to confirm) |
@@ -340,6 +340,27 @@ billing:
 The Billing column (BILL; hidden below full detail, shown by
 `overcode list`) shows each agent's code, dim while it is still the
 agent's name. A bad `billing:` entry is skipped and the dialog says so.
+
+### Agent names
+
+The NAME column marks names nobody chose:
+
+- **dim**: a default name, made up by overcode: the new-agent dialog's
+  directory name left as it was, or a fork's `<name>-fork`.
+- **`~name`**: overcode named the agent (auto-naming, `naming.enabled`).
+
+A name you typed (in the new-agent dialog, `Ctrl+N`, or `-n` in a shell)
+or one a parent agent gave its child is plain, and overcode never
+renames it. The `~` takes a cell from the name, so the column keeps its
+width. Hover the name to see who named it, whether it was launched with
+`--force-name`, and the names it had before.
+
+- `Ctrl+N` renames the agent; its **Named by** row says who names it from
+  then on: `you` (locked) or `overcode`. A name you type switches it to
+  `you`; set it back to `overcode` to keep auto-naming. Changing only the
+  row, with the name as it was, just hands the name over (or takes it back).
+- In the palette (`/`): "Let overcode name it" and "Keep this name" do the
+  same for the focused agent (`overcode rename <agent> --auto` / `--lock`).
 
 ### Weekly quota (subscriptions)
 

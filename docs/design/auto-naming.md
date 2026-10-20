@@ -1,6 +1,6 @@
 # Auto-naming agents (#542)
 
-Status: proposal, 2026-10-20; owner decisions taken the same day (end of file). Builds on `overcode rename` (#478) and the
+Status: proposal, 2026-10-20; owner decisions taken the same day (end of file). Sections 2 and 2a built (P1). Builds on `overcode rename` (#478) and the
 per-agent directories keyed by session id (quality review item 35).
 
 ## Goal
@@ -74,6 +74,11 @@ refusal and the 3 s gap from every manual rename.
 
 ### 2. Where a name came from
 
+**Built (P1, branch name-policy).** As designed, except: the palette title
+is "Let overcode name it" (the longer one does not fit the palette), and
+old records read as `default` only for an exact made-up default
+(`name_source.infer_legacy`), else `human`.
+
 A new `Session.name_source`, kept in sessions.json. Loaders default it for
 old records.
 
@@ -99,6 +104,17 @@ locks the name. Per agent:
 
 ### 2a. Checking the names parents give
 
+**Built (P1, branch name-policy),** with the owner's change of 2026-10-20:
+no edit-distance or other similarity check (a numbered series such as
+`wiki1`, `wiki2` is deliberate), and every rule opt-in with defaults that
+reject nothing. Only the base name pattern and a taken name (live name or
+alias) are always checked; `max_length`, `pattern`, `forbid`, `require`,
+`no_repo_prefix` and recent archived names (`recent_archived_hours`) are
+off by default. `naming.max_length` (18) is the namer's target, separate
+from the hard `naming.rules.max_length` (unset). The free-text advice is
+the primary policy. Code: `naming_policy.py` (`check`, `choose`),
+`cli/naming.py`.
+
 A parent's name is never renamed, so it is checked once, when the parent
 chooses it. `overcode launch` and `fork`, run from inside an agent
 (`OVERCODE_SESSION_ID` set), check `-n` against the naming policy and
@@ -108,7 +124,7 @@ refuse a name that breaks it.
   `max_length`, `pattern` (a regex, default lowercase kebab), `forbid`
   (words such as `test`, `agent`, `child`, `tmp`), `require` (a regex such
   as an issue-number suffix, off by default), `no_repo_prefix`, and the
-  fleet checks from section 5 (taken, an alias, near-duplicate). The CLI
+  fleet checks from section 5 (taken, an alias). The CLI
   checks these with no API call and no delay, so they apply whether or not
   auto-naming is on.
 - **The free-text advice** can be checked by the model with
@@ -191,10 +207,10 @@ then decides on its own, without the model:
 1. Normalise each candidate to the name pattern (lowercase kebab, `[a-z0-9-]`).
    Drop any over `max_length`, and any that repeats the repo name when the
    repo column is showing.
-2. Drop any equal to a live name, a live alias, or an archived name from the
-   last 24 h (so `send` to a recent name can't reach the wrong agent).
-   Drop any within edit distance 1 of a live name (`api-fix` next to
-   `api-fx`).
+2. Drop any equal to a live name, a live alias, or (with
+   `rules.recent_archived_hours`) a recently archived name. No
+   edit-distance check: the model avoids confusable names from the fleet
+   list (owner decision, 2026-10-20).
 3. Take the first survivor. If none survive, add the shortest disambiguator
    to the first candidate (`-2`, then `-3`), or the parent's issue number if
    advice asks for one.
@@ -349,3 +365,8 @@ Tests:
    notice, the enhanced-context line, and the CLI's own session name kept
    in step (section 7).
 5. **No sister awareness.** Sister support is semi-deprecated.
+6. **Permissive rules, advice first** (later the same day). No
+   edit-distance or similarity check: `wiki1`, `wiki2`, `wiki3` are
+   deliberate names. Every deterministic rule is opt-in; only overcode's
+   name pattern and a taken name are always refused. The free-text advice
+   is the primary policy, the rules a supplement.

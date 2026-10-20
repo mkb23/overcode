@@ -27,6 +27,7 @@ def _launch_message(**overrides):
         name="worker", is_remote=False, directory="/tmp", bypass_permissions=False,
         agent_teams=False, agent_persona=None, provider=None, backend=None,
         wrapper=None, extra_cli_args=None, skill_profile=None, billing_code=None,
+        name_auto=False,
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -56,6 +57,27 @@ class TestNewAgentDialog:
 
         assert _notes(app) == [("Created agent: worker", "information")]
         app.refresh_sessions.assert_called_once()
+
+
+class TestNameSource:
+    """The dialog's name is a default one until typed; a fork's until edited (#542)."""
+
+    def test_launch(self):
+        for auto, source in ((True, "default"), (False, "human")):
+            app = _app()
+            with patch("overcode.tui_actions.dialogs.AgentLauncher") as cls:
+                SupervisorTUI.on_new_agent_modal_launch_requested(
+                    app, _launch_message(name_auto=auto))
+            assert cls.return_value.launch.call_args.kwargs["name_source"] == source
+
+    def test_fork(self):
+        for name, source in (("src-fork", "default"), ("src-fork2", "default"), ("side", "human")):
+            app = _app()
+            message = SimpleNamespace(source_session=SimpleNamespace(name="src", is_remote=False),
+                                      fork_name=name)
+            with patch("overcode.tui_actions.command_bar.AgentLauncher") as cls:
+                SupervisorTUI.on_command_bar_fork_requested(app, message)
+            assert cls.return_value.launch_fork.call_args.kwargs["name_source"] == source
 
 
 class TestFork:
