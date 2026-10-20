@@ -178,31 +178,18 @@ class TestBillingCodesModal:
         _press(m, "enter")
         assert posted == [] and m.mode == "list"
 
-    def test_another_codes_name_offers_a_merge_on_a_second_enter(self):
+    def test_another_codes_name_is_refused_with_the_merge_hint(self):
         m, posted = _modal()
         _press(m, "j")
         _press(m, "enter")
         m.value, m.cursor = "web", 3
-        assert "merges api into it" in m.render().plain
+        assert "taken by 'web' — press M to merge into it" in m.render().plain
         _press(m, "enter")
-        assert posted == []
-        assert "merge api into web? press Enter again" in m.render().plain
-        _press(m, "enter")
-        msg = posted[-1]
-        assert isinstance(msg, BillingCodesModal.MergeRequested)
-        assert (msg.code_id, msg.into_id) == ("c_" + "2" * 32, "c_" + "1" * 32)
-
-    def test_an_edit_after_the_offer_needs_the_confirm_again(self):
-        m, posted = _modal()
-        _press(m, "j")
-        _press(m, "enter")
-        m.value, m.cursor = "we", 2
-        _type(m, "b")
-        _press(m, "enter")
-        _press(m, "backspace")
-        _type(m, "b")
-        _press(m, "enter")
-        assert posted == []
+        assert posted == [] and m.mode == "list"
+        assert "can't rename api: taken by 'web'" in m.render().plain
+        _press(m, "M", "M")  # the picker starts on the name that was refused
+        assert m.mode == "merge" and m.query == "web"
+        assert [r.name for r in m.candidates()] == ["web"]
 
     def test_another_codes_previous_name_is_allowed_with_a_warning(self):
         m, posted = _modal()
@@ -316,7 +303,7 @@ class TestFromTheTui:
         assert codes.name_of(code_id) == "client-q"
         assert SessionManager(skip_git_detection=True).get_session(s.id).billing_code == "client-q"
 
-    async def test_merge_with_a_double_enter_and_the_figures_read_again(self, make_tui):
+    async def test_merge_with_m_and_the_figures_read_again(self, make_tui):
         sm = SessionManager(skip_git_detection=True)
         a = sm.create_session(name="alpha", tmux_session="test", tmux_window="a-w",
                               command=["claude"], start_directory="/tmp")
@@ -329,18 +316,15 @@ class TestFromTheTui:
         async with app.run_test(size=(160, 40)) as pilot:
             modal = await self._open(app, pilot)
             assert [r.name for r in modal.rows] == ["bravo", "alpha"]
-            await pilot.press("j", "enter")
-            for _ in range(5):
-                await pilot.press("backspace")
-            await pilot.press(*"bravo", "enter")
-            assert "press Enter again" in modal.render().plain
+            await pilot.press("j", "M", *"bra", "enter")
+            assert "merge alpha ($2.00, 1 agent) into bravo? ↵ confirm" in modal.render().plain
             await pilot.press("enter")
             await app.workers.wait_for_complete()
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
             assert [(r.name, r.total) for r in modal.shown] == [("bravo", 9.0)]
-            assert "folded into bravo" in modal.render().plain
+            assert "merged alpha into bravo · undo: m then u" in modal.render().plain
 
         fresh = SessionManager(skip_git_detection=True)
         assert fresh.get_session(a.id).billing_code_id == idb

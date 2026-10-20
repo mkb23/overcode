@@ -394,7 +394,7 @@ class DialogsMixin:
     def on_billing_codes_modal_merge_requested(
         self, message: BillingCodesModal.MergeRequested,
     ) -> None:
-        """Fold one code into another: ``overcode billing merge``'s path; the figures are read again."""
+        """Fold codes into another: ``overcode billing merge``'s path (one write); the figures are read again."""
         from ..tui_widgets import dialog_style as ds
 
         manager = self.session_manager
@@ -403,13 +403,15 @@ class DialogsMixin:
             from ..codes import CodeError
 
             try:
-                manager.ledger.codes.merge(message.code_id, message.into_id)
+                _, folded = manager.ledger.codes.merge_many(message.code_ids, message.into_id)
             except CodeError as e:
                 self.call_from_thread(self._billing_codes_modal_say, str(e), "error")
                 return
             self._billing_codes_changed(manager)
+            what = folded[0][1] if len(folded) == 1 else f"{len(folded)} codes"
             self.call_from_thread(self._load_billing_codes,
-                                  f"✓ {message.name} folded into {message.into_name}", ds.STATE_ON)
+                                  f"✓ merged {what} into {message.into_name} · undo: m then u",
+                                  ds.STATE_ON)
             self.call_from_thread(self.refresh_sessions)
 
         self.run_worker(work, thread=True, group="billing_codes_edit", exclusive=False)
