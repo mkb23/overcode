@@ -185,8 +185,8 @@ def hover_spend(ctx: ColumnContext):
         rows.append(("$", f"${total:.2f} in all"))
     if sub:
         own = max(0.0, total - sub)
-        rows += [("·", f"${own:.2f} of it its own turns"),
-                 (ctx.e("👥"), f"${sub:.2f} of it its subagents, workflow agents and teammates")]
+        rows += [("·", f"${own:.2f} its own turns"),
+                 (ctx.e("👥"), f"${sub:.2f} its subagents, workflow agents and teammates")]
         notes.append("Delegated work is inside the total; never add it again.")
     return _emoji_legend("Spend", rows, "\n".join(notes))
 

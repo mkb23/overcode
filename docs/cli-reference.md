@@ -111,9 +111,9 @@ overcode list [name | --self] [--show-done] [--session <session>]
 | `name` | Optional. Show only this agent and its descendants |
 | `--self` | From inside an agent: show it and its descendants, found by `OVERCODE_SESSION_ID` (so it still works after the agent is renamed) |
 | `--show-done` | Include "done" child agents |
-| `--json` | One JSON object per agent: `id`, `name`, `name_source` (`default`, `parent`, `auto` or `human`), `name_forced`, `previous_names`, `status`, `activity`, `parent_session_id`, `repo`, `branch`, `backend`, `model`, `is_remote` |
+| `--json` | One JSON object per agent: `id`, `name`, `name_source` (`default`, `parent`, `auto` or `human`), `name_forced`, `previous_names`, `status`, `activity`, `parent_session_id`, `repo`, `branch`, `backend`, `model`, `is_remote`, and `spend`: `{"total", "trip", "trip_reset_at"}` (see [`overcode trip`](#overcode-trip)) |
 
-Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity. In tree mode, children are indented under their parent. A name overcode chose (auto-naming) is shown as `~name`.
+Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity. In tree mode, children are indented under their parent. A name overcode chose (auto-naming) is shown as `~name`. An agent whose trip counter was reset shows its spend since, marked `↺`.
 
 ### `overcode attach`
 
@@ -360,6 +360,24 @@ overcode budget show [name]                      # Show budget status
 ```
 
 The `transfer` command requires the source to be an ancestor of the target.
+
+### `overcode trip`
+
+Trip counters: an agent's spend since you last reset it, like a car's trip
+meter. A reset zeroes the spend the agent's row shows (tokens, `$`, energy,
+`Q%`, in the TUI and `overcode list`, marked `↺`); the total keeps counting
+in the ledger, billing codes, `overcode billing` and budgets — a reset
+never gives an agent more budget.
+
+```bash
+overcode trip reset <name>          # this agent
+overcode trip reset <name> --tree   # it and every agent under it
+overcode trip reset --all           # every agent in the session
+overcode trip show <name> [--json]  # its trip beside its total, and when it was reset
+```
+
+`Q%` restarts each quota week by itself: within the week of the reset its
+trip is the points since; once the week rolls over it is this week's.
 
 ### `overcode rebill`
 

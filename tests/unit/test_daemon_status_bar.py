@@ -467,6 +467,22 @@ class TestDaemonStatusBarRenderSpinStats:
         assert "🔥" in plain
         assert "/h" in plain
 
+    def test_burn_rate_in_quota_mode_is_points_per_hour(self):
+        """Q% mode: the window's quota points and points per hour, not tokens."""
+        from overcode.burn import WindowBurnStats
+        s1 = _make_session_state(session_id="s1", current_status="running",
+                                 input_tokens=1000, output_tokens=500)
+        state = _make_monitor_state(sessions=[s1])
+        burn = WindowBurnStats(window_hours=2.0, input_tokens=300, output_tokens=600,
+                               cost_usd=0.2, quota_pp=0.84)
+        widget = _make_bare_status_bar(monitor_state=state, show_cost="quota", _burn_stats=burn)
+        plain = widget.render().plain
+        assert "Δ0.84%" in plain and "🔥0.42%/h" in plain
+        burn.quota_pp = None  # no quota model: nothing, rather than tokens
+        plain = _make_bare_status_bar(monitor_state=state, show_cost="quota",
+                                      _burn_stats=burn).render().plain
+        assert "🔥" not in plain
+
     def test_burn_rate_hidden_when_zero(self):
         from overcode.burn import WindowBurnStats
         s1 = _make_session_state(session_id="s1", current_status="running")
