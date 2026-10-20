@@ -28,6 +28,8 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
     """
     if mode == "fork_name":
         return "[Fork: Name] ", "Enter name for forked agent (or Enter to accept default)..."
+    elif mode == "worktree_name":
+        return "[Worktree: Name] ", "Name the new agent and its branch (or Enter to accept default)..."
     elif mode == "standing_orders":
         prefix = f"[{target_session} Standing Orders] " if target_session else "[Standing Orders] "
         return prefix, "Enter standing orders (or empty to clear)..."
@@ -82,6 +84,7 @@ class CommandBar(Static):
     mode: str = "send"  # "send", "standing_orders", "heartbeat_freq", "heartbeat_instruction", etc.
     heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
     fork_source_session: Optional[object] = None  # Store source session for fork flow (#347)
+    worktree_source_session: Optional[object] = None  # The agent a worktree sibling starts beside
 
     class SendRequested(Message):
         """Message sent when user wants to send text to a session."""
@@ -139,6 +142,13 @@ class CommandBar(Static):
             super().__init__()
             self.source_session = source_session
             self.fork_name = fork_name
+
+    class WorktreeRequested(Message):
+        """Message sent when user wants a fresh agent in a new worktree."""
+        def __init__(self, source_session, name: str):
+            super().__init__()
+            self.source_session = source_session
+            self.name = name
 
     class ClearRequested(Message):
         """Message sent when user clears the command bar."""
@@ -250,6 +260,15 @@ class CommandBar(Static):
                     return
                 self.post_message(self.ForkRequested(self.fork_source_session, fork_name))
                 self.fork_source_session = None
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
+            elif self.mode == "worktree_name":
+                if not text:
+                    self.app.notify("Agent name required", severity="error")
+                    return
+                self.post_message(self.WorktreeRequested(self.worktree_source_session, text))
+                self.worktree_source_session = None
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
@@ -392,6 +411,7 @@ class CommandBar(Static):
         # Reset mode and state
         self.mode = "send"
         self.fork_source_session = None  # Reset fork state (#347)
+        self.worktree_source_session = None
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()
         # Let parent handle unfocus

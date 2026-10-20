@@ -141,6 +141,40 @@ class SessionActionsMixin:
         except NoMatches:
             self.notify("Command bar not found", severity="error")
 
+    def action_new_agent_in_worktree(self) -> None:
+        """A fresh agent beside the focused one, in a new git worktree (``g``).
+
+        Asks for its name (also its branch's) in the command bar; the
+        launch is ``AgentLauncher.launch_in_worktree``.
+        """
+        from ..tui_widgets import CommandBar
+
+        focused = _get_focused_session(self)
+        if not focused:
+            self.notify("No agent focused", severity="warning")
+            return
+        session = focused.session
+        if self._is_remote(session):
+            self.notify(
+                f"'{session.name}' runs on {session.source_host}: make its worktree there",
+                severity="warning",
+            )
+            return
+        if not session.start_directory:
+            self.notify(f"'{session.name}' has no directory", severity="warning")
+            return
+
+        try:
+            command_bar = self.query_one("#command-bar", CommandBar)
+            command_bar.add_class("visible")
+            command_bar.worktree_source_session = session
+            command_bar.set_mode("worktree_name")
+            input_widget = command_bar.query_one("#cmd-input", Input)
+            input_widget.value = command_bar._get_unique_agent_name(f"{session.name}-wt")
+            command_bar.focus_input()
+        except NoMatches:
+            self.notify("Command bar not found", severity="error")
+
     def action_toggle_sleep(self) -> None:
         """Toggle sleep mode for the focused agent.
 

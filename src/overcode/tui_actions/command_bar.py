@@ -356,3 +356,34 @@ class CommandBarMixin:
             self.notify(str(e), severity="error")
         except Exception as e:
             self.notify(f"Failed to fork: {e}", severity="error")
+
+    def on_command_bar_worktree_requested(self, message: CommandBar.WorktreeRequested) -> None:
+        """A fresh agent in a new worktree: off the UI thread (git checks out every file)."""
+        source_session = message.source_session
+        name = message.name
+        if source_session is None:
+            return
+        self.notify(f"Making a worktree for '{name}'…", severity="information")
+
+        def work() -> None:
+            from ..exceptions import LaunchError
+            launcher = AgentLauncher(
+                tmux_session=self.tmux_session,
+                session_manager=self.session_manager,
+            )
+            try:
+                _, worktree = launcher.launch_in_worktree(name, source_session)
+            except LaunchError as e:
+                self.call_from_thread(self.notify, str(e), severity="error")
+                return
+            except Exception as e:
+                self.call_from_thread(self.notify, f"Failed to create agent: {e}", severity="error")
+                return
+            self.call_from_thread(
+                self.notify,
+                f"Created '{name}' on branch {worktree.branch} in {worktree.path}",
+                severity="information",
+            )
+            self.call_from_thread(self.refresh_sessions)
+
+        self.run_worker(work, thread=True, group="worktree_launch", exclusive=False)

@@ -322,6 +322,8 @@ class SupervisorTUI(
         ("H", "configure_heartbeat", "Heartbeat config"),
         # Fork agent - create child with source's conversation context (#347)
         ("F", "fork_focused", "Fork agent"),
+        # Fresh agent beside the focused one, in a git worktree of its own
+        ("g", "new_agent_in_worktree", "New agent in worktree"),
         # Enhanced context toggle - per-agent context injection hook
         ("ctrl+t", "toggle_enhanced_context", "Enhanced context"),
         # Hook-based status detection toggle (#5)

@@ -309,6 +309,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("new_agent", "New agent…", "Agent", "launch create start remote"),
     _C("rename_focused", "Rename agent…", "Agent", "name", agent=True),
     _C("fork_focused", "Fork agent", "Agent", "clone copy child", agent=True),
+    _C("new_agent_in_worktree", "New agent in worktree…", "Agent",
+       "git branch sibling fresh clear context checkout parallel", agent=True),
     _C("restart_focused", "Restart agent", "Agent", "revive", agent=True),
     _C("revive_dead_agents", "Revive all dead agents", "Agent",
        "restart resume reboot terminated killed dead crashed bulk restore recover bring back"),
