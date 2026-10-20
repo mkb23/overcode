@@ -40,9 +40,13 @@ What each backend's pass proves, in order:
    pane, telemetry footprint present) and can determine the CLI version.
 6. ``overcode rename`` mid-run leaves the agent running (same CLI process),
    and the next turn's hooks still land in its own hook state (auto-naming
-   §1). Where hook stdout reaches the model (claude-code, hermes) the rename
-   notice is consumed by that turn's prompt and the agent answers with its
-   new name. The permission step (3) then runs under the new name.
+   §1). Where the prompt context reaches the model (claude-code, codex and
+   hermes through hook stdout, opencode and opencode2 through their
+   plugins) the rename notice is consumed by that turn's prompt and the
+   agent answers with its new name, in upper case: opencode2's pane shows
+   the notice itself in the user's message. The opencode plugins also
+   record the first prompts in ``prompts.jsonl``. The permission step (3)
+   then runs under the new name.
 
 Prerequisites per backend are checked up front and reported as a skip
 reason, never a failure: binary on PATH (or the *_COMMAND override) and a
@@ -63,8 +67,10 @@ uninstall-backend`` removes each.
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import warnings
@@ -147,9 +153,11 @@ class LiveSpec:
     # Substrings of a fresh pane (from the corpus) — proves the chrome.
     idle_markers: Tuple[str, ...] = ()
     extra_env: Dict[str, str] = field(default_factory=dict)
-    # Whether a UserPromptSubmit hook's stdout reaches the model as context
-    # (the rename notice, the enhanced-context line).
-    hook_stdout_reaches_model: bool = False
+    # Whether the UserPromptSubmit context (the rename notice, the
+    # enhanced-context line) reaches the model: hook stdout, or a plugin.
+    prompt_context_reaches_model: bool = False
+    # Whether the telemetry plugin records the first prompts itself.
+    plugin_records_prompts: bool = False
 
 
 def _opencode_v1_files(model: Optional[str]) -> Dict[str, str]:
@@ -198,7 +206,7 @@ SPECS: List[LiveSpec] = [
         approved_effect=lambda d: (d / "live_probe.txt").exists(),
         expect_stats=False,
         idle_markers=("Claude Code",),
-        hook_stdout_reaches_model=True,
+        prompt_context_reaches_model=True,
     ),
     LiveSpec(
         backend="opencode",
@@ -211,6 +219,8 @@ SPECS: List[LiveSpec] = [
         permission_prompt="Use the bash tool to run exactly this command and report its output: touch live_probe.txt && echo live-ok",
         approved_effect=lambda d: (d / "live_probe.txt").exists(),
         idle_markers=("┃", "ctrl+p commands"),
+        prompt_context_reaches_model=True,
+        plugin_records_prompts=True,
     ),
     LiveSpec(
         backend="opencode2",
@@ -223,6 +233,8 @@ SPECS: List[LiveSpec] = [
         permission_prompt="Use the shell tool to run exactly this command and report its output: touch live_probe.txt && echo live-ok",
         approved_effect=lambda d: (d / "live_probe.txt").exists(),
         idle_markers=("┃", "ctrl+p commands"),
+        prompt_context_reaches_model=True,
+        plugin_records_prompts=True,
     ),
     LiveSpec(
         backend="codex",
@@ -241,6 +253,7 @@ SPECS: List[LiveSpec] = [
         permission_prompt="Run exactly this shell command and then say done: touch ~/overcode_live_probe.txt",
         approved_effect=lambda _d: (Path.home() / "overcode_live_probe.txt").exists(),
         idle_markers=("Codex",),
+        prompt_context_reaches_model=True,
     ),
     LiveSpec(
         backend="grok",
@@ -277,7 +290,7 @@ SPECS: List[LiveSpec] = [
         # hatch for spawned children; this tier exists to touch the real
         # store, so it is the right thing to set here and nowhere else.
         extra_env={"HERMES_STATE_DB_GUARD_BYPASS": "1"},
-        hook_stdout_reaches_model=True,
+        prompt_context_reaches_model=True,
     ),
 ]
 _BY_NAME = {s.backend: s for s in SPECS}
@@ -352,6 +365,21 @@ def live_env(spec):
     env["OVERCODE_STATE_DIR"] = state_dir
     env["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
     env["PYTHONPATH"] = str(_PROJECT_ROOT / "src")
+    # The agent's hooks and plugins run the `overcode` the launcher finds
+    # on PATH, and the agent's process does not inherit PYTHONPATH: put
+    # one first that runs this checkout, or they run whatever is installed.
+    shim_dir = Path(state_dir) / "bin"
+    shim_dir.mkdir()
+    shim = shim_dir / "overcode"
+    shim.write_text(
+        "#!/bin/sh\n"
+        f"PYTHONPATH={shlex.quote(str(_PROJECT_ROOT / 'src'))} "
+        f"exec {shlex.quote(sys.executable)} -c "
+        "'import sys; from overcode.entrypoint import main; sys.argv[0] = \"overcode\"; main()' "
+        '"$@"\n'
+    )
+    shim.chmod(0o755)
+    env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
     for key in [
         "OVERCODE_SESSION_NAME", "OVERCODE_SESSION_ID", "OVERCODE_TMUX_SESSION",
         "OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME",
@@ -553,17 +581,21 @@ class TestLiveBackend:
 
         t = time.time()
         prompt = ("What name did overcode just tell you to use from now on? "
-                  "Reply with only that name." if spec.hook_stdout_reaches_model
-                  else spec.simple_prompt)
+                  "Reply with only that name, in upper case."
+                  if spec.prompt_context_reaches_model else spec.simple_prompt)
         result = self._cli("send", new_name, prompt)
         assert result.returncode == 0, result.stderr
         state = self._wait_hook_event("Stop", after=t)
         if cli_pid and state.get("cli_pid"):
             assert state["cli_pid"] == cli_pid, "the rename restarted the agent's CLI"
-        if spec.hook_stdout_reaches_model:
+        if spec.prompt_context_reaches_model:
             assert not notice.exists(), "the notice was not consumed by the prompt hook"
-            assert self._pane_shows(new_name, timeout=30), (
+            assert self._pane_shows(new_name.upper(), timeout=30), (
                 f"the agent never said its new name:\n{self._pane()}")
+        if spec.plugin_records_prompts:
+            rows = [json.loads(line) for line in
+                    (notice.parent / "prompts.jsonl").read_text().splitlines()]
+            assert [r["prompt"] for r in rows] == [spec.simple_prompt, prompt], rows
         assert self._wait_daemon_status("waiting_user") == "waiting_user"
 
     # -- the one long test ---------------------------------------------

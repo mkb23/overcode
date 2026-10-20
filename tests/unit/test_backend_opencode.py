@@ -186,9 +186,11 @@ class TestBuildCommand:
         env = dict(os.environ)
         env.pop("OVERCODE_STATE_DIR", None)
         with patch.dict(os.environ, env, clear=True):
-            assert backend.env_prefix(
+            result = backend.env_prefix(
                 LaunchSpec(agent_teams=True, provider="bedrock")
-            ) == {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
+            )
+        result.pop("OVERCODE_HOOK_COMMAND")
+        assert result == {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
 
 
 class TestGestures:
@@ -371,16 +373,26 @@ class TestEnvPrefix:
         # The plugin runs inside the opencode process and must write hook state
         # where this overcode instance reads it.
         with patch.dict(os.environ, {"OVERCODE_STATE_DIR": "/tmp/state dir"}):
-            assert backend.env_prefix(LaunchSpec()) == {
-                "OPENCODE_DISABLE_AUTOUPDATE": "1",
-                "OVERCODE_STATE_DIR": "'/tmp/state dir'",
-            }
+            result = backend.env_prefix(LaunchSpec())
+        assert result["OVERCODE_STATE_DIR"] == "'/tmp/state dir'"
 
-    def test_only_autoupdate_off_without_a_state_dir_override(self, backend):
+    def test_only_autoupdate_off_and_the_hook_command_without_overrides(self, backend):
         env = dict(os.environ)
         env.pop("OVERCODE_STATE_DIR", None)
-        with patch.dict(os.environ, env, clear=True):
-            assert backend.env_prefix(LaunchSpec()) == {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
+        with patch.dict(os.environ, env, clear=True), \
+                patch("overcode.backends.opencode.shutil.which",
+                      return_value="/opt/bin/overcode"):
+            assert backend.env_prefix(LaunchSpec()) == {
+                "OPENCODE_DISABLE_AUTOUPDATE": "1",
+                "OVERCODE_HOOK_COMMAND": "/opt/bin/overcode",
+            }
+
+    def test_hook_command_falls_back_to_this_python(self, backend):
+        # The plugin's `hook-handler --prompt-context` must find overcode
+        # even when only a venv has it.
+        with patch("overcode.backends.opencode.shutil.which", return_value=None):
+            cmd = backend.env_prefix(LaunchSpec())["OVERCODE_HOOK_COMMAND"]
+        assert cmd.endswith("-m overcode.cli'")
 
     def test_autoupdate_is_off(self, backend):
         # opencode 1.18's "Update Available" modal eats every key sent to

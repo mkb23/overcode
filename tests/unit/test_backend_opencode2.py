@@ -105,6 +105,17 @@ def test_bypass_env_unset_no_override_verified():
     assert "OPENCODE_PERMISSION" not in env
 
 
+def test_env_names_the_hook_command():
+    # The server plugin runs `<this> hook-handler --prompt-context`.
+    from unittest.mock import patch
+
+    from overcode.backends.base import LaunchSpec
+
+    with patch("overcode.backends.opencode.shutil.which", return_value="/opt/bin/overcode"):
+        env = Opencode2Backend().env_prefix(LaunchSpec())
+    assert env["OVERCODE_HOOK_COMMAND"] == "/opt/bin/overcode"
+
+
 def test_doctor_emits_opencode2_findings():
     # Mirrors test_doctor_cli.py's patch harness (AgentLauncher,
     # snapshot_process_table, inspect_agent, is_monitor_daemon_running) plus

@@ -84,6 +84,12 @@
  *   session.error, not MessageAbortedError             → StopFailure       (error; the idle after it publishes nothing)
  *   session.deleted                                    → SessionEnd        (terminated)
  *   anything else from a child session                 → ignored
+ *
+ * chat.message also adds overcode's prompt context to the agent's own
+ * prompts (not a `task` child's): `overcode hook-handler --prompt-context`
+ * prints what Claude's UserPromptSubmit hook prints (the enhanced-context
+ * line, the one-shot rename notice), and the plugin adds it as a synthetic
+ * text part. The agent's first prompts go to agents/<id>/prompts.jsonl.
  */
 
 // The hook-file writer (snapshot + event log, obligation carry-over, the
@@ -99,8 +105,15 @@ try {
 } catch (e) {
   core = null
 }
-const { MAX_SESSION_IDS, canonicalToolName, createWriter, isOvercodeSession, resolveStateDir } =
-  core || {}
+const {
+  MAX_SESSION_IDS,
+  ascendingId,
+  canonicalToolName,
+  createWriter,
+  isOvercodeSession,
+  promptContext,
+  resolveStateDir,
+} = core || {}
 
 // What each published event means for the agent, mirrored from
 // hook_status_detector._HOOK_STATUS_MAP — the reducer keeps the last one so
@@ -394,15 +407,60 @@ function createTelemetry(env, options = {}) {
     }
   }
 
+  /** True for a prompt in this agent's own conversation, never a `task`
+   *  child's: only those get overcode's prompt context. */
+  function ownsPrompt(sessionId) {
+    return owns(sessionId, { adopt: true })
+  }
+
   return {
     handleBusEvent,
     onUserMessage,
     onToolBefore,
     onToolAfter,
+    ownsPrompt,
     writer,
     rootSessionIds,
     childSessionIds,
   }
+}
+
+/** The user's own words in a chat.message: its non-synthetic text parts. */
+function promptText(parts) {
+  if (!Array.isArray(parts)) return ""
+  return parts
+    .filter((p) => p && p.type === "text" && !p.synthetic && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("\n")
+}
+
+/**
+ * Add overcode's prompt context (enhanced-context line, rename notice) to a
+ * user message, the way Claude's UserPromptSubmit hook stdout reaches the
+ * model.
+ *
+ * Verified live on v1.18.29: chat.message gets the parts array opencode
+ * saves after the hook returns, and awaits the hook, so a pushed text part
+ * is stored with the message and sent to the model. `synthetic` keeps it
+ * out of the TUI's transcript (as opencode's own @file expansions are).
+ * The part needs an id of opencode's ascending `prt_` shape.
+ */
+async function addPromptContext(env, telemetry, input, output, options = {}) {
+  if (!output || !Array.isArray(output.parts)) return
+  const message = output.message || {}
+  if (message.role && message.role !== "user") return
+  const sessionId = (input && input.sessionID) || message.sessionID
+  if (!telemetry.ownsPrompt(sessionId)) return
+  const text = await promptContext(env, promptText(output.parts), options)
+  if (!text) return
+  output.parts.push({
+    id: ascendingId("prt"),
+    messageID: message.id,
+    sessionID: sessionId,
+    type: "text",
+    text,
+    synthetic: true,
+  })
 }
 
 /**
@@ -436,13 +494,19 @@ export const OvercodeTelemetryPlugin = async () => {
     }
   }
 
+  const env = process.env
   return {
     event: guard((input) => telemetry.handleBusEvent(input && input.event)),
-    "chat.message": guard((input, output) => {
-      const message = (output && output.message) || {}
-      if (message.role && message.role !== "user") return
-      telemetry.onUserMessage((input && input.sessionID) || message.sessionID, message.id)
-    }),
+    "chat.message": async (input, output) => {
+      try {
+        const message = (output && output.message) || {}
+        if (message.role && message.role !== "user") return
+        telemetry.onUserMessage((input && input.sessionID) || message.sessionID, message.id)
+        await addPromptContext(env, telemetry, input, output)
+      } catch (e) {
+        /* ignore */
+      }
+    },
     "tool.execute.before": guard((input, output) => telemetry.onToolBefore(input, output)),
     "tool.execute.after": guard((input, output) => telemetry.onToolAfter(input, output)),
   }
@@ -450,6 +514,7 @@ export const OvercodeTelemetryPlugin = async () => {
 
 // Test seam only — a property, never a second export (see above).
 OvercodeTelemetryPlugin.internals = {
+  addPromptContext,
   canonicalToolName,
   createTelemetry,
   createWriter,

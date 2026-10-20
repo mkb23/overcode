@@ -24,13 +24,14 @@ Audited on 2026-10-07 against `release/0.6.0` (d22c174).
 ## Summary
 
 Counts cover the 49 capability rows below. The colour-replay row is left out
-because it's described in its own section.
+because it's described in its own section. Updated on 2026-10-20 for gap 6
+(#533).
 
 | Backend | works | partial | missing | n/a | unverified |
 |---|---|---|---|---|---|
 | Claude Code | 45 | 2 | 0 | 1 | 1 |
-| opencode (v1) | 30 | 8 | 4 | 4 | 3 |
-| opencode2 | 22 | 9 | 9 | 4 | 5 |
+| opencode (v1) | 32 | 7 | 3 | 4 | 3 |
+| opencode2 | 24 | 8 | 8 | 4 | 5 |
 
 ### Top gaps, ranked by how much a user would notice
 
@@ -50,9 +51,9 @@ because it's described in its own section.
 5. **The PR column comes only from the pane (opencode, opencode2).**
    - Claude's PR number comes from transcript pr-link records (`monitor_daemon.py:873-887`). opencode only gets the GitHub URL scrape (`monitor_daemon.py:1797-1803`, `status_patterns.py:858`).
    - The PR is missed once the URL scrolls off screen, or if it never appeared there.
-6. **Rename and time context never reach the opencode model.**
-   - Claude's hook prints the rename notice and the time-context line to the model's context on each prompt (`hook_handler.py:1231-1236`). The opencode plugins can't do this.
-   - A renamed opencode agent keeps calling itself by its old name, for example in `overcode report` reasoning and messages to its parent.
+6. **Fixed (#533)**: **Rename and time context never reached the opencode model.**
+   - Claude's hook prints the rename notice and the time-context line to the model's context on each prompt. The opencode plugins couldn't do this, so a renamed opencode agent kept calling itself by its old name.
+   - Both plugins now add the output of `overcode hook-handler --prompt-context` to each of the agent's own prompts (see item 6 of the list at the end).
 7. **The container e2e tier has no opencode coverage.**
    - `MOCK_OPENCODE` is defined in `tests/container/harness/core.py:10` but no workflow uses it.
    - Budgets, delegation, fork/restart, shutdown/revive and the supervisor are container-tested for Claude only.
@@ -84,7 +85,7 @@ Also worth knowing:
 |---|---|---|---|---|
 | Standing instructions | **works**: supervisor `daemon_claude` sends text through tmux (`supervisor_daemon_core.py:49-54`, `:90-117`; `tests/container/workflows/test_supervisor.py`) | **works†**: same delivery path; the supervisor prompt names the backend (`supervisor_daemon_core.py:52-54`) | **works†** | Add an opencode mock to the container tier (gap 7) |
 | Heartbeats | **works**: `monitor_daemon.py:660-705`. In hooks mode it skips the send while the agent is working (`:683-692`). Tests: `tests/container/workflows/test_instructions_heartbeat.py`. | **works†**: the plugin publishes the same `UserPromptSubmit`/`PreToolUse` events the skip check reads (`opencode_plugin/overcode-telemetry.js:411-438`) | **works†**: plain text plus Enter. The autocomplete quirk only affects slash commands (`backends/opencode2.py:152-166`). | Same as above |
-| Per-prompt context injection (time context, rename notice) | **works**: hook stdout goes into the model's context (`hook_handler.py:1231-1236`, `:420-429`) | **missing**: the plugin only writes files and can't add text to the prompt | **missing** | Possibly by mutating `output.parts` in the `chat.message` hook. Whether that reaches the model is unverified. |
+| Per-prompt context injection (time context, rename notice) | **works**: hook stdout goes into the model's context (`hook_handler.emit_prompt_context`) | **works** (#533): `chat.message` adds the output of `overcode hook-handler --prompt-context` as a synthetic text part, verified live on 1.18.29 (`opencode_plugin/overcode-telemetry.js` `addPromptContext`; `tests/unit/test_opencode_prompt_context.py`) | **works** (#533): the server entrypoint's `session.hook("prompt")` appends it to the prompt text, which the TUI shows too; verified live on dev-19272 (`overcode-telemetry-core.mjs` `extendPrompt`; same test file) | |
 
 ## 3. Status detection by colour
 
@@ -130,7 +131,7 @@ pane fallback uses `OPENCODE_PATTERNS` / `OPENCODE2_PATTERNS`.
 | Fork | **works** | **works**: `--session <id> --fork` (`backends/opencode.py:415-416`, gate `launcher.py:679`) | **missing**: `--fork` exists only on `mini`/`run` (`backends/opencode2.py:88-91`) | Needs CLI support, or a `run --fork` bootstrap followed by a TUI resume (unverified) |
 | Sleep / wake | **works**: an overcode-side flag (`monitor_daemon_core.py:185`, `supervisor_daemon_core.py:113`) | **works†** | **works†** | |
 | Kill | **works** | **works** (`test_backend_matrix.py::test_kill_removes_window_and_state`) | **works** (`tests/e2e/test_opencode2_backend.py`) | |
-| Rename | **works**: stop and resume, and the agent is told its new name (`launcher.py:1038`, `:1157`; `hook_handler.py:1236`) | **partial**: the stop/resume works, but the rename notice is only delivered by Claude's hook, so the model never learns its new name | **partial** | Same fix as per-prompt context injection |
+| Rename | **works**: stop and resume, and the agent is told its new name (`launcher.py:1038`, `:1157`; `hook_handler._emit_rename_notice`) | **works** (#533): the notice reaches the model on the next prompt, through the per-prompt context injection above; `tests/e2e/test_live_backends.py` checks it live | **works** (#533): same | |
 
 ## 6. Delegation, oversight, budgets
 
@@ -227,7 +228,7 @@ Filed as #529–#537 (items 2–10); item 1 was fixed in 0.6.0.
 
 5. **PR column is pane-scrape-only for opencode/opencode2.** Claude gets the PR number from transcript pr-link records (#489). For opencode the number only appears if a `github.com/.../pull/N` URL is on screen when the daemon polls. Use `gh pr view --json number` on the agent's branch, which is backend-neutral, or scan opencode's stored tool output.
 
-6. **Rename and time-context notices never reach opencode models.** `hook_handler` prints the rename notice and the enhanced time-context line to Claude's context on each `UserPromptSubmit`. The opencode plugins only write files. A renamed opencode agent keeps its old name. Investigate whether the `chat.message` hook can append a text part that reaches the model (v1) or the v2 equivalent.
+6. **Fixed (#533)** — **Rename and time-context notices never reached opencode models.** `hook_handler` prints the rename notice and the enhanced time-context line to Claude's context on each `UserPromptSubmit`; the opencode plugins only wrote files, so a renamed opencode agent kept its old name. Now `overcode hook-handler --prompt-context` prints the same text (one source, `hook_handler.emit_prompt_context`), and the plugins add it to each of the agent's own prompts: v1 as a synthetic text part in `chat.message`, opencode2 by appending to `prompt.text` in the server's `session.hook("prompt")`. Both verified live (1.18.29, dev-19272); the notice is consumed once. The plugins also record the first 3 prompts in `agents/<id>/prompts.jsonl`. Of the other hook backends, codex already adds UserPromptSubmit stdout to the conversation (verified live on 0.156.1). grok 1.0.34 discards it and has no supported way to add context on a prompt, according to its hooks guide (not checked live). See `docs/backends.md`.
 
 7. **Container e2e tier: add opencode.** `tests/container/harness/core.py` defines `MOCK_OPENCODE` but no workflow uses it. Parametrize the status-detection, delegation, budget, fork/restart and shutdown/revive workflows over the opencode mock so lifecycle regressions are caught for the second-most-used backend.
 

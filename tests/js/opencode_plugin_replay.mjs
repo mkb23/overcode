@@ -83,7 +83,14 @@ async function makeHooks(mod, flavor) {
 
 async function replayStream(mod, baseEnv, stream, job) {
   const stateDir = path.join(baseEnv.OVERCODE_STATE_DIR, stream.name)
-  const env = { ...baseEnv, OVERCODE_STATE_DIR: stateDir }
+  // chat.message runs `$OVERCODE_HOOK_COMMAND hook-handler --prompt-context`;
+  // without one it would find whatever overcode is on PATH. `node -e 0`
+  // prints nothing, so a replay adds no prompt context.
+  const env = {
+    OVERCODE_HOOK_COMMAND: `${process.execPath} -e 0`,
+    ...baseEnv,
+    OVERCODE_STATE_DIR: stateDir,
+  }
   const agent = env.OVERCODE_SESSION_NAME
   const dir = path.join(stateDir, env.OVERCODE_TMUX_SESSION)
   const logPath = path.join(dir, `hook_events_${agent}.jsonl`)

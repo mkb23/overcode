@@ -18,6 +18,11 @@ def hook_handler_cmd(
         Optional[str],
         typer.Option("--backend", help="Backend whose hook dialect the payload is in"),
     ] = None,
+    prompt_context: Annotated[
+        bool,
+        typer.Option("--prompt-context",
+                     help="Print only the context a user prompt gets (opencode plugins)"),
+    ] = False,
 ):
     """Handle agent hook events (internal).
 
@@ -25,6 +30,11 @@ def hook_handler_cmd(
     Reads event JSON from stdin, writes state for status detection,
     and outputs enhanced context for UserPromptSubmit events.
     """
+    if prompt_context:
+        from ..hook_handler import handle_prompt_context
+
+        handle_prompt_context()
+        return
     from ..hook_handler import handle_hook_event
 
     handle_hook_event(backend)

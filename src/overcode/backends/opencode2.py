@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import StatusPatterns
 from .base import AgentBackendBase, BackendCapability, KeyPress, LaunchSpec
-from .opencode import parse_version
+from .opencode import _resolve_overcode_bin, parse_version
 
 class Opencode2NotFoundError(AgentCliNotFoundError):
     """Raised when the opencode2 CLI isn't on PATH."""
@@ -129,7 +129,9 @@ class Opencode2Backend(AgentBackendBase):
         import json
         import os
         import shlex
-        env = {}
+        # How the server plugin runs `overcode hook-handler
+        # --prompt-context` for the context it adds to each prompt.
+        env = {"OVERCODE_HOOK_COMMAND": shlex.quote(_resolve_overcode_bin())}
         state_dir = os.environ.get("OVERCODE_STATE_DIR")
         if state_dir:
             env["OVERCODE_STATE_DIR"] = shlex.quote(state_dir)

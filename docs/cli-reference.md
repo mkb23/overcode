@@ -237,7 +237,9 @@ A rename locks the name (its source becomes `human`): auto-naming never
 changes a name a person chose. `--auto` undoes that.
 
 The agent keeps running, even mid-turn: its tmux window and its record take
-the new name, and with its next prompt it is told it was renamed. Its
+the new name, and with its next prompt it is told it was renamed (every
+backend except grok, which has no way to add context to a prompt; see
+`docs/backends.md`). Its
 environment keeps the name it was launched under (`OVERCODE_SESSION_NAME`);
 overcode finds a running agent by `OVERCODE_SESSION_ID`, so nothing reads
 that name.

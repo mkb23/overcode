@@ -18,8 +18,10 @@ import sys
 def main() -> None:
     """Dispatch ``overcode <cmd>``; fast-path hook events, else run the CLI.
 
-    Only ``hook-handler`` and ``hook-handler --backend <name>`` take the
-    fast path; any other shape (``--help``) goes to the typer CLI.
+    Only ``hook-handler``, ``hook-handler --backend <name>`` and
+    ``hook-handler --prompt-context`` (the opencode plugins, on every
+    prompt) take the fast path; any other shape (``--help``) goes to the
+    typer CLI.
     """
     from .paths import mark_entry_point
 
@@ -30,6 +32,11 @@ def main() -> None:
             from .hook_handler import handle_hook_event
 
             handle_hook_event(argv[2] if len(argv) == 3 else None)
+            return
+        if argv[1:] == ["--prompt-context"]:
+            from .hook_handler import handle_prompt_context
+
+            handle_prompt_context()
             return
     # The calibration statusline runs after every assistant message, like a hook
     if argv == ["statusline"]:
