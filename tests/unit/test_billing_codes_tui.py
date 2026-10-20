@@ -71,7 +71,10 @@ class TestLoadCodeRows:
         api, web = _seed(ledger)
         ledger.codes.merge(api, web)
         rows = load_code_rows(ledger)
-        assert [r.name for r in rows] == ["web", "idle"]
+        assert [(r.name, r.merged_into) for r in rows] == [
+            ("web", None), ("api", "web"), ("idle", None)]
+        assert rows[1].total == 0.0  # its spend reports under web
+        rows = [r for r in rows if r.merged_into is None]
         assert rows[0].total == 29.5 and rows[0].last_month == 5.0
         assert "api" in rows[0].previous_names
         assert {m[0] for m in rows[0].members} == {"api-agent", "web-one", "web-two"}
@@ -336,7 +339,7 @@ class TestFromTheTui:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert [(r.name, r.total) for r in modal.rows] == [("bravo", 9.0)]
+            assert [(r.name, r.total) for r in modal.shown] == [("bravo", 9.0)]
             assert "folded into bravo" in modal.render().plain
 
         fresh = SessionManager(skip_git_detection=True)

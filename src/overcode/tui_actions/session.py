@@ -574,7 +574,8 @@ class SessionActionsMixin:
     def action_new_agent(self) -> None:
         """Open the unified new-agent modal pre-filled with defaults."""
         from ..tui_widgets import NewAgentModal
-        from ..config import get_billing_config, get_new_agent_defaults, get_sisters_config
+        from ..config import (get_billing_config, get_billing_defaults, get_new_agent_defaults,
+                              get_sisters_config)
         from ..agent_scanner import scan_agents
         from ..wrapper import list_available_wrappers
 
@@ -610,6 +611,7 @@ class SessionActionsMixin:
             sister_names=sister_names,
             wrappers=wrappers,
             billing_codes=get_billing_config()["codes"],
+            billing_defaults=get_billing_defaults(),
             app_ref=self,
         )
 

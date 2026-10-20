@@ -26,6 +26,12 @@ CONFIG_TEMPLATE = """\
 #   bypass_permissions: false  # --dangerously-skip-permissions
 #   agent_teams: false         # CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 
+# Billing codes (Billing Codes in docs/configuration.md; the TUI's m dialog)
+# billing:
+#   new_agent_code: name       # a new agent's code: name | folder (its repo) | default
+#   default_code: general      # the code `default` bills to; collapse folds codes into it
+#   codes: [client-a, internal]  # the shortlist space cycles in the TUI
+
 # Children presets: oversight, archive delay and default budget for child
 # agents (`overcode launch --preset`; `overcode config presets` lists them)
 # children:

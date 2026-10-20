@@ -313,23 +313,28 @@ class DialogsMixin:
         manager = self.session_manager
 
         def work() -> None:
+            from ..config import get_billing_defaults
             from ..tui_widgets.billing_codes_modal import load_code_rows
 
             try:
                 rows = load_code_rows(manager.ledger)
+                settings = get_billing_defaults()
+                default_id = manager.ledger.codes.find(settings["default_code"])
             except Exception as e:  # a broken ledger must not take the TUI down
                 self.call_from_thread(self._billing_codes_modal_say,
                                       f"could not read the ledger: {e}", "error")
                 return
-            self.call_from_thread(self._billing_codes_loaded, rows, message, style)
+            self.call_from_thread(self._billing_codes_loaded, rows, message, style,
+                                  settings, default_id)
 
         self.run_worker(work, thread=True, group="billing_codes", exclusive=True)
 
-    def _billing_codes_loaded(self, rows, message, style) -> None:
+    def _billing_codes_loaded(self, rows, message, style, settings=None, default_id=None) -> None:
         from ..tui_widgets import dialog_style as ds
 
         modal = self.query_one("#billing-codes-modal", BillingCodesModal)
-        modal.set_rows(rows, message, style or ds.MUTED)
+        modal.set_rows(rows, message, style or ds.MUTED, settings=settings,
+                       default_id=default_id)
 
     def _billing_codes_modal_say(self, text: str, severity: str = "information") -> None:
         from ..tui_widgets import dialog_style as ds
@@ -408,6 +413,64 @@ class DialogsMixin:
             self.call_from_thread(self.refresh_sessions)
 
         self.run_worker(work, thread=True, group="billing_codes_edit", exclusive=False)
+
+    def on_billing_codes_modal_collapse_requested(
+        self, message: BillingCodesModal.CollapseRequested,
+    ) -> None:
+        """Collapse codes into the default one: ``overcode billing collapse``'s path."""
+        from ..tui_widgets import dialog_style as ds
+
+        manager = self.session_manager
+
+        def work() -> None:
+            from ..codes import CodeError
+            from ..config import get_billing_defaults
+
+            default = get_billing_defaults()["default_code"]
+            try:
+                _, folded = manager.ledger.codes.collapse(message.code_ids, default)
+            except CodeError as e:
+                self.call_from_thread(self._billing_codes_modal_say, str(e), "error")
+                return
+            self._billing_codes_changed(manager)
+            what = folded[0][1] if len(folded) == 1 else f"{len(folded)} codes"
+            self.call_from_thread(self._load_billing_codes,
+                                  f"✓ {what} collapsed into {default} · m, then u, undoes one",
+                                  ds.STATE_ON)
+            self.call_from_thread(self.refresh_sessions)
+
+        self.run_worker(work, thread=True, group="billing_codes_edit", exclusive=False)
+
+    def on_billing_codes_modal_unmerge_requested(
+        self, message: BillingCodesModal.UnmergeRequested,
+    ) -> None:
+        """Undo a merge: ``overcode billing unmerge``'s path (live agents stay put)."""
+        from ..tui_widgets import dialog_style as ds
+
+        manager = self.session_manager
+
+        def work() -> None:
+            from ..codes import CodeError
+
+            try:
+                _, name, into = manager.ledger.codes.unmerge(message.code_id)
+            except CodeError as e:
+                self.call_from_thread(self._billing_codes_modal_say, str(e), "error")
+                return
+            self._billing_codes_changed(manager)
+            self.call_from_thread(self._load_billing_codes,
+                                  f"✓ {name} reports its own spend again; its agents "
+                                  f"stay on {into}", ds.STATE_ON)
+            self.call_from_thread(self.refresh_sessions)
+
+        self.run_worker(work, thread=True, group="billing_codes_edit", exclusive=False)
+
+    def on_billing_codes_modal_settings_requested(
+        self, message: BillingCodesModal.SettingsRequested,
+    ) -> None:
+        """``s`` in the billing codes dialog: New agent defaults on its billing rows, then back."""
+        self._defaults_return_to_billing = True
+        self.action_open_new_agent_defaults(at_billing=True)
 
     def on_billing_codes_modal_closed(self, message: BillingCodesModal.Closed) -> None:
         self._dialog_did_close()
@@ -526,25 +589,36 @@ class DialogsMixin:
         self._recompute_cell_column_widths()
         self._dialog_did_close()
 
-    def action_open_new_agent_defaults(self) -> None:
-        """Open the new-agent defaults modal."""
-        from ..config import get_new_agent_defaults
+    def action_open_new_agent_defaults(self, at_billing: bool = False) -> None:
+        """Open the new-agent defaults modal (``at_billing``: on its billing rows)."""
+        from ..config import get_billing_defaults, get_new_agent_defaults
         try:
             modal = self.query_one("#new-agent-defaults-modal", NewAgentDefaultsModal)
             self._dialog_will_open()
-            modal.show(get_new_agent_defaults(), self)
+            modal.show(get_new_agent_defaults(), self, get_billing_defaults(),
+                       at_billing=at_billing)
         except NoMatches:
             pass
 
     def on_new_agent_defaults_modal_defaults_changed(self, message: NewAgentDefaultsModal.DefaultsChanged) -> None:
         """Handle new-agent defaults applied from modal."""
-        from ..config import save_new_agent_defaults
+        from ..config import save_billing_defaults, save_new_agent_defaults
         save_new_agent_defaults(message.defaults)
+        if message.billing is not None:
+            save_billing_defaults(message.billing["new_agent_code"],
+                                  message.billing["default_code"])
         self.notify("Defaults saved", severity="information")
-        self._dialog_did_close()
+        self._defaults_closed()
 
     def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
         """Handle new-agent defaults modal cancellation."""
+        self._defaults_closed()
+
+    def _defaults_closed(self) -> None:
+        """Back to the billing codes dialog when ``s`` there opened the defaults."""
+        if getattr(self, "_defaults_return_to_billing", False):
+            self._defaults_return_to_billing = False
+            self.action_open_billing_codes()
         self._dialog_did_close()
 
     def action_open_skills(self) -> None:
