@@ -323,7 +323,8 @@ naming:
 every launch, restart and revive. Alignment: at a turn end, a Claude agent
 whose believed title (`namer.json` `cli_title`) differs from its name gets
 `/rename <name>` typed in when its live input line is the bare prompt glyph
-and no TUI key was pressed in 30 s; it runs whatever started the rename
+(not gated on TUI keypresses: keys typed into the agent's pane reach tmux,
+not the TUI, so the empty line is the guard); it runs whatever started the rename
 (auto, CLI, TUI). Adoption: a new `custom-title` (Claude 2.1.304 writes
 `{"type": "custom-title", "customTitle", "sessionId"}`, plus an
 `agent-name` twin, at a `/rename`) that is not the agent's name, an old
