@@ -195,8 +195,10 @@ agent, `kind` final, `namer: true`) under the code `overcode`, so the
 The daemon decides, because it owns per-agent values (AGENTS.md). It works
 from events and adds no polling.
 
-- **The first name** comes at the first Stop after the agent has done
-  enough work: by default at least 2 completed turns and either 3 minutes
+- **The first name** comes once the agent has worked
+  `first_after.work_minutes` (default 5; green time, checked each tick, so
+  mid-turn and never for an agent that sits idle), or at the first Stop
+  after it has done enough work, whichever is first: by default at least 2 completed turns and either 3 minutes
   of green time or 15k output tokens. The thresholds are configurable.
   A Stop is when the task is clearest, and the agent is idle at that
   moment, so the notice arrives with the next prompt.

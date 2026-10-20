@@ -521,14 +521,50 @@ class DialogsMixin:
                     self.call_from_thread(lab.renamed, current)
             threading.Thread(target=work, daemon=True).start()
 
+        def apply_all(plan: list) -> None:
+            def work() -> None:
+                self._rename_many(plan, lab)
+            threading.Thread(target=work, daemon=True).start()
+
         try:
             available = bool(make_client(cfg.get("provider")).available)
         except Exception:
             available = False
         self._dialog_will_open()
+        from ..config import describe_auto_naming
         lab.show(runner=runner, load=load, available=available, apply=apply,
+                 apply_all=apply_all, auto_naming=describe_auto_naming(cfg),
                  config_advice=cfg.get("advice") or "", max_length=cfg.get("max_length", 18),
                  app_ref=self)
+
+    def _rename_many(self, plan: list, lab) -> None:
+        """Worker thread for the lab's A (apply every pick): rename each (agent, name) in
+        turn as a human choice, then one toast for the lot."""
+        from ..launcher import AgentLauncher
+
+        launcher = AgentLauncher(self.tmux_session, session_manager=self.session_manager)
+        done, failed = 0, []
+        for agent, name in plan:
+            session = self.session_manager.get_session(agent.id)
+            if session is None:
+                failed.append(f"{agent.name}: gone")
+                continue
+            try:
+                if launcher.rename(session, name, source="human"):
+                    done += 1
+                else:
+                    failed.append(f"{session.name}: tmux refused")
+            except Exception as e:
+                failed.append(f"{session.name}: {e}")
+            current = self.session_manager.get_session(agent.id)
+            if current is not None:
+                self.call_from_thread(lab.renamed, current)
+        message = f"Renamed {done} of {len(plan)} agents"
+        if failed:
+            message += " — not renamed: " + "; ".join(failed[:3]) + (
+                f" (+{len(failed) - 3} more)" if len(failed) > 3 else "")
+        self.call_from_thread(self.notify, message,
+                              severity="warning" if failed else "information")
 
     def on_naming_lab_closed(self, message: NamingLab.Closed) -> None:
         """The naming lab closed (#542)."""

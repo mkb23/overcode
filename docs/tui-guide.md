@@ -470,9 +470,13 @@ name Claude still shows.
 - In the palette (`/`): "Let overcode name it" and "Keep this name" do the
   same for the focused agent (`overcode rename <agent> --auto` / `--lock`).
 
-With auto-naming on (`naming.enabled`, see
-[Naming](configuration.md#naming)), the engine names an agent once its
-task is clear, at a turn end, and at most once more later. A toast says so
+With auto-naming on (`/` → "Auto-naming", or `naming.enabled`; see
+[Naming](configuration.md#naming)), the engine names an agent with a
+default name once it has worked 5 minutes (`naming.first_after.work_minutes`;
+it need not have finished its turn, and an agent that sits idle is never
+named) or at an earlier turn end, and at most once more later. The palette
+row says whether it is on; the new-agent dialog's tip for the name says
+what will happen to a name left as it is. A toast says so
 (`overcode-main2 → jwt-refresh (auto)`), the name gets its `~`, and the
 daemon panel (`d`) logs it with the model's reason. The agent keeps
 running; its old name still reaches it. To undo, `Ctrl+N` it back: the name
@@ -482,7 +486,7 @@ For a Claude Code agent the name also shows in Claude's own prompt box,
 and a `/rename` typed inside Claude renames the agent.
 
 **The naming lab** (`/` → "Naming lab…") tunes the naming advice by showing
-the names it gives. The editor above holds the advice (`Ctrl+O` switches
+the names it gives. Its header says whether auto-naming is on. The editor above holds the advice (`Ctrl+O` switches
 to the namer's whole prompt); below is one row per agent: its name and
 source (`human locked` and `parent locked` names are never auto-renamed,
 but still get a suggestion), the draft's pick, its length against
@@ -500,6 +504,7 @@ typing, only for agents whose prompt changed.
 | `Ctrl+D` | Pin the draft as A: rows show A \| B, the header counts changed names, collisions and mean length for each; again to unpin |
 | `Ctrl+N` | Move between the editor and the rows |
 | `↑`/`↓`, `Enter` | Pick a row; `Enter` twice renames that agent to the pick, as your choice (locked) |
+| `A` (in the rows) | Rename every live agent to its pick, as your choice: `y` those with default or auto names; `a` then `a` again every one, names people chose included. Shared picks are left out |
 | `Esc` | Cancel a confirm, or close (twice with unsaved edits) |
 
 The footer shows the lab's calls and spend, and the naming spend today

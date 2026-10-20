@@ -13,7 +13,10 @@ The draft runs about every two seconds once it has settled, only for agents
 whose prompt changed (see naming_lab.py). Ctrl+T switches between the live
 fleet and the last archived agents; Ctrl+D pins the draft as A, so the rows
 show A | B while B is edited. Enter on a row renames that agent to the
-draft's pick as a human choice (locked), after a confirm.
+draft's pick as a human choice (locked), after a confirm. A (in the rows) renames
+every agent to its pick the same way: those with a default or auto name
+(y), or, after a second confirm, every one, names people chose included
+(a). Picks two agents share are left out.
 
 Saving writes ~/.overcode/prompts/naming-advice.md (or naming.md); saving
 the built-in text (Ctrl+L then Ctrl+S) deletes the file instead.
@@ -23,6 +26,7 @@ Keys (the editor keeps its own: arrows, Ctrl+Z undo, Ctrl+C/X/V…):
     Ctrl+R  revert to saved    Ctrl+O  advice / whole prompt
     Ctrl+L  built-in default   Ctrl+D  pin the draft as A (again: unpin)
     Ctrl+N  editor / rows      ↑↓ Enter  pick a row, apply its name
+    A       (in the rows) apply every pick (y: default and auto names; a: all, after a confirm)
     Esc     close (twice to discard unsaved edits)
 """
 
@@ -76,6 +80,8 @@ class NamingLab(Vertical):
         Binding("up", "cursor_up", "Row up", show=False),
         Binding("down", "cursor_down", "Row down", show=False),
         Binding("enter", "apply", "Apply the pick", show=False),
+        # In the rows (Ctrl+N), like Enter: in the editor A is typed
+        Binding("A", "apply_all", "Apply every pick", show=False),
         Binding("escape", "close", "Close", show=False),
     ]
 
@@ -99,6 +105,9 @@ class NamingLab(Vertical):
         self._runner: Optional[NamingLabRunner] = None
         self._load_fn: Optional[Callable[[str], List[LabAgent]]] = None
         self._apply_fn: Optional[Callable[[LabAgent, str], None]] = None
+        self._apply_all_fn: Optional[Callable[[List[Tuple[LabAgent, str]]], None]] = None
+        self._confirm_all: Optional[str] = None   # "ask", then "all" for every name
+        self._auto_naming: str = ""
         self._available: bool = True
         self._app_ref: Any = None
         self._previous_focus: Any = None
@@ -126,15 +135,22 @@ class NamingLab(Vertical):
         load: Callable[[str], List[LabAgent]],
         available: bool,
         apply: Optional[Callable[[LabAgent, str], None]] = None,
+        apply_all: Optional[Callable[[List[Tuple[LabAgent, str]]], None]] = None,
+        auto_naming: str = "",
         config_advice: str = "",
         max_length: int = 18,
         app_ref: Any = None,
     ) -> None:
         """Open the lab. ``load(view)`` reads the agents for "live" or "archived"
-        (run in a thread); ``apply(agent, name)`` renames one as a human choice."""
+        (run in a thread); ``apply(agent, name)`` renames one as a human choice,
+        ``apply_all([(agent, name), ...])`` several, one after another.
+        ``auto_naming`` says whether the daemon names agents (describe_auto_naming)."""
         self._runner = runner
         self._load_fn = load
         self._apply_fn = apply
+        self._apply_all_fn = apply_all
+        self._auto_naming = auto_naming
+        self._confirm_all = None
         self._available = available
         self._config_advice = config_advice or ""
         self._max_length = max_length
@@ -386,7 +402,73 @@ class NamingLab(Vertical):
                               style=ds.STATE_ON)
         self._draw()
 
+    def _bulk_plan(self, include_locked: bool) -> List[Tuple[LabAgent, str]]:
+        """The (agent, pick) pairs A would apply: live agents with a pick
+        that changes their name and that no other agent's pick shares."""
+        if self.view != "live":
+            return []
+        draft = self.current()
+        picks = [self._pick(a, draft) for a in self.agents]
+        clash = _clashes(self.agents, picks)
+        plan = []
+        for agent, p in zip(self.agents, picks):
+            if (agent.archived or p is None or p.running or p.error or p.keep or not p.pick
+                    or p.pick == agent.name or agent.id in clash):
+                continue
+            if agent.locked and not include_locked:
+                continue
+            plan.append((agent, p.pick))
+        return plan
+
+    def action_apply_all(self) -> None:
+        """A: ask, then rename every agent to its pick (see the module docstring)."""
+        if self._confirm_all is not None:
+            self._apply_plan(include_locked=self._confirm_all == "all")
+            return
+        self._confirm_apply = None
+        if not self._bulk_plan(include_locked=True):
+            self._note = Text("no picks to apply" + ("" if self.view == "live"
+                                                     else " (archived agents are not renamed)"),
+                              style=ds.MUTED)
+            self._draw()
+            return
+        self._confirm_all = "ask"
+        try:
+            self.rows_widget.focus()   # y / a reach the lab, not the editor
+        except Exception:
+            pass
+        self._draw()
+
+    def on_key(self, event) -> None:
+        if self._confirm_all is None or event.key not in ("y", "a"):
+            return
+        event.stop()
+        event.prevent_default()
+        if event.key == "y":
+            self._apply_plan(include_locked=False)
+        elif self._confirm_all == "ask":
+            self._confirm_all = "all"
+            self._draw()
+        else:
+            self._apply_plan(include_locked=True)
+
+    def _apply_plan(self, include_locked: bool) -> None:
+        plan = self._bulk_plan(include_locked)
+        self._confirm_all = None
+        if not plan:
+            self._note = Text("no picks to apply", style=ds.MUTED)
+        else:
+            if self._apply_all_fn is not None:
+                self._apply_all_fn(plan)
+            self._note = Text(f"renaming {len(plan)} agent{'s' if len(plan) != 1 else ''} to "
+                              "the draft's picks (your choice: locked)", style=ds.STATE_ON)
+        self._draw()
+
     def action_close(self) -> None:
+        if self._confirm_all is not None:
+            self._confirm_all = None
+            self._draw()
+            return
         if self._confirm_apply is not None:
             self._confirm_apply = None
             self._draw()
@@ -503,8 +585,15 @@ class NamingLab(Vertical):
                 return Text(f" left as typed (not placeholders): {names}", style=ds.WARN)
             return Text(" placeholders: " + " ".join("{" + n + "}" for n in sp.NAMING_PLACEHOLDERS),
                         style=ds.STATE_OTHER)
-        return Text(" the advice is the naming policy: the namer follows it; a repo's "
-                    ".overcode/naming.md is added after it", style=ds.STATE_OTHER)
+        out = Text(" ")
+        if self._auto_naming:
+            on = self._auto_naming.startswith("on")
+            out.append("auto-naming ", style=f"bold {ds.TEXT}")
+            out.append(self._auto_naming, style=ds.STATE_ON if on else ds.STATE_OTHER)
+            out.append("  ·  ", style=ds.STATE_OTHER)
+        out.append("the advice is the naming policy: the namer follows it; a repo's "
+                   ".overcode/naming.md is added after it", style=ds.STATE_OTHER)
+        return out
 
     def _rows_header(self, w: int) -> Text:
         left = Text(" FLEET ", style=f"bold {ds.MUTED}")
@@ -666,6 +755,8 @@ class NamingLab(Vertical):
     def _tip_line(self, picks: List[Optional[LabPick]]) -> Text:
         if not self.agents:
             return Text("")
+        if self._confirm_all is not None:
+            return self._confirm_all_line()
         agent = self.agents[self.selected]
         p = picks[self.selected]
         if self._confirm_apply == agent.id and p is not None and p.pick:
@@ -677,7 +768,8 @@ class NamingLab(Vertical):
             return problem
         if not self._rows_focused():
             return Text(f" {self._key('switch_focus')} to pick a row; "
-                        f"{self._key('apply')} renames the agent to the draft's pick",
+                        f"{self._key('apply')} renames the agent to the draft's pick, "
+                        f"{self._key('apply_all')} every agent",
                         style=ds.STATE_OTHER)
         tip = Text(" ")
         tip.append(agent.name, style=f"bold {ds.TEXT}")
@@ -686,6 +778,30 @@ class NamingLab(Vertical):
         if p is not None and p.why:
             tip.append(f"  why: {p.why}", style=ds.STATE_OTHER)
         return tip
+
+
+    def _confirm_all_line(self) -> Text:
+        """A's question: default and auto names (y), or every name (a, twice)."""
+        free = len(self._bulk_plan(include_locked=False))
+        every = len(self._bulk_plan(include_locked=True))
+        locked = every - free
+        if self._confirm_all == "all":
+            return Text(f" rename ALL {_plural(every, 'agent')}, with {locked} named by people "
+                        f"or parents? a: yes · {self._key('close')}: cancel",
+                        style=f"bold {ds.ERROR}")
+        t = Text(" ", style=f"bold {ds.WARN}")
+        if free:
+            t.append(f"rename {_plural(free, 'agent')} (default/auto names) to their picks? y: yes · ")
+        else:
+            t.append("no default or auto names to rename · ")
+        if locked:
+            t.append(f"a: all {every}, with {locked} people named · ")
+        t.append(f"{self._key('close')}: cancel")
+        return t
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
 def _clashes(agents: List[LabAgent], picks: List[Optional[LabPick]]) -> dict:

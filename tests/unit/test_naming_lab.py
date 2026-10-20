@@ -124,7 +124,7 @@ class TestEngine:
         runner = _runner(model)
         runner.run(agents[1:2], *DRAFT)
         p = runner.result(agents[1], *DRAFT)
-        assert p.pick == "wiki-docs"
+        assert p.pick == "Wiki-Docs"
         assert p.rejected == [("proj2", "taken by agent 'proj2'"), ("auth", "taken by agent 'auth'")]
 
     def test_rules_name_the_rejection(self, home):
@@ -436,7 +436,7 @@ class TestLabInTUI:
             await pilot.pause()
             assert not lab.dirty
             saved = (tui_state_dir / "prompts" / "naming-advice.md").read_text()
-            assert saved.startswith("q! kebab-case")
+            assert saved.startswith("q! lowercase kebab-case")
 
     async def test_enter_on_a_row_renames_it_as_a_human_choice(self, make_tui, stub, monkeypatch):
         fleet = self._seed()
@@ -463,6 +463,60 @@ class TestLabInTUI:
             assert lab.agents[1].locked
             got = SessionManager(skip_git_detection=True).get_session(fleet[1].id)
             assert got.name == "wiki" and got.name_source == "human"
+
+    async def test_a_applies_every_pick_and_names_people_chose_only_on_a_second_yes(
+            self, make_tui, stub, monkeypatch):
+        model = StubModel({**ANSWERS, "docs site": {"candidates": ["docs"], "keep": False}})
+        monkeypatch.setattr("overcode.namer.make_client", lambda provider=None: model)
+        self._seed()
+        renames = []
+
+        def rename(self, session, new_name, force=False, source="human"):
+            renames.append((session.name, new_name, source))
+            self.sessions.update_session(session.id, name=new_name, name_source=source)
+            return True
+        monkeypatch.setattr("overcode.launcher.AgentLauncher.rename", rename)
+        app = make_tui()
+        async with app.run_test(size=(160, 45)) as pilot:
+            lab = await self._open(pilot)
+            await _until(pilot, lambda: lab._runner.calls >= 4)
+            await app.workers.wait_for_complete()
+            await pilot.press("ctrl+n")              # the rows: A is a key, not text
+            await pilot.press("A")
+            tip = lab.render_rows().plain
+            assert "rename 2 agents (default/auto names) to their picks? y: yes" in tip
+            assert "a: all 3, with 1 people named" in tip
+            await pilot.press("escape")              # cancel: nothing renamed
+            assert lab._confirm_all is None and renames == []
+            await pilot.press("A")
+            await pilot.press("a")                   # every name: asks again
+            assert "rename ALL 3 agents, with 1 named by people" in lab.render_rows().plain
+            assert renames == []
+            await pilot.press("a")
+            await _until(pilot, lambda: len(renames) == 3)
+            assert sorted(renames) == [("kid", "billing-codes-dialog-in-the-tui", "human"),
+                                       ("proj", "wiki", "human"), ("proj2", "docs", "human")]
+
+    async def test_a_then_y_leaves_names_people_chose(self, make_tui, stub, monkeypatch):
+        model = StubModel({**ANSWERS, "docs site": {"candidates": ["docs"], "keep": False}})
+        monkeypatch.setattr("overcode.namer.make_client", lambda provider=None: model)
+        self._seed()
+        renames = []
+
+        def rename(self, session, new_name, force=False, source="human"):
+            renames.append((session.name, new_name, source))
+            self.sessions.update_session(session.id, name=new_name, name_source=source)
+            return True
+        monkeypatch.setattr("overcode.launcher.AgentLauncher.rename", rename)
+        app = make_tui()
+        async with app.run_test(size=(160, 45)) as pilot:
+            lab = await self._open(pilot)
+            await _until(pilot, lambda: lab._runner.calls >= 4)
+            await app.workers.wait_for_complete()
+            await pilot.press("ctrl+n", "A", "y")
+            await _until(pilot, lambda: len(renames) == 2)
+            await pilot.pause()
+            assert sorted(renames) == [("proj", "wiki", "human"), ("proj2", "docs", "human")]
 
     async def test_ctrl_t_archived_ctrl_d_pins_esc_twice(self, make_tui, stub):
         fleet = self._seed()

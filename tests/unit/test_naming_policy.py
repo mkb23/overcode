@@ -180,10 +180,12 @@ class TestSuggestions:
 
 class TestChoose:
 
-    def test_normalises_and_takes_the_first_survivor(self):
+    def test_cleans_and_takes_the_first_survivor(self):
         rules = NamingRules(max_length=10)
         ctx = _ctx(rules, sessions=[_agent("jwt-fix")])
-        assert choose(["JWT Fix", "Auth Refresh Flow", "jwt_retry"], ctx) == "jwt-retry"
+        # "JWT-Fix" is jwt-fix in another case: taken; case and _ are the advice's
+        assert choose(["JWT Fix", "Auth Refresh Flow", "jwt_retry"], ctx) == "jwt_retry"
+        assert choose(["Auth Fix!"], ctx) == "Auth-Fix"
 
     def test_none_survive_disambiguates_the_first(self):
         ctx = _ctx(sessions=[_agent("jwt-fix")])
@@ -241,7 +243,7 @@ class TestLlmCheck:
         client = _Client('{"ok": false, "why": "names the tool", "suggestion": "Auth Fix"}')
         failure, pick = llm_check("claude-1", "name the work", client=client)
         assert failure.rule == RULE_ADVICE and "names the tool" in failure.message
-        assert pick == "auth-fix"
+        assert pick == "Auth-Fix"  # case is the advice's
         assert "claude-1" in client.calls[0][0] and "name the work" in client.calls[0][0]
 
     @pytest.mark.parametrize("client", [

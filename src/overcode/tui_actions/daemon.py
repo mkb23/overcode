@@ -253,6 +253,30 @@ class DaemonActionsMixin:
         else:
             self.notify("Failed to restart Monitor Daemon", severity="error")
 
+    def action_toggle_auto_naming(self) -> None:
+        """Turn auto-naming on or off (naming.enabled in config.yaml; the daemon reads it each tick)."""
+        from ..config import describe_auto_naming, get_naming_config, save_naming_enabled
+        on = not get_naming_config()["enabled"]
+        try:
+            save_naming_enabled(on)
+        except Exception as e:
+            self.notify(f"Auto-naming not changed: {e}", severity="error")
+            return
+        cfg = get_naming_config()
+        message, severity = f"Auto-naming {describe_auto_naming(cfg)}", "information"
+        if on:
+            from ..namer import make_client
+            try:
+                available = bool(make_client(cfg.get("provider")).available)
+            except Exception:
+                available = False
+            if not available:
+                message += (" — but no model is set up (summarizer: or naming.provider, "
+                            "and its API key)")
+                severity = "warning"
+        self.notify(message, severity=severity)
+        _log_to_daemon_panel(self, f">>> Auto-naming {'on' if on else 'off'}")
+
     def action_toggle_web_server(self) -> None:
         """Toggle the API server (the sister API) on/off."""
         from ..web_server import toggle_web_server, get_web_server_url

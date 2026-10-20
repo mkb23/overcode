@@ -893,7 +893,7 @@ ending in `-fork`); everything else reads as `human`.
 ```yaml
 naming:
   advice: |                 # the naming policy, in your words
-    kebab-case, 1-3 words, what the work is about, not how.
+    lowercase kebab-case, 1-3 words, what the work is about, not how.
     Put an issue number last when there is one: fix-jwt-542.
   max_length: 18            # the length the namer aims for (not a check)
   rules:                    # optional checks; every one is off by default
@@ -906,7 +906,7 @@ naming:
     llm_check: false        # also ask the summarizer model whether the name follows the advice
     warn_humans: false      # warn (never refuse) when a name you type breaks the rules
   enabled: false            # auto-naming: the engine names agents (off by default)
-  first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
+  first_after: {turns: 2, green_minutes: 3, output_tokens: 15000, work_minutes: 5}
   max_renames: 2            # auto renames in an agent's life (the first name + one refinement)
   cost_cap_per_day: 0.50    # USD a day for the namer's model calls (per tmux session)
   # provider:               # the namer's model; default: the summarizer: block
@@ -917,11 +917,19 @@ naming:
   cli_title: true           # keep Claude Code's own session name in step (below)
 ```
 
-**Auto-naming** (`enabled: true`, or a children preset that sets it). The
-engine names an agent whose name is `default` or `auto` once its task is
-clear: at the first turn end (Stop) after `first_after` work (at least
-`turns` completed turns, and `green_minutes` of green time or
-`output_tokens` output tokens). One refinement comes at 10 times that
+**Auto-naming** (`enabled: true`, `/` → "Auto-naming" in the TUI, or a
+children preset that sets it). The engine names an agent whose name is
+`default` or `auto` once its task is clear: as soon as it has worked
+`work_minutes` (green time, so an agent that sits idle is never named; it
+need not have finished its turn), or at the first turn end (Stop) after
+`first_after` work (at least `turns` completed turns, and `green_minutes`
+of green time or `output_tokens` output tokens), whichever comes first.
+`work_minutes: 0` leaves only the turn-end rule. The name follows the
+naming advice, case included ("use capitals" gets capitals); names that
+differ only in case count as the same name. `overcode name policy` says
+whether auto-naming is on and when it names, the new-agent dialog's tip
+for the name says what will happen to a name you leave as it is, and the
+naming lab's header says it too. One refinement comes at 10 times that
 work, and renames only if the model says the task has changed. An auto
 name changes at most `max_renames` times, at least 10 minutes apart. The
 namer never renames a `human` or `parent` name, never while the agent
@@ -981,7 +989,10 @@ in a shell) tries advice on the whole fleet before you save it; see
 `naming.advice` (the repo's file is still added after it); saving the
 built-in advice deletes the file, and `naming.advice` applies again. Its
 calls are the namer's: a ledger row each under `overcode`, counted against
-`cost_cap_per_day`.
+`cost_cap_per_day`. `A` (in the rows) renames every live agent to its pick
+at once, as your choice: those with `default` or `auto` names (`y`), or,
+after a second confirm, every one, names people or parents chose included
+(`a`); picks two agents share are left out.
 
 **The namer's prompt** is `~/.overcode/prompts/naming.md` once saved (the
 naming lab edits it too); until then a built-in default. Its placeholders are

@@ -1051,7 +1051,8 @@ _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "max_
                 "cost_cap_per_day", "provider", "cli_title")
 _NAMING_RULE_KEYS = ("pattern", "max_length", "forbid", "require", "no_repo_prefix",
                      "recent_archived_hours", "llm_check", "warn_humans")
-_NAMING_FIRST_AFTER = {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000}
+_NAMING_FIRST_AFTER = {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000,
+                       "work_minutes": 5.0}
 
 
 def _positive_int(value) -> Optional[int]:
@@ -1078,6 +1079,29 @@ def _regex_or_none(value, where: str, warnings: List[str]) -> Optional[str]:
     return value
 
 
+def save_naming_enabled(enabled: bool) -> None:
+    """Turn auto-naming on or off (``naming.enabled``), keeping the rest of ``naming:``."""
+    config = load_config()
+    naming = config.get("naming")
+    naming = dict(naming) if isinstance(naming, dict) else {}
+    naming["enabled"] = bool(enabled)
+    config["naming"] = naming
+    save_config(config)
+
+
+def describe_auto_naming(cfg: Optional[dict] = None) -> str:
+    """Auto-naming in one line, for the palette, the new-agent dialog, the
+    naming lab and ``overcode name policy``."""
+    cfg = cfg if cfg is not None else get_naming_config()
+    if not cfg.get("enabled"):
+        return "off: agents keep the names they are launched with"
+    first = cfg.get("first_after") or {}
+    work = float(first.get("work_minutes") or 0)
+    when = (f"after {work:g} min of work" if work
+            else "at a turn end, once it has done some work")
+    return f"on: a default name is replaced {when}, following the naming advice"
+
+
 def get_naming_config() -> dict:
     """Auto-naming and the naming policy (#542, docs/design/auto-naming.md §2a, §6).
 
@@ -1096,7 +1120,9 @@ def get_naming_config() -> dict:
             recent_archived_hours: 0   # refuse names archived this recently (0 = off)
             llm_check: false    # ask the summarizer model whether the name follows the advice
             warn_humans: false  # warn (never refuse) a human's -n too
-          first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
+          first_after: {turns: 2, green_minutes: 3, output_tokens: 15000, work_minutes: 5}
+                                # at a turn end after that much work; or, mid-turn,
+                                # once it has worked work_minutes (0 = only at turn ends)
           max_renames: 2
           cost_cap_per_day: 0.50
           provider: {...}       # api_type/api_url/model/api_key_var; default: the summarizer: block

@@ -341,7 +341,7 @@ class TestChoosing:
         fleet.turn(a)
         assert fleet.get(a).name == "wiki3"
 
-    def test_an_alias_is_taken_and_candidates_are_normalised(self, tmp_path):
+    def test_an_alias_is_taken_and_candidates_are_cleaned(self, tmp_path):
         fleet = Fleet(tmp_path, model=StubModel(_reply("Old Name", "JWT Refresh!")))
         other = fleet.add("holder", source="human")
         fleet.sm.rename_session(other.id, "holder2")
@@ -350,7 +350,16 @@ class TestChoosing:
         a = fleet.add("work")
         fleet.turn(a)
         fleet.turn(a)
-        assert fleet.get(a).name == "jwt-refresh"
+        assert fleet.get(a).name == "JWT-Refresh"     # "Old-Name": old-name, any case
+
+    def test_the_advice_decides_case(self, tmp_path):
+        model = StubModel(_reply("AUTH-REFRESH"))
+        fleet = Fleet(tmp_path, cfg=_cfg(advice="UPPERCASE, words joined by -"), model=model)
+        a = fleet.add("work")
+        fleet.turn(a)
+        fleet.turn(a)
+        assert fleet.get(a).name == "AUTH-REFRESH"
+        assert "UPPERCASE" in model.prompts[0] and "lowercase" not in model.prompts[0]
 
     def test_a_configured_rule_drops_a_candidate(self, tmp_path):
         fleet = Fleet(tmp_path, cfg=_cfg(rules={"forbid": ["tmp"]}),
@@ -685,6 +694,79 @@ class TestCapture:
         files = collect_files(d)
         assert files["brief.txt"] == "b" and files["namer.json"] == {"renames": 1}
         assert "prompts.jsonl" in files
+
+
+# ── the first name mid-turn (first_after.work_minutes) ───────────────
+
+
+WORK = {"turns": 2, "green_minutes": 3, "output_tokens": 15000, "work_minutes": 5}
+
+
+class TestWorkTrigger:
+
+    def _work(self, fleet, a, minutes, status="running"):
+        """One tick with ``a`` having worked ``minutes`` in all, still in its turn."""
+        fleet.clock.now += timedelta(seconds=WORK_TICK)
+        fleet.green[a.id] = minutes * 60
+        fleet.idle(a, status=status)
+
+    def test_named_after_work_minutes_before_its_turn_ends(self, tmp_path):
+        model = StubModel(_reply("jwt-fix"))
+        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=model)
+        a = fleet.add("overcode-main2")
+        self._work(fleet, a, 4.9)
+        assert fleet.get(a).name == "overcode-main2" and model.prompts == []
+        self._work(fleet, a, 5.0)
+        assert fleet.get(a).name == "jwt-fix" and fleet.get(a).name_source == "auto"
+        assert fleet.state(a).first_done
+
+    def test_an_idle_agent_is_never_named(self, tmp_path):
+        model = StubModel(_reply("jwt-fix"))
+        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=model)
+        a = fleet.add("overcode-main2")
+        for _ in range(5):
+            fleet.idle(a, seconds=3600)                 # hours at its prompt, no work
+        assert model.prompts == [] and fleet.get(a).name == "overcode-main2"
+
+    def test_zero_work_minutes_waits_for_the_turn_end(self, tmp_path):
+        model = StubModel(_reply("jwt-fix"))
+        fleet = Fleet(tmp_path, cfg=_cfg(first_after={**WORK, "work_minutes": 0}), model=model)
+        a = fleet.add("overcode-main2")
+        self._work(fleet, a, 30)
+        assert model.prompts == []
+
+    def test_off_or_locked_is_never_named(self, tmp_path):
+        model = StubModel(_reply("jwt-fix"))
+        fleet = Fleet(tmp_path, cfg=_cfg(enabled=False, first_after=WORK), model=model)
+        a = fleet.add("overcode-main2")
+        self._work(fleet, a, 30)
+        fleet.cfg = _cfg(first_after=WORK)
+        b = fleet.add("mine", source="human")
+        self._work(fleet, b, 30)
+        assert model.prompts == []
+
+    def test_asked_once_then_left_to_the_turn_ends(self, tmp_path):
+        model = StubModel(_reply("jwt-fix"), _reply("other"))
+        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=model)
+        a = fleet.add("overcode-main2")
+        for minutes in (6, 7, 8, 30):
+            self._work(fleet, a, minutes)
+        assert len(model.prompts) == 1
+
+    def test_claude_title_waits_until_it_is_idle(self, tmp_path):
+        mock = MockTmux()
+        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=StubModel(_reply("jwt-fix")),
+                      tmux=mock)
+        a = fleet.add("work")
+        mock.set_pane_content("agents", "work-w", EMPTY)  # a working Claude's box is empty too
+        self._work(fleet, a, 6)
+        assert fleet.get(a).name == "jwt-fix"
+        assert mock.sent_keys == []
+        fleet.idle(a, seconds=5)
+        assert [k[2] for k in mock.sent_keys] == ["/rename jwt-fix"]
+
+
+WORK_TICK = 2
 
 
 # ── Claude's own session name (§7) ───────────────────────────────────

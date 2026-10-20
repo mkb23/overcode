@@ -227,12 +227,13 @@ Files it edits most: {files}
 {siblings}
 
 RULES:
-- At most {max_length} characters, lowercase kebab-case
+- At most {max_length} characters: letters, digits, - and _ only; case and
+  separators as the naming advice says
 - Name the work, not the tool or the agent
 - Reply with JSON only: {"candidates": ["best", "next", "third"], "keep": false, "why": "..."}
 - "keep": true when the current name still fits"""
 
-DEFAULT_NAMING_ADVICE = "kebab-case, 1-3 words, what the work is about, not how."
+DEFAULT_NAMING_ADVICE = "lowercase kebab-case, 1-3 words, what the work is about, not how."
 
 
 def naming_prompt_path() -> Path:
