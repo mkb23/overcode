@@ -759,8 +759,13 @@ class MonitorDaemon:
         result, reason = task_result(session, status)
         swarm_rollup = getattr(self.detector, "get_swarm_rollup", None)
         swarm_rollup = swarm_rollup(session.name) if callable(swarm_rollup) else None
+        try:
+            cli_title_lag = self.namer.title_lag(session)
+        except Exception:  # a cosmetic mark is never worth a failed tick
+            cli_title_lag = None
         return SessionDaemonState(
             last_hook_at=last_hook_at if isinstance(last_hook_at, (int, float)) else None,
+            cli_title_lag=cli_title_lag,
             session_id=session_id,
             name=session.name,
             tmux_window=session.tmux_window,

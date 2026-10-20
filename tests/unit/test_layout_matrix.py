@@ -308,3 +308,53 @@ async def test_layout_holds_with_the_background_worker_badge(make_tui, width):
                 line = bravo.render().plain
                 seen |= {mark for mark in ("🌙", "Bw") if mark in line}
         assert seen == {"🌙", "Bw"}
+
+
+class TitleLagEngine(GridEngine):
+    """GridEngine with charlie (the widest name) and bravo (an auto "~" name)
+    renamed since Claude last showed their names: the "*" mark."""
+
+    lag = True
+
+    def snapshot_now(self):
+        snap = super().snapshot_now()
+        if self.lag:
+            snap.agents["id-charlie"]["cli_title_lag"] = "old-charlie"
+            snap.agents["id-bravo"]["cli_title_lag"] = "old-bravo"
+        return snap
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_layout_holds_with_a_lagging_cli_title(make_tui, width):
+    """The "*" trails the whole name (the widest is never cut for it) and
+    goes, with its cell, when the title lands."""
+    engine = TitleLagEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
+
+    def line(name):
+        return next(w for w in app._get_widgets_in_session_order()
+                    if w.session.name == name).render().plain
+
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _open(pilot, engine)
+        for emoji_free in (False, True):
+            if emoji_free:
+                app.action_toggle_emoji_free()
+            for level in app.SUMMARY_LEVELS:
+                app._set_summary_level(level)
+                await _settle(pilot)
+                try:
+                    assert_layout_invariants(app)
+                except AssertionError as e:
+                    raise AssertionError(f"{width} cols, {level}, emoji-free {emoji_free}: "
+                                         f"{e}") from e
+                _shot(app, f"layout-titlelag-{width}-{level}-{emoji_free}")
+                assert "charlie*" in line("charlie"), level
+                assert "~bravo*" in line("bravo"), level
+                assert "alpha*" not in line("alpha")
+        engine.lag = False
+        engine.tick()
+        await _settle(pilot)
+        assert_layout_invariants(app)
+        assert "charlie*" not in line("charlie") and "charlie" in line("charlie")

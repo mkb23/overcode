@@ -258,6 +258,10 @@ class SessionDaemonState:
     # None when the pane decided). Holds still between events, so views can
     # tell a status hooks reported a moment ago from one that is hours old.
     last_hook_at: Optional[float] = None
+    # The session name Claude still shows (its prompt box, /resume) for an
+    # agent renamed since; None once overcode's /rename lands (namer.py).
+    # Views mark the name meanwhile.
+    cli_title_lag: Optional[str] = None
 
     # Transcript-derived values the views render beside the token columns
     # (synced with them, every STATS_SYNC_*). stats_available is False for

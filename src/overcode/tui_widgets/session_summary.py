@@ -15,7 +15,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..clock import from_iso
-from ..name_source import name_marker
+from ..name_source import name_marker, title_pending_mark
 from ..session_manager import Session
 from ..status_patterns import extract_from_pane, extract_sleep_duration
 from ..history_reader import AgentSessionStats, synthesize_remote_stats
@@ -556,18 +556,20 @@ class SessionSummary(Static, can_focus=True):
         # Fold indicator for parents with collapsed children
         fold_suffix = FOLD_SUFFIX if self.children_collapsed else ""
 
-        # The 🌙 / "~" markers' cells come off the name
+        # The 🌙 / "~" markers' cells come off the name, and the "*" of a
+        # rename Claude's title has not caught up with
         marker = name_lead(s, ef)
-        marker_cells = cell_len(marker)
+        pending = title_pending_mark(self.engine.get("cli_title_lag") if self.engine else None)
+        marker_cells = cell_len(marker) + len(pending)
 
         # Apply tree indentation when in tree sort mode (#244)
         if self.tree_prefix:
             tree_str = self.tree_prefix
             available = name_width - len(tree_str) - len(fold_suffix) - marker_cells
-            display_name = tree_str + marker + s.name[:available] + fold_suffix
+            display_name = tree_str + marker + s.name[:available] + pending + fold_suffix
         else:
             available = name_width - len(fold_suffix) - marker_cells
-            display_name = marker + s.name[:available] + fold_suffix
+            display_name = marker + s.name[:available] + pending + fold_suffix
         display_name += " " * max(0, name_width - cell_len(display_name))
 
         # Compute sleep wake estimate (#289)
@@ -630,6 +632,7 @@ class SessionSummary(Static, can_focus=True):
             subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
             quota=self.engine.get("quota") if self.engine else None,
             trip=self.engine.get("trip") if self.engine else None,
+            cli_title_lag=self.engine.get("cli_title_lag") if self.engine else None,
             subtree_trip_cost_usd=(self.engine.get("subtree_trip_cost_usd")
                                    if self.engine else None),
             status_changed_at=self._status_changed_at,

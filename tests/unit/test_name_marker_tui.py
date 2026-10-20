@@ -65,3 +65,13 @@ def test_hover_says_who_named_it_and_what_it_was_called():
     assert "never renames" in hover_agent_name(SimpleNamespace(session=session)).plain
     session.is_remote = True
     assert hover_agent_name(SimpleNamespace(session=session)) is None
+
+
+def test_hover_names_the_title_claude_still_shows():
+    from types import SimpleNamespace
+    session = SimpleNamespace(name="limbic", name_source="human", name_forced=False,
+                              previous_names=["limbic2"], is_remote=False)
+    plain = hover_agent_name(SimpleNamespace(session=session, cli_title_lag="limbic2")).plain
+    assert "Claude still shows 'limbic2'" in plain and "/rename" in plain
+    plain = hover_agent_name(SimpleNamespace(session=session, cli_title_lag=None)).plain
+    assert "Claude still shows" not in plain

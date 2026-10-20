@@ -178,6 +178,9 @@ class ColumnContext:
     # Its trip counter (engine: trip, trip.trip_view): spend since its trip
     # was reset; the spend cells show it, marked ↺. None if never reset.
     trip: Optional[dict] = None
+    # The session name Claude still shows after a rename (engine:
+    # cli_title_lag); the name cell trails "*" and its hover says so
+    cli_title_lag: Optional[str] = None
 
     # Fleet-wide column gates, the same for every row
     fleet: FleetFlags = field(default_factory=FleetFlags)
@@ -288,6 +291,7 @@ def build_cli_context(
     quota: Optional[dict] = None,
     trip: Optional[dict] = None,
     subtree_trip_cost_usd: Optional[float] = None,
+    cli_title_lag: Optional[str] = None,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed).
 
@@ -355,6 +359,7 @@ def build_cli_context(
         quota=quota,
         trip=trip,
         subtree_trip_cost_usd=subtree_trip_cost_usd,
+        cli_title_lag=cli_title_lag,
         status_changed_at=status_changed_at,
         max_name_width=max_name_width,
         max_repo_width=max_repo_width,

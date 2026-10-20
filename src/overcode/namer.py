@@ -709,6 +709,8 @@ class Namer:
         # Per id, the name an idle agent's title was last checked against, and
         # when to check again (None: settled until the name changes)
         self._idle_title: Dict[str, Tuple[str, Optional[float]]] = {}
+        # Per id, the name and the CLI title recorded for it (title_lag)
+        self._titles_known: Dict[str, Tuple[str, Optional[str]]] = {}
         self._in_flight: set = set()
         self._lock = threading.Lock()
         self._cap_logged_day: Optional[str] = None
@@ -812,6 +814,23 @@ class Namer:
                 del self._last_status[sid]
                 self._title_seen.pop(sid, None)
                 self._idle_title.pop(sid, None)
+                self._titles_known.pop(sid, None)
+
+    def title_lag(self, session) -> Optional[str]:
+        """The title Claude still shows for an agent renamed since, else None.
+
+        Published as ``cli_title_lag``: views mark the name until ``_align``
+        types the new one in. Read from ``namer.json`` when the agent's name
+        changes, kept in memory between.
+        """
+        if not self._is_claude(session) or not self.config().get("cli_title", True):
+            return None
+        known = self._titles_known.get(session.id)
+        if known is None or known[0] != session.name:
+            title = load_state(session.tmux_session or self.tmux_session, session.id).cli_title
+            known = self._titles_known[session.id] = (session.name, title)
+        title = known[1]
+        return title if title is not None and title != session.name else None
 
     def _idle_title_due(self, session, now: float) -> bool:
         """Whether to check an idle agent's title against its name now (a rename made while it sat idle).
@@ -995,6 +1014,7 @@ class Namer:
             save_state(tmux_session, session_id, state)
         if state.cli_title == session.name:
             self._idle_title[session_id] = (session.name, None)
+            self._titles_known[session_id] = (session.name, session.name)
             return
         backend = get_backend(session_backend_name(session))
         if not input_line_empty(self._capture(session, 15), backend):
@@ -1006,6 +1026,7 @@ class Namer:
         state.cli_title = session.name
         save_state(tmux_session, session_id, state)
         self._idle_title[session_id] = (session.name, None)
+        self._titles_known[session_id] = (session.name, session.name)
 
     def _consider_title(self, session, title: str) -> None:
         tmux_session = session.tmux_session or self.tmux_session
@@ -1017,6 +1038,7 @@ class Namer:
         if name is None:
             if title == session.name:
                 state.cli_title = title
+                self._titles_known[session.id] = (session.name, title)
             save_state(tmux_session, session.id, state)
             return
         save_state(tmux_session, session.id, state)

@@ -1015,7 +1015,18 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             self.sessions.update_session(session.id, agent_session_ids=[new_claude_sid])
             self.sessions.set_active_agent_session_id(session.id, new_claude_sid)
 
+        if backend.display_name_args(spec.name):
+            self._record_cli_title(session.id, spec.name)
         return True
+
+    def _record_cli_title(self, session_id: str, name: str) -> None:
+        """The CLI's own session name is the ``--name`` just launched with (namer.py)."""
+        from .namer import load_state, save_state
+
+        state = load_state(self.tmux_session, session_id)
+        if state.cli_title != name:
+            state.cli_title = name
+            save_state(self.tmux_session, session_id, state)
 
     def _apply_skill_profile(self, backend: AgentBackend, session: Session,
                              spec: LaunchSpec) -> None:

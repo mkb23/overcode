@@ -445,6 +445,10 @@ The NAME column marks names nobody chose:
 - **dim**: a default name, made up by overcode: the new-agent dialog's
   directory name left as it was, or a fork's `<name>-fork`.
 - **`~name`**: overcode named the agent (auto-naming, `naming.enabled`).
+- **`name*`**: a Claude agent renamed since; Claude's own session name (its
+  prompt box, `/resume`) still shows the old one until overcode types
+  `/rename` in, when the agent is idle with an empty input line. Asleep
+  agents take it too, and it doesn't wake them.
 
 A name you typed (in the new-agent dialog, `Ctrl+N`, or `-n` in a shell)
 or one a parent agent gave its child is plain, and overcode never
@@ -452,10 +456,11 @@ renames it. The `~` takes a cell from the name, so the column keeps its
 width.
 
 The column grows to the widest name it shows, counting what leads it (the
-tree connector of a nested child, 🌙, `~`) and a fold's ` ▶`, so a nested
+tree connector of a nested child, 🌙, `~`), a `*` and a fold's ` ▶`, so a nested
 name is not the one cut short. It stops at 42 cells at low detail, 38 at
 med and 34 at high and full, where more columns compete for the line. Hover the name to see who named it, whether it was launched with
-`--force-name`, and the names it had before.
+`--force-name`, the names it had before, and, while it has its `*`, the
+name Claude still shows.
 
 - `Ctrl+N` renames the agent; its **Named by** row says who names it from
   then on: `you` (locked) or `overcode`. A name you type switches it to

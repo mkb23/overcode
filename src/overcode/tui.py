@@ -1562,7 +1562,9 @@ class SupervisorTUI(
 
     def _name_cell_width(self, sessions) -> int:
         """The widest name cell the rows draw: tree prefix, 🌙 / "~" markers,
-        name and fold marker, so a nested name is not the first one cut."""
+        name, the "*" of a lagging CLI title and fold marker, so a nested
+        name is not the first one cut."""
+        from .name_source import title_pending_mark
         from .tui_widgets.session_summary import FOLD_SUFFIX, name_lead
         prefixes, folded = {}, set()
         prefs = getattr(self, "_prefs", None)
@@ -1570,9 +1572,12 @@ class SupervisorTUI(
             prefixes = {sid: meta.prefix for sid, meta in compute_tree_metadata(self.sessions).items()}
             folded = self.collapsed_parents
         # 🌙 and its ASCII "Bs" are the same width: emoji-free needs no recount
+        link = getattr(self, "engine_link", None)
+        views = getattr(link, "agents", None) or {}
         return max(
             (cell_len(prefixes.get(s.id, "")) + cell_len(name_lead(s))
              + len(s.name) + (len(FOLD_SUFFIX) if s.id in folded else 0)
+             + len(title_pending_mark((views.get(s.id) or {}).get("cli_title_lag")))
              for s in sessions), default=8)
 
     def _recompute_cell_column_widths(self, force: bool = False) -> None:

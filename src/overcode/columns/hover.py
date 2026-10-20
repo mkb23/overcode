@@ -264,4 +264,8 @@ def hover_agent_name(ctx: ColumnContext):
     previous = getattr(session, "previous_names", None) or []
     if previous:
         text.append(f"\nwas: {', '.join(reversed(previous))}", style="dim")
+    lag = getattr(ctx, "cli_title_lag", None)
+    if lag:
+        text.append(f"\n* Claude still shows '{lag}': overcode types /rename "
+                    "when the agent is idle with an empty input line", style="yellow")
     return text

@@ -208,6 +208,7 @@ class EngineLink:
         agents = self.agents
         hours = app._burn_hours()
         changed = []
+        lag_moved = False  # a name's "*" came or went: the NAME column may resize
         for widget in app.query(SessionSummary):
             if widget.session.is_remote:
                 continue
@@ -216,8 +217,11 @@ class EngineLink:
             if view is None or ((view is widget.engine or view == widget.engine) and not force):
                 continue
             old_status = widget.detected_status
+            old_lag = (widget.engine or {}).get("cli_title_lag")
             if widget.apply_engine(view, hours, app._visited_here.get(widget.session.id)):
                 changed.append(widget)
+                if bool(old_lag) != bool(view.get("cli_title_lag")):
+                    lag_moved = True
                 if app._prefs.status_change_logging and old_status != widget.detected_status:
                     app._log_status_change(
                         widget.session.name, old_status, widget.detected_status,
@@ -233,7 +237,9 @@ class EngineLink:
             sid = widget.session.id
             if widget.is_unvisited_stalled and sid == focused_id and app.attended:
                 app._schedule_bell_dismiss(sid)
-        if app._update_fleet_flags() | app._update_uniform_columns(changed):
+        if (app._update_fleet_flags() | app._update_uniform_columns(changed)
+                | (lag_moved and app._recalc_column_widths(
+                    [w.session for w in app.query(SessionSummary) if not w.leaving]))):
             changed = list(app.query(SessionSummary))
         if not app.attended:
             return  # nothing is drawn while detached; re-attaching repaints every row

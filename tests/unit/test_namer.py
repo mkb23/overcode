@@ -782,14 +782,40 @@ class TestClaudeTitle:
         fleet.idle(a)
         assert mock.sent_keys == [] and fleet.state(a).cli_title == "work"
 
+    def test_a_launch_records_its_name_as_the_title(self, tmp_path):
+        launcher, sm = _launcher(tmp_path)
+        a = launcher.launch(name="alpha")
+        assert nm.load_state("agents", a.id).cli_title == "alpha"
+        assert launcher.rename(sm.get_session(a.id), "beta")
+        assert nm.load_state("agents", a.id).cli_title == "alpha"  # still what Claude shows
+        assert launcher.restart(sm.get_session(a.id))
+        assert nm.load_state("agents", a.id).cli_title == "beta"   # relaunched with --name beta
+
     def test_a_rename_records_the_title_it_leaves_behind(self, tmp_path):
         launcher, sm = _launcher(tmp_path)
         a = launcher.launch(name="alpha")
-        assert nm.load_state("agents", a.id).cli_title is None
+        nm.save_state("agents", a.id, nm.NamerState())  # launched before titles were kept
         assert launcher.rename(sm.get_session(a.id), "beta")
         assert nm.load_state("agents", a.id).cli_title == "alpha"
         assert launcher.rename(sm.get_session(a.id), "gamma")
-        assert nm.load_state("agents", a.id).cli_title == "alpha"  # still what Claude shows
+        assert nm.load_state("agents", a.id).cli_title == "alpha"
+
+    def test_title_lag_is_what_claude_still_shows(self, tmp_path):
+        fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
+        a = fleet.add("work")
+        assert fleet.namer.title_lag(fleet.get(a)) is None      # never titled: --name work
+        fleet.turn(a)
+        fleet.sm.rename_session(a.id, "renamed", name_source="human")
+        assert fleet.namer.title_lag(fleet.get(a)) == "work"
+        mock.set_pane_content("agents", "work-w", EMPTY)
+        fleet.idle(a)
+        assert fleet.namer.title_lag(fleet.get(a)) is None      # /rename typed in
+        b = fleet.add("other", backend="codex")
+        fleet.sm.rename_session(b.id, "other2", name_source="human")
+        assert fleet.namer.title_lag(fleet.get(b)) is None      # no CLI title to lag
+        fleet.cfg = _cfg(enabled=False, cli_title=False)
+        fleet.sm.rename_session(a.id, "again", name_source="human")
+        assert fleet.namer.title_lag(fleet.get(a)) is None
 
     def test_cli_title_off_types_nothing(self, tmp_path):
         fleet, mock = self._fleet(tmp_path, cfg=_cfg(cli_title=False), model=StubModel(_reply("x-y")))

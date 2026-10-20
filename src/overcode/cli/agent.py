@@ -774,7 +774,7 @@ def list_agents(
         pad_and_join_cells, render_header_cells, render_summary_cells,
     )
     from ..tui_logic import compute_tree_metadata, sort_sessions
-    from ..name_source import name_marker
+    from ..name_source import name_marker, title_pending_mark
     from rich.console import Console
 
     # Resolve detail level (mutually exclusive flags, default full)
@@ -1025,12 +1025,14 @@ def list_agents(
         oversight_deadline = None
         in_session_mode = ""
         idle_at = None
+        title_lag = None
         if use_daemon:
             ds = daemon_state.get_session(sess.id)
             if ds:
                 oversight_deadline = ds.oversight_deadline
                 in_session_mode = ds.in_session_mode
                 idle_at = ds.idle_since
+                title_lag = ds.cli_title_lag
 
         _, status_color = get_status_symbol(status)
         ctx = build_cli_context(
@@ -1054,6 +1056,7 @@ def list_agents(
             child_rollup=child_rollup(children.get(sess.id, ())),
             swarm_rollup=swarms[sess.id],
             quota=quotas[sess.id],
+            cli_title_lag=title_lag,
             trip=trips[sess.id][0],
             subtree_trip_cost_usd=trips[sess.id][1],
         )
@@ -1065,8 +1068,9 @@ def list_agents(
         depth = meta.depth if meta else 0
         indent = "  " * depth
         marker = name_marker(sess.name_source)
-        available = name_width - len(indent) - len(marker)
-        ctx.display_name = (indent + marker + sess.name[:available]).ljust(name_width)
+        pending = title_pending_mark(title_lag)
+        available = name_width - len(indent) - len(marker) - len(pending)
+        ctx.display_name = (indent + marker + sess.name[:available] + pending).ljust(name_width)
 
         row_contexts.append(ctx)
         # A child's result follows its activity (the TUI's ``l`` result mode)

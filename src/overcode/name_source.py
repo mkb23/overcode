@@ -25,6 +25,15 @@ NAME_SOURCES = (DEFAULT, PARENT, AUTO, HUMAN)
 # The TUI marks names overcode chose (the name column: dim / "~")
 AUTO_MARKER = "~"
 
+# Trails a name Claude's own session title has not caught up with yet: the
+# engine's cli_title_lag, until overcode's /rename lands (namer.py)
+TITLE_PENDING_MARK = "*"
+
+
+def title_pending_mark(cli_title_lag: Optional[str]) -> str:
+    """The text that trails the name in the name column while its CLI title lags."""
+    return TITLE_PENDING_MARK if cli_title_lag else ""
+
 
 def is_locked(source: Optional[str]) -> bool:
     """Whether the namer must leave this name alone."""
