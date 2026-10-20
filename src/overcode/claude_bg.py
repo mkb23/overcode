@@ -502,8 +502,7 @@ def continues(job: Mapping[str, Any], agent_session_id: Optional[str]) -> Option
     last = _last_uuid(path.with_name(f"{agent_session_id}.jsonl"))
     if last is None:
         return None
-    held = _holds(path, f'"uuid":"{last}"'.encode())
-    return held
+    return _holds(path, f'"{last}"'.encode())
 
 
 # ── Rows ───────────────────────────────────────────────────────────────

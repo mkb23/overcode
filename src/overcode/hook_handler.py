@@ -522,11 +522,12 @@ def _note_foreign_session(prev_state: dict, session_id: str, now: float,
 def _settled(entry: dict) -> bool:
     """Whether a foreign conversation's placement is final.
 
-    A background session is not, until whether it continues the agent's
-    own conversation is known (an entry written before that was asked).
+    A background session is not until it is known not to continue the
+    agent's own conversation (an entry written before that was asked).
     """
     kind = entry.get("kind")
-    return kind in _SETTLED_KINDS and not (kind == FOREIGN_BG and "continues" not in entry)
+    return kind in _SETTLED_KINDS and not (kind == FOREIGN_BG
+                                           and entry.get("continues") is not False)
 
 
 def _pane_pid(state: dict) -> int | None:
