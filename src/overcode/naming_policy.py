@@ -204,6 +204,13 @@ def normalise(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
+def clean(name: str) -> str:
+    """A model's candidate made a valid name, its case and ``-``/``_`` kept: every
+    run of other characters one ``-``, none at the ends. The naming advice
+    decides case and separators, so they are not normalised away."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", name.strip()).strip("-_")
+
+
 def _words(name: str) -> List[str]:
     return [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
 
@@ -211,6 +218,15 @@ def _words(name: str) -> List[str]:
 def _repo_prefixed(name: str, repo: str) -> bool:
     n, r = name.lower(), repo.lower()
     return n == r or (n.startswith(r) and not n[len(r):len(r) + 1].isalnum())
+
+
+def _holder(names: Mapping[str, str], name: str) -> Optional[str]:
+    """Who holds ``name`` in ``names``, ignoring case: two agents whose names
+    differ only in case would be told apart by nobody."""
+    if name in names:
+        return names[name]
+    low = name.lower()
+    return next((who for held, who in names.items() if held.lower() == low), None)
 
 
 def failures(name: str, ctx: NamingContext) -> List[Failure]:
@@ -222,8 +238,9 @@ def failures(name: str, ctx: NamingContext) -> List[Failure]:
                            f"letters, digits, - and _ only, at most {_BASE_MAX} characters"))
     if name in RESERVED_NAMES:
         out.append(Failure(RULE_RESERVED, "reserved by overcode"))
-    if name in ctx.taken:
-        out.append(Failure(RULE_TAKEN, f"taken by {ctx.taken[name]}"))
+    taken = _holder(ctx.taken, name)
+    if taken is not None:
+        out.append(Failure(RULE_TAKEN, f"taken by {taken}"))
     if rules.pattern and not re.search(rules.pattern, name):
         out.append(Failure(RULE_PATTERN, f"does not match the pattern {rules.pattern}"))
     if rules.max_length and len(name) > rules.max_length:
@@ -240,8 +257,9 @@ def failures(name: str, ctx: NamingContext) -> List[Failure]:
             and _repo_prefixed(name, ctx.repo)):
         out.append(Failure(RULE_NO_REPO_PREFIX,
                            f"repeats the repo name '{ctx.repo}', which has its own column"))
-    if name in ctx.recent and name not in ctx.taken:
-        out.append(Failure(RULE_RECENT_ARCHIVED, f"recently used by {ctx.recent[name]}"))
+    recent = _holder(ctx.recent, name)
+    if recent is not None and taken is None:
+        out.append(Failure(RULE_RECENT_ARCHIVED, f"recently used by {recent}"))
     return out
 
 
@@ -293,7 +311,7 @@ def suggest(name: str, ctx: NamingContext) -> Optional[str]:
     """A name close to ``name`` that passes, or None."""
     base = _repair(name, ctx)
     if not _BASE_PATTERN.match(base or "-"):
-        base = normalise(name)
+        base = clean(name)
     if not base:
         return None
     left = failures(base, ctx)
@@ -315,10 +333,11 @@ def check(name: str, ctx: NamingContext) -> Verdict:
 
 
 def choose(candidates: Sequence[str], ctx: NamingContext) -> Optional[str]:
-    """The namer's pick (§5 steps 1-3): each candidate normalised, the first
-    that passes; else the first one with the shortest disambiguator. None
-    when no candidate yields a passing name."""
-    names = [n for n in (normalise(c) for c in candidates if isinstance(c, str)) if n]
+    """The namer's pick (§5 steps 1-3): each candidate cleaned (``clean``:
+    case kept, as the advice asks), the first that passes; else the first
+    one with the shortest disambiguator. None when no candidate yields a
+    passing name."""
+    names = [n for n in (clean(c) for c in candidates if isinstance(c, str)) if n]
     for name in names:
         if _passes(name, ctx):
             return name
@@ -423,5 +442,5 @@ def llm_check(name: str, advice: str, client=None,
         return None
     why = data.get("why") if isinstance(data.get("why"), str) else "does not follow the advice"
     suggestion = data.get("suggestion")
-    suggestion = normalise(suggestion) if isinstance(suggestion, str) else None
+    suggestion = clean(suggestion) if isinstance(suggestion, str) else None
     return Failure(RULE_ADVICE, f"advice: {why.strip()[:120]}"), suggestion or None

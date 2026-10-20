@@ -64,6 +64,7 @@ RETRY_GAP_SECONDS = 600          # after a call that failed or was skipped
 REFINE_FACTOR = 10               # the refinement comes at 10x the first's work
 HUMAN_QUIET_SECONDS = 30         # no rename this soon after a TUI keypress
 TITLE_RETRY_SECONDS = 10         # an idle agent's lagging title is tried again this often
+WORK_RECHECK_SECONDS = 60        # a working agent past work_minutes is looked at this often
 ARCHIVED_HOURS = 24              # archived agents the model sees
 FLEET_LINES = 120                # at most this many fleet lines in the prompt
 PANE_LINES = 60                  # a hookless agent's fallback input
@@ -711,6 +712,9 @@ class Namer:
         self._idle_title: Dict[str, Tuple[str, Optional[float]]] = {}
         # Per id, the name and the CLI title recorded for it (title_lag)
         self._titles_known: Dict[str, Tuple[str, Optional[str]]] = {}
+        # Per id, when to look again at a working agent for its first name
+        # (first_after.work_minutes); inf once it has one
+        self._work_next: Dict[str, float] = {}
         self._in_flight: set = set()
         self._lock = threading.Lock()
         self._cap_logged_day: Optional[str] = None
@@ -801,6 +805,11 @@ class Namer:
                     cfg = self.config()
                 if cfg.get("cli_title", True) and self._is_claude(session):
                     self._run(f"align:{sid}", lambda sid=sid: self._align(sid))
+            if not turn_end and status in GREEN_STATUSES:
+                if cfg is None:
+                    cfg = self.config()
+                if self._first_name_due_at_work(session, st, cfg, now):
+                    self._run(f"name:{sid}", lambda sid=sid, cfg=cfg: self._name(sid, "first", cfg))
             if not turn_end and not title:
                 continue
             if cfg is None:
@@ -815,6 +824,34 @@ class Namer:
                 self._title_seen.pop(sid, None)
                 self._idle_title.pop(sid, None)
                 self._titles_known.pop(sid, None)
+                self._work_next.pop(sid, None)
+
+    def _first_name_due_at_work(self, session, st, cfg: dict, now: datetime) -> bool:
+        """Whether a working agent gets its first name now, mid-turn.
+
+        Once it has worked ``first_after.work_minutes`` (green time, so an
+        agent that sits idle is never named), without waiting for its turn
+        to end. Its namer.json is read at most every ``WORK_RECHECK_SECONDS``
+        once past the threshold, and never again once it has a first name.
+        """
+        minutes = float((cfg.get("first_after") or {}).get("work_minutes") or 0)
+        if not cfg.get("enabled") or minutes <= 0:
+            return False
+        if is_locked(getattr(session, "name_source", HUMAN)):
+            return False
+        if float(getattr(st, "green_time_seconds", 0) or 0) < minutes * 60:
+            return False
+        ts = now.timestamp()
+        if ts < self._work_next.get(session.id, 0.0):
+            return False
+        self._work_next[session.id] = ts + WORK_RECHECK_SECONDS
+        state = load_state(session.tmux_session or self.tmux_session, session.id)
+        if state.first_done or state.renames:
+            self._work_next[session.id] = float("inf")
+            return False
+        if state.attempted_at and ts - state.attempted_at < RETRY_GAP_SECONDS:
+            return False
+        return not self._human_typing() and not self._over_cap(cfg, now)
 
     def title_lag(self, session) -> Optional[str]:
         """The title Claude still shows for an agent renamed since, else None.
@@ -959,6 +996,11 @@ class Namer:
             current = self.session_manager.get_session(session.id)
             if current is None or is_locked(getattr(current, "name_source", HUMAN)):
                 return None  # a person took the name over meanwhile
+            tmux_session = current.tmux_session or self.tmux_session
+            state = load_state(tmux_session, current.id)
+            if state.cli_title is None:  # still the launch's --name: keep it known
+                state.cli_title = current.name
+                save_state(tmux_session, current.id, state)
             try:
                 if self._rename(current, pick, AUTO):
                     return pick
@@ -1010,6 +1052,8 @@ class Namer:
         session = self.session_manager.get_session(session_id)
         if session is None or self.tmux is None:
             return
+        if self._last_status.get(session_id) not in IDLE_STATUSES:
+            return  # a working Claude would take it as its next prompt
         tmux_session = session.tmux_session or self.tmux_session
         state = load_state(tmux_session, session_id)
         if state.cli_title is None:

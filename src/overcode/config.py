@@ -1051,7 +1051,8 @@ _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "max_
                 "cost_cap_per_day", "provider", "cli_title")
 _NAMING_RULE_KEYS = ("pattern", "max_length", "forbid", "require", "no_repo_prefix",
                      "recent_archived_hours", "llm_check", "warn_humans")
-_NAMING_FIRST_AFTER = {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000}
+_NAMING_FIRST_AFTER = {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000,
+                       "work_minutes": 5.0}
 
 
 def _positive_int(value) -> Optional[int]:
@@ -1096,7 +1097,9 @@ def get_naming_config() -> dict:
             recent_archived_hours: 0   # refuse names archived this recently (0 = off)
             llm_check: false    # ask the summarizer model whether the name follows the advice
             warn_humans: false  # warn (never refuse) a human's -n too
-          first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
+          first_after: {turns: 2, green_minutes: 3, output_tokens: 15000, work_minutes: 5}
+                                # at a turn end after that much work; or, mid-turn,
+                                # once it has worked work_minutes (0 = only at turn ends)
           max_renames: 2
           cost_cap_per_day: 0.50
           provider: {...}       # api_type/api_url/model/api_key_var; default: the summarizer: block

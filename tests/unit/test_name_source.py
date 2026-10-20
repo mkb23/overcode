@@ -121,7 +121,8 @@ class TestNamingConfig:
             "no_repo_prefix": False, "recent_archived_hours": 0.0, "llm_check": False,
             "warn_humans": False,
         }
-        assert cfg["first_after"] == {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000}
+        assert cfg["first_after"] == {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000,
+                                      "work_minutes": 5.0}
         assert (cfg["max_renames"], cfg["cost_cap_per_day"], cfg["warnings"]) == (2, 0.5, [])
 
     def test_a_full_block(self, load_naming):

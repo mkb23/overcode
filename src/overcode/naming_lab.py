@@ -118,11 +118,11 @@ def short_reason(failure) -> str:
 
 def rejected(candidates: Sequence[str], pick: Optional[str], ctx) -> List[Tuple[str, str]]:
     """The candidates passed over before the pick, each with why."""
-    from .naming_policy import failures, normalise
+    from .naming_policy import clean, failures
 
     out: List[Tuple[str, str]] = []
     for raw in candidates:
-        name = normalise(raw)
+        name = clean(raw)
         if not name:
             out.append((raw, "not a name"))
             continue

@@ -124,7 +124,7 @@ class TestEngine:
         runner = _runner(model)
         runner.run(agents[1:2], *DRAFT)
         p = runner.result(agents[1], *DRAFT)
-        assert p.pick == "wiki-docs"
+        assert p.pick == "Wiki-Docs"
         assert p.rejected == [("proj2", "taken by agent 'proj2'"), ("auth", "taken by agent 'auth'")]
 
     def test_rules_name_the_rejection(self, home):
@@ -436,7 +436,7 @@ class TestLabInTUI:
             await pilot.pause()
             assert not lab.dirty
             saved = (tui_state_dir / "prompts" / "naming-advice.md").read_text()
-            assert saved.startswith("q! kebab-case")
+            assert saved.startswith("q! lowercase kebab-case")
 
     async def test_enter_on_a_row_renames_it_as_a_human_choice(self, make_tui, stub, monkeypatch):
         fleet = self._seed()
