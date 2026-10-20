@@ -38,6 +38,11 @@ What each backend's pass proves, in order:
    (tokens > 0) using the ids the telemetry recorded.
 5. ``overcode doctor`` reports the agent ``ok`` (process found under the
    pane, telemetry footprint present) and can determine the CLI version.
+6. ``overcode rename`` mid-run leaves the agent running (same CLI process),
+   and the next turn's hooks still land in its own hook state (auto-naming
+   §1). Where hook stdout reaches the model (claude-code, hermes) the rename
+   notice is consumed by that turn's prompt and the agent answers with its
+   new name. The permission step (3) then runs under the new name.
 
 Prerequisites per backend are checked up front and reported as a skip
 reason, never a failure: binary on PATH (or the *_COMMAND override) and a
@@ -142,6 +147,9 @@ class LiveSpec:
     # Substrings of a fresh pane (from the corpus) — proves the chrome.
     idle_markers: Tuple[str, ...] = ()
     extra_env: Dict[str, str] = field(default_factory=dict)
+    # Whether a UserPromptSubmit hook's stdout reaches the model as context
+    # (the rename notice, the enhanced-context line).
+    hook_stdout_reaches_model: bool = False
 
 
 def _opencode_v1_files(model: Optional[str]) -> Dict[str, str]:
@@ -190,6 +198,7 @@ SPECS: List[LiveSpec] = [
         approved_effect=lambda d: (d / "live_probe.txt").exists(),
         expect_stats=False,
         idle_markers=("Claude Code",),
+        hook_stdout_reaches_model=True,
     ),
     LiveSpec(
         backend="opencode",
@@ -268,6 +277,7 @@ SPECS: List[LiveSpec] = [
         # hatch for spawned children; this tier exists to touch the real
         # store, so it is the right thing to set here and nowhere else.
         extra_env={"HERMES_STATE_DB_GUARD_BYPASS": "1"},
+        hook_stdout_reaches_model=True,
     ),
 ]
 _BY_NAME = {s.backend: s for s in SPECS}
@@ -521,6 +531,41 @@ class TestLiveBackend:
             time.sleep(1)
         raise AssertionError(f"daemon never reported {expected!r} for {self.name}; last={last!r}")
 
+    def _rename_mid_run(self) -> None:
+        """Step 6: rename the idle agent, then run a turn under the new name."""
+        from overcode.paths import agent_path
+        from tests.agent_file_lookup import agent_session_id
+
+        spec = self.spec
+        state_path = self._hook_state_path()
+        cli_pid = (self._hook_state() or {}).get("cli_pid")
+        new_name = f"renamed-{spec.backend}"[:20]
+        result = self._cli("rename", self.name, new_name)
+        assert result.returncode == 0, f"rename failed:\n{result.stdout}\n{result.stderr}"
+        self.name = new_name
+        assert self._window() == f"{new_name}-{agent_session_id(self.live['state_dir'], self.session, new_name)[:4]}"
+        # Keyed by id: nothing moved
+        assert self._hook_state_path() == state_path
+        sid = agent_session_id(self.live["state_dir"], self.session, new_name)
+        notice = agent_path(self.session, sid, new_name, "rename_notice",
+                            base=Path(self.live["state_dir"]) / self.session)
+        assert notice.exists(), "rename left no notice for the agent"
+
+        t = time.time()
+        prompt = ("What name did overcode just tell you to use from now on? "
+                  "Reply with only that name." if spec.hook_stdout_reaches_model
+                  else spec.simple_prompt)
+        result = self._cli("send", new_name, prompt)
+        assert result.returncode == 0, result.stderr
+        state = self._wait_hook_event("Stop", after=t)
+        if cli_pid and state.get("cli_pid"):
+            assert state["cli_pid"] == cli_pid, "the rename restarted the agent's CLI"
+        if spec.hook_stdout_reaches_model:
+            assert not notice.exists(), "the notice was not consumed by the prompt hook"
+            assert self._pane_shows(new_name, timeout=30), (
+                f"the agent never said its new name:\n{self._pane()}")
+        assert self._wait_daemon_status("waiting_user") == "waiting_user"
+
     # -- the one long test ---------------------------------------------
 
     def test_real_cli_round_trip(self):
@@ -585,6 +630,9 @@ class TestLiveBackend:
         assert "no process" not in out, out
         assert "could not determine the installed" not in out, out
         assert f"{self.name}" in out and "✓ ok" in out, out
+
+        # 6. Rename mid-run; the permission step below runs under the new name.
+        self._rename_mid_run()
 
         # 3. A tool call that must ask; the approve gesture lands on it.
         if spec.permission_available():

@@ -444,7 +444,10 @@ class MonitorDaemonState:
         return None
 
     def get_session_by_name(self, name: str) -> Optional[SessionDaemonState]:
-        """Get session state by name."""
+        """Get session state by its published name (exact, and a tick behind a rename).
+
+        A caller holding the agent's record looks it up by id (``get_session``).
+        """
         for session in self.sessions:
             if session.name == name:
                 return session

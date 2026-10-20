@@ -279,3 +279,21 @@ class TestUniqueAgentName:
             # "bar" and "bar2" exist, so should get "bar3"
             result = cmd_bar._get_unique_agent_name("bar")
             assert result == "bar3"
+
+    @pytest.mark.asyncio
+    async def test_unique_name_skips_a_renamed_agents_old_name(self, make_tui, tmp_path):
+        """An old name still reaches its agent, so a fork may not take it."""
+        from overcode.tui import CommandBar
+        from overcode.session_manager import SessionManager
+
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = session_manager.create_session(
+            name="foo", tmux_session="test", tmux_window=1, command=["claude"])
+        assert session_manager.rename_session(session.id, "renamed")
+
+        app = make_tui()
+        app.session_manager = session_manager
+
+        async with app.run_test():
+            cmd_bar = app.query_one("#command-bar", CommandBar)
+            assert cmd_bar._get_unique_agent_name("foo") == "foo2"

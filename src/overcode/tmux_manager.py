@@ -72,17 +72,19 @@ class TmuxManager:
         except TmuxTimeoutError:
             return False
 
-    def create_window(self, window_name: str, start_directory: Optional[str] = None) -> Optional[str]:
+    def create_window(self, window_name: str, start_directory: Optional[str] = None,
+                      options: Optional[Dict[str, str]] = None) -> Optional[str]:
         """Create a shell window, ready to be typed into; its name, or None.
 
         Returns once the shell has drawn its prompt (see
         ``RealTmux._wait_for_prompt``), so a long launch command sent next
-        is not cut off.
+        is not cut off. ``options`` are set as window options on it.
         """
         if not self._session_ready():
             return None
         return self.client.new_window(
             self.session_name, window_name, cwd=start_directory, wait_for_prompt=True,
+            options=options,
         )
 
     def create_ssh_proxy_window(
@@ -169,6 +171,10 @@ class TmuxManager:
         window, so the new name sticks.
         """
         return self.client.rename_window(self.session_name, window_name, new_name)
+
+    def set_window_option(self, window_name: str, option: str, value: str) -> bool:
+        """Set a window option on a window; False when tmux refused."""
+        return self.client.set_window_option(self.session_name, window_name, option, value)
 
     def kill_window(self, window_name: str) -> bool:
         """Kill a specific window."""

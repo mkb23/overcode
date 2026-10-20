@@ -114,6 +114,10 @@ class TmuxInterface(Protocol):
         """
         ...
 
+    def set_window_option(self, session: str, window: str, option: str, value: str) -> bool:
+        """Set a window option (e.g. ``@overcode_id``); True on success."""
+        ...
+
     def kill_session(self, session: str) -> bool:
         """Kill an entire tmux session."""
         ...

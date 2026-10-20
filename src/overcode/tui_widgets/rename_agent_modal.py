@@ -2,13 +2,14 @@
 Rename-agent modal (Ctrl+N, #478).
 
 A small form in the new-agent modal's style: the new name is edited inline
-from the moment the dialog opens (pre-filled with the current name), and a
-force toggle covers renaming a busy agent. The name is validated as it is
-typed, so Enter only ever submits a name ``overcode rename`` would accept;
-the rename itself runs in the app (it stops and resumes the agent).
+from the moment the dialog opens (pre-filled with the current name). The
+name is validated as it is typed, so Enter only ever submits a name
+``overcode rename`` would accept; the rename itself runs in the app. The
+agent keeps running. Only an agent launched before 0.6 is stopped and
+resumed, and for it a force toggle covers renaming it while busy.
 
 Keys:
-    printable chars  insert at cursor        Tab / ↑ / ↓  switch field
+    printable chars  insert at cursor        Tab / ↑ / ↓  switch field (force)
     Backspace / Del  delete                  Space        toggle force
     ← / → Home End   move cursor             Enter        rename
     Esc              cancel
@@ -53,6 +54,7 @@ class RenameAgentModal(ModalBase):
         self.value: str = ""
         self.cursor: int = 0
         self.force: bool = False
+        self.restarts: bool = False  # a pre-0.6 agent: the force row shows
         self._taken: set[str] = set()
 
     # ── public api ───────────────────────────────────────────────────────
@@ -63,14 +65,19 @@ class RenameAgentModal(ModalBase):
         session_id: str,
         name: str,
         existing_names: set[str],
+        restarts: bool = False,
         app_ref: Optional[Any] = None,
     ) -> None:
-        """Open for the agent ``name``; ``existing_names`` are all agents' names."""
+        """Open for the agent ``name``; ``existing_names`` are all agents' names.
+
+        ``restarts``: the rename stops and resumes the agent (pre-0.6).
+        """
         self.session_id = session_id
         self.old_name = name
         self.value = name
         self.cursor = len(name)
         self.force = False
+        self.restarts = restarts
         self._taken = set(existing_names) - {name}
         self._save_focus(app_ref)
         self._show()  # resets selected_index to 0: the name field
@@ -116,20 +123,25 @@ class RenameAgentModal(ModalBase):
         t.append_text(ds.finish(line, w))
         t.append("\n")
 
-        on_force = self.selected_index == 1
-        line = ds.item(on_force)
-        line.append(f"{'Force':<{self.LABEL_W}}", style="bold" if on_force else ds.TEXT)
-        line.append_text(ds.options(("off", "on"), "on" if self.force else "off"))
-        t.append_text(ds.finish(line, w))
-        t.append("\n")
+        if self.restarts:
+            on_force = self.selected_index == 1
+            line = ds.item(on_force)
+            line.append(f"{'Force':<{self.LABEL_W}}", style="bold" if on_force else ds.TEXT)
+            line.append_text(ds.options(("off", "on"), "on" if self.force else "off"))
+            t.append_text(ds.finish(line, w))
+            t.append("\n")
 
         problem = self.error()
         if problem:
             note = Text(problem, style=ds.ERROR)
+        elif not self.restarts:
+            note = Text("it keeps running; told its new name with its next prompt",
+                        style=ds.MUTED)
         elif self.force:
             note = Text("restarts it even mid-turn — the turn is cancelled", style=ds.WARN)
         else:
-            note = Text("a busy agent is refused unless force is on", style=ds.MUTED)
+            note = Text("a pre-0.6 agent restarts: refused while busy unless force is on",
+                        style=ds.MUTED)
         t.append_text(ds.tip(w, note))
         t.append("\n")
         t.append_text(ds.finish(Text("the old name keeps working as an alias", style=ds.MUTED), w))
@@ -147,7 +159,8 @@ class RenameAgentModal(ModalBase):
         elif key == "enter":
             self._submit()
         elif key in ("tab", "shift+tab", "up", "down"):
-            self.selected_index = 1 - self.selected_index
+            if self.restarts:
+                self.selected_index = 1 - self.selected_index
         elif self.selected_index == 1:
             if key in ("space", "left", "right"):
                 self.force = not self.force

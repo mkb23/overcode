@@ -107,6 +107,7 @@ from .monitor_daemon_core import (
     should_enforce_oversight_timeout,
 )
 from .tmux_utils import (
+    AGENT_ID_OPTION,
     PaneInfo,
     pane_for_window,
     send_text_to_tmux_window,
@@ -227,6 +228,9 @@ class NullTmux:
         return []
 
     def rename_window(self, session, window, new_name):
+        return False
+
+    def set_window_option(self, session, window, option, value):
         return False
 
     def kill_session(self, session):
@@ -601,6 +605,23 @@ class MonitorDaemon:
 
         # Legacy migration flag — runs once on first tick
         self._legacy_windows_migrated = False
+
+    def _tag_agent_windows(self, sessions: list) -> None:
+        """Give each live agent's window its ``@overcode_id`` (auto-naming §1).
+
+        Launches set it; a window launched before the option existed gets
+        it here, once per daemon start. The hook handler's pane fallback
+        reads it.
+        """
+        try:
+            live = {w['name'] for w in self._tmux.list_windows(self.tmux_session)}
+        except Exception as e:
+            self.log.warn(f"Window tagging skipped: {e}")
+            return
+        for session in sessions:
+            if session.tmux_window in live and not getattr(session, "is_remote", False):
+                self._tmux.set_window_option(
+                    self.tmux_session, session.tmux_window, AGENT_ID_OPTION, session.id)
 
     def _migrate_legacy_window_ids(self, sessions: list) -> None:
         """Migrate legacy digit-string tmux_window values to actual window names."""
@@ -1456,6 +1477,7 @@ class MonitorDaemon:
         self._refresh_detection_mode(sessions)
         if not self._legacy_windows_migrated:
             self._migrate_legacy_window_ids(sessions)
+            self._tag_agent_windows(sessions)
             self._legacy_windows_migrated = True
         self._sync_session_ids(sessions, now)
         self._sync_session_stats(sessions, now)
@@ -1875,7 +1897,7 @@ class MonitorDaemon:
                 all_waiting_user = False
 
         # Compute subtree costs and child rollups for parent agents
-        self._compute_subtree_costs(session_states)
+        self._compute_subtree_costs(session_states, index)
         self._compute_child_rollups(session_states, index)
 
         return session_states, all_waiting_user
@@ -2063,32 +2085,40 @@ class MonitorDaemon:
                 f"{session.name}  {current_phase} → {status} ({activity})"
             )
 
-    def _compute_subtree_costs(self, session_states):
+    def _compute_subtree_costs(self, session_states, index: Optional[SessionIndex] = None):
         """Compute subtree cost (self + all descendants) for each parent agent.
 
-        Agents are linked by *name*, and names are not guaranteed unique: a
-        duplicate name whose entry lists itself (or an ancestor) as parent
-        forms a cycle in ``children_map``. Each walk carries a ``visited`` set
-        so such a cycle counts every member once instead of recursing until
-        the daemon dies with RecursionError.
+        Agents are linked by id: each record's ``parent_session_id`` in
+        ``index``, so a rename between ticks moves no cost. Without an index
+        the published ``parent_name`` links them. Parent links can still
+        form a cycle (a corrupt record, duplicate names without an index):
+        each walk carries a ``visited`` set so a cycle counts every member
+        once instead of recursing until the daemon dies with RecursionError.
         """
-        by_name = {s.name: s for s in session_states}
+        by_id = {s.session_id: s for s in session_states}
+        if index is not None:
+            parent_of = {sid: getattr(index.by_id.get(sid), "parent_session_id", None)
+                         for sid in by_id}
+        else:
+            id_by_name = {s.name: s.session_id for s in session_states}
+            parent_of = {s.session_id: id_by_name.get(s.parent_name)
+                         for s in session_states if s.parent_name}
         children_map = {}
-        for s in session_states:
-            if s.parent_name and s.parent_name in by_name:
-                children_map.setdefault(s.parent_name, []).append(s.name)
+        for sid, parent_id in parent_of.items():
+            if parent_id and parent_id in by_id:
+                children_map.setdefault(parent_id, []).append(sid)
 
-        def _sum(name, visited):
-            visited.add(name)
-            total = by_name[name].estimated_cost_usd
-            for child in children_map.get(name, []):
+        def _sum(sid, visited):
+            visited.add(sid)
+            total = by_id[sid].estimated_cost_usd
+            for child in children_map.get(sid, []):
                 if child not in visited:
                     total += _sum(child, visited)
             return total
 
         for s in session_states:
-            if children_map.get(s.name):
-                s.subtree_cost_usd = _sum(s.name, set())
+            if children_map.get(s.session_id):
+                s.subtree_cost_usd = _sum(s.session_id, set())
 
     def _count_children_working(self, index: SessionIndex) -> None:
         """Refill the children-working counts from the last published tick.

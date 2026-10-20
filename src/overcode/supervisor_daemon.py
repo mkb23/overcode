@@ -485,24 +485,27 @@ class SupervisorDaemon:
             since=self.daemon_claude_launch_time,
         )
 
-    def update_intervention_counts(self, session_names: List[str]) -> None:
-        """Update steers_count for sessions based on supervisor log interventions."""
-        counts = self.count_interventions_from_log(session_names)
+    def update_intervention_counts(self, names_by_id: Dict[str, str]) -> None:
+        """Update steers_count for sessions based on supervisor log interventions.
+
+        ``names_by_id`` is the agents daemon claude was shown, under the
+        names it was shown (what its log says). The count goes to the agent
+        by id, so one renamed meanwhile is still credited.
+        """
+        counts = self.count_interventions_from_log(list(names_by_id.values()))
         if not counts:
             return
 
-        sessions = self.session_manager.list_sessions()
-        session_by_name = {s.name: s for s in sessions}
-
-        for name, intervention_count in counts.items():
-            if name in session_by_name:
-                session = session_by_name[name]
-                current_stats = session.stats
-                self.session_manager.update_stats(
-                    session.id,
-                    steers_count=current_stats.steers_count + intervention_count,
-                )
-                self.log.info(f"[{name}] +{intervention_count} daemon interventions")
+        for session_id, name in names_by_id.items():
+            intervention_count = counts.get(name)
+            session = self.session_manager.get_session(session_id)
+            if not intervention_count or session is None:
+                continue
+            self.session_manager.update_stats(
+                session.id,
+                steers_count=session.stats.steers_count + intervention_count,
+            )
+            self.log.info(f"[{session.name}] +{intervention_count} daemon interventions")
 
     def _mark_daemon_claude_stopped(self) -> None:
         """Mark daemon claude as stopped and accumulate run time."""
@@ -868,8 +871,7 @@ class SupervisorDaemon:
                 return
             if completed:
                 self.kill_daemon_claude()
-                session_names = [s.name for s in non_green]
-                self.update_intervention_counts(session_names)
+                self.update_intervention_counts({s.session_id: s.name for s in non_green})
                 self._sync_daemon_claude_tokens()
                 # Reset health counter on any successful completion
                 if self.supervisor_stats.consecutive_timeouts:

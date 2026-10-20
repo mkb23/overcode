@@ -12,10 +12,10 @@ All functions are pure (no Rich/Typer dependencies) for easy testing.
 """
 
 import json
-import os
 from datetime import datetime
 from typing import Optional
 
+from .agent_identity import env_agent_id, find_in_daemon_state
 from .paths import agent_path, session_dir
 
 
@@ -144,17 +144,19 @@ def format_heartbeat(
         return f"{interval_minutes}m (next: now)"
 
 
-def read_heartbeat_timestamp(tmux_session: str, session_name: str) -> Optional[str]:
+def read_heartbeat_timestamp(tmux_session: str, session_name: str,
+                             session_id: Optional[str] = None) -> Optional[str]:
     """Read last heartbeat timestamp from file.
 
     Args:
         tmux_session: Tmux session name
         session_name: Agent session name
+        session_id: Agent session id (default: ``OVERCODE_SESSION_ID``)
 
     Returns:
         ISO timestamp string, or None if file doesn't exist
     """
-    sid = os.environ.get("OVERCODE_SESSION_ID") or None
+    sid = session_id or env_agent_id()
     path = agent_path(tmux_session, sid, session_name, "heartbeat")
     try:
         return path.read_text().strip()
@@ -218,20 +220,36 @@ def _load_daemon_state(tmux_session: str) -> Optional[dict]:
         return None
 
 
-def _find_session_in_state(state: dict, session_name: str) -> Optional[dict]:
-    """Find a session by name in daemon state.
+def _find_session_in_state(state: dict, session_name: str,
+                           session_id: Optional[str] = None) -> Optional[dict]:
+    """Find an agent in daemon state: by ``session_id``, else (pre-0.6) by name.
 
     Args:
         state: Parsed daemon state dict
-        session_name: Agent session name
+        session_name: Agent session name (its launch name: stale after a rename)
+        session_id: Agent session id
 
     Returns:
         Session dict, or None
     """
-    for s in state.get("sessions", []):
-        if s.get("name") == session_name:
-            return s
-    return None
+    return find_in_daemon_state(state, session_id, session_name)
+
+
+def _current_name(session_id: Optional[str], session_data: Optional[dict]) -> Optional[str]:
+    """The agent's name now: its record's, else the daemon's last published one.
+
+    The env name is the launch name; a rename does not restart the agent.
+    """
+    if session_id:
+        try:
+            from .session_manager import SessionManager
+
+            session = SessionManager(skip_git_detection=True).get_session(session_id)
+            if session is not None:
+                return session.name
+        except Exception:  # noqa: BLE001 — never fail a prompt over a name
+            pass
+    return session_data.get("name") if session_data else None
 
 
 def generate_enhanced_context(
@@ -239,27 +257,32 @@ def generate_enhanced_context(
     session_name: str,
     now: Optional[datetime] = None,
     config: Optional[dict] = None,
+    session_id: Optional[str] = None,
 ) -> str:
     """Orchestrator: reads state, config, calls formatters, returns final line.
 
     Args:
         tmux_session: Tmux session name
-        session_name: Agent session name
+        session_name: Agent session name (launch name; shown only for an
+            agent with no id)
         now: Current datetime (defaults to now with local timezone)
         config: Enhanced context config dict (defaults to loading from config.yaml)
+        session_id: Agent session id (default: ``OVERCODE_SESSION_ID``)
 
     Returns:
         Complete enhanced context line
     """
     if now is None:
         now = datetime.now().astimezone()
+    session_id = session_id or env_agent_id()
 
     # Check enhanced_context_enabled flag in daemon state before doing any work.
     # If the session exists in state and flag is False (or missing), suppress output.
     # If the session is not found or state is unavailable, allow output (graceful degradation).
     state = _load_daemon_state(tmux_session)
+    session_data = None
     if state:
-        session_data = _find_session_in_state(state, session_name)
+        session_data = _find_session_in_state(state, session_name, session_id)
         if session_data and not session_data.get("enhanced_context_enabled",
                                                   session_data.get("time_context_enabled", False)):
             return ""
@@ -277,7 +300,6 @@ def generate_enhanced_context(
 
     if state:
         presence_state = state.get("presence_state")
-        session_data = _find_session_in_state(state, session_name)
         if session_data:
             start_time = session_data.get("start_time")
 
@@ -293,9 +315,10 @@ def generate_enhanced_context(
 
     # Heartbeat
     interval = config.get("heartbeat_interval_minutes")
-    last_heartbeat = read_heartbeat_timestamp(tmux_session, session_name)
+    last_heartbeat = read_heartbeat_timestamp(tmux_session, session_name, session_id)
     heartbeat = format_heartbeat(interval, last_heartbeat, now)
 
-    line = build_enhanced_context_line(clock, presence, office, uptime, heartbeat, agent_name=session_name)
+    agent_name = _current_name(session_id, session_data) or session_name
+    line = build_enhanced_context_line(clock, presence, office, uptime, heartbeat, agent_name=agent_name)
     line += "\nPrefix each response with [HH:MM] using the Clock value above."
     return line

@@ -407,6 +407,23 @@ def tmux_window_target(session: str, window) -> str:
     return f"{session}:={window}"
 
 
+# Window option naming the agent a window belongs to (its overcode session
+# id). Set at launch, kept by rename-window: the hook handler reads it when
+# its environment lost the agent's identity (auto-naming §1).
+AGENT_ID_OPTION = "@overcode_id"
+
+
+def set_tmux_window_option(server, session: str, window, option: str, value: str) -> bool:
+    """Set a window option on ``session``'s window ``window``; True on success."""
+    try:
+        result = server.cmd(
+            "set-option", "-w", "-t", tmux_window_target(session, window), option, value,
+        )
+    except Exception:
+        return False
+    return getattr(result, "returncode", 0) == 0 and not getattr(result, "stderr", None)
+
+
 def rename_tmux_window(server, session: str, window, new_name: str) -> bool:
     """Rename ``session``'s window ``window`` to ``new_name``; True on success.
 

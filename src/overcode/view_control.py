@@ -120,7 +120,9 @@ def send_command(session: str, verb: str, args: dict, timeout: float = ACK_TIMEO
     """
     cmd_id = uuid.uuid4().hex[:12]
     if via is None:
-        via = "agent" if os.environ.get("OVERCODE_SESSION_NAME") else "cli"
+        from .agent_identity import in_agent
+
+        via = "agent" if in_agent() else "cli"
     ack_file = ack_path(session)
     try:
         start_offset = ack_file.stat().st_size

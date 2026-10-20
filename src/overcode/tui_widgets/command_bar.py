@@ -303,13 +303,17 @@ class CommandBar(Static):
         self.post_message(self.SendRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
     def _get_unique_agent_name(self, base_name: str) -> str:
-        """Get a unique agent name by incrementing suffix if needed (#131)."""
-        if not self.app.session_manager.get_session_by_name(base_name):
+        """Get a unique agent name by incrementing suffix if needed (#131).
+
+        A name another agent had before a rename is taken too: it still
+        reaches that agent (``resolve_session_name``).
+        """
+        if not self.app.session_manager.resolve_session_name(base_name):
             return base_name
         suffix = 2
         while suffix < 100:
             candidate = f"{base_name}{suffix}"
-            if not self.app.session_manager.get_session_by_name(candidate):
+            if not self.app.session_manager.resolve_session_name(candidate):
                 return candidate
             suffix += 1
         return f"{base_name}_{suffix}"

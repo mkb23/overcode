@@ -252,7 +252,7 @@ class TestDoctorFix:
             "broken-1": AgentHealth(
                 name="broken-1", tmux_window="broken-1-0", launcher_version="0.3.6",
                 claude_pid=5, claude_argv="claude",
-                verdict=VERDICT_MISSING_SETTINGS, details="",
+                verdict=VERDICT_MISSING_SETTINGS, details="", session_id=broken.id,
             ),
         }
         patches, mock_launcher = _patch_doctor(
@@ -260,7 +260,8 @@ class TestDoctorFix:
         )
         with patch("overcode.session_manager.SessionManager") as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = broken
+            # By id: the agent may have been renamed since it was inspected
+            mock_sm.get_session.side_effect = {broken.id: broken}.get
             mock_sm_cls.return_value = mock_sm
             _enter(patches)
             try:

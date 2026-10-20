@@ -389,6 +389,15 @@ class RealTmux:
         self.invalidate_cache(session, window)
         return renamed
 
+    def set_window_option(self, session: str, window: str, option: str, value: str) -> bool:
+        """Set a window option (exact target, as ``rename_window``)."""
+        from .tmux_utils import set_tmux_window_option
+        try:
+            with self._bounded():
+                return set_tmux_window_option(self.server, session, window, option, value)
+        except TmuxTimeoutError:
+            return False
+
     def kill_session(self, session: str) -> bool:
         try:
             with self._bounded():

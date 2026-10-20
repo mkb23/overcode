@@ -20,6 +20,7 @@ def bash(
 ):
     """Launch a bash command as a tracked job."""
     import os
+    from ..agent_identity import current_agent, env_agent_id, env_agent_name, in_agent
     from ..job_launcher import JobLauncher
     from ..session_manager import SessionManager
 
@@ -27,12 +28,15 @@ def bash(
 
     agent_session_id = None
     agent_name = None
-    # Auto-detect calling agent from env if --agent not specified
-    if not agent:
-        agent = os.environ.get("OVERCODE_SESSION_NAME")
+    # Auto-detect calling agent from env if --agent not specified: by its
+    # id, which a rename keeps (by launch name only for a pre-0.6 agent)
+    sess = None
     if agent:
-        sm = SessionManager()
-        sess = find_agent(sm, agent)
+        sess = find_agent(SessionManager(), agent)
+    elif in_agent():
+        sess = current_agent(SessionManager())
+        agent = env_agent_name() or env_agent_id()
+    if agent:
         if sess:
             agent_session_id = sess.id
             agent_name = sess.name

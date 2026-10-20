@@ -1515,9 +1515,10 @@ class TestComputeSubtreeCosts:
         lists the name once per child. The pre-visited-set code summed the
         kept entry once per listing (parent 1 + 5 + 5 = 11, never seeing the
         first ``x``); with the visited set the kept entry is counted once
-        (1 + 5 = 6). Neither counts the shadowed first ``x``; that needs
-        id-keyed links and is out of scope. This pins the current number so
-        a change is deliberate.
+        (1 + 5 = 6). Neither counts the shadowed first ``x`` (here both
+        share an id too; the daemon links by id from its SessionIndex, see
+        ``test_links_by_id_across_a_rename``). This pins the current number
+        so a change is deliberate.
         """
         daemon = self._make_daemon()
         parent = self._make_state("p", 1.00)
@@ -1527,6 +1528,25 @@ class TestComputeSubtreeCosts:
         assert parent.subtree_cost_usd == 6.00
         assert x_first.subtree_cost_usd == 0.0
         assert x_last.subtree_cost_usd == 0.0
+
+    def test_links_by_id_across_a_rename(self):
+        """With the index, a parent renamed since the names were published keeps its children."""
+        from overcode.session_manager import Session, SessionIndex
+
+        daemon = self._make_daemon()
+        parent = self._make_state("renamed-parent", 1.00)
+        child = self._make_state("child", 2.00, parent_name="old-parent-name")
+        index = SessionIndex.of([
+            Session(id=parent.session_id, name="renamed-parent", tmux_session="agents",
+                    tmux_window="w", command=["claude"], start_directory=None,
+                    start_time="2026-01-01T00:00:00"),
+            Session(id=child.session_id, name="child", tmux_session="agents",
+                    tmux_window="w2", command=["claude"], start_directory=None,
+                    start_time="2026-01-01T00:00:00", parent_session_id=parent.session_id),
+        ])
+        daemon._compute_subtree_costs([parent, child], index)
+        assert parent.subtree_cost_usd == 3.00
+        assert child.subtree_cost_usd == 0.0
 
     def test_two_node_cycle_counts_each_member_once(self):
         daemon = self._make_daemon()

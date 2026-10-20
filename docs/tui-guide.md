@@ -275,7 +275,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `1-5` | Send numbered option to agent |
 | `n` | Create new agent (Host field picks local or a remote sister) |
 | `F` | Fork agent (with conversation context) |
-| `Ctrl+N` | Rename agent (keeps its conversation; the old name stays an alias) |
+| `Ctrl+N` | Rename agent (it keeps running, even mid-turn; the old name stays an alias) |
 | `Ctrl+R` | Cycle the focused agent's focal repo (multi-repo workspaces) |
 | `R` | Restart agent (double-press to confirm) |
 | `x` | Kill agent (double-press to confirm) |
