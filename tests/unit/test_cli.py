@@ -2668,7 +2668,7 @@ class TestRenameCommand:
         result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
         out = " ".join(strip_ansi(result.output).split())  # rich wraps lines
         assert result.exit_code == 1
-        assert "restarted under its old name" in out
+        assert "keeps its name" in out
         assert "Renamed agent" not in out
 
     def test_relaunch_failure_says_renamed_and_how_to_restart(self, monkeypatch):
