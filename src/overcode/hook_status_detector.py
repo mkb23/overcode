@@ -1183,11 +1183,16 @@ class HookStatusDetector:
         self._last_detect_phase[session.id] = phase_label(ctx.event, rule)
         detail = verdict.detail()
         if detail is not None:
+            extra = []
+            worker = conversation_warning.bg_worker(hook_state)
+            if worker is not None:
+                extra.append(conversation_warning.bg_worker_badge(worker))
             warning = conversation_warning.current(hook_state, now)
             if warning is not None:
+                extra.append(conversation_warning.badge(warning))
+            if extra:
                 # Beside the light, never instead of it (hook_handler._place)
-                detail = StatusDetail(detail.color,
-                                      list(detail.badges) + [conversation_warning.badge(warning)],
+                detail = StatusDetail(detail.color, list(detail.badges) + extra,
                                       detail.legacy_status)
             self._status_details[session.name] = detail
         return verdict.legacy_status, verdict.activity, pane_content

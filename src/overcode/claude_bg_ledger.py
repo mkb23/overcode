@@ -173,7 +173,8 @@ class BgLedger:
 
     def sync(self, rows: Iterable, agents: Iterable, ledger, now: float,
              codes: Optional[Mapping[str, str]] = None,
-             reread: Optional[Callable[[str], Optional[dict]]] = None) -> int:
+             reread: Optional[Callable[[str], Optional[dict]]] = None,
+             owned: Iterable[str] = ()) -> int:
         """Bring the ledger up to date with ``rows`` (the source's, as built); rows written.
 
         ``agents`` are the source's FleetAgents (their own conversations are
@@ -184,7 +185,12 @@ class BgLedger:
         and its code's id are one code, not a rebill. ``reread``
         answers a session id's spend now (``ClaudeBgSource.read_spend_of``),
         so a segment closed for a row that is gone closes at what the
-        session really spent, not at its last checkpoint.
+        session really spent, not at its last checkpoint. ``owned`` are
+        conversations that turned out to be an agent's own (its
+        conversation moved into Claude's background worker,
+        ``ClaudeBgSource.owned``; the agents' own are added): a segment
+        opened for one before that was known is restated to nothing,
+        since the agent's own spend counts it.
 
         Planned against the state as last read (one ``stat`` to know it is
         current); the state file is locked and read again only when a row
@@ -193,7 +199,11 @@ class BgLedger:
         path = self._path()
         if path is None or ledger is None:
             return 0
+        agents = list(agents)
         by_id = {a.id: a for a in agents}
+        owned = set(owned)
+        for agent in agents:
+            owned |= set(agent.conversations)
         code_of = dict(codes or {})
         self._codes = getattr(ledger, "codes", None)
         observed: Dict[str, dict] = {}
@@ -215,13 +225,13 @@ class BgLedger:
         self._seen = observed
         now_dt = datetime.fromtimestamp(now)
         out, _, changed = self._plan(self._cached(path), observed, finished, gone, now, now_dt,
-                                     reread=None)
+                                     reread=None, owned=owned)
         if not out and not changed:
             return 0
         with self._locked(path):
             state = self._load(path)
             out, state, changed = self._plan(state, observed, finished, gone, now, now_dt,
-                                             reread=reread)
+                                             reread=reread, owned=owned)
             if out:
                 try:
                     ledger.append(out, now=now_dt)
@@ -253,7 +263,7 @@ class BgLedger:
 
     def _plan(self, state: Dict[str, dict], observed: Dict[str, dict],
               finished: Dict[str, bool], gone: Dict[str, dict], now: float,
-              now_dt: datetime, reread) -> tuple:
+              now_dt: datetime, reread, owned=frozenset()) -> tuple:
         """(rows to write, the new state, whether it changed) from ``state``."""
         state = dict(state)
         out: List[dict] = []
@@ -272,6 +282,17 @@ class BgLedger:
                 continue
             last = gone.get(rid) or entry.get("record")
             if not isinstance(last, dict):
+                continue
+            if rid.split(":", 1)[-1] in owned:
+                # It was the agent's own conversation all along (moved into
+                # Claude's background worker): the agent's spend counts it
+                nothing = dict(last, stats=_stats_of({}))
+                if isinstance(entry.get("record"), dict) and _lowered(
+                        ledger_mod.spend_of(nothing), entry.get("last")):
+                    out.append(self._correction(entry["record"], nothing, entry, now_dt))
+                state[rid] = dict(entry, closed=True, at=now,
+                                  last=ledger_mod.spend_of(nothing), record=nothing)
+                changed = True
                 continue
             if reread is not None:
                 fresh = None

@@ -510,6 +510,7 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     "conv_adopted":    ("🔀", STATUS_COLOR_REST,  "Cv"),   # resumed a conversation overcode didn't start
     "conv_shared":     ("🔀", STATUS_COLOR_REST,  "Cv"),   # in another agent's conversation
     "conv_unplaced":   ("🔀", STATUS_COLOR_REST,  "Cv"),   # a conversation it can't place: ignored
+    "bg_worker":       ("🌙", STATUS_COLOR_REST,  "Bw"),   # its conversation is in Claude's background worker
 }
 
 
@@ -537,6 +538,7 @@ BADGE_MEANINGS: dict[str, str] = {
     "conv_adopted":    "resumed a conversation overcode did not start; now tracked as this agent's",
     "conv_shared":     "in a conversation another agent owns; not adopted, restart returns to the old one",
     "conv_unplaced":   "a conversation overcode can't place ran in this agent's name; its events are ignored",
+    "bg_worker":       "running in Claude's background worker (Remote Control, /background); still this agent",
 }
 
 

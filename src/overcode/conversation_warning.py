@@ -15,6 +15,11 @@ The hook handler writes ``conversation_warning`` into the agent's hook state
 The detector shows it as a status-detail badge for ``SHOW_SECONDS`` after
 it was written (a value that holds still, so a quiet fleet sends no
 delta), and ``overcode doctor`` lists the recent ones.
+
+Not a warning, but shown the same way: ``bg_worker`` in hook state,
+``{"session_id", "pane_pid", "at"}``, while the agent's own conversation
+runs in Claude's background worker (``hook_handler``, ``FOREIGN_CONTINUED``):
+a 🌙 badge for as long as it is there.
 """
 
 from __future__ import annotations
@@ -79,3 +84,25 @@ def badge(warning: Mapping[str, Any]):
     if warning.get("kind") == SHARED and warning.get("owner"):
         label = f"{warning['owner']}'s {label}"
     return StatusBadge(BADGE_KIND[warning["kind"]], label=label)
+
+
+BG_WORKER_KIND = "bg_worker"
+
+
+def bg_worker(hook_state: Any) -> Optional[dict]:
+    """The agent's conversation in Claude's background worker, while it is its current one."""
+    if not isinstance(hook_state, Mapping):
+        return None
+    note = hook_state.get("bg_worker")
+    if not isinstance(note, Mapping) or not isinstance(note.get("session_id"), str):
+        return None
+    if note["session_id"] != hook_state.get("agent_session_id"):
+        return None
+    return dict(note)
+
+
+def bg_worker_badge(note: Mapping[str, Any]):
+    """The status-detail badge for a ``bg_worker`` note."""
+    from .status_constants import StatusBadge
+
+    return StatusBadge(BG_WORKER_KIND, label=short(note.get("session_id")))
