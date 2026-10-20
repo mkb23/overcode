@@ -326,6 +326,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `W` | Skill profiles: build named sets of skills, pin them to folders ([guide](skill-profiles.md)) |
 | `U` | Sister visibility |
 | `/` → "Billing code…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
+| `/` → "Naming lab…" | Try naming advice on the whole fleet (no default key; see [Agent names](#agent-names)) |
 | `/` → "Billing codes…" | Every code's spend; rename or merge codes (no default key; see [Billing codes](#billing-codes)) |
 
 ### Daemon Control
@@ -434,6 +435,32 @@ is then yours and is not renamed again. No rename happens within 30 s of a
 key pressed in the TUI, so a name does not change under you as you type it.
 For a Claude Code agent the name also shows in Claude's own prompt box,
 and a `/rename` typed inside Claude renames the agent.
+
+**The naming lab** (`/` → "Naming lab…") tunes the naming advice by showing
+the names it gives. The editor above holds the advice (`Ctrl+O` switches
+to the namer's whole prompt); below is one row per agent: its name and
+source (`human locked` and `parent locked` names are never auto-renamed,
+but still get a suggestion), the draft's pick, its length against
+`naming.max_length`, and the candidates passed over with why (`taken by
+agent 'x'`, `too long`, `repeats repo`). A pick two agents share is red,
+with `same pick as <other>`. The draft runs about 2 s after you stop
+typing, only for agents whose prompt changed.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+S` | Save (`~/.overcode/prompts/naming-advice.md` or `naming.md`; the built-in text deletes the file) |
+| `Ctrl+R` / `Ctrl+L` | Revert to the saved text / load the built-in default |
+| `Ctrl+O` | Edit the advice or the whole prompt |
+| `Ctrl+T` | Live agents or the last 30 archived ones (from their day bundles) |
+| `Ctrl+D` | Pin the draft as A: rows show A \| B, the header counts changed names, collisions and mean length for each; again to unpin |
+| `Ctrl+N` | Move between the editor and the rows |
+| `↑`/`↓`, `Enter` | Pick a row; `Enter` twice renames that agent to the pick, as your choice (locked) |
+| `Esc` | Cancel a confirm, or close (twice with unsaved edits) |
+
+The footer shows the lab's calls and spend, and the naming spend today
+against `naming.cost_cap_per_day`; each call is billed to `overcode`, like
+the namer's. With no model configured nothing is called, but editing and
+saving work. `overcode name lab` runs the same thing in a shell.
 
 ### Weekly quota (subscriptions)
 

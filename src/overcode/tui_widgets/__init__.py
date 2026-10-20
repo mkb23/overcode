@@ -31,6 +31,7 @@ from .rename_agent_modal import RenameAgentModal
 from .billing_code_modal import BillingCodeModal
 from .billing_codes_modal import BillingCodesModal
 from .summary_prompt_lab import SummaryPromptLab
+from .naming_lab import NamingLab
 from .job_summary import JobSummary
 from .journey_panel import JourneyPanel
 
@@ -62,6 +63,7 @@ __all__ = [
     "BillingCodeModal",
     "BillingCodesModal",
     "SummaryPromptLab",
+    "NamingLab",
     "JobSummary",
     "JourneyPanel",
 ]

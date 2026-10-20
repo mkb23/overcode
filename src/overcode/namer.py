@@ -191,55 +191,84 @@ class NamerInputs:
         return [e.name for e in self.fleet if e.parent_id == self.parent_id and not e.archived]
 
 
-def read_prompts(tmux_session: str, session_id: str) -> List[str]:
-    """The agent's first prompts (``prompts.jsonl``, written by the hook handler)."""
+def live_files(tmux_session: str, session_id: str) -> Callable[[str], str]:
+    """``kind -> text`` of a live agent's files (``paths.AGENT_DIR_FILES``); "" if unreadable."""
     from .paths import agent_file
+
+    def read(kind: str) -> str:
+        try:
+            return agent_file(tmux_session, session_id, kind).read_text(
+                encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+    return read
+
+
+def bundle_files(member: Optional[Mapping]) -> Callable[[str], str]:
+    """``kind -> text`` of an archived agent's files, from its day-bundle member."""
+    from .paths import AGENT_DIR_FILES
+    files = (member or {}).get("files") or {}
+
+    def read(kind: str) -> str:
+        value = files.get(AGENT_DIR_FILES.get(kind, kind)) if isinstance(files, dict) else None
+        return value if isinstance(value, str) else ""
+    return read
+
+
+def parse_prompts(text: str) -> List[str]:
+    """The prompts in a ``prompts.jsonl`` text."""
     out: List[str] = []
-    try:
-        lines = agent_file(tmux_session, session_id, "prompts").read_text(
-            encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return out
-    for line in lines:
+    for line in text.splitlines():
         try:
             entry = json.loads(line)
         except ValueError:
             continue
-        text = entry.get("prompt") if isinstance(entry, dict) else None
-        if isinstance(text, str) and text.strip():
-            out.append(text.strip())
+        prompt = entry.get("prompt") if isinstance(entry, dict) else None
+        if isinstance(prompt, str) and prompt.strip():
+            out.append(prompt.strip())
     return out
 
 
-def most_edited_files(tmux_session: str, session_id: str, directory: Optional[str] = None,
-                      limit: int = TOP_FILES) -> List[str]:
-    """The files the agent's hook events show it editing most, most first."""
+def read_prompts(tmux_session: str, session_id: str) -> List[str]:
+    """The agent's first prompts (``prompts.jsonl``, written by the hook handler)."""
+    return parse_prompts(live_files(tmux_session, session_id)("prompts"))
+
+
+def edited_files(lines: Iterable[str], directory: Optional[str] = None,
+                 limit: int = TOP_FILES) -> List[str]:
+    """The files a hook event log shows the agent editing most, most first."""
     from collections import Counter
-    from .paths import agent_file
     counts: Counter = Counter()
-    try:
-        with open(agent_file(tmux_session, session_id, "hook_events"), encoding="utf-8",
-                  errors="replace") as f:
-            for line in f:
-                if '"file_path"' not in line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(entry, dict) or entry.get("tool_name") not in _EDIT_TOOLS:
-                    continue
-                path = (entry.get("tool_input") or {}).get("file_path")
-                if isinstance(path, str) and path:
-                    counts[path] += 1
-    except OSError:
-        return []
+    for line in lines:
+        if '"file_path"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("tool_name") not in _EDIT_TOOLS:
+            continue
+        path = (entry.get("tool_input") or {}).get("file_path")
+        if isinstance(path, str) and path:
+            counts[path] += 1
     out = []
     for path, _ in counts.most_common(limit):
         if directory and path.startswith(directory.rstrip("/") + "/"):
             path = path[len(directory.rstrip("/")) + 1:]
         out.append(path)
     return out
+
+
+def most_edited_files(tmux_session: str, session_id: str, directory: Optional[str] = None,
+                      limit: int = TOP_FILES) -> List[str]:
+    """The files the agent's hook events show it editing most, most first."""
+    from .paths import agent_file
+    try:
+        with open(agent_file(tmux_session, session_id, "hook_events"), encoding="utf-8",
+                  errors="replace") as f:
+            return edited_files(f, directory, limit)
+    except OSError:
+        return []
 
 
 def recent_archived(session_manager, now: Optional[datetime] = None,
@@ -301,14 +330,15 @@ def fleet_entries(sessions: Iterable, archived: Iterable[Mapping] = (),
 
 
 def gather_inputs(session, *, tmux_session: str, sessions: Sequence, archived: Sequence = (),
-                  max_length: int = 18, pane: Optional[Callable[[], str]] = None) -> NamerInputs:
+                  max_length: int = 18, pane: Optional[Callable[[], str]] = None,
+                  files: Optional[Callable[[str], str]] = None) -> NamerInputs:
     """The namer's inputs for ``session`` (a Session), from its files and the fleet.
 
-    ``pane`` gives the agent's last lines; read only when it has neither a
-    brief nor a captured prompt (a hookless agent).
+    ``files`` reads the agent's files by kind (default: its live directory;
+    ``bundle_files`` for an archived agent). ``pane`` gives the agent's last
+    lines; read only when it has neither a brief nor a captured prompt (a
+    hookless agent).
     """
-    from .agent_files import read_brief
-
     sid = session.id
     by_id = {s.id: s for s in sessions}
     parent = by_id.get(session.parent_session_id) if session.parent_session_id else None
@@ -316,13 +346,21 @@ def gather_inputs(session, *, tmux_session: str, sessions: Sequence, archived: S
     if parent_name is None and session.parent_session_id:
         parent_name = next((r.get("name") for r in archived
                             if r.get("id") == session.parent_session_id), None)
+    if files is None:
+        from .agent_files import read_brief
+        brief = read_brief(tmux_session, sid)
+        prompts = read_prompts(tmux_session, sid)
+        edited = most_edited_files(tmux_session, sid, session.start_directory)
+    else:
+        brief = files("brief")
+        prompts = parse_prompts(files("prompts"))
+        edited = edited_files(files("hook_events").splitlines(), session.start_directory)
     inputs = NamerInputs(
         session_id=sid, name=session.name,
         name_source=getattr(session, "name_source", "human"),
-        brief=read_brief(tmux_session, sid).strip(),
-        prompts=read_prompts(tmux_session, sid),
+        brief=brief.strip(), prompts=prompts,
         repo=session.repo_name, branch=session.branch, pr=session.pr_number,
-        files=most_edited_files(tmux_session, sid, session.start_directory),
+        files=edited,
         parent=parent_name, parent_id=session.parent_session_id,
         fleet=fleet_entries(sessions, archived, exclude_id=sid),
         max_length=max_length, directory=session.start_directory,

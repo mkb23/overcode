@@ -35,6 +35,7 @@ from ..tui_widgets import (
     SkillsModal,
     SummaryConfigModal,
     SummaryPromptLab,
+    NamingLab,
     TmuxConfigModal,
 )
 
@@ -417,6 +418,55 @@ class DialogsMixin:
 
     def on_summary_prompt_lab_closed(self, message: SummaryPromptLab.Closed) -> None:
         """The prompt lab closed (#491)."""
+        self._dialog_did_close()
+
+    def action_open_naming_lab(self) -> None:
+        """Open the naming lab: the naming advice over the whole fleet (#542 §9)."""
+        from ..config import get_naming_config
+        from ..namer import make_client
+        from ..naming_lab import ARCHIVED_IN_LAB, LabSpend, NamingLabRunner, load_archived, load_live
+
+        try:
+            lab = self.query_one("#naming-lab", NamingLab)
+        except NoMatches:
+            return
+        cfg = get_naming_config()
+        sm = self.session_manager
+        # Results are kept between opens; the config is read again each time
+        runner = getattr(self, "_naming_lab_runner", None)
+        if runner is None:
+            runner = self._naming_lab_runner = NamingLabRunner(make_client=make_client)
+        runner.make_client = lambda: make_client(cfg.get("provider"))
+        # Lab calls are the namer's spend: the ledger and the daily cap
+        runner.spend = LabSpend(self.tmux_session, getattr(sm, "ledger", None), cfg)
+
+        def pane(session) -> str:
+            return self._summarizer._capture_pane(session.tmux_window) or ""
+
+        def load(view: str) -> list:
+            if view == "archived":
+                return load_archived(sm, self.tmux_session, cfg, ARCHIVED_IN_LAB)
+            return load_live(sm, self.tmux_session, cfg, pane=pane)
+
+        def apply(agent, name: str) -> None:
+            def work() -> None:
+                self._run_rename(agent.session, name, False, "human")
+                current = sm.get_session(agent.id)
+                if current is not None:
+                    self.call_from_thread(lab.renamed, current)
+            threading.Thread(target=work, daemon=True).start()
+
+        try:
+            available = bool(make_client(cfg.get("provider")).available)
+        except Exception:
+            available = False
+        self._dialog_will_open()
+        lab.show(runner=runner, load=load, available=available, apply=apply,
+                 config_advice=cfg.get("advice") or "", max_length=cfg.get("max_length", 18),
+                 app_ref=self)
+
+    def on_naming_lab_closed(self, message: NamingLab.Closed) -> None:
+        """The naming lab closed (#542)."""
         self._dialog_did_close()
 
     def action_open_column_config(self) -> None:

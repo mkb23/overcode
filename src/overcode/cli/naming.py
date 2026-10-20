@@ -297,3 +297,127 @@ def name_suggest(
                    f"tokens, ${result.cost_usd:.4f}[/dim]")
     if result.error:
         raise typer.Exit(code=1)
+
+
+@name_app.command("lab")
+def name_lab(
+    archived: Annotated[
+        Optional[int], typer.Option("--archived", help="Run on the last N archived agents (default: the live ones)")
+    ] = None,
+    advice_file: Annotated[
+        Optional[str], typer.Option("--advice-file", help="The advice to try (default: the saved advice)")
+    ] = None,
+    vs: Annotated[
+        Optional[str], typer.Option("--vs", help="A second advice file, compared side by side (B)")
+    ] = None,
+    csv_path: Annotated[Optional[str], typer.Option("--csv", help="Also write the rows to this CSV file")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the rows as JSON")] = False,
+    session: SessionOption = "agents",
+):
+    """Try naming advice on the whole fleet without renaming anything (the naming lab, batch).
+
+    One model call per agent and advice, in parallel, billed to the
+    `overcode` billing code and counted against naming.cost_cap_per_day.
+    A repo's .overcode/naming.md is still added after the advice, as the
+    namer does. One row per agent: its name, the pick (A, and B with
+    --vs), and the candidates passed over with why.
+    """
+    from ..config import get_naming_config
+    from ..namer import make_client
+    from ..naming_lab import (LabSpend, NamingLabRunner, collided, load_archived, load_live,
+                              stats)
+    from ..naming_policy import user_advice
+    from ..session_manager import SessionManager
+    from ..summarizer_prompts import DEFAULT_NAMING_ADVICE, load_naming_prompt
+
+    def read(path: str) -> str:
+        from pathlib import Path
+        try:
+            return Path(path).expanduser().read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as e:
+            err_console.print(f"Error: cannot read {escape(path)}: {e}", style="red", highlight=False)
+            raise typer.Exit(code=1)
+
+    cfg = get_naming_config()
+    drafts = [read(advice_file) if advice_file else (user_advice(cfg["advice"]) or DEFAULT_NAMING_ADVICE)]
+    if vs:
+        drafts.append(read(vs))
+    client = make_client(cfg.get("provider"))
+    if not getattr(client, "available", False):
+        err_console.print("Error: no model: set summarizer: (or naming.provider) and its API key",
+                          style="red", highlight=False)
+        raise typer.Exit(code=1)
+    sm = SessionManager()
+    if archived:
+        agents = load_archived(sm, session, cfg, archived)
+    else:
+        agents = load_live(sm, session, cfg)
+    runner = NamingLabRunner(make_client=lambda: make_client(cfg.get("provider")),
+                             spend=LabSpend(session, sm.ledger, cfg))
+    template = load_naming_prompt()
+    for advice in drafts:
+        runner.run(agents, template, advice)
+    if runner.blocked:
+        err_console.print(f"Warning: {escape(runner.blocked)}", style="yellow", highlight=False)
+
+    picks = [[runner.result(a, template, advice) for a in agents] for advice in drafts]
+    clashes = [collided(agents, p) for p in picks]
+    labels = ["a", "b"][:len(drafts)]
+    rows = []
+    for i, agent in enumerate(agents):
+        row = {"agent": agent.name, "id": agent.id, "name_source": agent.source,
+               "locked": agent.locked, "archived": agent.archived}
+        for label, ps, clash in zip(labels, picks, clashes):
+            p = ps[i]
+            row[f"pick_{label}"] = p.pick if p is not None and not p.error else None
+            row[f"keep_{label}"] = bool(p and p.keep)
+            row[f"rejected_{label}"] = [{"name": n, "why": w} for n, w in (p.rejected if p else [])]
+            row[f"why_{label}"] = p.why if p else ""
+            row[f"error_{label}"] = (p.error if p else
+                                     None if agent.has_inputs else "no recorded brief or prompts")
+            row[f"collides_{label}"] = agent.id in clash
+        rows.append(row)
+    summary = {label: vars(stats(agents, ps)) for label, ps in zip(labels, picks)}
+
+    if csv_path:
+        import csv
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["agent", "name_source", "pick_a", "pick_b", "rejected"])
+            for row in rows:
+                rejected = "; ".join(f"{r['name']} ({r['why']})" for r in row["rejected_a"])
+                writer.writerow([row["agent"], row["name_source"], row.get("pick_a") or "",
+                                 row.get("pick_b") or "", rejected])
+    if as_json:
+        typer.echo(json.dumps({"rows": rows, "summary": summary, "calls": runner.calls,
+                               "cost_usd": round(runner.spent_usd, 6)}))
+        return
+
+    from rich.table import Table
+    table = Table(box=None, pad_edge=False, show_edge=False)
+    table.add_column("agent")
+    table.add_column("source", style="dim")
+    for label in labels:
+        table.add_column(f"pick {label.upper()}")
+    table.add_column("rejected (A)", style="dim")
+    for row in rows:
+        cells = [escape(row["agent"]),
+                 row["name_source"] + (" locked" if row["locked"] else "")]
+        for label in labels:
+            pick = row[f"pick_{label}"]
+            if row[f"error_{label}"]:
+                cell = f"[red]{escape(row[f'error_{label}'])}[/red]"
+            elif row[f"keep_{label}"] or pick in (None, row["agent"]):
+                cell = "[dim](keeps)[/dim]"
+            elif row[f"collides_{label}"]:
+                cell = f"[bold red]{escape(pick)}[/bold red] (collides)"
+            else:
+                cell = escape(pick)
+            cells.append(cell)
+        cells.append(escape(", ".join(f"{r['name']}: {r['why']}" for r in row["rejected_a"])))
+        table.add_row(*cells)
+    rprint(table)
+    for label, s in summary.items():
+        rprint(f"[bold]{label.upper()}[/bold]: {s['changed']} changed, {s['collisions']} collisions, "
+               f"mean length {s['mean_length']:.1f}")
+    rprint(f"[dim]{runner.calls} calls, ${runner.spent_usd:.4f} (billed to overcode)[/dim]")

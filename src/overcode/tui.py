@@ -104,6 +104,7 @@ from .tui_widgets import (
     BillingCodeModal,
     BillingCodesModal,
     SummaryPromptLab,
+    NamingLab,
     JourneyPanel,
     AgentSelectModal,
     SisterSelectionModal,
@@ -623,6 +624,8 @@ class SupervisorTUI(
         yield BillingCodesModal(id="billing-codes-modal", classes="modal")
         # Summarizer prompt editor with live results (#491)
         yield SummaryPromptLab(id="summary-prompt-lab", classes="modal")
+        # Naming advice editor over the whole fleet (#542)
+        yield NamingLab(id="naming-lab", classes="modal")
         # The learning journey (#483)
         yield JourneyPanel(id="journey-panel", classes="modal")
         # Modal for agent selection during new agent creation
@@ -649,9 +652,12 @@ class SupervisorTUI(
         self._bindings = textual_bindings_map(type(self), km.bindings("app"))
         if not refresh:
             return
+        from .tui_widgets.naming_lab import NamingLab
         from .tui_widgets.summary_prompt_lab import SummaryPromptLab
         for w in self.query(SummaryPromptLab):
             apply_to_widget(w, "summary_prompt_lab", km)
+        for w in self.query(NamingLab):
+            apply_to_widget(w, "naming_lab", km)
         try:
             self.query_one("#command-bar", CommandBar).refresh_key_hint()
         except NoMatches:

@@ -291,6 +291,31 @@ SessionSummary:focus.list-mode {
     border: none;
 }
 
+/* Naming lab (#542): the same skeleton — head, editor, fleet rows */
+#naming-lab {
+    layout: vertical;
+}
+
+#naming-lab Static {
+    width: 100%;
+}
+
+#naming-lab #naming-lab-head {
+    height: auto;
+}
+
+#naming-lab TextArea {
+    height: 8;
+    border: none;
+    padding: 0 1;
+    background: #1c1c1c;
+    margin: 0 0 1 0;
+}
+
+#naming-lab TextArea:focus {
+    border: none;
+}
+
 /* Jobs container — hidden by default, shown when tui_mode == "jobs" */
 #jobs-container {
     display: none;

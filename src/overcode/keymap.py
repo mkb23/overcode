@@ -42,6 +42,7 @@ SCOPES: Dict[str, str] = {
     "command_bar": "Command bar",
     "command_palette": "Command palette",
     "summary_prompt_lab": "Summary prompt lab",
+    "naming_lab": "Naming lab",
 }
 
 # Removed with the standalone monitor in 0.6.0 (#523). A config that still
@@ -507,12 +508,14 @@ def default_scope_bindings() -> Dict[str, List[KeyBinding]]:
     from .tui import SupervisorTUI
     from .tui_widgets.command_bar import CommandBar
     from .tui_widgets.command_palette import CommandPalette
+    from .tui_widgets.naming_lab import NamingLab
     from .tui_widgets.summary_prompt_lab import SummaryPromptLab
     return {
         "app": default_entries(SupervisorTUI.BINDINGS),
         "command_bar": default_entries(CommandBar.KEYS),
         "command_palette": default_entries(CommandPalette.KEYS),
         "summary_prompt_lab": default_entries(SummaryPromptLab.BINDINGS),
+        "naming_lab": default_entries(NamingLab.BINDINGS),
     }
 
 

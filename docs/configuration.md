@@ -342,7 +342,7 @@ keys:
 - **Layers.** The default keys are the ones in code (`SupervisorTUI.BINDINGS` plus each widget's own list). A preset is a delta on top of them, and `overrides` / `scopes` are a delta on top of the preset. Each entry names an action and gives its *complete* key list, replacing what the layer below bound.
 - **Action names** are the palette's: `overcode view actions` lists them, and `overcode keys` shows every scope's actions with their current keys.
 - **Key names** are Textual's (`ctrl+p`, `question_mark`, `pagedown`, `J` for shift+j). Characters (`?`, `@`, `|`), caret (`^P`) and tmux (`C-p`, `M-j`) spellings are accepted too.
-- **Scopes:** `app` (the main screen, which `overrides` sets), `command_bar`, `command_palette`, `summary_prompt_lab`.
+- **Scopes:** `app` (the main screen, which `overrides` sets), `command_bar`, `command_palette`, `summary_prompt_lab`, `naming_lab`.
 - **Problems are warnings, never crashes:** an unknown action or scope (including ones removed with the standalone dashboard in 0.6.0: `toggle_preview`, `expand_preview`, `toggle_tmux_sync` and the `fullscreen_preview` scope), a key bound twice in one scope, a key the preset avoids, a typing key bound inside a text field, or a key that shadows a [passthru key](#passthru-keys). The TUI mentions them at startup; `overcode keys --conflicts` lists them.
 
 ```bash
@@ -878,8 +878,17 @@ name exits 3 with the rule, the advice and a suggested name;
 summarizer call per child launch, waits at most 5 s, and lets the name
 through if the call fails.
 
+**The naming lab** (`/` → "Naming lab…" in the TUI, `overcode name lab`
+in a shell) tries advice on the whole fleet before you save it; see
+[Agent names](tui-guide.md#agent-names). It saves the advice to
+`~/.overcode/prompts/naming-advice.md`, which then stands in for
+`naming.advice` (the repo's file is still added after it); saving the
+built-in advice deletes the file, and `naming.advice` applies again. Its
+calls are the namer's: a ledger row each under `overcode`, counted against
+`cost_cap_per_day`.
+
 **The namer's prompt** is `~/.overcode/prompts/naming.md` once saved (the
-naming lab will edit it); until then a built-in default. Its placeholders are
+naming lab edits it too); until then a built-in default. Its placeholders are
 `{advice}`, `{brief}`, `{prompts}`, `{repo}`, `{branch}`, `{files}`,
 `{current_name}`, `{name_source}`, `{parent}`, `{fleet}`, `{siblings}` and
 `{max_length}`.

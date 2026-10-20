@@ -157,6 +157,7 @@ def key_sections(km: Any, compact: bool = False,
         + [HelpRow(">", "Commands, from the agent list")]))
     if not compact:
         sections.append(HelpSection("SUMMARY PROMPT LAB", _scope_rows(km, "summary_prompt_lab")))
+        sections.append(HelpSection("NAMING LAB", _scope_rows(km, "naming_lab")))
 
     split = "/".join(filter(None, (km.label("split_shrink"), km.label("split_grow"))))
     tmux_rows = [HelpRow(toggle_label or "Tab", "Switch pane (TUI ⇄ agent)")]

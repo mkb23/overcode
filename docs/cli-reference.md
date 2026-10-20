@@ -266,6 +266,7 @@ The naming policy (#542; see [Naming](configuration.md#naming)).
 overcode name policy [--directory <dir>] [--json]
 overcode name check <name> [--directory <dir>] [--json]
 overcode name suggest <agent> [--advice-file <file>] [--json]
+overcode name lab [--archived <n>] [--advice-file <a.md>] [--vs <b.md>] [--csv <out.csv>] [--json]
 ```
 
 `name policy` prints the naming advice first (the policy proper: free text
@@ -289,6 +290,21 @@ of the configured one. `--json` prints `{agent, id, name_source, advice,
 candidates, keep, why, pick, error, model, tokens_in, tokens_out,
 cost_usd}`. It works with `naming.enabled` off; the call is billed to the
 `overcode` billing code. Exit 1 when there is no model or no usable reply.
+
+`name lab` is the naming lab without the TUI: it runs advice over every
+live local agent, or the last `--archived` N archived ones (their brief,
+prompts and edited files come from the day bundles; they are checked
+against each other, as a fleet), and renames nothing. `--advice-file`
+is the advice to try (default: the saved advice); `--vs` runs a second
+file as B. A repo's `.overcode/naming.md` is still added after the advice,
+as the namer does. It prints one row per agent (name, source, pick A, pick
+B, the candidates passed over and why; a pick two agents share is marked
+`collides`), then per draft the names changed, collisions and mean length.
+`--csv` also writes `agent,name_source,pick_a,pick_b,rejected`; `--json`
+prints `{rows, summary, calls, cost_usd}`. One call per agent and advice,
+in parallel, billed to `overcode` and counted against
+`naming.cost_cap_per_day` (a warning when the cap stops calls). Exit 1
+with no model.
 
 ### `overcode cleanup`
 
