@@ -560,8 +560,20 @@ class TestNotices:
         assert "renamed from 'overcode-main2' to 'jwt-refresh'" in agent_file(
             "agents", child.id, "rename_notice").read_text()
         notice = agent_file("agents", parent.id, "child_notice").read_text()
-        assert notice == ("[overcode] Your child agent 'overcode-main2' is now called "
+        assert notice == ("overcode: your child agent 'overcode-main2' is now called "
                           "'jwt-refresh'; the old name still reaches it.\n")
+
+    def test_notices_never_look_like_json(self, tmp_path):
+        """codex reads hook stdout starting with [ or { as JSON: a
+        "[overcode] ..." notice failed its prompt hook and never arrived."""
+        launcher, sm = _launcher(tmp_path)
+        parent = launcher.launch(name="lead")
+        child = launcher.launch(name="old-name")
+        sm.update_session(child.id, parent_session_id=parent.id)
+        assert launcher.rename(sm.get_session(child.id), "new-name")
+        for sid, kind in ((child.id, "rename_notice"), (parent.id, "child_notice")):
+            text = agent_file("agents", sid, kind).read_text()
+            assert text.strip() and text.lstrip()[0] not in "[{", text
 
     def test_no_source_leaves_the_record_alone(self, tmp_path):
         launcher, sm = _launcher(tmp_path)

@@ -256,7 +256,7 @@ class RenameMixin:
         try:
             agent_dir(self.tmux_session, session.id).mkdir(parents=True, exist_ok=True)
             path.write_text(
-                f"[overcode] This agent was renamed from '{old_name}' to "
+                f"overcode: this agent was renamed from '{old_name}' to "
                 f"'{new_name}'. Use '{new_name}' as your name from now on; "
                 f"other agents and overcode commands now address you by it.\n",
                 encoding="utf-8",
@@ -283,7 +283,7 @@ class RenameMixin:
         try:
             with open(agent_file(tmux_session, parent.id, "child_notice"), "a",
                       encoding="utf-8") as f:
-                f.write(f"[overcode] Your child agent '{old_name}' is now called "
+                f.write(f"overcode: your child agent '{old_name}' is now called "
                         f"'{new_name}'; the old name still reaches it.\n")
         except OSError:
             pass  # a missing note is cosmetic
