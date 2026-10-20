@@ -62,7 +62,8 @@ class TestRegistry:
             if c.state is None:
                 continue
             options = {
-                "cycle_summary_content": ("short", "context", "orders", "note", "heartbeat", "command"),
+                "cycle_summary_content": ("short", "context", "orders", "note", "beat", "cmd",
+                                          "result"),
             }.get(c.action)
             if options is None:
                 continue

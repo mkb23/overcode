@@ -28,7 +28,7 @@ from ..tui_helpers import (
 )
 from ..summary_columns import (
     COLUMNS_BY_ID, ColumnContext, FleetFlags, FleetRow, SummaryColumn, SUMMARY_COLUMNS, column_at,
-    cell_segments, cell_text, render_cell, resolve_column_visible, pad_and_join_cells,
+    cell_segments, cell_text, grid_room, render_cell, resolve_column_visible, pad_and_join_cells,
 )
 
 
@@ -56,6 +56,24 @@ _PRIVATE_ROW_INPUTS = frozenset({"_status_changed_at"})
 # The attributes that decide which columns show
 _VISIBILITY_INPUTS = frozenset({"summary_detail", "column_overrides", "uniform_columns"})
 _UNSET = object()
+
+# The NAME column grows to the widest name (tree prefix, markers and fold
+# included: the app's max_name_width) up to this many cells, by detail
+# level: room for a nested child's or a 🌙 row's name, less where more
+# columns compete for the line
+NAME_WIDTH_CAPS = {"low": 42, "med": 38, "high": 34, "full": 34}
+NAME_WIDTH_MIN = 8
+FOLD_SUFFIX = " ▶"
+
+
+def name_lead(session, emoji_free: bool = False) -> str:
+    """What leads the name in its cell: 🌙 for a Claude background session
+    (agent-observability §4.0), then "~" for an auto name (#542)."""
+    marker = ""
+    if getattr(session, "kind", None) == "claude_bg":
+        from ..claude_bg import MARKER, MARKER_ASCII
+        marker = (MARKER_ASCII if emoji_free else MARKER) + " "
+    return marker + name_marker(getattr(session, "name_source", None))
 
 
 class _BuiltRow:
@@ -278,7 +296,7 @@ class SessionSummary(Static, can_focus=True):
         if not widths or offset is None:
             return None
         ids = [c.id for c in self.visible_columns()]
-        return COLUMNS_BY_ID.get(column_at(offset.x, ids, widths))
+        return COLUMNS_BY_ID.get(column_at(offset.x, ids, widths, self._row_width()))
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
         """Hovering an emoji cell pops up what its emoji stand for."""
@@ -389,7 +407,7 @@ class SessionSummary(Static, can_focus=True):
                 tuple(getattr(self, n) for n in tui_engine.PANE_FIELDS))
 
     def _apply_results(self, view: dict) -> None:
-        """The Result column's, the 👶 and the 👥 rollups' values from a published view."""
+        """The result (the ``l`` result mode), the 👶 and the 👥 rollups from a published view."""
         self.task_result = view.get("task_result") or None
         self.task_reason = view.get("task_reason") or ""
         rollup = view.get("children_rollup")
@@ -474,7 +492,6 @@ class SessionSummary(Static, can_focus=True):
             pr_number=self.pr_number, subtree_cost_usd=self.subtree_cost_usd,
             window_burn=self.window_burn,
             has_status_detail=bool(self.engine.get("status_detail")),
-            task_result=self.task_result,
             has_swarm=self.swarm_rollup is not None,
             has_live_subagents=max(self.live_subagent_count, self.file_subagent_count) > 0,
             has_quota=isinstance(self.engine.get("quota"), dict),
@@ -507,27 +524,16 @@ class SessionSummary(Static, can_focus=True):
         perm_emoji = get_permissiveness_emoji(
             effective_permission_mode(s.permissiveness_mode, self.in_session_mode), ef)
 
-        # Name width: grows to longest agent name, capped by detail level
-        if self.summary_detail == "low":
-            name_cap = 34
-        elif self.summary_detail == "med":
-            name_cap = 30
-        else:
-            name_cap = 26
+        # Name width: grows to the widest name cell, capped by detail level
+        name_cap = NAME_WIDTH_CAPS.get(self.summary_detail, NAME_WIDTH_CAPS["full"])
         raw_max = getattr(self.app, 'max_name_width', name_cap)
-        name_width = max(8, min(raw_max, name_cap))
+        name_width = max(NAME_WIDTH_MIN, min(raw_max, name_cap))
 
         # Fold indicator for parents with collapsed children
-        fold_suffix = " ▶" if self.children_collapsed else ""
+        fold_suffix = FOLD_SUFFIX if self.children_collapsed else ""
 
-        # A 🌙 Claude background session leads its name with the marker
-        # (agent-observability §4.0); the marker's cells come off the name
-        marker = ""
-        if getattr(s, "kind", None) == "claude_bg":
-            from ..claude_bg import MARKER, MARKER_ASCII
-            marker = (MARKER_ASCII if ef else MARKER) + " "
-        # An auto name leads with "~" (#542), taken off the name's cells too
-        marker += name_marker(getattr(s, "name_source", None))
+        # The 🌙 / "~" markers' cells come off the name
+        marker = name_lead(s, ef)
         marker_cells = cell_len(marker)
 
         # Apply tree indentation when in tree sort mode (#244)
@@ -594,8 +600,6 @@ class SessionSummary(Static, can_focus=True):
             child_count=self.child_count,
             job_count=self.job_count,
             status=self.detected_status,
-            task_result=self.task_result,
-            task_reason=self.task_reason,
             child_rollup=self.child_rollup,
             swarm_rollup=swarm_view.shown_rollup(self.swarm_rollup, self.swarm_finished),
             swarm_expanded=self.swarm_expanded,
@@ -666,6 +670,9 @@ class SessionSummary(Static, can_focus=True):
             remaining_width=remaining,
             last_command=self.last_command,
             scraped_recap=_scraped_recap_from_stats(s.stats),
+            task_result=self.task_result,
+            task_reason=self.task_reason,
+            emoji_free=ctx.emoji_free,
         )
 
         # Map style categories to Rich styles
@@ -676,6 +683,7 @@ class SessionSummary(Static, can_focus=True):
             "bold_cyan": f"bold cyan{ctx.bg}",
             "bold_yellow": f"bold italic yellow{ctx.bg}",
             "bold_magenta": f"bold magenta{ctx.bg}",
+            "bold_red": f"bold red{ctx.bg}",
         }
         content.append(text, style=style_map.get(style_cat, style_map["dim"]))
 
@@ -771,6 +779,10 @@ class SessionSummary(Static, can_focus=True):
         pad_style = ctx.bg
         if column_widths:
             content = pad_and_join_cells(cells, column_widths, pad_style=pad_style)
+            # The summary keeps its minimum: the grid's right end is cut first
+            room = grid_room(column_widths, width)
+            if room < cell_len(content.plain):
+                content.truncate(room, overflow="crop")
         else:
             # Fallback: no alignment data yet (first render before batch update)
             content = Text()

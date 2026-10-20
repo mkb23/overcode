@@ -182,7 +182,7 @@ class SessionDaemonState:
     oversight_policy: str = "wait"
     oversight_timeout_seconds: float = 0.0
     oversight_deadline: Optional[str] = None
-    # A child's task outcome, the Result column (child_lifecycle.task_result):
+    # A child's task outcome, the ``l`` result mode (child_lifecycle.task_result):
     # "unreported" | "success" | "failure" | "timeout", None while it works
     # or for a top-level agent; task_reason is the report's full reason
     task_result: Optional[str] = None

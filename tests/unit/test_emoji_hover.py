@@ -137,7 +137,8 @@ class TestRowHoverInTUI:
     async def test_hovering_an_emoji_cell_names_its_emoji(self, tools_tui):
         from overcode.tui_widgets import SessionSummary
         app = tools_tui
-        async with app.run_test(size=(220, 40)) as pilot:
+        # Wide enough that the summary's reserve (grid_room) leaves the column on
+        async with app.run_test(size=(320, 40)) as pilot:
             await _ready(pilot)
             row = next(iter(app.query(SessionSummary)))
             ids = [c.id for c in COLUMNS_BY_ID.values() if row.column_visible(c)]

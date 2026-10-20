@@ -164,3 +164,76 @@ async def test_layout_holds_with_trip_counters_in_every_cost_mode(make_tui, widt
             assert_layout_invariants(app)
         except AssertionError as e:
             raise AssertionError(f"{width} cols, emoji-free: {e}") from e
+
+
+# A child, with an auto name and a reported failure
+NESTED_NAME = "fix-flaky-integration-tests-main"
+REASON = "three integration tests still fail on main"
+
+
+class NestedEngine(GridEngine):
+    """GridEngine plus delta (alpha's child) with a result."""
+
+    def snapshot_now(self):
+        from tests.unit.test_swarm_tui import _view
+        snap = super().snapshot_now()
+        snap.agents["id-delta"] = _view("delta", 3,
+                                        current_status="waiting_oversight",
+                                        task_result="failure", task_reason=REASON)
+        return snap
+
+
+def _nested_agents():
+    from overcode.session_manager import Session
+    agents = _named_agents()
+    agents.append(Session(id="id-delta", name=NESTED_NAME, tmux_session="test", tmux_window="w3",
+                          command=["claude"], start_directory="/tmp",
+                          start_time="2026-09-24T10:00:00", repo_name="repo-a", branch="main",
+                          parent_session_id="id-alpha", name_source="auto"))
+    return agents
+
+
+def _row_text(app, name: str) -> str:
+    row = next(w for w in app._get_widgets_in_session_order() if w.session.name == name)
+    return row.render().plain
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_nested_names_and_the_result_mode_hold(make_tui, width):
+    """Tree sort with a nested auto-named child that reported: the NAME
+    column makes room for its prefix and marker, and the result mode shows
+    its glyph and reason at the end of the row."""
+    from overcode.settings import TUIPreferences
+    from overcode.tui_widgets.session_summary import NAME_WIDTH_CAPS
+
+    saved = TUIPreferences()
+    saved.sort_mode = "by_tree"
+    saved.save("test")
+    engine = NestedEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_nested_agents(), engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _open(pilot, engine)
+        await _settle(pilot)
+        # Prefix, "~" and the whole name: the width the column asks for
+        assert app.max_name_width >= len("└─~" + NESTED_NAME)
+        for level in app.SUMMARY_LEVELS:
+            app._set_summary_level(level)
+            await _settle(pilot)
+            # Within the cap, the nested name is whole
+            if NAME_WIDTH_CAPS[level] >= len("└─~" + NESTED_NAME):
+                assert NESTED_NAME in _row_text(app, NESTED_NAME), level
+            for _ in app.SUMMARY_CONTENT_MODES:
+                mode = app.summary_content_mode
+                try:
+                    assert_layout_invariants(app)
+                except AssertionError as e:
+                    raise AssertionError(f"{width} cols, {level}, {mode}: {e}") from e
+                if mode == "result":
+                    summary = _row_text(app, NESTED_NAME).split(" │ ")[-1]
+                    # Whatever fits of it, never nothing
+                    assert summary.startswith("❌ three"), (width, level, summary)
+                    assert _row_text(app, "bravo").split(" │ ")[-1].startswith("🏁")
+                _shot(app, f"nested-{width}-{level}-{mode}")
+                app.action_cycle_summary_content()
+                await _settle(pilot)

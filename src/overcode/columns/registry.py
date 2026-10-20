@@ -19,7 +19,6 @@ from .hover import (
     hover_subtree_cost,
     hover_status_detail,
     hover_subagents,
-    hover_task_result,
     hover_wrapper,
 )
 from .render_context import (
@@ -90,8 +89,6 @@ from .render_supervision import (
     render_skill_profile,
     render_skill_profile_plain,
     render_skills_plain,
-    render_task_result,
-    render_task_result_plain,
     render_standing_orders,
     render_teams_plain,
     render_tools_plain,
@@ -101,7 +98,6 @@ from .render_supervision import (
 )
 from .render_virtual import (
     hover_virtual_name,
-    hover_virtual_result,
     render_virtual_cost,
     render_virtual_expand,
     render_virtual_billing,
@@ -109,7 +105,6 @@ from .render_virtual import (
     render_virtual_model,
     render_virtual_quota,
     render_virtual_name,
-    render_virtual_result,
     render_virtual_status,
     render_virtual_subagents,
     render_virtual_time,
@@ -222,14 +217,6 @@ def _sort_heartbeat(ctx: ColumnContext) -> Optional[tuple]:
     return (bool(s.heartbeat_paused), s.heartbeat_frequency_seconds)
 
 
-# Failures first, then what still needs a look, then successes
-_RESULT_ORDER = {"failure": 0, "timeout": 1, "unreported": 2, "success": 3}
-
-
-def _sort_task_result(ctx: ColumnContext) -> Optional[int]:
-    return _RESULT_ORDER.get(ctx.task_result or "")
-
-
 def _sort_oversight(ctx: ColumnContext) -> Optional[str]:
     return ctx.oversight_deadline or None
 
@@ -276,15 +263,6 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="DTL", name="Status Detail",
                   description="Status detail: current tool, subagents, sleep wake-up estimate",
                   hover=hover_status_detail),
-    SummaryColumn(id="task_result", group="identity", detail_levels=ALL, render=render_task_result,
-                  label="Result", render_plain=render_task_result_plain,
-                  visible=lambda ctx: ctx.fleet.any_has_task_result,
-                  header="RES", name="Result",
-                  description="A child agent's outcome: 📭 stopped without a report, ✅ success, "
-                              "❌ failure, ⌛ oversight timeout (hover for the full reason)",
-                  sort_key=_sort_task_result,
-                  hover=hover_task_result,
-                  virtual_render=render_virtual_result, virtual_hover=hover_virtual_result),
     # Merged from DLG (swarm, the hook rollup) and SUB (subagent_count, the
     # transcript-file count) in 0.6.1: the old ids alias to it (COLUMN_ALIASES).
     # Left of the name, at every level: its ▸ says → expands the row.
@@ -632,22 +610,33 @@ COLUMN_ALIASES: dict[str, str] = {
 }
 
 
+# Column ids that are gone, with where their data went. Saved overrides and
+# sort modes naming one are dropped on load; view commands say where it went.
+REMOVED_COLUMNS: dict[str, str] = {
+    "task_result": "a child's result is the summary's result mode (l)",  # RES (0.6.1)
+}
+
+
 def canonical_column_id(column_id: str) -> str:
     """The id a column goes by now (an alias resolved; anything else as is)."""
     return COLUMN_ALIASES.get(column_id, column_id)
 
 
 def migrate_column_overrides(overrides: dict) -> dict:
-    """One level's {column id: shown?} with aliased ids renamed.
+    """One level's {column id: shown?} with aliased ids renamed and removed
+    ones dropped.
 
     Two old ids meeting in one new column: shown wins, as either one on
     meant the person wanted to see that work.
     """
-    if not isinstance(overrides, dict) or not any(k in COLUMN_ALIASES for k in overrides):
+    if not isinstance(overrides, dict) or not any(
+            k in COLUMN_ALIASES or k in REMOVED_COLUMNS for k in overrides):
         return overrides
     out: dict = {}
     merged: dict = {}
     for key, value in overrides.items():
+        if key in REMOVED_COLUMNS:
+            continue
         if key in COLUMN_ALIASES:
             merged.setdefault(COLUMN_ALIASES[key], []).append(value)
         else:

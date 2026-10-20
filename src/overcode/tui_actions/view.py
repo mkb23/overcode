@@ -91,7 +91,7 @@ class ViewActionsMixin:
         self.notify(f"Summary: {new_level}", severity="information")
 
     def action_cycle_summary_content(self) -> None:
-        """Cycle through summary content modes (ai_short, ai_long, orders, annotation) (#74)."""
+        """Cycle through summary content modes (ai_short ... last_command, result) (#74)."""
         from ..tui_widgets import SessionSummary
         modes = self.SUMMARY_CONTENT_MODES
         current_idx = modes.index(self.summary_content_mode) if self.summary_content_mode in modes else 0
@@ -114,6 +114,7 @@ class ViewActionsMixin:
             "annotation": "Human Annotation",
             "heartbeat": "Heartbeat Instruction",
             "last_command": "Last User Command",
+            "result": "Result",
         }
         self.notify(f"{mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
 

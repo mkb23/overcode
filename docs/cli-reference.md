@@ -113,7 +113,7 @@ overcode list [name | --self] [--show-done] [--session <session>]
 | `--show-done` | Include "done" child agents |
 | `--json` | One JSON object per agent: `id`, `name`, `name_source` (`default`, `parent`, `auto` or `human`), `name_forced`, `previous_names`, `status`, `activity`, `parent_session_id`, `repo`, `branch`, `backend`, `model`, `is_remote`, and `spend`: `{"total", "trip", "trip_reset_at"}` (see [`overcode trip`](#overcode-trip)) |
 
-Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity. In tree mode, children are indented under their parent. A name overcode chose (auto-naming) is shown as `~name`. An agent whose trip counter was reset shows its spend since, marked `↺`.
+Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity. A child that stopped has its result after the activity, with the full reason (`❌ three integration tests still fail`; the TUI's `l` result mode); there is no RES column. In tree mode, children are indented under their parent. A name overcode chose (auto-naming) is shown as `~name`. An agent whose trip counter was reset shows its spend since, marked `↺`.
 
 ### `overcode attach`
 

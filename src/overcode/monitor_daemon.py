@@ -1676,7 +1676,7 @@ class MonitorDaemon:
         tick, for ``_refund_done_children`` once the status is written.
 
         A child that turns done has its report copied onto the session if
-        ``overcode report`` could not write it there, so the Result column
+        ``overcode report`` could not write it there, so the result mode
         shows it. A stopped child's oversight deadline is staged in
         ``_detect_and_enrich``, on that tick's status.
         """

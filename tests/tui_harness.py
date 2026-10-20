@@ -351,7 +351,11 @@ def _check_painted(widget, lines: list, what: str) -> None:
 
 def _check_cells(line: str, cells: list, widths: list, width: int, what: str) -> None:
     """Each non-empty cell starts at its column's x (the sum of the widths
-    before it), up to the edge of the row."""
+    before it), up to where the grid is cut (``grid_room``: the summary
+    keeps its minimum)."""
+    from overcode.summary_columns import grid_room
+
+    width = grid_room(widths, width) if widths else width
     x = 0
     for j, cell in enumerate(cells):
         if cell.strip() and x < width:
@@ -379,12 +383,16 @@ def assert_layout_invariants(app) -> None:
     - the rows stack with no gap and no overlap;
     - the header's labels, the agent rows' cells and the virtual rows' cells
       start at the same x offsets: the sums of ``app.column_widths``, and the
-      summary bar " │ " is at the same x on every row that reaches it.
+      summary bar " │ " is at the same x on every row that reaches it;
+    - the grid is cut where the summary would get fewer than
+      ``SUMMARY_MIN_WIDTH`` cells, so every agent row has its " │ " and at
+      least that much summary room.
 
     The header never widens a column: a label longer than its column is cut
     to the column's width (``render_header_cells``), so a label is checked
     as cut.
     """
+    from overcode.columns.layout import SUMMARY_MIN_WIDTH
     from overcode.summary_columns import COLUMNS_BY_ID
     from overcode.tui_widgets import ColumnHeader, SessionSummary
     from overcode.tui_widgets.swarm_rows import SwarmRows
@@ -406,6 +414,9 @@ def assert_layout_invariants(app) -> None:
         assert cell_len_(line) <= width, f"{what}: {cell_len_(line)} cells in {width}"
         _check_painted(row, [line], what)
         _check_cells(line, [c.plain for c in row.row_cells()], widths, width, what)
+        if width >= SUMMARY_MIN_WIDTH + 3:
+            assert " │ " in line, f"{what}: no summary"
+            assert cell_len_(line.split(" │ ")[-1]) >= SUMMARY_MIN_WIDTH, f"{what}: summary squeezed"
         if " │ " in line:
             bar = cell_len_(line[:line.index(" │ ")])
             if bar + 3 <= width:

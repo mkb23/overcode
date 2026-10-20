@@ -10,13 +10,14 @@ the right edge of the agents' text in that column, blank where the agents'
 cells are blank, so the "-" sits where a value would (``placeholder``).
 
 What a subagent fills: status (its light), time in state and uptime (since
-it started, from the published start; its run time once finished), RES
-(✅ / ❌, the result text in the hover), SUBA (a summary line's counts),
+it started, from the published start; its run time once finished), SUBA
+(a summary line's counts),
 KIND, NAME (tree connector, kind marker, title), TYPE (its agent type, when
 the members on screen are of two or more), MDL (its own model, or the
 parent's dim when it inherits it), TOK, $ and Q% (its own spend, from its
 transcript), BILL (the parent's code: its spend is billed there). The
-summary column (``l``) maps by mode (``virtual_summary``).
+summary column (``l``) maps by mode (``virtual_summary``), its result
+(✅ / ❌ and the text) in the result mode.
 
 Nothing here is published as a countdown: durations are worked out from
 absolute times as the agent rows' are, and only on the row clock.
@@ -30,7 +31,7 @@ from typing import List, Optional, Tuple
 
 from rich.cells import cell_len, set_cell_size
 
-from ..status_constants import RESULT_FAILURE, RESULT_SUCCESS, emoji_or_ascii
+from ..status_constants import emoji_or_ascii
 from ..swarm_view import (
     COUNT_GLYPHS, SwarmLine, light_glyph, marker_glyph, run_seconds,
 )
@@ -54,7 +55,6 @@ def virtual_context(line: SwarmLine, parent: ColumnContext, selected: bool = Fal
     """``ColumnContext.for_virtual``: the parent's settings, the row's values."""
     row = line.row if line.kind in _LIT else {}
     symbol, style = light_glyph(row, parent.emoji_free) if row else ("", "")
-    result = row.get("result") if row.get("light") == "done" else None
     # No model of its own: it runs on the parent's (drawn dim)
     model = (row.get("model") or parent.model or "") if row else ""
     return replace(
@@ -64,9 +64,6 @@ def virtual_context(line: SwarmLine, parent: ColumnContext, selected: bool = Fal
         display_name=line.label, model=model, effort="",
         claude_stats=None, git_diff_stats=None, git_untracked_count=None,
         status_changed_at=None, status_detail=None, sleep_wake_estimate=None,
-        task_result=(RESULT_FAILURE if result == "failed" else RESULT_SUCCESS) if result else None,
-        task_reason=row.get("result_text") or ("failed" if result == "failed" else "done"
-                                               if result else ""),
         child_rollup=None, swarm_rollup=None, swarm_expanded=False, subagent_cost_usd=None,
         subtree_cost_usd=0.0, window_burn=None, pr_number=None, oversight_deadline=None,
         live_subagent_count=0, background_bash_count=0, child_count=0, job_count=0,
@@ -131,27 +128,6 @@ def render_virtual_uptime(ctx: ColumnContext) -> ColumnOutput:
     if seconds is None:
         return None
     return [(f" ↑{format_duration(seconds):>5}", "bold white")]
-
-
-def render_virtual_result(ctx: ColumnContext) -> ColumnOutput:
-    """RES: ✅ / ❌ and the result text, as a child agent's."""
-    if not ctx.task_result:
-        return None
-    from .render_supervision import render_task_result
-    return render_task_result(ctx)
-
-
-def hover_virtual_result(ctx: ColumnContext):
-    if not ctx.task_result:
-        return None
-    from rich.text import Text
-    row = _lit_row(ctx)
-    glyph = emoji_or_ascii("❌" if ctx.task_result == RESULT_FAILURE else "✅", ctx.emoji_free)
-    ran = run_seconds(row)
-    text = Text(f"{glyph} {row.get('result_text') or ctx.task_reason}")
-    if ran is not None:
-        text.append(f"\nran {format_duration(ran)}", style="dim")
-    return text
 
 
 def _count_text(ctx: ColumnContext, key: str, n: int) -> str:
@@ -312,6 +288,7 @@ def virtual_summary(line: SwarmLine, mode: str, emoji_free: bool = False) -> Tup
       ai_long       📖 its agent type, kind and phase, then the same
       orders        🎯 its task as given (the full title)
       last_command  ⌨ its last tool call
+      result        ✅ / ❌ and its result text once finished, else "-"
       annotation, heartbeat: "-" (a subagent has neither)
     A summary line ("+k more") shows its own text in every mode.
     """
@@ -328,6 +305,13 @@ def virtual_summary(line: SwarmLine, mode: str, emoji_free: bool = False) -> Tup
     if mode == "last_command":
         last = line.row.get("activity")
         return (f"{e('⌨')} {last}", style) if last else ("-", "dim")
+    if mode == "result":
+        result = line.row.get("result") if done else None
+        if not result:
+            return "-", "dim"
+        failed = result == "failed"
+        text = line.row.get("result_text") or ("failed" if failed else "done")
+        return f"{e('❌' if failed else '✅')} {text}", "red" if failed else "green"
     if mode in ("annotation", "heartbeat"):
         return "-", "dim"
     return (f"{e('💬')} {line.summary}", style) if line.summary else ("-", "dim")

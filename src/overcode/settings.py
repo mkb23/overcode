@@ -713,7 +713,7 @@ class TUIPreferences:
     show_done_children: bool = False
     sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value, by_tree (#61), col:<id> (#487)
     sort_reversed: bool = False  # flip the sort column's natural direction (#487)
-    summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation, heartbeat (#98, #171)
+    summary_content_mode: str = "ai_short"  # SupervisorTUI.SUMMARY_CONTENT_MODES (#98, #171)
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
     emoji_free: bool = False  # ASCII fallbacks for terminals without emoji (#315)
@@ -815,14 +815,20 @@ class TUIPreferences:
                         col_cfg.setdefault(lvl, {}).update(preset)
 
                 # Migration: merged or renamed columns (swarm / subagent_count
-                # → subagents, 0.6.1) keep their overrides and sort
-                from .columns.registry import canonical_column_id, migrate_column_overrides
+                # → subagents, 0.6.1) keep their overrides and sort; a removed
+                # one's (task_result, 0.6.1) are dropped
+                from .columns.registry import (
+                    REMOVED_COLUMNS, canonical_column_id, migrate_column_overrides,
+                )
                 if isinstance(col_cfg, dict):
                     for lvl, overrides in list(col_cfg.items()):
                         col_cfg[lvl] = migrate_column_overrides(overrides)
                 sort_mode = kwargs.get("sort_mode")
                 if isinstance(sort_mode, str) and sort_mode.startswith("col:"):
-                    kwargs["sort_mode"] = "col:" + canonical_column_id(sort_mode[4:])
+                    if sort_mode[4:] in REMOVED_COLUMNS:
+                        kwargs.pop("sort_mode")
+                    else:
+                        kwargs["sort_mode"] = "col:" + canonical_column_id(sort_mode[4:])
 
                 return cls(**kwargs)
         except (json.JSONDecodeError, IOError):

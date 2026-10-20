@@ -97,18 +97,6 @@ def hover_permission_mode(ctx: ColumnContext):
     return _emoji_legend("Permission mode", rows, footer)
 
 
-def hover_task_result(ctx: ColumnContext):
-    """The child's result in full: the kind, then the report's whole reason."""
-    from ..status_constants import RESULT_KINDS
-    spec = RESULT_KINDS.get(ctx.task_result or "")
-    if spec is None:
-        return None
-    emoji, ascii_fb, _, meaning = spec
-    reason = (ctx.task_reason or "").strip()
-    return _emoji_legend("Result", [(ascii_fb if ctx.emoji_free else emoji,
-                                     f"{meaning}: {reason}" if reason else meaning)])
-
-
 def hover_child_count(ctx: ColumnContext):
     """What the 👶 rollup's segments count."""
     if not ctx.child_count:

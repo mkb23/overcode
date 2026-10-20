@@ -1,6 +1,6 @@
 """A child's outcome and its parent's view of its children (the daemon's side).
 
-- ``child_lifecycle.task_result``: the Result column's kind and reason.
+- ``child_lifecycle.task_result``: a child's result kind and reason.
 - The daemon publishes it, backfills a report ``overcode report`` could not
   write onto the session, starts a policy-timeout child's oversight
   deadline without ``--follow`` (and clears it while the child works

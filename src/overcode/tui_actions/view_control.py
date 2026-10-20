@@ -87,8 +87,11 @@ class ViewControlMixin:
     # ── verbs ──────────────────────────────────────────────────────────
 
     def _resolve_column(self, name: str):
+        from ..columns.registry import REMOVED_COLUMNS
         from ..summary_columns import SUMMARY_COLUMNS, canonical_column_id
         key = canonical_column_id(name.strip().lower())
+        if key in REMOVED_COLUMNS:
+            raise ViewCommandError(f"column '{name}' was removed: {REMOVED_COLUMNS[key]}")
         for col in SUMMARY_COLUMNS:
             if key in (col.id.lower(), (col.name or "").lower(), (col.header or "").strip().lower()):
                 return col

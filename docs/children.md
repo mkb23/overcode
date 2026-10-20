@@ -82,25 +82,26 @@ has finished its turn and is waiting on its parent.
 | 🟡 | Waiting on its own background work | Its turn ended but its children (or its background subagents, workflows or 🌙 sessions) are still working: "Waiting on 2 children". They will wake it |
 | 🟠 | A permission prompt or plan waits for approval: yours, or its parent's (`overcode send <child> approve`) | The same, in its own pane (a 👥 subagent's prompt shows here too) |
 | 🔴 | Rarely seen: once a child's turn has ended, overcode settles it to ⚪ | Its turn ended, nothing it delegated is still working, and it waits for you |
-| ⚪ | Stopped, reported or not: see the Result column | Only when it is itself a child |
+| ⚪ | Stopped, reported or not: see its result (`l`) | Only when it is itself a child |
 
 A child waiting on approval still counts as working for its parent, so the
 parent stays 🟡 rather than 🔴 until every child is at rest.
 
 ## Results
 
-How a child's task went is in the Result column (RES), not in its light:
+How a child's task went is not in its light: in the TUI, press `l` until
+the summary shows **Result**; `overcode list` prints it after the activity.
 
 | Result | Meaning |
 |--------|---------|
-| (blank) | Still working, or has never stopped |
+| 🏁 (no result) | Still working, or has never stopped |
 | 📭 | Stopped without a report (`waiting_oversight`) |
 | ✅ | Reported success, with its reason |
 | ❌ | Reported failure, with its reason |
 | ⌛ | Its oversight timeout expired before it reported |
 
-Hover the cell to see the full reason; `overcode list` prints it after the
-activity. The 👶 column on the parent rolls its children up, e.g.
+The reason is shown as far as the row has room; `overcode list` prints it
+in full. The 👶 column on the parent rolls its children up, e.g.
 `👶 5 ▶2 📭1 ✅1 ❌1` (▶ means still working, and a ⌛ counts as a
 failure). It reads like the SubAgents cell, glyph then count, but keeps the
 total in front: a child can be working again after it reported, and one

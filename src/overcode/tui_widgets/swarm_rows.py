@@ -28,7 +28,7 @@ from rich.text import Text
 from textual import events
 from textual.widgets import Static
 
-from ..columns.layout import column_at, pad_and_join_cells
+from ..columns.layout import column_at, grid_room, pad_and_join_cells
 from ..columns.registry import cell_segments, cell_text
 from ..columns.render_virtual import (
     ROW_BG, SELECTED_BG, placeholder, ticks, virtual_summary,
@@ -145,7 +145,10 @@ class SwarmRows(Static, can_focus=False):
                 texts = [cell_text(segs if segs else placeholder(edges[j] if j < len(edges) else 0))
                          for j, segs in enumerate(cells)]
                 if widths and len(widths) == len(texts):
-                    row.append_text(pad_and_join_cells(texts, widths))
+                    grid = pad_and_join_cells(texts, widths)
+                    # Cut where the agent rows cut theirs (grid_room)
+                    grid.truncate(grid_room(widths, width), overflow="crop")
+                    row.append_text(grid)
                 else:
                     for t in texts:
                         row.append_text(t)
@@ -188,8 +191,8 @@ class SwarmRows(Static, can_focus=False):
         return None
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
-        """Hovering a cell with a popup (RES: the result text; NAME: the
-        title, type and phase) shows it, as on an agent row."""
+        """Hovering a cell with a popup (NAME: the title, type and phase)
+        shows it, as on an agent row."""
         offset = event.get_content_offset(self)
         self.tooltip = None
         if offset is None or self._paint_args is None:
@@ -198,7 +201,7 @@ class SwarmRows(Static, can_focus=False):
             return
         from ..summary_columns import COLUMNS_BY_ID
         col = COLUMNS_BY_ID.get(column_at(offset.x, [c.id for c in self._columns],
-                                          self._paint_args[0]))
+                                          self._paint_args[0], self.content_size.width or None))
         if col is not None and col.virtual_hover is not None:
             self.tooltip = col.virtual_hover(self._ctxs[offset.y])
 

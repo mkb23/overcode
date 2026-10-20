@@ -9,14 +9,38 @@ if TYPE_CHECKING:
     from rich.text import Text
 
 
-def column_at(x: int, column_ids: List[str], column_widths: List[int]) -> Optional[str]:
+# The summary text (the ``l`` modes) keeps at least this many cells after
+# its " │ ": past that, the column grid is cut at its right end instead
+SUMMARY_MIN_WIDTH = 24
+SUMMARY_BAR_WIDTH = 3  # " │ "
+
+
+def grid_room(column_widths: List[int], width: int) -> int:
+    """How much of the column grid a `width`-cell TUI row shows: all of it,
+    or the whole columns that leave the summary its SUMMARY_MIN_WIDTH
+    cells. Agent rows, virtual rows and the header cut the grid at this
+    same x."""
+    room = max(0, width - SUMMARY_BAR_WIDTH - SUMMARY_MIN_WIDTH)
+    edge = 0
+    for w in column_widths:
+        if edge + w > room:
+            return edge
+        edge += w
+    return edge
+
+
+def column_at(x: int, column_ids: List[str], column_widths: List[int],
+              width: Optional[int] = None) -> Optional[str]:
     """The column under cell offset `x` of an aligned row, or None.
 
     `column_ids` and `column_widths` are parallel: the visible columns in
     order and their widths from compute_column_widths(). Zero-width columns
-    are never hit. Used by the header row for hover and click (#477, #487).
+    are never hit, nor, given the row's `width`, the grid past grid_room.
+    Used by the header row for hover and click (#477, #487).
     """
     if x < 0:
+        return None
+    if width is not None and x >= grid_room(column_widths, width):
         return None
     edge = 0
     for col_id, w in zip(column_ids, column_widths):
