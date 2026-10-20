@@ -291,6 +291,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `W` | Skill profiles: build named sets of skills, pin them to folders ([guide](skill-profiles.md)) |
 | `U` | Sister visibility |
 | `/` → "Billing code…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
+| `/` → "Billing codes…" | Every code's spend; rename or merge codes (no default key; see [Billing codes](#billing-codes)) |
 
 ### Daemon Control
 
@@ -337,10 +338,33 @@ billing:
   running keep their codes, children it launches later take the new one.
   A sister's agent has to be rebilled on its own machine.
 
+**All codes**: `/`, then "Billing codes…". One row per code, most spend
+first: its name, total, this month, last month, agents (and how many are
+running) and source, with the totals underneath; the highlighted code's
+previous names and id are in the foot. The figures are read from the
+ledger once, when the dialog opens.
+
+| Key | In the billing codes dialog |
+|-----|-----------------------------|
+| `j`/`k`, `↑`/`↓` | Move |
+| `Enter` or `r` | Rename the code in place; `Enter` applies, `Esc` cancels |
+| `a` or `→` | The code's agents and their spend (`Esc`/`←` back) |
+| `/` | Filter as you type (names and previous names); `Esc` clears |
+| `Esc` / `q` | Close |
+
+A rename is `overcode billing rename`: every report, past spend included,
+shows the new name, and the old one becomes a previous name that still
+works. The name is checked as you type: empty or id-shaped names are
+refused, and the name of another code offers a merge instead — `Enter`
+asks "merge X into Y? press Enter again", and a second `Enter` runs
+`overcode billing merge` (X's spend, past and future, reports under Y).
+Codes are local: a sister's are renamed on its own machine.
+
 The Billing column (BILL; hidden below full detail, shown by
 `overcode list`) shows each agent's code by its current name, dim while it
-is still the agent's name; after `overcode billing rename` it shows the new
-name within a daemon pass. Codes are typed and shown by name; a code's
+is still the agent's name; after a rename (the dialog, or `overcode billing
+rename`) it shows the new name within a moment: the agents' copies are
+updated at once and the engine is woken to publish them. Codes are typed and shown by name; a code's
 previous name still picks it. A bad `billing:` entry is skipped and the
 dialog says so.
 

@@ -737,18 +737,21 @@ class Ledger:
         return report
 
     def report(self, since: Optional[datetime] = None,
-               until: Optional[datetime] = None) -> Dict[str, dict]:
+               until: Optional[datetime] = None, *, rows: Optional[List[dict]] = None,
+               agents: Optional[Dict[str, Dict[str, dict]]] = None) -> Dict[str, dict]:
         """Spend per billing code (id) in [since, until), from the rows (by their time).
 
         A segment's spend in the period is its last cumulative value before
         ``until`` less its last one before ``since``. Reads every month: a
-        CLI report, not a hot path.
+        CLI report, not a hot path; ``rows`` (``list(iter_rows())``) spares
+        the read for several periods. ``agents``, when given, is filled with
+        each code's agents: ``{code id: {sid: {"name", "cost", "running"}}}``.
         """
         start = stamp(since) if since else ""
         end = stamp(until) if until else "￿"
         before: Dict[str, dict] = {}
         within: Dict[str, dict] = {}
-        rows = list(self.iter_rows())
+        rows = list(self.iter_rows()) if rows is None else rows
         # Corrections restate every earlier row of their segment
         corrections: Dict[str, List[Tuple[int, dict]]] = {}
         for row in rows:
@@ -790,6 +793,12 @@ class Ledger:
                 entry["running"] += 1
             if row.get("claude_bg"):
                 entry["background"] += 1
+            if agents is not None:
+                spent = agents.setdefault(self.codes.canonical(code), {}).setdefault(
+                    str(row.get("sid")), {"name": row.get("name") or "?", "cost": 0.0,
+                                          "running": False})
+                spent["cost"] += amounts["cost"]
+                spent["running"] = spent["running"] or not is_closing(row)
         return self.by_code(report)
 
     # ── backfill ────────────────────────────────────────────────────────
