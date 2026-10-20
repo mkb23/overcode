@@ -1471,10 +1471,12 @@ class TestEventLogBytes:
         append_hook_event("PreToolUse", "agents", "a1", tool_name="Edit", tool_input=body)
         path = tmp_path / "agents" / "hook_events_a1.jsonl"
         entry = json.loads(path.read_text().splitlines()[-1])
-        assert set(entry["tool_input"]) == {"_preview"}
-        assert entry["tool_input"]["_preview"].startswith('{"file_path": "/repo/a.py"')
+        # The path stays whole (the namer's most-edited files, #542)
+        assert set(entry["tool_input"]) == {"file_path", "_preview"}
+        assert entry["tool_input"]["file_path"] == "/repo/a.py"
+        assert entry["tool_input"]["_preview"].startswith('{"old_string": "aaa')
         assert len(entry["tool_input"]["_preview"]) == 256
-        assert len(path.read_bytes()) < 400
+        assert len(path.read_bytes()) < 450
 
     def test_obligation_fields_survive(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))

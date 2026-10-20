@@ -152,7 +152,10 @@ class TestAgentDirs:
         assert paths.agent_file("agents", "sid-1", "episodes") == d / "episodes.jsonl"
         assert paths.agent_file("agents", "sid-1", "rename_notice") == d / "rename_notice.txt"
         assert paths.agent_file("agents", "sid-1", "heartbeat") == d / "heartbeat.last"
-        assert set(paths.AGENT_DIR_FILES) == set(paths.AGENT_FILES)
+        assert paths.agent_file("agents", "sid-1", "brief") == d / "brief.txt"
+        assert paths.agent_file("agents", "sid-1", "prompts") == d / "prompts.jsonl"
+        # Files added after per-agent directories have no name-keyed form
+        assert set(paths.AGENT_FILES) <= set(paths.AGENT_DIR_FILES)
 
     def test_agent_path_own_dir_when_it_exists(self, no_env):
         own = paths.agent_file("agents", "sid-1", "hook_state")

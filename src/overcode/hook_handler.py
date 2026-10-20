@@ -655,6 +655,43 @@ def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
         print(text)
 
 
+def _emit_child_notices(tmux_session: str) -> None:
+    """Print, then consume, the notes of this agent's children renamed since its last prompt."""
+    sid = _agent_session_id()
+    if not sid:
+        return
+    path = agent_file(tmux_session, sid, "child_notice")
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    path.unlink(missing_ok=True)
+    if text:
+        print(text)
+
+
+# The namer's view of what the agent was asked (#542, auto-naming §4)
+PROMPTS_KEPT = 3
+PROMPT_BYTES = 1024
+
+
+def _capture_prompt(tmux_session: str, prompt) -> None:
+    """Append one of the agent's first ``PROMPTS_KEPT`` prompts to its ``prompts.jsonl``."""
+    sid = _agent_session_id()
+    if not sid or not isinstance(prompt, str) or not prompt.strip():
+        return
+    path = agent_file(tmux_session, sid, "prompts")
+    try:
+        with open(path, "a+b") as f:
+            f.seek(0)
+            if f.read().count(b"\n") >= PROMPTS_KEPT:
+                return
+            text = prompt.encode("utf-8")[:PROMPT_BYTES].decode("utf-8", "ignore")
+            f.write((json.dumps({"t": time.time(), "prompt": text}) + "\n").encode("utf-8"))
+    except OSError:
+        pass  # the namer reads what there is
+
+
 def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for the append-only hook event log (#448).
 
@@ -693,6 +730,7 @@ _EVENT_LOG_INPUT_FIELDS = (
     "id",
     "cron_id",
     "skill",
+    "file_path",  # the namer's most-edited files (#542)
 )
 _EVENT_LOG_INPUT_CHARS = 256
 
@@ -1425,3 +1463,5 @@ def handle_hook_event(backend: str | None = None) -> None:
         if line:
             print(line)
         _emit_rename_notice(tmux_session, session_name)
+        _emit_child_notices(tmux_session)
+        _capture_prompt(tmux_session, data.get("prompt"))

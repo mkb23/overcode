@@ -199,6 +199,8 @@ class ClaudeCodeBackend(AgentBackendBase):
         elif spec.skip_permissions or spec.permissiveness_mode == "permissive":
             cmd.extend(["--permission-mode", "dontAsk"])
 
+        if spec.name:
+            cmd.extend(self.display_name_args(spec.name))
         if spec.model:
             cmd.extend(["--model", spec.model])
         if spec.agent:
@@ -210,6 +212,10 @@ class ClaudeCodeBackend(AgentBackendBase):
                 cmd.extend(shlex.split(arg))
 
         return cmd
+
+    def display_name_args(self, name: str) -> List[str]:
+        """``--name``: the title Claude shows in its prompt box, ``/resume`` and the terminal."""
+        return ["--name", name]
 
     def prepare_launch(self, spec: LaunchSpec) -> None:
         """Nothing to stage — hooks and permissions ride on ``--settings``.

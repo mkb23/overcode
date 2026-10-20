@@ -72,10 +72,16 @@ AGENT_DIR_FILES = {
     "episodes": "episodes.jsonl",           # engine episode log
     "rename_notice": "rename_notice.txt",   # one-shot note after a rename (#478)
     "heartbeat": "heartbeat.last",          # last heartbeat (time context)
+    # The namer's inputs and state (#542, auto-naming §4); no name-keyed form
+    "brief": "brief.txt",                   # first 2 KB of the launch prompt
+    "prompts": "prompts.jsonl",             # first 3 user prompts, 1 KB each
+    "namer": "namer.json",                  # the daemon namer's per-agent state
+    "child_notice": "child_notice.txt",     # one-shot "your child X is now Y"
 }
 
 # Before 0.6.0 the same files sat directly in the session directory, keyed
-# by the agent's name (``kind`` -> file name pattern). Still read for an
+# by the agent's name (``kind`` -> file name pattern; files added since have
+# none). Still read for an
 # agent launched before the upgrade (one with no ``agent_dir``) until it is
 # relaunched; ``agent_path`` picks the right one.
 AGENT_FILES = {

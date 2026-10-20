@@ -193,6 +193,8 @@ class AgentBackend(Protocol):
 
     def normalize_hook_payload(self, data: dict) -> Optional[dict]: ...
 
+    def display_name_args(self, name: str) -> List[str]: ...
+
 
 class AgentBackendBase:
     """Defaults for the AgentBackend members most backends don't need.
@@ -251,6 +253,13 @@ class AgentBackendBase:
     def normalize_hook_payload(self, data: dict) -> Optional[dict]:
         """A hook payload in Claude Code's vocabulary, or None to drop it."""
         return self.hook_dialect.normalize(data)
+
+    def display_name_args(self, name: str) -> List[str]:
+        """Launch arguments that give the CLI's own session title ``name`` (auto-naming §7).
+
+        Empty for a CLI with no title of its own to set at launch.
+        """
+        return []
 
     def prompt_ready_line(self, line: str) -> bool:
         """Is this (ANSI-stripped, whitespace-trimmed) pane line the live,

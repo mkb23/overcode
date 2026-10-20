@@ -51,3 +51,28 @@ def prepare_agent_dir(tmux_session: str, session_id: str, *, reset: bool = False
 def remove_agent_dir(tmux_session: str, session_id: str) -> None:
     """Remove the agent's directory and everything in it; never raises."""
     shutil.rmtree(agent_dir(tmux_session, session_id), ignore_errors=True)
+
+
+# The namer's view of the task (#542, auto-naming §4): the launch prompt's
+# first bytes, written once at launch and never moved.
+BRIEF_BYTES = 2048
+
+
+def write_brief(tmux_session: str, session_id: str, prompt: str) -> None:
+    """Keep the first ``BRIEF_BYTES`` of the launch prompt as the agent's brief; never raises."""
+    if not prompt or not prompt.strip():
+        return
+    text = prompt.encode("utf-8")[:BRIEF_BYTES].decode("utf-8", "ignore")
+    try:
+        agent_dir(tmux_session, session_id).mkdir(parents=True, exist_ok=True)
+        agent_file(tmux_session, session_id, "brief").write_text(text, encoding="utf-8")
+    except OSError:
+        pass  # the namer falls back to the prompts and the pane
+
+
+def read_brief(tmux_session: str, session_id: str) -> str:
+    """The agent's brief, or "" when it has none."""
+    try:
+        return agent_file(tmux_session, session_id, "brief").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
