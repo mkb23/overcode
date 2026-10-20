@@ -136,6 +136,12 @@ sisters:
     url: "http://localhost:25337"
     api_key: "secret"  # Only needed for direct LAN access
 
+# Status colours: which glyph each light shows; see "Status Colours" below
+status_theme:
+  preset: classic                 # classic | calm | colorblind | shapes
+  overrides:
+    input: 🔵                     # a light → a glyph or its name ("blue circle")
+
 # Custom emoticons for skills
 # Overrides built-in defaults shown in the "Available Skills" (ASK) column
 skill_emoji:
@@ -414,6 +420,32 @@ Then use with:
 ```bash
 overcode instruct my-agent MY_PRESET
 ```
+
+## Status Colours
+
+`status_theme` picks the glyph each status light shows (see the
+[TUI guide](tui-guide.md#status-colours) for the presets). The palette's
+**Status colours** and the **Status colours…** dialog write it; editing it
+by hand works too, and the TUI and `overcode list` pick it up at once.
+
+```yaml
+status_theme: calm                # a preset alone
+
+status_theme:                     # or a preset with lights changed
+  preset: colorblind
+  overrides:
+    approval: 🟥
+    error: purple square
+```
+
+Lights: `working`, `automatic`, `approval`, `input`, `rest`, `unknown`,
+`gone`, and the shades `heartbeat`, `heartbeat_waiting`, `error`, `asleep`.
+Glyphs: 🔴 🟠 🟡 🟢 🔵 🟣 🟤 ⚫ ⚪, the squares 🟥 🟧 🟨 🟩 🟦 🟪 🟫 ⬛ ⬜,
+the diamonds 🔶 🔷 🔸 🔹, ❔ 💤 💚 💛, and the shapes ● ◐ ○ ▲ ■ ◆ ·, each by
+glyph or name (`blue circle`, `small orange diamond`, `half dot`…). A
+light's text colour follows its glyph. An unknown preset, light or glyph is
+logged and skipped (the preset falls back to `classic`). The web API keeps
+publishing the classic glyph and colour.
 
 ## TUI Preferences
 

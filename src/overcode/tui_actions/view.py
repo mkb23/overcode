@@ -429,6 +429,46 @@ class ViewActionsMixin:
         self._apply_ui_theme()
         self.notify(f"Theme: {self.ui_theme}", severity="information")
 
+    def action_cycle_status_theme(self) -> None:
+        """Step the status colours to the next preset, keeping changed lights."""
+        from ..status_theme import StatusTheme, active_theme, next_preset
+        theme = active_theme()
+        self._apply_status_theme(StatusTheme(next_preset(theme.preset), dict(theme.overrides)))
+        self.notify(f"Status colours: {active_theme().label()}", severity="information")
+
+    def action_open_status_colours(self) -> None:
+        """The Status colours dialog: a preset, then a glyph per light."""
+        from ..status_theme import active_theme
+        from ..tui_widgets import StatusColoursModal
+        try:
+            modal = self.query_one("#status-colours-modal", StatusColoursModal)
+        except NoMatches:
+            return
+        self._dialog_will_open()
+        modal.show(active_theme(), bool(self.emoji_free), self)
+
+    def on_status_colours_modal_changed(self, message) -> None:
+        self._apply_status_theme(message.theme)
+
+    def on_status_colours_modal_closed(self, message) -> None:
+        self._dialog_did_close()
+
+    def _apply_status_theme(self, theme) -> None:
+        """Save ``theme`` to config.yaml and redraw everything that shows a light."""
+        from ..status_theme import save_theme
+        try:
+            save_theme(theme)
+        except OSError as e:
+            self.notify(f"Could not save status colours: {e}", severity="error")
+            return
+        self.update_session_widgets()
+        self._update_footer()
+        for widget_id in ("#timeline", "#daemon-status"):
+            try:
+                self.query_one(widget_id).refresh()
+            except NoMatches:
+                pass
+
     def action_toggle_emoji_free(self) -> None:
         """Toggle emoji-free mode for terminals without emoji fonts (#315).
 

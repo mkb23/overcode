@@ -20,6 +20,7 @@ from .skills_modal import SkillsModal
 from .tmux_config_modal import TmuxConfigModal
 from .passthru_config_modal import PassthruConfigModal
 from .agent_visibility_modal import AgentVisibilityModal
+from .status_colours_modal import StatusColoursModal
 from .agent_select_modal import AgentSelectModal
 from .sister_selection_modal import SisterSelectionModal
 from .new_agent_modal import NewAgentModal
@@ -51,6 +52,7 @@ __all__ = [
     "TmuxConfigModal",
     "PassthruConfigModal",
     "AgentVisibilityModal",
+    "StatusColoursModal",
     "AgentSelectModal",
     "SisterSelectionModal",
     "NewAgentModal",

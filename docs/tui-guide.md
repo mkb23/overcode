@@ -500,7 +500,7 @@ need you?
 |-------|------|---------|
 | 🟢 | Working | Generating or running a tool |
 | 🟡 | Waiting on something automatic | Background work, a wakeup or child agents will resume it |
-| 🟠 | Needs approval | A permission prompt or a plan to approve |
+| 🟠 | Needs approval | A permission prompt, a question or a plan to approve |
 | 🔴 | Needs input | Its turn is over and it waits for you |
 | ⚪ | At rest | A child agent that stopped, reported or not |
 | ❔ | Unknown | Starting up, or its status cannot be read |
@@ -509,6 +509,39 @@ need you?
 Shades of those: 💚 working (a heartbeat started this turn), 💛 waiting on a
 heartbeat that will re-prompt it, 🟣 an API or hook error needs attention,
 💤 asleep (paused by you, left out of stats).
+
+A question (Claude's AskUserQuestion menu) is an approval: 🟠 with ❓ in the
+status detail, where a permission shows 🔐 and a plan 📋.
+
+These are the classic colours; `?` always shows the ones in use.
+
+### Status colours
+
+The palette's **Status colours** steps through four presets, and
+**Status colours…** (Settings) changes single lights. Both save to
+`status_theme` in `~/.overcode/config.yaml` (see
+[configuration](configuration.md#status-colours)), which `overcode list`
+reads too.
+
+| Preset | Working | Automatic | Approval | Input | At rest | Gone |
+|--------|---------|-----------|----------|-------|---------|------|
+| `classic` (default) | 🟢 | 🟡 | 🟠 | 🔴 | ⚪ | ⚫ |
+| `calm` | 🟢 | 🟡 | 🔴 | 🔵 | ⚪ | ⚫ |
+| `colorblind` | 🔷 | 🟦 | 🟧 | 🔶 | ⬜ | ⬛ |
+| `shapes` | ● | ◐ | ▲ | ■ | ○ | · |
+
+`calm` keeps red for what you must answer now (a permission, a question,
+a plan) and shows an idle agent in neutral blue. `colorblind` uses only
+blue (nothing to do) and orange (you), the pair that stays apart with
+red/green colour blindness, and a shape in each family (diamond: acting
+or asking; square: waiting). `shapes` is monochrome. A light's text colour
+(time in state, the status detail, the timeline) follows its glyph. In
+emoji-free mode every theme shows the same letters (`[R]` working, `[W]`
+needs input, `[A]` approval…) in the theme's colours.
+
+In the dialog, `←`/`→` steps the preset or the highlighted light's glyph,
+`r` resets it, and a sample fleet shows the result; the foot warns when two
+main lights look the same.
 
 A parent whose own turn ended while any of its children still work reads 🟡,
 with 👶 in the status detail ("Waiting on 2 children"). Once every child is at

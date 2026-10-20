@@ -70,3 +70,17 @@ def test_the_retired_glyphs_are_gone():
             text = path.read_text(errors="ignore")
             hits += [f"{path.relative_to(ROOT)}: {g}" for g in RETIRED if g in text]
     assert hits == []
+
+
+def test_the_tui_guide_describes_every_status_theme():
+    """The legend there is classic; its Status colours section names every
+    preset and each preset's main glyphs."""
+    from overcode.status_theme import MAIN_LIGHTS, PRESETS
+    guide = (ROOT / "docs" / "tui-guide.md").read_text()
+    section = guide[guide.index("### Status colours"):]
+    for name, glyphs in PRESETS.items():
+        row = next(ln for ln in section.splitlines() if ln.startswith(f"| `{name}`"))
+        for light in MAIN_LIGHTS:
+            if light != "unknown":
+                assert glyphs[light] in row, (name, light)
+    assert "status_theme" in (ROOT / "docs" / "configuration.md").read_text()
