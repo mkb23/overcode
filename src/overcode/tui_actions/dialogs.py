@@ -3,10 +3,10 @@ Dialogs for the TUI: opening them, their results, and the tmux zoom around them.
 
 Every dialog (a widget with the "modal" class) zooms the TUI pane while it
 is open (_dialog_will_open) and unzooms when the last one closes
-(_dialog_did_close). Here: the new-agent, rename and billing-code dialogs, column config,
-new-agent defaults, skills, tmux toggle key, passthru keys, instruction
-history (#376) and the command palette (agents, tags, sorts, commands:
-#420, #357, #482, #487).
+(_dialog_did_close). Here: the new-agent, rename and billing-code dialogs,
+billing codes, column config, new-agent defaults, skills, tmux toggle key,
+passthru keys, instruction history (#376) and the command palette (agents,
+tags, sorts, commands: #420, #357, #482, #487).
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from ..tui_widgets import (
     PassthruConfigModal,
     AgentVisibilityModal,
     BillingCodeModal,
+    BillingCodesModal,
     RenameAgentModal,
     SessionSummary,
     SkillsModal,
@@ -295,6 +296,119 @@ class DialogsMixin:
 
     def on_billing_code_modal_cancelled(self, message: BillingCodeModal.Cancelled) -> None:
         """Handle cancel from the billing-code modal."""
+        self._dialog_did_close()
+
+    def action_open_billing_codes(self) -> None:
+        """Open the billing codes dialog (palette: Billing codes…); the ledger is read in a worker."""
+        try:
+            modal = self.query_one("#billing-codes-modal", BillingCodesModal)
+        except NoMatches:
+            return
+        self._dialog_will_open()
+        modal.show(app_ref=self)
+        self._load_billing_codes()
+
+    def _load_billing_codes(self, message: str | None = None, style: str | None = None) -> None:
+        manager = self.session_manager
+
+        def work() -> None:
+            from ..tui_widgets.billing_codes_modal import load_code_rows
+
+            try:
+                rows = load_code_rows(manager.ledger)
+            except Exception as e:  # a broken ledger must not take the TUI down
+                self.call_from_thread(self._billing_codes_modal_say,
+                                      f"could not read the ledger: {e}", "error")
+                return
+            self.call_from_thread(self._billing_codes_loaded, rows, message, style)
+
+        self.run_worker(work, thread=True, group="billing_codes", exclusive=True)
+
+    def _billing_codes_loaded(self, rows, message, style) -> None:
+        from ..tui_widgets import dialog_style as ds
+
+        modal = self.query_one("#billing-codes-modal", BillingCodesModal)
+        modal.set_rows(rows, message, style or ds.MUTED)
+
+    def _billing_codes_modal_say(self, text: str, severity: str = "information") -> None:
+        from ..tui_widgets import dialog_style as ds
+
+        style = {"error": ds.ERROR, "warning": ds.WARN}.get(severity, ds.MUTED)
+        try:
+            self.query_one("#billing-codes-modal", BillingCodesModal).say(text, style)
+        except NoMatches:
+            pass
+
+    def _billing_codes_changed(self, manager) -> None:
+        """After a rename or merge: the agents' name copies now, and the engine told.
+
+        ``overcode billing rename``'s refresh (the daemon's housekeeping
+        would, later); the activity signal wakes the engine for a full tick,
+        which publishes the new names to every view.
+        """
+        from ..layout_migration import fill_billing_codes
+        from ..settings import signal_activity
+
+        try:
+            fill_billing_codes(manager)
+        except Exception:  # the registry is right; the daemon catches the copies up
+            pass
+        signal_activity(self.tmux_session)
+
+    def on_billing_codes_modal_rename_requested(
+        self, message: BillingCodesModal.RenameRequested,
+    ) -> None:
+        """Rename a code: ``overcode billing rename``'s path, off the UI thread."""
+        manager = self.session_manager
+
+        def work() -> None:
+            from ..codes import CodeError
+
+            codes = manager.ledger.codes
+            try:
+                code_id, _ = codes.rename(message.code_id, message.new)
+            except CodeError as e:
+                self.call_from_thread(self._billing_codes_modal_say, str(e), "error")
+                return
+            entry = codes.get(code_id) or {}
+            self._billing_codes_changed(manager)
+            self.call_from_thread(self._billing_code_renamed, code_id, entry, message.old)
+
+        self.run_worker(work, thread=True, group="billing_codes_edit", exclusive=False)
+
+    def _billing_code_renamed(self, code_id: str, entry: dict, old: str) -> None:
+        from ..tui_widgets import dialog_style as ds
+
+        modal = self.query_one("#billing-codes-modal", BillingCodesModal)
+        name = entry.get("name", "?")
+        modal.renamed(code_id, name, list(entry.get("previous_names") or ()))
+        modal.say(f"✓ {old} is now {name} in every report", ds.STATE_ON)
+        self.refresh_sessions()
+
+    def on_billing_codes_modal_merge_requested(
+        self, message: BillingCodesModal.MergeRequested,
+    ) -> None:
+        """Fold one code into another: ``overcode billing merge``'s path; the figures are read again."""
+        from ..tui_widgets import dialog_style as ds
+
+        manager = self.session_manager
+
+        def work() -> None:
+            from ..codes import CodeError
+
+            try:
+                manager.ledger.codes.merge(message.code_id, message.into_id)
+            except CodeError as e:
+                self.call_from_thread(self._billing_codes_modal_say, str(e), "error")
+                return
+            self._billing_codes_changed(manager)
+            self.call_from_thread(self._load_billing_codes,
+                                  f"✓ {message.name} folded into {message.into_name}", ds.STATE_ON)
+            self.call_from_thread(self.refresh_sessions)
+
+        self.run_worker(work, thread=True, group="billing_codes_edit", exclusive=False)
+
+    def on_billing_codes_modal_closed(self, message: BillingCodesModal.Closed) -> None:
         self._dialog_did_close()
 
     def on_rename_agent_modal_cancelled(self, message: RenameAgentModal.Cancelled) -> None:

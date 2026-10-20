@@ -101,6 +101,7 @@ from .tui_widgets import (
     NewAgentModal,
     RenameAgentModal,
     BillingCodeModal,
+    BillingCodesModal,
     SummaryPromptLab,
     JourneyPanel,
     AgentSelectModal,
@@ -618,6 +619,7 @@ class SupervisorTUI(
         yield NewAgentModal(id="new-agent-modal", classes="modal")
         yield RenameAgentModal(id="rename-agent-modal", classes="modal")
         yield BillingCodeModal(id="billing-code-modal", classes="modal")
+        yield BillingCodesModal(id="billing-codes-modal", classes="modal")
         # Summarizer prompt editor with live results (#491)
         yield SummaryPromptLab(id="summary-prompt-lab", classes="modal")
         # The learning journey (#483)
