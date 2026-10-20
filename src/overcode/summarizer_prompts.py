@@ -261,3 +261,43 @@ def render_naming_prompt(template: str, **values: str) -> str:
         name: (str(values[name]) if values.get(name) not in (None, "") else "(none)")
         for name in NAMING_PLACEHOLDERS
     })
+
+
+# The naming lab saves the advice beside the prompt (#542 §9). A saved
+# naming-advice.md stands in for naming.advice in config.yaml; a repo's
+# .overcode/naming.md is still added after it (naming_policy.load_advice).
+
+NAMING_KINDS = ("advice", "prompt")
+
+
+def naming_file_path(kind: str) -> Path:
+    """Where the lab saves ``kind``: prompts/naming-advice.md or prompts/naming.md."""
+    if kind not in NAMING_KINDS:
+        raise ValueError(f"unknown naming text '{kind}' (expected one of {NAMING_KINDS})")
+    return naming_prompt_path() if kind == "prompt" else overcode_dir() / "prompts" / "naming-advice.md"
+
+
+def load_saved_naming_advice() -> str:
+    """The advice the lab saved, or "" when there is none (or it is blank)."""
+    try:
+        return naming_file_path("advice").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def save_naming_file(kind: str, text: str) -> Path:
+    """Save ``kind`` (atomically); returns the path."""
+    path = naming_file_path(kind)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def reset_naming_file(kind: str) -> None:
+    """Delete the saved ``kind`` so its fallback applies again."""
+    try:
+        naming_file_path(kind).unlink()
+    except FileNotFoundError:
+        pass

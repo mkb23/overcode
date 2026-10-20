@@ -356,9 +356,17 @@ def project_advice_path(directory: Optional[str]) -> Optional[Path]:
     return None
 
 
-def load_advice(config_advice: str, directory: Optional[str] = None) -> str:
-    """The naming advice: config's ``naming.advice``, then the project's file."""
-    parts = [config_advice.strip()] if config_advice and config_advice.strip() else []
+def user_advice(config_advice: str) -> str:
+    """The person's own advice: what the naming lab saved, else config's ``naming.advice``."""
+    from .summarizer_prompts import load_saved_naming_advice
+    return load_saved_naming_advice() or (config_advice or "").strip()
+
+
+def load_advice(config_advice: str, directory: Optional[str] = None,
+                user: Optional[str] = None) -> str:
+    """The naming advice: the person's (``user``, else ``user_advice``), then the project's file."""
+    own = user_advice(config_advice) if user is None else user.strip()
+    parts = [own] if own else []
     path = project_advice_path(directory)
     if path is not None:
         try:

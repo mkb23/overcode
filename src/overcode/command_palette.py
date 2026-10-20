@@ -354,6 +354,7 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     # Daemons and services
     _C("toggle_summarizer", "AI summarizer", "Daemons", "openai summary", state=_summarizer_state),
     _C("open_summary_prompt_lab", "AI summary prompts…", "Daemons", "summarizer edit tune lab"),
+    _C("open_naming_lab", "Naming lab…", "Daemons", "names advice auto-naming namer tune"),
     _C("toggle_web_server", "API server (sisters)", "Daemons", "web server http api sister", state=_web_state),
     _C("cycle_notifications", "macOS notifications", "Daemons", "sound banner alert",
        state=_notifications_state),
