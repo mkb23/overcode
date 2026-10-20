@@ -1,6 +1,7 @@
 # Auto-naming agents (#542)
 
-Status: proposal, 2026-10-20; owner decisions taken the same day (end of file). Builds on `overcode rename` (#478) and the
+Status: proposal, 2026-10-20; owner decisions taken the same day (end of file).
+Section 1 (P0) is built. Builds on `overcode rename` (#478) and the
 per-agent directories keyed by session id (quality review item 35).
 
 ## Goal
@@ -20,7 +21,7 @@ uses but does not depend on.
 
 ## What exists today
 
-- **Rename restarts the agent.** `RenameMixin.rename` (`rename.py:55`)
+- **Rename restarts the agent** (until section 1 was built). `RenameMixin.rename` (`rename.py:55`)
   refuses a busy agent, sends a graceful exit, renames the window
   (`<name>-<id4>`), commits the record (`rename_session`: `previous_names`
   alias, locked duplicate check), writes `agents/<id>/rename_notice.txt`,
@@ -48,6 +49,17 @@ uses but does not depend on.
 ## Design
 
 ### 1. Rename without a restart (prerequisite)
+
+**Built** (2026-10-20). As designed, plus: the lookups share
+`agent_identity.py` (`in_agent`, `current_agent`, `find_in_daemon_state`);
+an id with no record is no agent (never a name fallback, since the launch
+name may belong to another agent by then); a child launched from inside an
+agent gets its parent by id too; the daemon sets `@overcode_id` on every
+live agent window once at start (idempotent, rather than checking first);
+the TUI rename dialog shows its Force row only for a pre-0.6 agent; and
+`rename()` takes a `source` keyword it does not store yet (section 2).
+An agent counts as 0.6+ when it has its own directory (`agents/<id>/`),
+which every launch since then creates along with `OVERCODE_SESSION_ID`.
 
 An agent's identity becomes its session id everywhere. The name becomes
 something displayed, not a key.

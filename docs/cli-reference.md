@@ -213,10 +213,13 @@ overcode rename <agent-name> <new-name> [--force] [--session <session>]
 
 | Option | Description |
 |--------|-------------|
-| `--force` | Rename even if the agent is busy (its current turn is cancelled) |
+| `--force` | Agents launched before 0.6 only: rename even if busy (its turn is cancelled). Ignored otherwise |
 
-A live agent is stopped and resumed under the new name, in the same window
-with the same conversation. With its next prompt it is told it was renamed.
+The agent keeps running, even mid-turn: its tmux window and its record take
+the new name, and with its next prompt it is told it was renamed. Its
+environment keeps the name it was launched under (`OVERCODE_SESSION_NAME`);
+overcode finds a running agent by `OVERCODE_SESSION_ID`, so nothing reads
+that name.
 
 The old name keeps working as an alias. `send`, `follow`, `kill`, `show` and
 the other name-taking commands still reach the agent and print
@@ -224,11 +227,13 @@ the other name-taking commands still reach the agent and print
 child through a rename keeps following it. An alias is dropped when a new
 agent is launched with that name.
 
-An agent that is busy (working, or showing a permission dialog) is not
-renamed: stopping it would cancel its turn and kill whatever command it was
-running, and the resumed agent would not carry on by itself. Wait until it
-is idle, or pass `--force`. A terminated agent just has its record renamed,
-and `restart`/`revive` bring it back under the new name.
+A terminated agent just has its record renamed, and `restart`/`revive`
+bring it back under the new name.
+
+An agent launched before 0.6 finds itself by its launch name, so it is
+stopped and resumed under the new name instead, in the same window with the
+same conversation. While it is busy (working, or showing a permission
+dialog) that would cancel its turn, so it is refused unless `--force`.
 
 ### `overcode cleanup`
 
