@@ -89,7 +89,7 @@ class TestSendToAgent:
 
         send_to_agent("agents", "test-agent", "hello")
 
-        sm.update_session.assert_called_once_with(session.id, is_asleep=False)
+        sm.update_session.assert_called_once_with(session.id, is_asleep=False, asleep_auto=False)
 
     @patch(SM_PATH)
     def test_agent_not_found_raises_404(self, MockSM):
@@ -460,7 +460,7 @@ class TestSetSleep:
         result = set_sleep("agents", "test-agent", asleep=True)
 
         assert result == {"ok": True}
-        sm.update_session.assert_called_once_with("sess-1", is_asleep=True)
+        sm.update_session.assert_called_once_with("sess-1", is_asleep=True, asleep_auto=False)
 
     @patch(SM_PATH)
     def test_wakes_agent(self, MockSM):
@@ -470,7 +470,7 @@ class TestSetSleep:
         result = set_sleep("agents", "test-agent", asleep=False)
 
         assert result == {"ok": True}
-        sm.update_session.assert_called_once_with("sess-1", is_asleep=False)
+        sm.update_session.assert_called_once_with("sess-1", is_asleep=False, asleep_auto=False)
 
     @patch(SM_PATH)
     def test_rejects_sleep_on_running_agent(self, MockSM):
