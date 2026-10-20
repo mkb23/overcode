@@ -56,13 +56,22 @@ class SummarizerClient:
 
     api_type: str = "openai"
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, overrides: Optional[dict] = None):
         """Initialize the client.
 
         Args:
             api_key: API key. If None, reads from config file or env var.
+            overrides: ``api_type`` / ``api_url`` / ``model`` / ``api_key_var``
+                over the summarizer: block (``naming.provider``, #542).
         """
         config = get_summarizer_config()
+        if overrides:
+            import os
+            for key in ("api_type", "api_url", "model"):
+                if isinstance(overrides.get(key), str) and overrides[key]:
+                    config[key] = overrides[key]
+            if isinstance(overrides.get("api_key_var"), str) and overrides["api_key_var"]:
+                config["api_key"] = os.environ.get(overrides["api_key_var"])
         self.api_url = config["api_url"]
         self.model = config["model"]
         self.api_key = api_key or config["api_key"]

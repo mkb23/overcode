@@ -43,6 +43,7 @@ from .session_manager import SessionManager, Session
 from .job_manager import Job, JobManager
 from .job_launcher import JobLauncher
 from .launcher import AgentLauncher
+from .name_source import auto_rename_toast
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
@@ -1200,6 +1201,9 @@ class SupervisorTUI(
         for widget in self.query(SessionSummary):
             new_sess = fresh.get(widget.session.id)
             if new_sess is not None and new_sess is not widget.session:
+                toast = auto_rename_toast(widget.session, new_sess)
+                if toast:
+                    self.notify(toast, severity="information")
                 widget.session = new_sess
                 if "pr_number" not in widget.engine:
                     widget.pr_number = new_sess.pr_number

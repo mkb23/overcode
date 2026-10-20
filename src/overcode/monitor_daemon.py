@@ -86,6 +86,7 @@ from .child_lifecycle import CHILD_NOT_WORKING, OVERSIGHT_TIMEOUT_REASON, child_
 from .engine_recorders import RecorderStore
 from .ledger import billing_name_of
 from .engine_wake import WakeLoop
+from .namer import Namer
 from .swarm_publisher import SwarmPublisher
 from . import swarm
 from .claude_bg import ClaudeBgSource, fleet_agents
@@ -591,6 +592,14 @@ class MonitorDaemon:
 
         # Loop interval while nobody is watching
         self._interval_unattended: int = interval_unattended
+
+        # The auto-namer and Claude's own session titles (#542): acts on
+        # turn ends seen here, calls the model on its own worker thread
+        self.namer = Namer(
+            tmux_session, session_manager, tmux=tmux, log=log, clock=self.clock,
+            titles=lambda: self.stats_sync.transcript_titles,
+            spend_path=state_path.parent / "namer_spend.json",
+        )
 
 
         # Shutdown flag
@@ -1499,6 +1508,10 @@ class MonitorDaemon:
             except Exception as e:  # the agents' own rows must still publish
                 self.log.warn(f"background sessions not read: {e}")
             self._publish_and_enforce(sessions, session_states, all_waiting, index, now)
+            try:
+                self.namer.on_tick(sessions, session_states, now)
+            except Exception as e:  # naming is never worth a failed tick
+                self.log.warn(f"namer: {type(e).__name__}: {e}")
             self.recorder_store.save({s.id for s in sessions} | self.claude_bg.ids())
         finally:
             # One write for the whole tick, even when a phase raised: what
@@ -2321,6 +2334,7 @@ class MonitorDaemon:
                 except Exception as e:
                     self.log.warn(f"quota token stream not flushed at shutdown: {e}")
             self.presence.stop()
+            self.namer.shutdown()
             if self._engine is not None:
                 self._engine.stop()
             self.state.status = "stopped"

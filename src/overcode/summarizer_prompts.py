@@ -201,7 +201,8 @@ def missing_pane_content(template: str) -> bool:
 # at {advice}: it is the primary naming policy.
 
 NAMING_PLACEHOLDERS = ("advice", "brief", "prompts", "repo", "branch", "files",
-                       "current_name", "name_source", "fleet", "siblings", "max_length")
+                       "current_name", "name_source", "parent", "fleet", "siblings",
+                       "max_length")
 
 DEFAULT_NAMING_PROMPT = """Name this coding agent. The name is how people and other agents refer to it.
 
@@ -217,7 +218,7 @@ DEFAULT_NAMING_PROMPT = """Name this coding agent. The name is how people and ot
 ## Where it works: repo {repo}, branch {branch}
 Files it edits most: {files}
 
-## Its name now: {current_name} ({name_source})
+## Its name now: {current_name} ({name_source}); its parent: {parent}
 
 ## The other agents (a new name must differ from all of them):
 {fleet}

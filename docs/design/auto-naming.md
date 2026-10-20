@@ -1,7 +1,9 @@
 # Auto-naming agents (#542)
 
 Status: proposal, 2026-10-20; owner decisions taken the same day (end of file).
-Section 1 (P0) and sections 2 and 2a (P1) are built. Builds on `overcode rename` (#478) and the
+Section 1 (P0), sections 2 and 2a (P1), sections 3-8 (P2, with P4's
+parent notices and Claude name alignment) and `overcode name suggest` are
+built. Builds on `overcode rename` (#478) and the
 per-agent directories keyed by session id (quality review item 35).
 
 ## Goal
@@ -173,6 +175,23 @@ would pick always passes.
 
 ### 3. When to name
 
+**Built (P2, branch auto-namer),** in `namer.py` (`Namer`, `due`), run
+from the daemon tick after publishing. As designed, with: a turn end is a
+status going from green to waiting_user / waiting_heartbeat /
+waiting_oversight / done, as the daemon publishes it (so hookless agents
+count too); the turn count is the larger of those seen (kept in
+`agents/<id>/namer.json`) and the transcript's interaction count; the
+refinement needs 10x every threshold (turns and green minutes or tokens);
+a failed or unreadable call is retried no sooner than 10 minutes later.
+"A human keypress in the TUI" is the TUI's keypress heartbeat file
+(`tui_heartbeat`, per tmux session, written at most every 5 s), so the
+30 s rule holds for the whole tmux session, not one agent. The worker is
+one thread (renames from one daemon never race each other). The cost cap
+is per tmux session (`namer_spend.json` beside the daemon state). Each
+call is one ledger row of its own (`sid` `namer:<hex>`, `parent` the
+agent, `kind` final, `namer: true`) under the code `overcode`, so the
+`overcode` code's agent count is its number of calls.
+
 The daemon decides, because it owns per-agent values (AGENTS.md). It works
 from events and adds no polling.
 
@@ -195,6 +214,18 @@ from events and adds no polling.
   At about 2 calls per agent with a mini model, 100 agents cost about $0.05.
 
 ### 4. What the namer reads
+
+**Built (P2).** `brief.txt` is written by `launch` and `fork` (a fork with
+no prompt of its own copies its source's). `prompts.jsonl` comes from the
+UserPromptSubmit hook: the payload's `prompt` (Claude Code's; codex, grok
+and hermes are captured when their normalised payload carries it, not
+live-checked); the opencode plugins' `chat.message` is left to the
+opencode-notices branch (TODO). The most-edited files come
+from `tool_input.file_path`, which the hook event log now keeps. The PR is
+its number (no title is fetched). The fleet is live local agents plus
+records archived in the last 24 h. The repo column flag is not passed to
+the model; `no_repo_prefix` stays a rule. The prompt gains a `{parent}`
+placeholder.
 
 Per-id storage makes this cheap: small files beside the ones that already
 exist, written once and never moved.
@@ -220,6 +251,13 @@ does.
 
 ### 5. Choosing the name
 
+**Built (P2)** with `naming_policy.choose`. The rename stores
+`name_source` in the same locked write (`rename_session(name_source=)`). A
+lost race chooses again once against the fleet as it is then. A pick equal
+to the current name, or `keep: true`, renames nothing. The first auto name
+of a root agent calls `codes.follow_agent_name` on its code (owner decision
+3); a child shares its root's code, so never.
+
 The model returns JSON: `{"candidates": ["jwt-refresh", "auth-refresh",
 "jwt-fix"], "keep": false, "why": "..."}`, best first. `keep: true` means
 the current name still fits, which is how refinements stay rare. Overcode
@@ -242,6 +280,10 @@ groups siblings, so advice such as "siblings share a short prefix:
 the set readable.
 
 ### 6. Naming advice
+
+**Built** (P1 and P2); `naming.provider` (`api_type`, `api_url`, `model`,
+`api_key_var` over the `summarizer:` block) and `naming.cli_title` (default
+on, section 7) are the additions.
 
 ```yaml
 naming:
@@ -277,6 +319,20 @@ naming:
 
 ### 7. Keeping the CLI's own name in step
 
+**Built for Claude Code (P4).** `display_name_args` (`--name <name>`) on
+every launch, restart and revive. Alignment: at a turn end, a Claude agent
+whose believed title (`namer.json` `cli_title`) differs from its name gets
+`/rename <name>` typed in when its live input line is the bare prompt glyph
+and no TUI key was pressed in 30 s; it runs whatever started the rename
+(auto, CLI, TUI). Adoption: a new `custom-title` (Claude 2.1.304 writes
+`{"type": "custom-title", "customTitle", "sessionId"}`, plus an
+`agent-name` twin, at a `/rename`) that is not the agent's name, an old
+name of it, or the title overcode last typed is normalised and committed as
+a `human` rename; a taken or invalid one is logged and left. Runs with
+`naming.enabled` off; `naming.cli_title: false` turns it off. An agent
+renamed while the daemon was down is assumed in step (its title is not
+recorded at launch). Hermes and opencode titles: not done.
+
 Claude Code has a session name of its own: `claude -n/--name` sets it,
 `/rename` changes it, and it shows in the prompt box, the `/resume` picker,
 the terminal title and Remote Control. The transcript records it as
@@ -307,6 +363,13 @@ prints the record's current name (P0).
 
 ### 8. Telling people
 
+**Built.** The parent notice is written by every rename of a child (human
+or auto) to `agents/<parent>/child_notice.txt`, appended, and printed and
+removed by the parent's next UserPromptSubmit. The toast is the TUI's,
+when a row's record changes name to an `auto` source. The activity-log
+line is the daemon log (the `d` panel): `namer: auto-named 'a' → 'b'
+(why)`.
+
 - **The agent** gets the existing one-shot `rename_notice.txt` on its next
   prompt: "You are now `jwt-refresh` (was `overcode-main2`); old names still
   reach you." This works today for Claude and hermes. opencode needs #533.
@@ -320,6 +383,8 @@ prints the record's current name (P0).
   name, so undoing is one rename, which then locks the name.
 
 ### 9. The naming lab
+
+`overcode name suggest` is built (P2); the lab and `name lab` are P3.
 
 Opened from the palette as "Naming lab…". It is a TUI modal with the same
 skeleton as the summary prompt lab: an editor above, results below, and
