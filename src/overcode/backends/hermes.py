@@ -419,6 +419,9 @@ HERMES_PATTERNS = StatusPatterns(
     command_menu_pattern=r"^\s*/[\w-]+\s{2,}\S",
 
     # No plan-mode / "approve this plan" stage.
+    # No question menu in its corpus
+    question_patterns=[],
+
     approval_patterns=[NEVER],
 
     # A provider failure ("OpenAI API rejected your API key … Provider

@@ -188,7 +188,7 @@ class SessionActionsMixin:
             return
 
         # Update the session in the session manager
-        self.session_manager.update_session(session.id, is_asleep=new_asleep_state)
+        self.session_manager.update_session(session.id, is_asleep=new_asleep_state, asleep_auto=False)
 
         # Update the local session object
         session.is_asleep = new_asleep_state

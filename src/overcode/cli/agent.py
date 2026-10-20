@@ -1000,8 +1000,18 @@ def list_agents(
     # Heartbeat status legacy bridge (#TBD task 6)
     from ..hook_status_detector import augment_with_legacy_heartbeat
 
-    def _augmented_detail(sess, status):
-        return augment_with_legacy_heartbeat(_get_status_detail(sess), status)
+    import time
+    from ..clock import to_epoch
+    from ..config import get_idle_config
+    from ..idle_stages import idle_since, staged_detail
+    drowsy_after = get_idle_config()["drowsy_after"]
+
+    def _augmented_detail(sess, status, idle_at=None):
+        """The detail as the TUI shows it: 📥 turns 😴 after idle.drowsy_after."""
+        detail = augment_with_legacy_heartbeat(_get_status_detail(sess), status)
+        if idle_at is None:
+            idle_at = idle_since(status, detail, to_epoch(sess.stats.state_since))
+        return staged_detail(detail, idle_at, time.time(), drowsy_after)
 
     # Second pass: build contexts and collect cells for auto-alignment
     from ..summary_columns import COLUMNS_BY_ID
@@ -1014,11 +1024,13 @@ def list_agents(
         # Get per-session daemon fields
         oversight_deadline = None
         in_session_mode = ""
+        idle_at = None
         if use_daemon:
             ds = daemon_state.get_session(sess.id)
             if ds:
                 oversight_deadline = ds.oversight_deadline
                 in_session_mode = ds.in_session_mode
+                idle_at = ds.idle_since
 
         _, status_color = get_status_symbol(status)
         ctx = build_cli_context(
@@ -1028,7 +1040,7 @@ def list_agents(
             git_untracked_count=git_untracked,
             in_session_mode=in_session_mode,
             fleet=fleet, child_count=child_count,
-            status_detail=_augmented_detail(sess, status),
+            status_detail=_augmented_detail(sess, status, idle_at),
             oversight_deadline=oversight_deadline,
             pr_number=getattr(sess, 'pr_number', None),
             summary_detail=detail,
@@ -1602,7 +1614,7 @@ def send(
     if agent_session:
         name = agent_session.name  # an old name resolved; say the current one
     if agent_session and agent_session.is_asleep:
-        sm.update_session(agent_session.id, is_asleep=False)
+        sm.update_session(agent_session.id, is_asleep=False, asleep_auto=False)
         rprint(f"[dim]Woke agent '{name}' to send command[/dim]")
 
     launcher = AgentLauncher(session)

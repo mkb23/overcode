@@ -44,12 +44,7 @@ C_TEXT = ds.TEXT                       # what a key does
 C_MUTED = ds.MUTED                     # notes, descriptions
 C_UNBOUND = ds.STATE_OTHER             # commands with no key (palette only)
 
-# Status colours — the timeline's and the agent list's (status_constants).
-C_RUNNING = "green"
-C_WAITING = "yellow"
-C_APPROVAL = "orange1"
-C_BLOCKED = "red"
-C_ERROR = "magenta"
+# The timeline's quiet marks; its lit ones take the status theme's colours
 C_ASLEEP = "dim"
 
 
@@ -176,16 +171,20 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
     """Status colours, indicators, emoji and the timeline legend.
 
     The light and the results (the ``l`` result mode) come from their one tables
-    (status_constants.LIGHT_LEGEND / RESULT_KINDS), as docs/tui-guide.md does.
+    (status_constants.LIGHT_LEGEND / RESULT_KINDS), as docs/tui-guide.md does;
+    each light shows its glyph and colour in the active status theme.
     """
     from ..status_constants import (
         LIGHT_LEGEND, RESULT_KINDS, STATUS_ASLEEP, STATUS_DONE, _safe_emoji,
-        get_agent_timeline_char, get_status_color,
+        get_agent_timeline_char,
     )
+    from ..status_theme import active_theme
+    theme = active_theme()
 
     def status(emoji: str, char: str, colour: str, name: str, desc: str) -> List[Text]:
         head = Text()
-        head.append(f"{_safe_emoji(emoji)} ")
+        # A one-cell shape (the shapes theme) is padded to the emoji's two
+        head.append(f"{_safe_emoji(emoji)}{' ' * (2 - cell_len(emoji))} ")
         head.append(char, style=colour)
         head.append(f"  {name}", style=f"bold {C_TEXT}")
         if compact:
@@ -203,8 +202,22 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
         lead = entry.statuses[0]
         key = next((keys[s] for s in entry.statuses if keys.get(s)), "")
         desc = entry.meaning[0].upper() + entry.meaning[1:] + (f"  ({key})" if key else "")
-        statuses += status(entry.glyph, get_agent_timeline_char(lead), get_status_color(lead),
-                           entry.name, desc)
+        statuses += status(theme.glyph(entry.key), get_agent_timeline_char(lead),
+                           theme.colour(entry.key), entry.name, desc)
+    if not compact:
+        # The idle stages beside needs input (idle_stages.py)
+        from ..config import get_idle_config
+        from ..idle_stages import format_after
+        idle = get_idle_config()
+        line = Text()
+        line.append(f"{_safe_emoji(theme.badge('awaiting_input'))} idle", style=C_TEXT)
+        line.append(f" → {_safe_emoji(theme.badge('drowsy'))} a while "
+                    f"({format_after(idle['drowsy_after'])})", style=C_MUTED)
+        line.append(f" → {_safe_emoji(theme.glyph('asleep'))} put to sleep "
+                    f"({format_after(idle['sleep_after'])}; wakes when it works)", style=C_MUTED)
+        statuses.append(line)
+        statuses.append(Text(f"Status colours: {theme.label()} (palette: Status colours)",
+                             style=C_MUTED))
 
     results: List[Text] = []
     for emoji, _ascii, style, meaning in RESULT_KINDS.values():
@@ -225,7 +238,8 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
 
     indicators = [plain(e, d) for e, d in (
         ("🔔", "Unvisited stall (bell)"),
-        ("👥", "SubAgents: ▶ working 🟠 needs approval ⚪ idle ✅ finished ❌ failed 🧩 workflows"),
+        ("👥", f"SubAgents: ▶ working {theme.glyph('approval')} needs approval "
+               f"{theme.glyph('rest')} idle ✅ finished ❌ failed 🧩 workflows"),
         ("🐚", "Background bash count"),
         ("👶", "Child agents, then ▶ working 📭 unreported ✅ success ❌ failure"),
         ("📋", "Standing orders active"), ("✓ ", "Standing orders complete"),
@@ -256,8 +270,10 @@ def reference_sections(km: Any, compact: bool = False) -> List[HelpSection]:
         return t
 
     timeline = [
-        legend(("█", C_RUNNING, "active"), (_safe_emoji("💚"), "", "heartbeat start")),
-        legend(("▒", C_WAITING, "waiting"), ("░", C_BLOCKED, "blocked"), ("▓", C_ERROR, "error")),
+        legend(("█", theme.colour("working"), "active"),
+               (_safe_emoji(theme.glyph("heartbeat")), theme.colour("heartbeat"), "heartbeat start")),
+        legend(("▒", theme.colour("heartbeat_waiting"), "waiting"), ("░", theme.colour("input"), "blocked"),
+               ("▓", theme.colour("error"), "error")),
         legend(("×", C_ASLEEP, "exited"), ("░", C_ASLEEP, "asleep"), ("·", C_ASLEEP, "at rest")),
         legend(("?", C_ASLEEP, "unknown"), ("─", C_ASLEEP, "no data")),
     ]

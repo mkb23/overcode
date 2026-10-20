@@ -121,6 +121,9 @@ class Session:
 
     # Sleep mode - agent is paused and excluded from stats
     is_asleep: bool = False
+    # Put to sleep by the engine after idle.sleep_after (idle_stages.py):
+    # it wakes by itself when it works again. A z sleep is not.
+    asleep_auto: bool = False
 
     # Enhanced context hook - per-agent toggle for enhanced context injection
     enhanced_context_enabled: bool = False

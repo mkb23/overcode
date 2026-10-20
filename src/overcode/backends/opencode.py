@@ -324,6 +324,9 @@ OPENCODE_PATTERNS = opencode_patterns(
     command_menu_pattern=r"^\s*┃?\s*/[\w-]+\s{2,}\S",
 
     # opencode has no plan-mode / "approve this plan" stage.
+    # No question menu in its corpus
+    question_patterns=[],
+
     approval_patterns=[NEVER],
 
     # opencode renders provider/tool errors as prose inside a red-bordered

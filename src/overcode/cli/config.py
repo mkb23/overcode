@@ -160,6 +160,15 @@ def _config_show():
         if "api_key_var" in s:
             rprint(f"    api_key_var: {s['api_key_var']}")
 
+    if "status_theme" in config:
+        from ..status_theme import resolve
+        theme, warnings = resolve(config["status_theme"])
+        rprint(f"  status_theme: {theme.label()}")
+        for light, glyph in theme.overrides.items():
+            rprint(f"    {light}: {glyph}")
+        for warning in warnings:
+            rprint(f"    [yellow]Warning:[/yellow] {warning}")
+
     if "sisters" in config:
         sisters = config["sisters"]
         if isinstance(sisters, list) and sisters:

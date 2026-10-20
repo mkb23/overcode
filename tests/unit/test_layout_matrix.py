@@ -237,3 +237,31 @@ async def test_nested_names_and_the_result_mode_hold(make_tui, width):
                 _shot(app, f"nested-{width}-{level}-{mode}")
                 app.action_cycle_summary_content()
                 await _settle(pilot)
+
+
+@pytest.mark.parametrize("width", [120, 200])
+@pytest.mark.parametrize("preset", ["calm", "colorblind", "shapes"])
+async def test_layout_holds_in_every_status_theme(make_tui, width, preset, tmp_path, monkeypatch):
+    """A theme's glyph keeps the status cell two wide, one-cell shapes included,
+    at every detail level, with and without emoji."""
+    from overcode.status_theme import StatusTheme, save_theme
+    # Its own config.yaml: a saved theme must not outlive the test
+    monkeypatch.setenv("OVERCODE_DIR", str(tmp_path))
+    save_theme(StatusTheme(preset))
+    engine = GridEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _open(pilot, engine)
+        for emoji_free in (False, True):
+            if emoji_free:
+                app.action_toggle_emoji_free()
+            for level in app.SUMMARY_LEVELS:
+                app._set_summary_level(level)
+                await _settle(pilot)
+                try:
+                    assert_layout_invariants(app)
+                except AssertionError as e:
+                    raise AssertionError(f"{preset}, {width} cols, {level}, "
+                                         f"emoji-free {emoji_free}: {e}") from e
+                _shot(app, f"layout-{preset}-{width}-{level}-{'ascii' if emoji_free else 'emoji'}")

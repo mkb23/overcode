@@ -114,6 +114,7 @@ class SessionDaemonState:
     permissiveness_mode: str = "normal"  # normal, permissive, bypass
     start_directory: Optional[str] = None  # For git diff stats
     is_asleep: bool = False  # Agent is paused and excluded from stats (#70)
+    asleep_auto: bool = False  # the engine put it to sleep (idle.sleep_after); wakes by itself
     enhanced_context_enabled: bool = False  # Per-agent enhanced context toggle
 
     # Agent priority value (#61)
@@ -249,6 +250,10 @@ class SessionDaemonState:
     # stretch that began after the visit is "unvisited": the 🔔 highlight.
     input_needed_since: Optional[float] = None
     visited_at: Optional[float] = None
+    # When a plain idle began (needs input, nothing pending; epoch seconds),
+    # None otherwise: views turn 📥 into 😴 after idle.drowsy_after
+    # (idle_stages.py). Holds still while the agent idles.
+    idle_since: Optional[float] = None
     # When the hook event behind current_status was written (epoch seconds;
     # None when the pane decided). Holds still between events, so views can
     # tell a status hooks reported a moment ago from one that is hours old.

@@ -138,6 +138,17 @@ sisters:
     url: "http://localhost:25337"
     api_key: "secret"  # Only needed for direct LAN access
 
+# An idle agent's stages; see "Idle Stages" below
+idle:
+  drowsy_after: 1h                # 📥 turns a dim 😴 (never / off: keep 📥)
+  sleep_after: never              # the engine puts it to sleep (6h, 1d, 3d, 7d...)
+
+# Status colours: which glyph each light shows; see "Status Colours" below
+status_theme:
+  preset: classic                 # classic | calm | colorblind | shapes
+  overrides:
+    input: 🔵                     # a light → a glyph or its name ("blue circle")
+
 # Custom emoticons for skills
 # Overrides built-in defaults shown in the "Available Skills" (ASK) column
 skill_emoji:
@@ -416,6 +427,54 @@ Then use with:
 ```bash
 overcode instruct my-agent MY_PRESET
 ```
+
+## Idle Stages
+
+An agent that waits for your next prompt with nothing pending shows 📥;
+after `drowsy_after` it shows a dim 😴, and after `sleep_after` the engine
+puts it to sleep (💤, as `z` does). It wakes by itself when it works again;
+a `z` sleep does not. See the [TUI guide](tui-guide.md#idle-stages).
+
+```yaml
+idle:
+  drowsy_after: 1h      # default 1h
+  sleep_after: 3d       # default never
+```
+
+Durations take `s`, `m`, `h` or `d` (`45m`, `2h`, `3d`) or plain seconds;
+`never`, `off` or `false` turns a stage off. An unreadable value is the
+default, with a warning in the log. The **Agent visibility** dialog (`d`)
+offers 10m / 30m / 1h / 2h / never and never / 6h / 1d / 3d / 7d and
+writes this block. The idle badges are themed like the lights
+(`status_theme.overrides.awaiting_input` / `drowsy`).
+
+## Status Colours
+
+`status_theme` picks the glyph each status light shows (see the
+[TUI guide](tui-guide.md#status-colours) for the presets). The palette's
+**Status colours** and the **Status colours…** dialog write it; editing it
+by hand works too, and the TUI and `overcode list` pick it up at once.
+
+```yaml
+status_theme: calm                # a preset alone
+
+status_theme:                     # or a preset with lights changed
+  preset: colorblind
+  overrides:
+    approval: 🟥
+    error: purple square
+```
+
+Lights: `working`, `automatic`, `approval`, `input`, `rest`, `unknown`,
+`gone`, and the shades `heartbeat`, `heartbeat_waiting`, `error`, `asleep`;
+and the idle badges `awaiting_input` (📥) and `drowsy` (😴), from 📥 😴 💬 🔕
+💭 ◇ z (`shapes` uses ◇ and z).
+Glyphs: 🔴 🟠 🟡 🟢 🔵 🟣 🟤 ⚫ ⚪, the squares 🟥 🟧 🟨 🟩 🟦 🟪 🟫 ⬛ ⬜,
+the diamonds 🔶 🔷 🔸 🔹, ❔ 💤 💚 💛, and the shapes ● ◐ ○ ▲ ■ ◆ ·, each by
+glyph or name (`blue circle`, `small orange diamond`, `half dot`…). A
+light's text colour follows its glyph. An unknown preset, light or glyph is
+logged and skipped (the preset falls back to `classic`). The web API keeps
+publishing the classic glyph and colour.
 
 ## TUI Preferences
 

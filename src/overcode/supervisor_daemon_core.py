@@ -10,7 +10,8 @@ from typing import List, Optional
 
 from .backends import DEFAULT_BACKEND
 from .backends.shell import SHELL_BACKEND
-from .status_constants import get_status_emoji, is_green_status
+from .status_constants import is_green_status
+from .status_theme import CLASSIC_THEME
 
 
 def build_daemon_claude_context(
@@ -41,7 +42,8 @@ def build_daemon_claude_context(
 
     for session in non_green_sessions:
         status = session.get("current_status", "unknown")
-        emoji = get_status_emoji(status)
+        # Classic glyphs: the prompt speaks of RED/YELLOW/ORANGE
+        emoji = CLASSIC_THEME.symbol_for(status)[0]
         name = session.get("name", "unknown")
         window = session.get("tmux_window", "?")
         context_parts.append(f"{emoji} {name} (window {window})")

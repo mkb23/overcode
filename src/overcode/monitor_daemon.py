@@ -56,7 +56,7 @@ from .settings import (
     get_agent_history_path,
     get_supervisor_stats_path,
 )
-from .config import get_monitor_daemon_config
+from .config import get_idle_config, get_monitor_daemon_config
 from .status_constants import (
     AT_REST_STATUSES,
     STATUS_ASLEEP,
@@ -82,6 +82,8 @@ from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
 from .quota_engine import QuotaEngine, UsageStore
+from .idle_stages import format_after, should_auto_sleep, should_auto_wake
+from .tui_helpers import format_duration
 from .child_lifecycle import CHILD_NOT_WORKING, OVERSIGHT_TIMEOUT_REASON, child_rollup, task_result
 from .engine_recorders import RecorderStore
 from .ledger import billing_name_of
@@ -786,6 +788,7 @@ class MonitorDaemon:
             permissiveness_mode=session.permissiveness_mode,
             start_directory=session.start_directory,
             is_asleep=session.is_asleep,
+            asleep_auto=bool(getattr(session, "asleep_auto", False)),
             enhanced_context_enabled=session.enhanced_context_enabled,
             agent_value=session.agent_value,
             # Heartbeat state (#171)
@@ -1758,6 +1761,7 @@ class MonitorDaemon:
         self._plan_captures(sessions, now)
         # session id -> (first failure, last error): see _detection_failed
         detect_failures = self._detect_failures
+        idle_cfg = get_idle_config()
 
         for snapshot in sessions:
             self._beat()  # a long tick over many agents is slow, not stalled
@@ -1824,6 +1828,13 @@ class MonitorDaemon:
             # reload used to return after the writes above.
             session = pending.view(snapshot)
 
+            # An agent the engine put to sleep wakes by itself when it works
+            # again (idle_stages); a z sleep stays
+            if should_auto_wake(session, status):
+                pending.update_session(session.id, is_asleep=False, asleep_auto=False)
+                session = pending.view(snapshot)
+                self.log.info(f"[{session.name}] awake: working again after an idle sleep")
+
             # Track stats and build state
             # Precedence: terminated > asleep > heartbeat variants > default (#399, #68, #171)
             if status == STATUS_TERMINATED:
@@ -1874,12 +1885,16 @@ class MonitorDaemon:
                 session = pending.view(snapshot)
 
             session_state = self.track_session_stats(session, effective_status, index, now)
+            # This tick's state start (staged just now): a status that changed
+            # this tick starts now, not when the last one did
+            session_state.status_since = pending.view(snapshot).stats.state_since
             session_state.current_activity = activity
             for name, value in self._pane_view(session, pane_content).items():
                 setattr(session_state, name, value)
             self._attach_git_and_burn(session, session_state)
             self.recorder_store.record(session, session_state, effective_status, now,
                                        detector=self.detector, engine=self._engine)
+            self._auto_sleep(session, session_state, now, idle_cfg)
             session_states.append(session_state)
 
             # Log status history to session-specific file — on change, on
@@ -1924,6 +1939,16 @@ class MonitorDaemon:
         self._compute_child_rollups(session_states, index)
 
         return session_states, all_waiting_user
+
+    def _auto_sleep(self, session, state: SessionDaemonState, now: datetime, idle_cfg: dict) -> None:
+        """Put a root agent idle for idle.sleep_after to sleep (idle_stages), marked
+        asleep_auto so it wakes by itself. Takes effect from the next tick."""
+        if not should_auto_sleep(session, state.idle_since, now.timestamp(), idle_cfg["sleep_after"]):
+            return
+        self._pending.update_session(session.id, is_asleep=True, asleep_auto=True)
+        idle = format_duration(now.timestamp() - state.idle_since)
+        self.log.info(f"[{session.name}] asleep: idle {idle} (idle.sleep_after "
+                      f"{format_after(idle_cfg['sleep_after'])}); wakes when it works again")
 
     def _record_swarm_history(self, session, now: datetime) -> None:
         """Append the parent's delegated-work counts to swarm_history.csv if they moved.

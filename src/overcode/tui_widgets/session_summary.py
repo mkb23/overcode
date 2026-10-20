@@ -268,7 +268,14 @@ class SessionSummary(Static, can_focus=True):
     @property
     def status_detail(self):
         """The engine's 4-colour detail (badge countdowns as of now), or None."""
-        return tui_engine.status_detail(self.engine, time.time()) if self.engine else None
+        if not self.engine:
+            return None
+        # 📥 turns 😴 after idle.drowsy_after, from when the engine says the idle began
+        from ..config import get_idle_config
+        from ..idle_stages import staged_detail
+        now = time.time()
+        return staged_detail(tui_engine.status_detail(self.engine, now), self.engine.get("idle_since"),
+                             now, get_idle_config()["drowsy_after"])
 
     def visible_columns(self) -> tuple:
         """The columns this row shows, worked out again only when the detail
@@ -368,8 +375,10 @@ class SessionSummary(Static, can_focus=True):
         ``local_pane`` holds (the focused agent's own capture).
         """
         before = self._engine_inputs()
+        prev = self.engine or {}
         self.engine = view or {}
         v = self.engine
+        self._follow_auto_sleep(prev, v)
         if v.get("current_status"):
             self.detected_status = self._effective_status(v["current_status"])
         if "current_activity" in v:
@@ -399,6 +408,21 @@ class SessionSummary(Static, can_focus=True):
             not self.session.is_asleep and tui_engine.is_unvisited(v, visited_here)
         )
         return self._engine_inputs() != before
+
+    def _follow_auto_sleep(self, prev: dict, view: dict) -> None:
+        """The engine put this agent to sleep after idle.sleep_after, or woke
+        it (idle_stages): follow at once, with a toast when it falls asleep.
+        A z sleep or wake is the TUI's own and is left alone."""
+        if view.get("asleep_auto") and view.get("is_asleep") and not self.session.is_asleep:
+            self.session.is_asleep = True
+            if prev:
+                try:
+                    self.app.notify(f"{self.session.name} fell asleep after a long idle; "
+                                    "it wakes when it works again", severity="information")
+                except Exception:
+                    pass  # no app (tests)
+        elif prev.get("asleep_auto") and not view.get("is_asleep") and self.session.is_asleep:
+            self.session.is_asleep = False
 
     def _engine_inputs(self) -> tuple:
         return (self.engine, self.detected_status, self.current_activity,

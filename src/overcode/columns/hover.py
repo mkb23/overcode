@@ -120,6 +120,7 @@ _SUBAGENT_WORDS = {"running": "working", "yellow": "waiting on background work o
 
 def hover_subagents(ctx: ColumnContext):
     """What the SubAgents cell's segments count, and the total it leaves out."""
+    from ..swarm_view import count_glyph
     from .render_performance import SUBAGENT_SEGMENTS, swarm_workflow_glyph
     rollup = ctx.swarm_rollup
     if not rollup:
@@ -131,9 +132,10 @@ def hover_subagents(ctx: ColumnContext):
     total = rollup.get("total") or 0
     rows = [(ctx.e("👥"), f"{total} agent{'' if total == 1 else 's'} delegated in this session "
                           "(subagents, forks, workflow agents, teammates)")]
-    for key, glyph in SUBAGENT_SEGMENTS:
+    for key, _ in SUBAGENT_SEGMENTS:
         if rollup.get(key):
-            rows.append((ctx.e(glyph).rstrip(), f"{rollup[key]} {_SUBAGENT_WORDS[key]}"))
+            rows.append((count_glyph(key, ctx.emoji_free).rstrip(),
+                         f"{rollup[key]} {_SUBAGENT_WORDS[key]}"))
     runs = rollup.get("workflows") or 0
     if runs:
         running = rollup.get("workflows_running") or 0

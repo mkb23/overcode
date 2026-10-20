@@ -815,6 +815,48 @@ def save_finished_row_seconds(seconds: float) -> None:
     save_config(config)
 
 
+_idle_warned: set = set()
+
+
+def get_idle_config() -> dict:
+    """The idle stages (idle_stages.py): seconds, None for never.
+
+    Config format in ~/.overcode/config.yaml:
+        idle:
+          drowsy_after: 1h    # 📥 turns 😴 (never / off to keep 📥)
+          sleep_after: never  # the engine puts it to sleep (30m, 2h, 3d...)
+
+    An unreadable value is the default, with a warning in the log.
+    """
+    from .idle_stages import DROWSY_AFTER_DEFAULT, SLEEP_AFTER_DEFAULT, parse_after
+    section = _get_config_value("idle", {})
+    if not isinstance(section, dict):
+        section = {}
+    out = {}
+    for key, default in (("drowsy_after", DROWSY_AFTER_DEFAULT),
+                         ("sleep_after", SLEEP_AFTER_DEFAULT)):
+        raw = section.get(key)
+        value = parse_after(raw, default)
+        warning = f"idle.{key}: not a duration: {raw!r}"
+        if parse_after(raw, -1.0) == -1.0 and warning not in _idle_warned:
+            _idle_warned.add(warning)
+            logging.getLogger(__name__).warning(warning)
+        out[key] = value
+    return out
+
+
+def save_idle_setting(key: str, seconds: Optional[float]) -> None:
+    """Set ``idle.<key>`` in config.yaml (the visibility dialog)."""
+    from .idle_stages import format_after
+    config = load_config()
+    section = config.get("idle")
+    if not isinstance(section, dict):
+        section = {}
+    section[key] = format_after(seconds)
+    config["idle"] = section
+    save_config(config)
+
+
 _SIZE_UNITS = {"": 1, "B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
 
 

@@ -54,18 +54,26 @@ TYPE_MAX = 22
 MARKER_SUBAGENT = "👥"
 MARKER_WORKFLOW = "🧩"
 
-# Light → (glyph, style)
-LIGHTS = {
-    "green": ("🟢", "green"),
-    "yellow": ("🟡", "yellow"),
-    "orange": ("🟠", "orange1"),
-    "idle": ("⚪", "grey70"),
-}
+# A row's light is drawn in the active status theme (status_theme.SWARM_LIGHTS)
 DONE_GLYPHS = {"ok": ("✅", "green"), "failed": ("❌", "red")}
 # Count key → glyph, in the order a SubAgents cell shows them ("more" is a
-# "+k more" line's count)
+# "+k more" line's count). The lit ones (yellow, waiting, idle) are their
+# light's glyph in the active theme (count_glyph); these are classic's.
 COUNT_GLYPHS = (("running", "▶"), ("yellow", "🟡"), ("waiting", "🟠"), ("idle", "⚪"),
                 ("ok", "✅"), ("failed", "❌"), ("more", "+"))
+# Count key → its light
+COUNT_LIGHTS = {"yellow": "automatic", "waiting": "approval", "idle": "rest"}
+
+
+def count_glyph(key: str, emoji_free: bool = False) -> str:
+    """A count's glyph as drawn: a lit one's is its light's in the active
+    status theme."""
+    light = COUNT_LIGHTS.get(key)
+    if light:
+        from .status_theme import active_theme
+        return active_theme().light_symbol(light, emoji_free)[0]
+    glyph = dict(COUNT_GLYPHS)[key]
+    return glyph if key == "more" else emoji_or_ascii(glyph, emoji_free)
 KIND_WORDS = {"subagent": "subagent", "fork": "fork", "teammate": "teammate",
               "workflow": "workflow agent"}
 
@@ -100,7 +108,7 @@ class SwarmLine:
         """The line as plain words (tests, logs): the NAME cell's text,
         its type, its counts and its summary."""
         head = self.connector + (f"{self.marker} " if self.marker else "") + self.label
-        counts = " ".join(f"{dict(COUNT_GLYPHS)[k]}{n}" for k, n in self.counts)
+        counts = " ".join(f"{count_glyph(k)}{n}" for k, n in self.counts)
         return "  ".join(p for p in (head + (f" {self.fold}" if self.fold else ""),
                                      self.type_label, counts, self.summary) if p)
 
@@ -156,9 +164,9 @@ def light_glyph(row: dict, emoji_free: bool = False) -> Tuple[str, str]:
     """A member's light: (glyph, style); a finished one's result."""
     if row.get("light") == "done":
         glyph, style = DONE_GLYPHS.get(row.get("result") or "ok", DONE_GLYPHS["ok"])
-    else:
-        glyph, style = LIGHTS.get(row.get("light"), ("❔", "grey50"))
-    return emoji_or_ascii(glyph, emoji_free), style
+        return emoji_or_ascii(glyph, emoji_free), style
+    from .status_theme import SWARM_LIGHTS, active_theme
+    return active_theme().light_symbol(SWARM_LIGHTS.get(row.get("light"), "unknown"), emoji_free)
 
 
 def marker_glyph(marker: str, emoji_free: bool = False) -> str:

@@ -179,6 +179,17 @@ def _swarm_detail_state(app: Any) -> StateView:
     return StateView(options, modes.index(mode) if mode in modes else None)
 
 
+def _status_theme_state(app: Any) -> StateView:
+    """The preset, "+" marked when lights are changed (status_theme)."""
+    try:
+        from .status_theme import PRESET_NAMES, active_theme
+        theme = active_theme()
+        names = tuple(theme.label() if n == theme.preset else n for n in PRESET_NAMES)
+        return _cycle(names, theme.label())
+    except Exception:
+        return StateView(("classic",), None)
+
+
 def _key_preset_state(app: Any) -> StateView:
     try:
         from .keymap import active, list_presets
@@ -298,6 +309,9 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        state=lambda app: _toggle(getattr(app, "emoji_free", None))),
     _C("toggle_theme", "Theme", "Display", "light dark mode colour color scheme background",
        state=lambda app: _cycle(("dark", "light"), getattr(app, "ui_theme", None))),
+    _C("cycle_status_theme", "Status colours", "Display",
+       "theme light lights colour color blind colorblind calm classic shapes palette emoji glyph",
+       state=_status_theme_state),
     _C("open_column_config", "Configure columns…", "Display", "fields"),
     _C("toggle_activity_recording", "Record activity (usage log)", "Settings",
        "privacy pause telemetry journey keys incognito",
@@ -380,6 +394,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("open_sister_selection", "Sister visibility…", "Settings", "remote hosts machines"),
     _C("open_tmux_config", "Tmux toggle key…", "Settings", "split pane focus"),
     _C("open_passthru_config", "Passthru keys…", "Settings", "forward ctrl"),
+    _C("open_status_colours", "Status colours…", "Settings",
+       "theme light lights colour color blind colorblind custom glyph emoji legend"),
     _C("open_agent_visibility", "Agent visibility…", "Settings",
        "show hide killed terminated ghost sleeping asleep done children subagents "
        "delegated work finished failures rows seconds swarm"),

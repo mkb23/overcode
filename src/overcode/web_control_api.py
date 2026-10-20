@@ -47,7 +47,7 @@ def send_to_agent(
 
     # Auto-wake sleeping agent (#168)
     if session.is_asleep:
-        sm.update_session(session.id, is_asleep=False)
+        sm.update_session(session.id, is_asleep=False, asleep_auto=False)
 
     launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
     if launcher.send_to_session(name, text, enter=enter):
@@ -347,7 +347,7 @@ def set_sleep(tmux_session: str, name: str, asleep: bool) -> dict:
                 status=409,
             )
 
-    sm.update_session(session.id, is_asleep=asleep)
+    sm.update_session(session.id, is_asleep=asleep, asleep_auto=False)
     return {"ok": True}
 
 

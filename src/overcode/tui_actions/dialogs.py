@@ -707,7 +707,7 @@ class DialogsMixin:
 
     def action_open_agent_visibility(self) -> None:
         """d: the agent visibility dialog, agents and subagents."""
-        from ..config import get_observability_config
+        from ..config import get_idle_config, get_observability_config
         try:
             modal = self.query_one("#agent-visibility-modal", AgentVisibilityModal)
         except NoMatches:
@@ -720,6 +720,8 @@ class DialogsMixin:
             "show_done": bool(self.show_done),
             "show_terminated": bool(self.show_terminated),
             "hide_asleep": bool(self.hide_asleep),
+            "idle_drowsy_after": get_idle_config()["drowsy_after"],
+            "idle_sleep_after": get_idle_config()["sleep_after"],
         }, self)
 
     def on_agent_visibility_modal_changed(self, message: AgentVisibilityModal.Changed) -> None:
@@ -733,6 +735,9 @@ class DialogsMixin:
         elif setting == "finished_row_seconds":
             from ..config import save_finished_row_seconds
             save_finished_row_seconds(value)  # the engine reads it on its next publish
+        elif setting in ("idle_drowsy_after", "idle_sleep_after"):
+            from ..config import save_idle_setting
+            save_idle_setting(setting[len("idle_"):], value)  # rows and the engine read it
         elif setting == "show_done" and bool(self.show_done) != bool(value):
             self.action_toggle_show_done()
         elif setting == "show_terminated" and bool(self.show_terminated) != bool(value):

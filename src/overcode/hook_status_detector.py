@@ -432,10 +432,10 @@ _LEGACY_BY_VERDICT: Dict[Tuple[Optional[str], Optional[str]], str] = {
     (STATUS_COLOR_GREEN, "blocked_sleep"): STATUS_BUSY_SLEEPING,  # a foreground sleep
     (STATUS_COLOR_GREEN, None): STATUS_RUNNING,                   # generating, a tool
     (STATUS_COLOR_YELLOW, None): STATUS_BUSY_SLEEPING,            # armed: background work
-    (STATUS_COLOR_ORANGE, None): STATUS_WAITING_APPROVAL,         # permission, plan
+    (STATUS_COLOR_ORANGE, None): STATUS_WAITING_APPROVAL,         # permission, question, plan
     (STATUS_COLOR_REST, None): STATUS_WAITING_OVERSIGHT,          # a child whose turn is over
     (STATUS_COLOR_RED, "error"): STATUS_ERROR,
-    (STATUS_COLOR_RED, None): STATUS_WAITING_USER,                # awaiting input, question, overdue
+    (STATUS_COLOR_RED, None): STATUS_WAITING_USER,                # awaiting input, overdue
 }
 
 
@@ -513,11 +513,13 @@ def rule_question(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     nothing more until it is answered (PostToolUse). Under bypass
     permissions that is all there is; otherwise a PermissionRequest
     follows. Either way the agent is waiting on a person, not working.
+    A question is an approval (orange): something to answer now, mid-turn;
+    its ❓ badge tells it from a permission.
     """
     if (ctx.event not in ("PreToolUse", "PermissionRequest")
             or ctx.tool_name not in _QUESTION_TOOLS):
         return None
-    return Verdict(STATUS_COLOR_RED, [StatusBadge(kind="ask_question")], v.activity)
+    return Verdict(STATUS_COLOR_ORANGE, [StatusBadge(kind="ask_question")], "Question: waiting for your answer")
 
 
 def rule_permission_answered(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
@@ -807,7 +809,8 @@ def synthesize_status_detail_from_legacy(
             return StatusDetail(STATUS_COLOR_YELLOW, [StatusBadge(kind=kind)], status)
         return StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="blocked_sleep")], status)
     if status == STATUS_WAITING_APPROVAL:
-        return StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind="permission")], status)
+        kind = "ask_question" if (activity or "").startswith("Question:") else "permission"
+        return StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind=kind)], status)
     if status == STATUS_WAITING_OVERSIGHT:
         return StatusDetail(STATUS_COLOR_REST, [], status)
     if status == STATUS_WAITING_HEARTBEAT:

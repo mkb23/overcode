@@ -378,6 +378,9 @@ GROK_PATTERNS = StatusPatterns(
     command_menu_pattern=r"^\s*/[\w-]+\s{2,}\S",
 
     # grok has no plan-mode / "approve this plan" stage.
+    # No question menu in its corpus
+    question_patterns=[],
+
     approval_patterns=[NEVER],
 
     # UNVERIFIED: error_bad_model.txt is a *headless* (`-p`/`--single`)

@@ -100,6 +100,9 @@ OPENCODE2_PATTERNS = opencode_patterns(
     command_menu_pattern=r"^\s*┃?\s*/[\w-]+\s{2,}\S",
 
     # opencode2 has no plan-mode / "approve this plan" stage.
+    # No question menu in its corpus
+    question_patterns=[],
+
     approval_patterns=[NEVER],
 
     # error_api_key.txt renders a provider failure as a plain transcript

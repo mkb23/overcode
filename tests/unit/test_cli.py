@@ -2440,6 +2440,17 @@ class TestListExtended:
         assert result.exit_code == 0, result.output
         assert get_status_symbol("asleep")[0] in result.output
 
+    def test_list_shows_a_long_idle_agent_drowsy(self, fleet):
+        """📥 turns 😴 after idle.drowsy_after (1h), as in the TUI (idle_stages)."""
+        from overcode.status_constants import StatusBadge, StatusDetail
+        fleet.add_with_history("idle-long")  # waiting since February
+        with _dispatcher_seeing("waiting_user", "Waiting for user input") as factory:
+            factory.return_value.get_status_detail.return_value = StatusDetail(
+                "color_red", [StatusBadge("awaiting_input")], "waiting_user")
+            result = runner.invoke(app, ["list"], env={"COLUMNS": "400"})
+        assert result.exit_code == 0, result.output
+        assert "😴" in result.output and "📥" not in result.output
+
 
 class TestKillExtended:
     """Extended kill command tests."""

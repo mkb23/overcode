@@ -176,7 +176,7 @@ class TestAutoWakeIfSleeping:
 
         result = InputActionsMixin._auto_wake_if_sleeping(mock_tui, mock_session, None)
         assert result is True
-        mock_tui.session_manager.update_session.assert_called_once_with("session-123", is_asleep=False)
+        mock_tui.session_manager.update_session.assert_called_once_with("session-123", is_asleep=False, asleep_auto=False)
         assert mock_session.is_asleep is False
         mock_tui.notify.assert_called_once()
         assert "Woke agent" in mock_tui.notify.call_args[0][0]
@@ -197,7 +197,7 @@ class TestAutoWakeIfSleeping:
 
         result = InputActionsMixin._auto_wake_if_sleeping(mock_tui, mock_session, mock_widget)
         assert result is True
-        mock_tui.session_manager.update_session.assert_called_once_with("session-456", is_asleep=False)
+        mock_tui.session_manager.update_session.assert_called_once_with("session-456", is_asleep=False, asleep_auto=False)
         assert mock_session.is_asleep is False
 
     def test_updates_widget_when_waking(self):

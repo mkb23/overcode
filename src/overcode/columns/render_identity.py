@@ -6,14 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from ..clock import from_iso, seconds_since, to_epoch
-from ..status_constants import (
-    BADGE_KINDS,
-    STATUS_COLOR_GREEN,
-    STATUS_COLOR_ORANGE,
-    STATUS_COLOR_RED,
-    STATUS_COLOR_YELLOW,
-    StatusDetail,
-)
+from ..status_constants import BADGE_KINDS, StatusDetail
 from ..tui_helpers import format_duration
 from .column import _make_simple_render
 from .context import ColumnContext, ColumnOutput
@@ -53,13 +46,6 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
         return [("    - ", f"dim{ctx.bg}")]
 
 
-_STATUS_COLOR_TO_STYLE: dict[str, str] = {
-    STATUS_COLOR_GREEN:  "green",
-    STATUS_COLOR_ORANGE: "orange1",
-    STATUS_COLOR_YELLOW: "yellow",
-    STATUS_COLOR_RED:    "red",
-}
-
 # Total display-cell budget for the column. Matches the legacy sleep-countdown
 # layout so headers and other columns line up.
 _STATUS_DETAIL_WIDTH = 9
@@ -76,7 +62,10 @@ def _badge_glyph(kind: str, emoji_free: bool) -> str:
     if spec is None:
         return "?"
     emoji, _, ascii_fb = spec
-    return ascii_fb if emoji_free else emoji
+    if emoji_free:
+        return ascii_fb
+    from ..status_theme import IDLE_BADGES, active_theme
+    return active_theme().badge(kind) if kind in IDLE_BADGES else emoji
 
 
 def _render_status_detail(ctx: "ColumnContext", detail: StatusDetail) -> ColumnOutput:
@@ -87,10 +76,15 @@ def _render_status_detail(ctx: "ColumnContext", detail: StatusDetail) -> ColumnO
     full remaining width; multi-badge layouts drop labels to keep packing
     tight. Overflow is signalled with a trailing '+'.
     """
-    color = _STATUS_COLOR_TO_STYLE.get(detail.color, "yellow")
+    # The badges take their light's colour in the active status theme
+    from ..status_theme import BUCKET_LIGHTS, active_theme
+    light = BUCKET_LIGHTS.get(detail.color)
+    color = active_theme().colour(light) if light else "yellow"
+    badges = detail.badges
+    if badges and badges[0].kind == "drowsy":
+        color = "dim"  # idle a while: no urgency
     style = f"{color}{ctx.bg}"
 
-    badges = detail.badges
     if not badges:
         return None
 

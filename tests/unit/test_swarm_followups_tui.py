@@ -140,7 +140,7 @@ class TestVisibilityDialog:
             await pilot.pause()
             modal = app.query_one(AgentVisibilityModal)
             assert "visible" in modal.classes
-            await pilot.press("j", "j", "j", "j")  # Subagents: Finished
+            await pilot.press(*["j"] * 6)  # Subagents: Finished
             await _press(pilot, engine, "space")  # → failures only
             assert app.swarm_finished == "failed"
             assert _keys(app) == ["id-bravo/sa/a1"]  # the fresh one finished ok
@@ -157,7 +157,7 @@ class TestVisibilityDialog:
             app.action_open_agent_visibility()
             await pilot.pause()
             assert (app.show_terminated, app.hide_asleep, app.show_done) == (False, False, False)
-            await pilot.press("space", "j", "space", "j", "space")
+            await pilot.press("space", "j", "space", "j", "j", "j", "space")  # past the idle rows
             await pilot.pause()
             assert (app.show_terminated, app.hide_asleep, app.show_done) == (True, True, True)
             await pilot.press("escape")
@@ -171,7 +171,7 @@ class TestVisibilityDialog:
             await _start(pilot)
             app.action_open_agent_visibility()
             await pilot.pause()
-            await pilot.press("j", "j", "j", "j", "j", "space")  # Finished row stays: 30s → 2m
+            await pilot.press(*["j"] * 7, "space")  # Finished row stays: 30s → 2m
             await pilot.pause()
             assert get_observability_config()["finished_row_seconds"] == 120.0
             await pilot.press("left", "left")     # → 10s
@@ -435,6 +435,6 @@ def test_agent_rows_offer_their_choices_in_one_order():
     """Killed, sleeping and done read "shown hidden" alike, though
     hide_asleep is a hide setting and the others are show settings."""
     from overcode.tui_widgets.agent_visibility_modal import _ROWS
-    agent_rows = [r for r in _ROWS if r[0] == "Agents"]
+    agent_rows = [r for r in _ROWS if r[0] == "Agents" and not r[1].startswith("idle_")]
     assert len(agent_rows) == 3
     assert {tuple(label for _, label in r[3]) for r in agent_rows} == {("shown", "hidden")}

@@ -548,7 +548,7 @@ need you?
 |-------|------|---------|
 | 🟢 | Working | Generating or running a tool |
 | 🟡 | Waiting on something automatic | Background work, a wakeup or child agents will resume it |
-| 🟠 | Needs approval | A permission prompt or a plan to approve |
+| 🟠 | Needs approval | A permission prompt, a question or a plan to approve |
 | 🔴 | Needs input | Its turn is over and it waits for you |
 | ⚪ | At rest | A child agent that stopped, reported or not |
 | ❔ | Unknown | Starting up, or its status cannot be read |
@@ -557,6 +557,60 @@ need you?
 Shades of those: 💚 working (a heartbeat started this turn), 💛 waiting on a
 heartbeat that will re-prompt it, 🟣 an API or hook error needs attention,
 💤 asleep (paused by you, left out of stats).
+
+### Idle stages
+
+An agent that just needs input (🔴, its turn over and nothing pending)
+shows 📥 in the status detail. Left alone it moves on:
+
+| Stage | Shows | When |
+|-------|-------|------|
+| Idle | 📥 | from the end of its turn |
+| Idle a while | 😴, dim | after `idle.drowsy_after` (default 1h) |
+| Put to sleep | 💤 | after `idle.sleep_after` (default never) |
+
+At the last stage the engine puts the agent to sleep as `z` does (left out
+of stats, hidden while Sleeping agents is hidden), and it wakes by itself as
+soon as it works again (a prompt, a child's report) or asks for approval. A
+`z` sleep is yours: it stays until you wake it. Only plain idle counts: an
+approval or question, a heartbeat wait, a child at rest, an error or an
+unknown status never moves through the stages, and sisters' agents follow
+their own machine. Set both in **Agent visibility** (`d`, the two Idle rows)
+or in [config.yaml](configuration.md#idle-stages); `overcode list` shows
+the same badge, and `?` says the stages in use.
+
+A question (Claude's AskUserQuestion menu) is an approval: 🟠 with ❓ in the
+status detail, where a permission shows 🔐 and a plan 📋.
+
+These are the classic colours; `?` always shows the ones in use.
+
+### Status colours
+
+The palette's **Status colours** steps through four presets, and
+**Status colours…** (Settings) changes single lights. Both save to
+`status_theme` in `~/.overcode/config.yaml` (see
+[configuration](configuration.md#status-colours)), which `overcode list`
+reads too.
+
+| Preset | Working | Automatic | Approval | Input | At rest | Gone |
+|--------|---------|-----------|----------|-------|---------|------|
+| `classic` (default) | 🟢 | 🟡 | 🟠 | 🔴 | ⚪ | ⚫ |
+| `calm` | 🟢 | 🟡 | 🔴 | 🔵 | ⚪ | ⚫ |
+| `colorblind` | 🔷 | 🟦 | 🟧 | 🔶 | ⬜ | ⬛ |
+| `shapes` | ● | ◐ | ▲ | ■ | ○ | · |
+
+`calm` keeps red for what you must answer now (a permission, a question,
+a plan) and shows an idle agent in neutral blue. `colorblind` uses only
+blue (nothing to do) and orange (you), the pair that stays apart with
+red/green colour blindness, and a shape in each family (diamond: acting
+or asking; square: waiting). `shapes` is monochrome. A light's text colour
+(time in state, the status detail, the timeline) follows its glyph. In
+emoji-free mode every theme shows the same letters (`[R]` working, `[W]`
+needs input, `[A]` approval…) in the theme's colours.
+
+In the dialog, `←`/`→` steps the preset or the highlighted light's glyph,
+`r` resets it, and a sample fleet shows the result; the foot warns when two
+main lights look the same.
 
 A parent whose own turn ended while any of its children still work reads 🟡,
 with 👶 in the status detail ("Waiting on 2 children"). Once every child is at

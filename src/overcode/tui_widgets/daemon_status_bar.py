@@ -372,11 +372,14 @@ class DaemonStatusBar(Static):
             green_now = local_green + sister_green
             total_agents = local_total + sister_total
 
+            # The working and asleep lights as the status theme draws them
+            from ..status_theme import active_theme
+            theme = active_theme()
             content.append("Spin: ", style="bold")
-            content.append(f"{green_now}", style="bold green" if green_now > 0 else "dim")
+            content.append(f"{green_now}", style=f"bold {theme.colour('working')}" if green_now > 0 else "dim")
             content.append(f"/{total_agents}", style="dim")
             if sleeping_count > 0:
-                content.append(f" 💤{sleeping_count}", style="dim")  # Show sleeping count
+                content.append(f" {theme.glyph('asleep')}{sleeping_count}", style="dim")  # Show sleeping count
 
             # New "|" section — everything that follows in this block
             # (μ, Δ, 🔥) is keyed off the movable baseline window (#174).

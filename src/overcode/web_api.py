@@ -25,11 +25,10 @@ from .tui_helpers import (
     calculate_uptime,
 )
 from .config import get_hostname
-from .status_constants import (
-    get_status_emoji,
-    get_status_color,
-    is_green_status,
-)
+from .status_constants import is_green_status
+# The API publishes the classic glyph and colour: status themes are a
+# view's, and its readers (the web page, scripts) see one fixed contract.
+from .status_theme import CLASSIC_THEME
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +252,7 @@ def _build_summary(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
 
 def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
     """Build status and identity fields for an agent."""
-    status_color = get_status_color(s.current_status)
+    status_emoji, status_color = CLASSIC_THEME.symbol_for(s.current_status)
     from .status_constants import PERMISSIVENESS_EMOJIS, effective_permission_mode
     perm_emoji = PERMISSIVENESS_EMOJIS.get(
         effective_permission_mode(s.permissiveness_mode, s.in_session_mode), "👮")
@@ -265,7 +264,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
     return {
         "name": s.name,
         "status": s.current_status,
-        "status_emoji": get_status_emoji(s.current_status),
+        "status_emoji": status_emoji,
         "status_color": status_color,
         "status_color_hex": get_web_color(status_color),
         "activity": s.current_activity[:100] if s.current_activity else "",
