@@ -906,6 +906,12 @@ def get_ledger_config() -> dict:
     return {"checkpoint_minutes": minutes if minutes > 0 else 60.0}
 
 
+# billing.new_agent_code: name (the default) | folder | default
+NEW_AGENT_CODE_MODES = ("name", "folder", "default")
+DEFAULT_BILLING_CODE = "general"
+_BILLING_KEYS = ("codes", "new_agent_code", "default_code")
+
+
 def get_billing_config() -> dict:
     """The billing-code shortlist the TUI cycles through with space.
 
@@ -928,7 +934,7 @@ def get_billing_config() -> dict:
     if not isinstance(cfg, dict):
         return {"codes": [], "warnings": ["billing: should be a mapping with a 'codes' list — ignored"]}
     for key in cfg:
-        if key != "codes":
+        if key not in _BILLING_KEYS:
             warnings.append(f"billing: unknown key '{key}' — ignored")
     raw = cfg.get("codes")
     if raw is None:
@@ -947,6 +953,55 @@ def get_billing_config() -> dict:
         if code not in codes:
             codes.append(code)
     return {"codes": codes, "warnings": warnings}
+
+
+def get_billing_defaults() -> dict:
+    """Where a new root agent's billing code comes from.
+
+    Config format in ~/.overcode/config.yaml:
+        billing:
+          new_agent_code: name      # name | folder | default
+          default_code: general     # the code ``default`` bills to; collapse folds into it
+
+    ``name`` (the default): the code named after the agent, following its
+    auto name while only its tree uses it. ``folder``: the git repository's
+    name (a worktree's main repository), else the directory's. ``default``:
+    ``default_code``. A bad value is ignored with a warning; never raises.
+
+    Returns:
+        Dict with ``new_agent_code``, ``default_code`` and ``warnings``.
+    """
+    warnings: List[str] = []
+    cfg = _get_config_value("billing", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    mode = cfg.get("new_agent_code", NEW_AGENT_CODE_MODES[0])
+    if mode not in NEW_AGENT_CODE_MODES:
+        warnings.append(f"billing.new_agent_code: {mode!r} is not one of "
+                        f"{', '.join(NEW_AGENT_CODE_MODES)} — using name")
+        mode = NEW_AGENT_CODE_MODES[0]
+    code = cfg.get("default_code", DEFAULT_BILLING_CODE)
+    if isinstance(code, (int, float)) and not isinstance(code, bool):
+        code = str(code)
+    if not isinstance(code, str) or not code.strip():
+        warnings.append(f"billing.default_code: {code!r} is not a billing code "
+                        f"— using {DEFAULT_BILLING_CODE}")
+        code = DEFAULT_BILLING_CODE
+    return {"new_agent_code": mode, "default_code": code.strip(), "warnings": warnings}
+
+
+def save_billing_defaults(new_agent_code: str, default_code: str) -> None:
+    """Save ``billing.new_agent_code`` and ``billing.default_code``, keeping ``billing.codes``."""
+    if new_agent_code not in NEW_AGENT_CODE_MODES:
+        raise ValueError(f"new_agent_code must be one of {', '.join(NEW_AGENT_CODE_MODES)}")
+    default_code = (default_code or "").strip() or DEFAULT_BILLING_CODE
+    config = load_config()
+    billing = config.get("billing")
+    billing = dict(billing) if isinstance(billing, dict) else {}
+    billing["new_agent_code"] = new_agent_code
+    billing["default_code"] = default_code
+    config["billing"] = billing
+    save_config(config)
 
 
 NAMING_MAX_LENGTH_DEFAULT = 18

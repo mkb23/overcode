@@ -167,6 +167,23 @@ def spend_of(record) -> Dict[str, float]:
     }
 
 
+def collapsible(total: float, running: int, last: Optional[datetime], now: datetime, *,
+                under: Optional[float] = None, idle_days: Optional[float] = None) -> bool:
+    """Whether a code passes ``billing collapse``'s filters (all given must hold).
+
+    ``under``: less than that much spend in total. ``idle_days``: no agent
+    running on it and no ledger row for that many days.
+    """
+    if under is not None and not total < under:
+        return False
+    if idle_days is not None:
+        if running:
+            return False
+        if last is not None and (now - last) < timedelta(days=idle_days):
+            return False
+    return True
+
+
 def billing_lookup(*groups) -> Dict[str, dict]:
     """``{id: {billing_code_id, billing_code, parent_session_id, name}}`` of records and sessions.
 
@@ -459,6 +476,27 @@ class Ledger:
             for name, value in entry.items():
                 if isinstance(value, (int, float)):
                     out[code][name] = out[code].get(name, 0) + value
+        return out
+
+    def last_activity(self, rows: Optional[List[dict]] = None) -> Dict[str, datetime]:
+        """Each code's latest row time, by code (merges followed); ``rows`` spares a read."""
+        from .clock import from_iso
+
+        latest: Dict[str, str] = {}
+        for row in self.iter_rows() if rows is None else rows:
+            t = str(row.get("t", ""))
+            key = row_code(row)
+            if t > latest.get(key, ""):
+                latest[key] = t
+        out: Dict[str, datetime] = {}
+        for key, t in latest.items():
+            try:
+                when = from_iso(t)
+            except ValueError:
+                continue
+            code = self.codes.canonical(key)
+            if code not in out or when > out[code]:
+                out[code] = when
         return out
 
     def named(self, report: Dict[str, dict]) -> Dict[str, dict]:
