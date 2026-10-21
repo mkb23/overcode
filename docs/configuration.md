@@ -936,9 +936,9 @@ says the task has changed. "Let overcode name it" (`overcode rename
 `default` one again, without a `~` (overcode did not choose it), and the
 agent is named afresh by the same rule. An auto
 name changes at most `max_renames` times, at least 10 minutes apart. The
-namer never renames a `human` or `parent` name, never while the agent
-waits on a permission dialog, and never within 30 s of a key pressed in
-the TUI (it waits for the next Stop). A rename is overcode's ordinary
+namer never renames a `human` or `parent` name. It does not wait for the
+TUI to go quiet: a rename interrupts nothing, and the old name still
+reaches the agent. A rename is overcode's ordinary
 restartless rename: the agent keeps running, the old name stays an alias,
 the agent and its parent are told with their next prompt, and the TUI
 shows a toast (`old → new (auto)`) and the `~` marker. The first auto name

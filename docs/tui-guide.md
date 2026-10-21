@@ -481,8 +481,8 @@ what will happen to a name left as it is. A toast says so
 (`overcode-main2 → jwt-refresh (auto)`), the name gets its `~`, and the
 daemon panel (`d`) logs it with the model's reason. The agent keeps
 running; its old name still reaches it. To undo, `Ctrl+N` it back: the name
-is then yours and is not renamed again. No rename happens within 30 s of a
-key pressed in the TUI, so a name does not change under you as you type it.
+is then yours and is not renamed again. The old name keeps working, so a
+rename never breaks a command you are typing.
 For a Claude Code agent the name also shows in Claude's own prompt box,
 and a `/rename` typed inside Claude renames the agent.
 

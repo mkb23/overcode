@@ -62,7 +62,6 @@ IDLE_STATUSES = TURN_END_STATUSES | {STATUS_ASLEEP}
 MIN_RENAME_GAP_SECONDS = 600     # auto names change at least this far apart
 RETRY_GAP_SECONDS = 600          # after a call that failed or was skipped
 REFINE_FACTOR = 10               # the refinement comes at 10x the first's work
-HUMAN_QUIET_SECONDS = 30         # no rename this soon after a TUI keypress
 TITLE_RETRY_SECONDS = 10         # an idle agent's lagging title is tried again this often
 FIRST_AFTER_MINUTES = 5.0        # the first name, this long after the first prompt
 FIRST_TRIES = 3                  # first-name calls a "keep" answer may use up
@@ -715,16 +714,6 @@ def title_to_adopt(title: Optional[str], session, state: NamerState) -> Optional
 # ── the daemon's namer ────────────────────────────────────────────────────
 
 
-def _tui_keypress_age(tmux_session: str) -> Optional[float]:
-    """Seconds since the TUI last saw a key (its heartbeat file), None if never."""
-    import time
-    from .settings import get_tui_heartbeat_path
-    try:
-        return max(0.0, time.time() - get_tui_heartbeat_path(tmux_session).stat().st_mtime)
-    except OSError:
-        return None
-
-
 class Namer:
     """The daemon's auto-namer and Claude-title keeper (see the module docstring).
 
@@ -732,15 +721,15 @@ class Namer:
     reads small per-agent files at a turn end; everything that calls a
     model, renames or touches a pane runs in ``submit`` (one worker thread
     by default, so two agents never rename at once from one daemon).
-    Tests inject ``submit`` (run at once), ``rename``, ``client_factory``,
-    ``config`` and ``keypress_age``.
+    Tests inject ``submit`` (run at once), ``rename``, ``client_factory``
+    and ``config``. A rename never waits for the TUI to go quiet: it
+    interrupts nothing, and the old name still reaches the agent.
     """
 
     def __init__(self, tmux_session: str, session_manager, *, tmux=None, log=None,
                  clock=None, titles: Optional[Callable[[], Mapping[str, str]]] = None,
                  rename: Optional[Callable] = None, client_factory: Optional[Callable] = None,
                  submit: Optional[Callable] = None, config: Optional[Callable[[], dict]] = None,
-                 keypress_age: Optional[Callable[[], Optional[float]]] = None,
                  spend_path: Optional[Path] = None):
         from .clock import SYSTEM_CLOCK
         self.tmux_session = tmux_session
@@ -753,7 +742,6 @@ class Namer:
         self._client_factory = client_factory or make_client
         self._submit = submit or self._pool_submit
         self._config = config
-        self._keypress_age = keypress_age or (lambda: _tui_keypress_age(tmux_session))
         if spend_path is None:
             from .paths import session_dir
             spend_path = session_dir(tmux_session) / "namer_spend.json"
@@ -826,10 +814,6 @@ class Namer:
                 with self._lock:
                     self._in_flight.discard(key)
         self._submit(job)
-
-    def _human_typing(self) -> bool:
-        age = self._keypress_age()
-        return age is not None and age < HUMAN_QUIET_SECONDS
 
     # ── the tick ──────────────────────────────────────────────────────
 
@@ -916,7 +900,7 @@ class Namer:
                 due_at = max(due_at, state.attempted_at + RETRY_GAP_SECONDS)
             self._first_next[session.id] = max(ts + 1, min(due_at, ts + FIRST_RECHECK_SECONDS))
             return False
-        return not self._human_typing() and not self._over_cap(cfg, now)
+        return not self._over_cap(cfg, now)
 
     def title_lag(self, session) -> Optional[str]:
         """The title Claude still shows for an agent renamed since, else None.
@@ -965,7 +949,7 @@ class Namer:
                     cfg=cfg, now=now.timestamp())
         if stage is None:
             return
-        if st.current_status == STATUS_WAITING_APPROVAL or self._human_typing():
+        if st.current_status == STATUS_WAITING_APPROVAL:
             return  # at the next Stop
         if self._over_cap(cfg, now):
             return

@@ -183,9 +183,9 @@ count too); the turn count is the larger of those seen (kept in
 `agents/<id>/namer.json`) and the transcript's interaction count; the
 refinement needs 10x every threshold (turns and green minutes or tokens);
 a failed or unreadable call is retried no sooner than 10 minutes later.
-"A human keypress in the TUI" is the TUI's keypress heartbeat file
-(`tui_heartbeat`, per tmux session, written at most every 5 s), so the
-30 s rule holds for the whole tmux session, not one agent. The worker is
+There is no wait for the TUI to go quiet (an earlier draft held renames
+for 30 s after any TUI keypress; it only delayed names, since a rename
+interrupts nothing and the old name stays an alias). The worker is
 one thread (renames from one daemon never race each other). The cost cap
 is per tmux session (`namer_spend.json` beside the daemon state). Each
 call is one ledger row of its own (`sid` `namer:<hex>`, `parent` the
@@ -209,10 +209,7 @@ from events and adds no polling.
   It renames only when the namer is confident the task has changed (see the
   `keep` reply below). So `auto` names change at most twice in an agent's
   life (`max_renames`, default 2), and at least 10 minutes apart.
-- Never while the name is `human`, while the agent is waiting on a
-  permission dialog, or when the agent's tmux session has had a human
-  keypress in the TUI in the last 30 s. The last rule is so a name doesn't
-  change under someone who is about to type it.
+- Never while the name is `human` (or `parent`).
 - Calls run on the daemon's worker pool, with a per-day cost cap
   (`naming.cost_cap_per_day`, default $0.50). Spend goes in the ledger
   under the billing code `overcode` (closing the gap the summariser has).

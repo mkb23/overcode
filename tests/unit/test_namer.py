@@ -79,7 +79,7 @@ class Clock:
 class Fleet:
     """Agents in a temp registry, and a namer over them driven tick by tick."""
 
-    def __init__(self, tmp_path, *, cfg=None, model=None, keypress_age=None, tmux=None):
+    def __init__(self, tmp_path, *, cfg=None, model=None, tmux=None):
         self.sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         self.clock = Clock()
         self.cfg = cfg or _cfg()
@@ -94,7 +94,6 @@ class Fleet:
             titles=lambda: self.titles,
             rename=self._rename, client_factory=lambda provider: self.model,
             submit=lambda fn: fn(), config=lambda: self.cfg,
-            keypress_age=keypress_age or (lambda: None),
             spend_path=tmp_path / "namer_spend.json",
         )
         self.green = {}
@@ -295,17 +294,6 @@ class TestReplay:
         for _ in range(4):
             fleet.turn(a, end="waiting_approval")
         assert fleet.state(a).turns == 0
-
-    def test_not_while_a_person_is_typing_in_the_tui(self, tmp_path):
-        age = {"value": 5.0}
-        fleet = Fleet(tmp_path, model=StubModel(_reply("x-name")), keypress_age=lambda: age["value"])
-        a = fleet.add("work")
-        fleet.turn(a)
-        fleet.turn(a)
-        assert fleet.model.prompts == []
-        age["value"] = 31.0
-        fleet.turn(a)
-        assert fleet.get(a).name == "x-name"
 
     def test_off_by_default_counts_turns_only(self, tmp_path):
         fleet = Fleet(tmp_path, cfg=_cfg(enabled=False), model=StubModel(_reply("x-name")))
@@ -847,15 +835,6 @@ class TestClaudeTitle:
         assert [k[2] for k in mock.sent_keys] == ["/rename renamed"]
         fleet.idle(a, seconds=60)
         assert len(mock.sent_keys) == 1                 # aligned: once
-
-    def test_tui_keys_do_not_hold_up_the_title(self, tmp_path):
-        fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False), keypress_age=lambda: 1.0)
-        a = fleet.add("work")
-        fleet.turn(a)
-        fleet.sm.rename_session(a.id, "renamed", name_source="human")
-        mock.set_pane_content("agents", "work-w", EMPTY)
-        fleet.idle(a)                                   # the rename was just typed in the TUI
-        assert [k[2] for k in mock.sent_keys] == ["/rename renamed"]
 
     def test_a_sleeping_agent_takes_a_rename(self, tmp_path):
         fleet, mock = self._fleet(tmp_path, cfg=_cfg(enabled=False))
