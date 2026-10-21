@@ -1,10 +1,16 @@
 # Overcode 0.6.1 Release Notes
 
-0.6.1 is the first published 0.6 release, and the biggest change to overcode so far. It includes everything built for 0.6.0, which was never released on its own (its notes are [here](release-notes-0.6.0.md)), and a second round of work on top. **If you are upgrading from 0.5, read [Upgrading](#upgrading-read-this-first) before you start: the first run converts your stored data and a few of those conversions cannot be undone.**
+**In short:** overcode is faster, calmer and more honest. Status lights mean what they say, spend is counted correctly and can be billed to projects, agents can name themselves, and you can finally see the work your agents hand off to others. It is a big upgrade, and it converts your stored data on first run: **back up `~/.overcode` before you upgrade** ([why](#upgrading-read-this-first)).
 
-## The daemon is now the engine
+0.6.1 is the first published 0.6 release. It includes everything built for 0.6.0, which was never released on its own (its notes are [here](release-notes-0.6.0.md)), and a second round of work on top.
 
-In 0.5 the TUI and the daemon each worked out agent status on their own, and they did not always agree. In 0.6 the monitor daemon is the single engine: it alone computes every agent's status, stats, git state, spend and history, and pushes changes to the TUI over a local socket. Hook events reach the screen within half a second, two TUIs always show the same thing, and a fleet nobody is watching drops to near-zero CPU while still being recorded. `overcode` now always opens the tmux split (agent list on top, the agent's own pane below); the standalone TUI, the web dashboard and the Cloudflare relay are gone, about 7,000 lines of code with them. The API server stays, for sister machines.
+## One source of truth for what your agents are doing
+
+**The problem.** In 0.5, two programs kept watch over your agents: the dashboard you look at (the TUI) and a monitor running in the background. Each worked out for itself whether every agent was busy, waiting for you or finished. Because they looked separately, they sometimes disagreed: a light could show an agent working while the history recorded it as idle, and two open dashboards could show different things. Doing the same work twice also made the dashboard slow and kept your CPU busy, even when nobody was looking at it.
+
+**The fix.** Now only the background monitor works things out. It keeps every agent's status, spend, git state and history, and sends each change to the dashboard, which just displays it. So what you see is what was recorded, every dashboard shows the same thing, changes appear within half a second, and when nobody is watching, the monitor drops to almost no CPU while still keeping the record.
+
+**Also simpler.** `overcode` now always opens one screen: your agent list on top, the selected agent's own terminal below. The old standalone dashboard, the web dashboard and the Cloudflare relay are gone, taking about 7,000 lines of code with them. The API server stays, for sharing agents between machines.
 
 ## Status you can trust, in your colours
 
