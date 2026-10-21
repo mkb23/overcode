@@ -502,7 +502,7 @@ typing, only for agents whose prompt changed.
 | `Ctrl+O` | Edit the advice or the whole prompt |
 | `Ctrl+T` | Live agents or the last 30 archived ones (from their day bundles) |
 | `Ctrl+D` | Pin the draft as A: rows show A \| B, the header counts changed names, collisions and mean length for each; again to unpin |
-| `Ctrl+N` | Move between the editor and the rows |
+| `Ctrl+N` | Move the focus between the advice editor and the agent rows. The lab opens in the editor, where every key types text; `Enter` and `A` act on the rows only. The legend and the rows' header say which has the focus |
 | `↑`/`↓`, `Enter` | Pick a row; `Enter` twice renames that agent to the pick, as your choice (locked) |
 | `A` (in the rows) | Rename every live agent to its pick, as your choice: `y` those with default or auto names; `a` then `a` again every one, names people chose included. Shared picks are left out |
 | `Esc` | Cancel a confirm, or close (twice with unsaved edits) |

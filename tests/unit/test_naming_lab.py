@@ -482,8 +482,13 @@ class TestLabInTUI:
             lab = await self._open(pilot)
             await _until(pilot, lambda: lab._runner.calls >= 4)
             await app.workers.wait_for_complete()
-            assert "A all" in Text.from_markup(str(lab.border_subtitle)).plain
+            legend = lambda: Text.from_markup(str(lab.border_subtitle)).plain  # noqa: E731
+            assert "^N focus the agents (to rename)" in legend() and "rename all" not in legend()
+            assert "FLEET live  archived  5 · ^N to focus" in lab.render_rows().plain
             await pilot.press("ctrl+n")              # the rows: A is a key, not text
+            await pilot.pause()
+            assert "Enter rename · A rename all · ^N back to the editor" in legend()
+            assert "· focused" in lab.render_rows().plain
             await pilot.press("A")
             assert "y rename default/auto names" in str(lab.border_subtitle).replace("  ", " ")
             assert "naming today" not in lab.render_rows().plain   # the question's whole line
