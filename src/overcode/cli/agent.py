@@ -1315,7 +1315,7 @@ def rename(
     """
     from ..exceptions import AgentBusyError, InvalidSessionNameError
     from ..launcher import AgentLauncher
-    from ..name_source import AUTO, HUMAN
+    from ..name_source import HUMAN
     from ..protocols import TmuxTimeoutError
 
     if auto and lock:
@@ -1333,7 +1333,11 @@ def rename(
     name = sess.name
 
     if auto or lock:
-        launcher.sessions.update_session(sess.id, name_source=AUTO if auto else HUMAN)
+        if auto:
+            from ..namer import hand_to_namer
+            hand_to_namer(launcher.sessions, sess, launcher.tmux_session)
+        else:
+            launcher.sessions.update_session(sess.id, name_source=HUMAN)
         if auto:
             rprint(f"[green]'{name}' is named by overcode now[/green]"
                    f"{'' if _naming_enabled() else ' [dim](naming.enabled is off)[/dim]'}")

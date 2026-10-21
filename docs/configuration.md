@@ -906,7 +906,7 @@ naming:
     llm_check: false        # also ask the summarizer model whether the name follows the advice
     warn_humans: false      # warn (never refuse) when a name you type breaks the rules
   enabled: false            # auto-naming: the engine names agents (off by default)
-  first_after: {turns: 2, green_minutes: 3, output_tokens: 15000, work_minutes: 5}
+  first_after: {minutes: 5} # the first name, this long after the agent's first prompt
   max_renames: 2            # auto renames in an agent's life (the first name + one refinement)
   cost_cap_per_day: 0.50    # USD a day for the namer's model calls (per tmux session)
   # provider:               # the namer's model; default: the summarizer: block
@@ -919,18 +919,22 @@ naming:
 
 **Auto-naming** (`enabled: true`, `/` → "Auto-naming" in the TUI, or a
 children preset that sets it). The engine names an agent whose name is
-`default` or `auto` once its task is clear: as soon as it has worked
-`work_minutes` (green time, so an agent that sits idle is never named; it
-need not have finished its turn), or at the first turn end (Stop) after
-`first_after` work (at least `turns` completed turns, and `green_minutes`
-of green time or `output_tokens` output tokens), whichever comes first.
-`work_minutes: 0` leaves only the turn-end rule. The name follows the
+`default` or `auto` `first_after.minutes` (default 5) after its first
+prompt (the launch prompt, or the first one you typed), once it has started
+on it: mid-turn or while it waits, whichever it is doing then. An agent
+never given a task, or one that never started on it, is not named. If the
+model answers that the name still fits (a placeholder like `tmp1` rarely
+does), it is asked again 10 minutes later, three times at most. The name follows the
 naming advice, case included ("use capitals" gets capitals); names that
 differ only in case count as the same name. `overcode name policy` says
 whether auto-naming is on and when it names, the new-agent dialog's tip
 for the name says what will happen to a name you leave as it is, and the
-naming lab's header says it too. One refinement comes at 10 times that
-work, and renames only if the model says the task has changed. An auto
+naming lab's header says it too. One refinement comes after 20 turns and
+30 minutes of work (or 150k output tokens), and renames only if the model
+says the task has changed. "Let overcode name it" (`overcode rename
+<agent> --auto`, or "Named by" in the rename dialog) makes the name a
+`default` one again, without a `~` (overcode did not choose it), and the
+agent is named afresh by the same rule. An auto
 name changes at most `max_renames` times, at least 10 minutes apart. The
 namer never renames a `human` or `parent` name, never while the agent
 waits on a permission dialog, and never within 30 s of a key pressed in

@@ -207,14 +207,14 @@ class TestAutoNamingSwitch:
         assert "Auto-naming off" in out
         naming_config("naming:\n  enabled: true\n")
         out = strip_ansi(runner.invoke(app, ["name", "policy"]).output)
-        assert "Auto-naming on: a default name is replaced after 5 min of work" in out
+        assert "Auto-naming on: a default name is replaced 5 min after its first prompt" in out
         data = json.loads(runner.invoke(app, ["name", "policy", "--json"]).stdout)
-        assert data["enabled"] is True and data["first_after"]["work_minutes"] == 5.0
+        assert data["enabled"] is True and data["first_after"] == {"minutes": 5.0}
 
     def test_describe(self, naming_config):
         assert config.describe_auto_naming().startswith("off")
-        naming_config("naming:\n  enabled: true\n  first_after: {work_minutes: 0}\n")
-        assert "at a turn end" in config.describe_auto_naming()
+        naming_config("naming:\n  enabled: true\n  first_after: {minutes: 0}\n")
+        assert "as soon as it starts on its first prompt" in config.describe_auto_naming()
 
     def test_the_switch_keeps_the_rest_of_naming(self, naming_config):
         naming_config(FORBID)
@@ -232,7 +232,7 @@ class TestAutoNamingSwitch:
         field = FormField("name", "Name", "text", value="overcode-main2", auto=True)
         assert "auto-naming off" in NewAgentModal._name_tip(field)
         naming_config("naming:\n  enabled: true\n")
-        assert "auto-naming renames it after 5 min of work" in NewAgentModal._name_tip(field)
+        assert "auto-naming renames it 5 min after its first prompt" in NewAgentModal._name_tip(field)
         field.auto = False
         assert "a name you type is kept" in NewAgentModal._name_tip(field)
 
@@ -243,7 +243,8 @@ class TestRename:
         fleet.add("alpha")
         result = runner.invoke(app, ["rename", "alpha", "--auto"])
         assert result.exit_code == 0, result.output
-        assert (fleet.get("alpha").name, fleet.get("alpha").name_source) == ("alpha", "auto")
+        # Handed to overcode: a placeholder it may replace, not a name it chose (no "~")
+        assert (fleet.get("alpha").name, fleet.get("alpha").name_source) == ("alpha", "default")
         result = runner.invoke(app, ["rename", "alpha", "--lock"])
         assert result.exit_code == 0, result.output
         assert fleet.get("alpha").name_source == "human"

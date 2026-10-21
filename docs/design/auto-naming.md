@@ -195,14 +195,17 @@ agent, `kind` final, `namer: true`) under the code `overcode`, so the
 The daemon decides, because it owns per-agent values (AGENTS.md). It works
 from events and adds no polling.
 
-- **The first name** comes once the agent has worked
-  `first_after.work_minutes` (default 5; green time, checked each tick, so
-  mid-turn and never for an agent that sits idle), or at the first Stop
-  after it has done enough work, whichever is first: by default at least 2 completed turns and either 3 minutes
-  of green time or 15k output tokens. The thresholds are configurable.
-  A Stop is when the task is clearest, and the agent is idle at that
-  moment, so the notice arrives with the next prompt.
-- **One refinement** comes once the agent has done 10× that much work.
+- **The first name** comes `first_after.minutes` (default 5) after the
+  agent's first prompt (`prompts.jsonl`'s first time, else the launch for
+  an agent launched with a brief), once it has any green time; checked
+  each tick (`first_due`), mid-turn or idle. The task is what names an
+  agent, and five minutes in it has usually shown what the work is. A
+  "keep" answer for a `default` name is asked again 10 minutes later, at
+  most 3 times (`first_tries`). "Let overcode name it" sets the source to
+  `default` (no `~`: overcode did not choose the name) and clears the
+  naming history (`hand_to_namer`), so the rule applies afresh.
+- **One refinement** comes at a Stop after 20 turns and 30 green minutes or
+  150k output tokens (`REFINE_AFTER`).
   It renames only when the namer is confident the task has changed (see the
   `keep` reply below). So `auto` names change at most twice in an agent's
   life (`max_renames`, default 2), and at least 10 minutes apart.
@@ -303,7 +306,7 @@ naming:
     recent_archived_hours: 0 # refuse names archived this recently (0: off)
     llm_check: false         # check the advice with the model too
     warn_humans: false
-  first_after: {turns: 2, green_minutes: 3, output_tokens: 15000}
+  first_after: {minutes: 5}
   max_renames: 2
   cost_cap_per_day: 0.50
   # provider: falls back to the summarizer: block (api_type, url, model, key var)

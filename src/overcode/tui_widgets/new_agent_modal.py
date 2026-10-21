@@ -486,8 +486,8 @@ class NewAgentModal(ModalBase):
             return "Agent name; follows the directory until you edit it · auto-naming off (/ Auto-naming)"
         if not f.auto:
             return "Agent name · a name you type is kept: auto-naming only replaces default names"
-        work = float((cfg.get("first_after") or {}).get("work_minutes") or 0)
-        when = f"after {work:g} min of work" if work else "at a turn end"
+        minutes = float((cfg.get("first_after") or {}).get("minutes") or 0)
+        when = f"{minutes:g} min after its first prompt" if minutes else "once it starts work"
         return f"Agent name; left as it is, auto-naming renames it {when}"
 
     def _render_choice(self, f: FormField, editing: bool, width: int) -> Text:

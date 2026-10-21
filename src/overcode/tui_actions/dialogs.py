@@ -218,11 +218,16 @@ class DialogsMixin:
         ).start()
 
     def _set_name_source(self, session: "Session", source: str) -> None:
-        """Hand the name to overcode's namer ("auto") or keep it ("human"), name unchanged (#542)."""
-        self.session_manager.update_session(session.id, name_source=source)
-        if source == "auto":
-            self.notify(f"overcode names '{session.name}' now", severity="information")
+        """Hand the name to overcode's namer ("default": a placeholder it may
+        replace, see namer.hand_to_namer) or keep it ("human"), name unchanged (#542)."""
+        if source in ("default", "auto"):
+            from ..config import get_naming_config
+            from ..namer import hand_to_namer
+            hand_to_namer(self.session_manager, session, self.tmux_session)
+            off = "" if get_naming_config()["enabled"] else " (auto-naming is off: / Auto-naming)"
+            self.notify(f"overcode may rename '{session.name}' now{off}", severity="information")
         else:
+            self.session_manager.update_session(session.id, name_source=source)
             self.notify(f"'{session.name}' keeps its name", severity="information")
         self.refresh_sessions()
 
@@ -254,7 +259,11 @@ class DialogsMixin:
         current = self.session_manager.get_session(session.id)
         if current is not None and current.name == new_name:
             # A person chose it: locked, unless they handed it to overcode
-            self.session_manager.update_session(session.id, name_source=name_source)
+            if name_source in ("default", "auto"):
+                from ..namer import hand_to_namer
+                hand_to_namer(self.session_manager, current, self.tmux_session)
+            else:
+                self.session_manager.update_session(session.id, name_source=name_source)
         if renamed:
             self.call_from_thread(
                 self.notify, f"Renamed '{old_name}' → '{new_name}'", severity="information",

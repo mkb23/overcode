@@ -40,7 +40,7 @@ def _state_dir(tmp_path, monkeypatch):
 
 def _cfg(**over):
     cfg = {"enabled": True, "advice": "", "max_length": 18, "rules": {},
-           "first_after": {"turns": 2, "green_minutes": 3, "output_tokens": 15000},
+           "first_after": {"minutes": 4},   # two Fleet.turn()s after the launch prompt
            "max_renames": 2, "cost_cap_per_day": 0.50, "provider": None, "cli_title": True}
     cfg.update(over)
     return cfg
@@ -109,7 +109,8 @@ class Fleet:
             brief="Fix the JWT refresh race in auth/session.py"):
         s = self.sm.create_session(name=name, tmux_session="agents", tmux_window=f"{name}-w",
                                    command=["claude"], name_source=source, backend=backend)
-        fields = {"repo_name": repo, "branch": "main"}
+        # Launched now, by the test's clock: with a brief, its task time (first_task_at)
+        fields = {"repo_name": repo, "branch": "main", "start_time": self.clock.wall().isoformat()}
         if parent is not None:
             fields["parent_session_id"] = parent.id
         self.sm.update_session(s.id, **fields)
@@ -127,12 +128,12 @@ class Fleet:
         self.clock.now += timedelta(minutes=minutes)
         for a in agents:
             self.green[a.id] += minutes * 60
-        live = self.sm.list_sessions()
         for status in ("running", end):
             states = [SimpleNamespace(session_id=a.id, current_status=status,
                                       green_time_seconds=self.green[a.id], output_tokens=tokens)
                       for a in agents]
-            self.namer.on_tick(live, states, self.clock.wall())
+            # Read each tick, as the daemon does: a name given mid-turn shows at the Stop
+            self.namer.on_tick(self.sm.list_sessions(), states, self.clock.wall())
 
     def idle(self, *agents, seconds=0.0, status="waiting_user"):
         """One tick with each agent sitting idle, ``seconds`` after the last."""
@@ -155,44 +156,51 @@ def _reply(*names, keep=False, why="the task"):
 
 class TestDue:
 
+    def _first(self, state=None, **kw):
+        args = dict(source="default", task_since=T0.timestamp() - 300, green_seconds=5,
+                    cfg=_cfg(first_after={"minutes": 5}), now=T0.timestamp())
+        args.update(kw)
+        return nm.first_due(state or nm.NamerState(), **args)
+
     def _due(self, state=None, **kw):
-        args = dict(source="default", turns=2, green_seconds=180, output_tokens=0, cfg=_cfg(),
+        args = dict(source="auto", turns=20, green_seconds=1800, output_tokens=0, cfg=_cfg(),
                     now=T0.timestamp())
         args.update(kw)
-        return nm.due(state or nm.NamerState(), **args)
+        return nm.due(state or nm.NamerState(first_done=True, renames=1,
+                                                last_rename_at=T0.timestamp() - 3600), **args)
 
-    def test_first_after_turns_and_green_minutes_or_tokens(self):
-        assert self._due(turns=1) is None
-        assert self._due(green_seconds=179) is None
-        assert self._due() == "first"
-        assert self._due(green_seconds=0, output_tokens=15000) == "first"
-
-    def test_refinement_at_ten_times_the_work(self):
-        st = nm.NamerState(first_done=True, renames=1,
-                           last_rename_at=T0.timestamp() - 3600)
-        assert self._due(st, turns=19, green_seconds=1800) is None
-        assert self._due(st, turns=20, green_seconds=1799) is None
-        assert self._due(st, turns=20, green_seconds=1800) == "refine"
-        assert self._due(nm.NamerState(first_done=True, refine_done=True), turns=99,
-                         green_seconds=99999) is None
+    def test_first_name_minutes_after_the_first_prompt_once_it_has_worked(self):
+        assert self._first()
+        assert not self._first(task_since=T0.timestamp() - 299)
+        assert not self._first(task_since=None)         # never given a task
+        assert not self._first(green_seconds=0)         # given one, never started on it
+        assert self._first(cfg=_cfg(first_after={"minutes": 0}), task_since=T0.timestamp())
 
     @pytest.mark.parametrize("source", ["human", "parent", None, "made-up"])
     def test_locked_names_are_never_due(self, source):
-        assert self._due(source=source, turns=99, green_seconds=99999) is None
+        assert not self._first(source=source)
+        assert self._due(source=source) is None
 
-    def test_auto_names_are_due_within_limits(self):
-        assert self._due(source="auto") == "first"
-        assert self._due(nm.NamerState(renames=2), source="auto") is None
-        assert self._due(nm.NamerState(renames=1), cfg=_cfg(max_renames=1)) is None
-        assert self._due(cfg=_cfg(max_renames=0)) is None
+    def test_named_once_and_retried_ten_minutes_after_a_call(self):
+        assert not self._first(nm.NamerState(first_done=True))
+        assert not self._first(nm.NamerState(renames=1))
+        assert not self._first(nm.NamerState(attempted_at=T0.timestamp() - 599))
+        assert self._first(nm.NamerState(attempted_at=T0.timestamp() - 601))
 
-    def test_ten_minutes_between_renames_and_retries(self):
+    def test_refinement_at_the_fixed_bar(self):
+        assert self._due(turns=19) is None
+        assert self._due(green_seconds=1799) is None
+        assert self._due() == "refine"
+        assert self._due(green_seconds=0, output_tokens=150000) == "refine"
+        assert self._due(nm.NamerState()) is None              # no first name yet
+        assert self._due(nm.NamerState(first_done=True, refine_done=True)) is None
+
+    def test_refinement_within_limits(self):
         st = nm.NamerState(first_done=True, renames=1, last_rename_at=T0.timestamp() - 599)
-        assert self._due(st, turns=99, green_seconds=99999) is None
-        st = nm.NamerState(attempted_at=T0.timestamp() - 599)
         assert self._due(st) is None
-        st.attempted_at = T0.timestamp() - 601
-        assert self._due(st) == "first"
+        st = nm.NamerState(first_done=True, renames=2)
+        assert self._due(st) is None
+        assert self._due(cfg=_cfg(max_renames=1)) is None
 
 
 # ── the namer, replayed ──────────────────────────────────────────────
@@ -236,12 +244,30 @@ class TestReplay:
         assert got.name == "db-migrate" and got.previous_names == ["overcode-main2", "jwt-refresh"]
         assert fleet.state(a).renames == 2
 
-    def test_output_tokens_trigger_without_green_time(self, tmp_path):
+    def test_a_quick_task_is_named_while_it_waits(self, tmp_path):
         fleet = Fleet(tmp_path, model=StubModel(_reply("big-refactor")))
-        a = fleet.add("work")
-        fleet.turn(a, minutes=0.1, tokens=20000)
-        fleet.turn(a, minutes=0.1, tokens=20000)
+        a = fleet.add("tmp1")
+        fleet.turn(a, minutes=0.3)                 # 18 s of work, then idle
+        assert fleet.model.prompts == []
+        fleet.idle(a, seconds=3 * 60)              # 3.3 min after its prompt
+        assert fleet.model.prompts == []
+        fleet.idle(a, seconds=60)                  # 4.3 min: due, though idle all along
         assert fleet.get(a).name == "big-refactor"
+
+    def test_a_launch_without_a_prompt_waits_for_one(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(_reply("db-migrate")))
+        a = fleet.add("tmp2", brief="")            # no launch prompt
+        for _ in range(5):
+            fleet.idle(a, seconds=600)
+        fleet.turn(a, minutes=0.5)                 # works, but no prompt on record yet
+        assert fleet.model.prompts == []
+        typed_at = fleet.clock.now.timestamp()
+        agent_file("agents", a.id, "prompts").write_text(
+            json.dumps({"t": typed_at, "prompt": "migrate the db"}) + "\n")
+        fleet.idle(a, seconds=61)
+        assert fleet.model.prompts == []           # 1 min after it
+        fleet.idle(a, seconds=4 * 60)
+        assert fleet.get(a).name == "db-migrate"
 
     @pytest.mark.parametrize("source", ["human", "parent"])
     def test_human_and_parent_names_are_never_renamed(self, tmp_path, source):
@@ -264,11 +290,11 @@ class TestReplay:
         assert fleet.get(a).name == "work" and fleet.renames == []
 
     def test_waiting_approval_is_not_a_stop(self, tmp_path):
-        fleet = Fleet(tmp_path, model=StubModel(_reply("x-name")))
+        fleet = Fleet(tmp_path, cfg=_cfg(enabled=False))
         a = fleet.add("work")
         for _ in range(4):
             fleet.turn(a, end="waiting_approval")
-        assert fleet.model.prompts == [] and fleet.state(a).turns == 0
+        assert fleet.state(a).turns == 0
 
     def test_not_while_a_person_is_typing_in_the_tui(self, tmp_path):
         age = {"value": 5.0}
@@ -390,12 +416,25 @@ class TestChoosing:
         fleet.turn(a)
         assert fleet.get(a).name == "auth-fix"
 
-    def test_keeping_the_current_name_renames_nothing(self, tmp_path):
-        fleet = Fleet(tmp_path, model=StubModel(_reply("work")))
+    def test_a_kept_default_name_is_asked_again_three_times_at_most(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(*[_reply("work")] * 5))
         a = fleet.add("work")
         fleet.turn(a)
         fleet.turn(a)
-        assert fleet.renames == [] and fleet.state(a).first_done
+        assert len(fleet.model.prompts) == 1 and not fleet.state(a).first_done
+        for _ in range(20):
+            fleet.idle(a, seconds=300)
+        assert len(fleet.model.prompts) == 3 and fleet.state(a).first_done
+        assert fleet.renames == []
+
+    def test_a_kept_auto_name_is_not_asked_again(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(*[_reply("work")] * 3))
+        a = fleet.add("work", source="auto")
+        fleet.turn(a)
+        fleet.turn(a)
+        for _ in range(5):
+            fleet.idle(a, seconds=700)
+        assert len(fleet.model.prompts) == 1 and fleet.state(a).first_done
 
 
 class TestSpend:
@@ -696,77 +735,61 @@ class TestCapture:
         assert "prompts.jsonl" in files
 
 
-# ── the first name mid-turn (first_after.work_minutes) ───────────────
+# ── the first name (first_after.minutes after the first prompt) ───────
 
 
-WORK = {"turns": 2, "green_minutes": 3, "output_tokens": 15000, "work_minutes": 5}
+class TestFirstName:
 
-
-class TestWorkTrigger:
-
-    def _work(self, fleet, a, minutes, status="running"):
-        """One tick with ``a`` having worked ``minutes`` in all, still in its turn."""
-        fleet.clock.now += timedelta(seconds=WORK_TICK)
-        fleet.green[a.id] = minutes * 60
-        fleet.idle(a, status=status)
-
-    def test_named_after_work_minutes_before_its_turn_ends(self, tmp_path):
+    def test_named_mid_turn_without_waiting_for_its_stop(self, tmp_path):
         model = StubModel(_reply("jwt-fix"))
-        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=model)
+        fleet = Fleet(tmp_path, cfg=_cfg(first_after={"minutes": 5}), model=model)
         a = fleet.add("overcode-main2")
-        self._work(fleet, a, 4.9)
-        assert fleet.get(a).name == "overcode-main2" and model.prompts == []
-        self._work(fleet, a, 5.0)
-        assert fleet.get(a).name == "jwt-fix" and fleet.get(a).name_source == "auto"
-        assert fleet.state(a).first_done
-
-    def test_an_idle_agent_is_never_named(self, tmp_path):
-        model = StubModel(_reply("jwt-fix"))
-        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=model)
-        a = fleet.add("overcode-main2")
-        for _ in range(5):
-            fleet.idle(a, seconds=3600)                 # hours at its prompt, no work
-        assert model.prompts == [] and fleet.get(a).name == "overcode-main2"
-
-    def test_zero_work_minutes_waits_for_the_turn_end(self, tmp_path):
-        model = StubModel(_reply("jwt-fix"))
-        fleet = Fleet(tmp_path, cfg=_cfg(first_after={**WORK, "work_minutes": 0}), model=model)
-        a = fleet.add("overcode-main2")
-        self._work(fleet, a, 30)
+        fleet.clock.now += timedelta(minutes=4, seconds=59)
+        fleet.green[a.id] = 299
+        fleet.idle(a, status="running")
         assert model.prompts == []
+        fleet.green[a.id] = 301
+        fleet.idle(a, seconds=1, status="running")
+        assert fleet.get(a).name == "jwt-fix" and fleet.get(a).name_source == "auto"
 
     def test_off_or_locked_is_never_named(self, tmp_path):
         model = StubModel(_reply("jwt-fix"))
-        fleet = Fleet(tmp_path, cfg=_cfg(enabled=False, first_after=WORK), model=model)
+        fleet = Fleet(tmp_path, cfg=_cfg(enabled=False), model=model)
         a = fleet.add("overcode-main2")
-        self._work(fleet, a, 30)
-        fleet.cfg = _cfg(first_after=WORK)
+        fleet.turn(a, minutes=30)
+        fleet.cfg = _cfg()
         b = fleet.add("mine", source="human")
-        self._work(fleet, b, 30)
+        fleet.turn(b, minutes=30)
         assert model.prompts == []
-
-    def test_asked_once_then_left_to_the_turn_ends(self, tmp_path):
-        model = StubModel(_reply("jwt-fix"), _reply("other"))
-        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=model)
-        a = fleet.add("overcode-main2")
-        for minutes in (6, 7, 8, 30):
-            self._work(fleet, a, minutes)
-        assert len(model.prompts) == 1
 
     def test_claude_title_waits_until_it_is_idle(self, tmp_path):
         mock = MockTmux()
-        fleet = Fleet(tmp_path, cfg=_cfg(first_after=WORK), model=StubModel(_reply("jwt-fix")),
-                      tmux=mock)
+        fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-fix")), tmux=mock)
         a = fleet.add("work")
         mock.set_pane_content("agents", "work-w", EMPTY)  # a working Claude's box is empty too
-        self._work(fleet, a, 6)
+        fleet.clock.now += timedelta(minutes=5)
+        fleet.green[a.id] = 300
+        fleet.idle(a, status="running")
         assert fleet.get(a).name == "jwt-fix"
         assert mock.sent_keys == []
         fleet.idle(a, seconds=5)
         assert [k[2] for k in mock.sent_keys] == ["/rename jwt-fix"]
 
+    def test_handed_back_it_is_named_afresh(self, tmp_path):
+        model = StubModel(_reply("jwt-fix"), _reply("db-migrate"))
+        fleet = Fleet(tmp_path, model=model)
+        a = fleet.add("work")
+        fleet.turn(a)
+        fleet.turn(a)
+        assert fleet.get(a).name == "jwt-fix"
+        fleet.sm.update_session(a.id, name_source="human")       # Ctrl+N: kept
+        nm.hand_to_namer(fleet.sm, fleet.get(a), "agents")       # then handed back
+        got = fleet.get(a)
+        assert got.name_source == "default" and not fleet.state(a).first_done
+        fleet.idle(a, seconds=61)
+        assert fleet.get(a).name == "db-migrate"
 
-WORK_TICK = 2
+
 
 
 # ── Claude's own session name (§7) ───────────────────────────────────

@@ -347,7 +347,7 @@ class TestNamedBy:
         self._press(m, "space", " ")
         assert m.error() is None  # same name, new source
         self._press(m, "enter")
-        assert [(p.new_name, p.name_source) for p in posted] == [("alpha", "auto")]
+        assert [(p.new_name, p.name_source) for p in posted] == [("alpha", "default")]
 
     def test_typing_a_name_makes_it_yours(self):
         m, posted = self._modal("auto")
@@ -363,7 +363,7 @@ class TestNamedBy:
         self._press(m, "space", " ")
         assert m.field == "source" and m.by_overcode
         self._press(m, "enter")
-        assert [(p.new_name, p.name_source) for p in posted] == [("alpha2", "auto")]
+        assert [(p.new_name, p.name_source) for p in posted] == [("alpha2", "default")]
 
 
 class TestNameSourceActions:
@@ -376,14 +376,14 @@ class TestNameSourceActions:
 
         tui = MagicMock()
         widget = MagicMock(spec=SessionSummary)
-        widget.session = SimpleNamespace(name="alpha", id="sid-1")
+        widget.session = SimpleNamespace(name="alpha", id="sid-1", tmux_session="agents")
         tui.focused = widget
         tui._is_remote = lambda s: remote
         tui._set_name_source = lambda s, src: DialogsMixin._set_name_source(tui, s, src)
         return tui, SessionActionsMixin
 
     @pytest.mark.parametrize("action, source", [
-        ("action_name_by_overcode", "auto"), ("action_keep_name", "human"),
+        ("action_name_by_overcode", "default"), ("action_keep_name", "human"),
     ])
     def test_sets_the_source(self, action, source):
         tui, mixin = self._app()

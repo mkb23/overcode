@@ -121,8 +121,7 @@ class TestNamingConfig:
             "no_repo_prefix": False, "recent_archived_hours": 0.0, "llm_check": False,
             "warn_humans": False,
         }
-        assert cfg["first_after"] == {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000,
-                                      "work_minutes": 5.0}
+        assert cfg["first_after"] == {"minutes": 5.0}
         assert (cfg["max_renames"], cfg["cost_cap_per_day"], cfg["warnings"]) == (2, 0.5, [])
 
     def test_a_full_block(self, load_naming):
@@ -140,7 +139,7 @@ class TestNamingConfig:
             "    recent_archived_hours: 24\n"
             "    llm_check: true\n"
             "    warn_humans: true\n"
-            "  first_after: {turns: 3, green_minutes: 5, output_tokens: 20000}\n"
+            "  first_after: {minutes: 3}\n"
             "  max_renames: 1\n"
             "  cost_cap_per_day: 0.25\n"
         )
@@ -151,7 +150,7 @@ class TestNamingConfig:
         assert (r["pattern"], r["max_length"], r["require"]) == ("^[a-z0-9-]+$", 30, "-[0-9]+$")
         assert r["no_repo_prefix"] and r["llm_check"] and r["warn_humans"]
         assert r["recent_archived_hours"] == 24.0
-        assert cfg["first_after"]["turns"] == 3 and cfg["max_renames"] == 1
+        assert cfg["first_after"] == {"minutes": 3.0} and cfg["max_renames"] == 1
         assert cfg["warnings"] == []
 
     def test_bad_values_warn_and_never_raise(self, load_naming):

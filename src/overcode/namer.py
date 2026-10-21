@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from .name_source import AUTO, HUMAN, is_locked
+from .name_source import AUTO, DEFAULT, HUMAN, is_locked
 from .status_constants import (
     GREEN_STATUSES,
     STATUS_ASLEEP,
@@ -64,7 +64,11 @@ RETRY_GAP_SECONDS = 600          # after a call that failed or was skipped
 REFINE_FACTOR = 10               # the refinement comes at 10x the first's work
 HUMAN_QUIET_SECONDS = 30         # no rename this soon after a TUI keypress
 TITLE_RETRY_SECONDS = 10         # an idle agent's lagging title is tried again this often
-WORK_RECHECK_SECONDS = 60        # a working agent past work_minutes is looked at this often
+FIRST_AFTER_MINUTES = 5.0        # the first name, this long after the first prompt
+FIRST_TRIES = 3                  # first-name calls a "keep" answer may use up
+FIRST_RECHECK_SECONDS = 60       # an agent waiting for its first name is looked at this often
+# The one refinement: this much work (turns, and green minutes or output tokens)
+REFINE_AFTER = {"turns": 20, "green_minutes": 30, "output_tokens": 150000}
 ARCHIVED_HOURS = 24              # archived agents the model sees
 FLEET_LINES = 120                # at most this many fleet lines in the prompt
 PANE_LINES = 60                  # a hookless agent's fallback input
@@ -91,6 +95,7 @@ class NamerState:
     refine_done: bool = False
     last_rename_at: float = 0.0
     attempted_at: float = 0.0           # the last model call (or a skipped one)
+    first_tries: int = 0                # first-name calls the model answered "keep"
     cli_title: Optional[str] = None     # what the CLI's own session name is
     seen_title: Optional[str] = None    # the last custom-title acted on
 
@@ -129,16 +134,36 @@ def save_state(tmux_session: str, session_id: str, state: NamerState) -> None:
 # ── when to name (§3) ─────────────────────────────────────────────────────
 
 
+def first_due(state: NamerState, *, source: Optional[str], task_since: Optional[float],
+              green_seconds: float, cfg: Mapping, now: float) -> bool:
+    """Whether an agent's first name is due: ``first_after.minutes`` after its
+    first prompt (``task_since``), once it has worked at all.
+
+    An agent never given a task, or one that has not started on it, is not
+    named; neither is a locked name, nor one named already. A call that
+    failed, or that the model answered "keep" (``FIRST_TRIES`` at most), is
+    tried again ``RETRY_GAP_SECONDS`` later.
+    """
+    if is_locked(source) or state.first_done or state.renames:
+        return False
+    if task_since is None or green_seconds <= 0:
+        return False
+    if state.attempted_at and now - state.attempted_at < RETRY_GAP_SECONDS:
+        return False
+    minutes = float((cfg.get("first_after") or {}).get("minutes", FIRST_AFTER_MINUTES) or 0)
+    return now >= task_since + minutes * 60
+
+
 def due(state: NamerState, *, source: Optional[str], turns: int, green_seconds: float,
         output_tokens: int, cfg: Mapping, now: float) -> Optional[str]:
-    """``"first"`` or ``"refine"`` when a name is due at this Stop, else None.
+    """``"refine"`` when the one refinement is due at this Stop, else None.
 
-    The first name once the agent has done ``first_after`` work (turns, and
-    green minutes or output tokens); one refinement at ``REFINE_FACTOR``
-    times that; at most ``max_renames`` auto renames, ``MIN_RENAME_GAP``
-    apart; never a locked name.
+    After the first name (``first_due``), once the agent has done
+    ``REFINE_AFTER`` work (turns, and green minutes or output tokens); at
+    most ``max_renames`` auto renames, ``MIN_RENAME_GAP`` apart; never a
+    locked name.
     """
-    if is_locked(source):
+    if is_locked(source) or not state.first_done:
         return None
     if state.renames >= cfg.get("max_renames", 2) or state.refine_done:
         return None
@@ -146,16 +171,45 @@ def due(state: NamerState, *, source: Optional[str], turns: int, green_seconds: 
         return None
     if state.attempted_at and now - state.attempted_at < RETRY_GAP_SECONDS:
         return None
-    stage = "refine" if state.first_done else "first"
-    scale = REFINE_FACTOR if state.first_done else 1
-    first = cfg.get("first_after") or {}
-    if turns < (first.get("turns", 2) or 0) * scale:
+    if turns < REFINE_AFTER["turns"]:
         return None
-    green_needed = (first.get("green_minutes", 3) or 0) * 60 * scale
-    tokens_needed = (first.get("output_tokens", 15000) or 0) * scale
-    if green_seconds >= green_needed or output_tokens >= tokens_needed:
-        return stage
+    if (green_seconds >= REFINE_AFTER["green_minutes"] * 60
+            or output_tokens >= REFINE_AFTER["output_tokens"]):
+        return "refine"
     return None
+
+
+def first_task_at(session, tmux_session: str) -> Optional[float]:
+    """When the agent was given its task (epoch seconds), or None if never.
+
+    Its first recorded prompt (``prompts.jsonl``); else, for an agent
+    launched with a prompt (a ``brief``), its start.
+    """
+    files = live_files(tmux_session, session.id)
+    for line in files("prompts").splitlines():
+        try:
+            t = json.loads(line).get("t")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(t, (int, float)):
+            return float(t)
+    if files("brief").strip():
+        from .clock import to_epoch
+        return to_epoch(getattr(session, "start_time", None))
+    return None
+
+
+def hand_to_namer(session_manager, session, tmux_session: str) -> None:
+    """"Let overcode name it": the name becomes a placeholder overcode may
+    replace (``default``: no ``~``, since overcode did not choose it), and
+    the agent's naming history is cleared so it gets a first name again."""
+    session_manager.update_session(session.id, name_source=DEFAULT)
+    tmux_session = session.tmux_session or tmux_session
+    state = load_state(tmux_session, session.id)
+    state.first_done = state.refine_done = False
+    state.renames = state.first_tries = 0
+    state.attempted_at = state.last_rename_at = 0.0
+    save_state(tmux_session, session.id, state)
 
 
 # ── what the namer reads (§4) ─────────────────────────────────────────────
@@ -712,9 +766,10 @@ class Namer:
         self._idle_title: Dict[str, Tuple[str, Optional[float]]] = {}
         # Per id, the name and the CLI title recorded for it (title_lag)
         self._titles_known: Dict[str, Tuple[str, Optional[str]]] = {}
-        # Per id, when to look again at a working agent for its first name
-        # (first_after.work_minutes); inf once it has one
-        self._work_next: Dict[str, float] = {}
+        # Per id, when to look again at an agent for its first name, and
+        # when it was given its task (first_task_at; it never changes)
+        self._first_next: Dict[str, float] = {}
+        self._task_at: Dict[str, float] = {}
         self._in_flight: set = set()
         self._lock = threading.Lock()
         self._cap_logged_day: Optional[str] = None
@@ -805,10 +860,10 @@ class Namer:
                     cfg = self.config()
                 if cfg.get("cli_title", True) and self._is_claude(session):
                     self._run(f"align:{sid}", lambda sid=sid: self._align(sid))
-            if not turn_end and status in GREEN_STATUSES:
+            if float(getattr(st, "green_time_seconds", 0) or 0) > 0:
                 if cfg is None:
                     cfg = self.config()
-                if self._first_name_due_at_work(session, st, cfg, now):
+                if self._first_name_due(session, st, cfg, now):
                     self._run(f"name:{sid}", lambda sid=sid, cfg=cfg: self._name(sid, "first", cfg))
             if not turn_end and not title:
                 continue
@@ -824,32 +879,42 @@ class Namer:
                 self._title_seen.pop(sid, None)
                 self._idle_title.pop(sid, None)
                 self._titles_known.pop(sid, None)
-                self._work_next.pop(sid, None)
+                self._first_next.pop(sid, None)
+                self._task_at.pop(sid, None)
 
-    def _first_name_due_at_work(self, session, st, cfg: dict, now: datetime) -> bool:
-        """Whether a working agent gets its first name now, mid-turn.
+    def _first_name_due(self, session, st, cfg: dict, now: datetime) -> bool:
+        """Whether an agent gets its first name on this tick (``first_due``).
 
-        Once it has worked ``first_after.work_minutes`` (green time, so an
-        agent that sits idle is never named), without waiting for its turn
-        to end. Its namer.json is read at most every ``WORK_RECHECK_SECONDS``
-        once past the threshold, and never again once it has a first name.
+        Checked on any tick, mid-turn or idle, for an agent that has worked
+        at all. Its files are read at most every ``FIRST_RECHECK_SECONDS``
+        (once its task time is known, not before the name is due), so a
+        hand-back from the TUI or CLI (``hand_to_namer``) is seen within a
+        minute.
         """
-        minutes = float((cfg.get("first_after") or {}).get("work_minutes") or 0)
-        if not cfg.get("enabled") or minutes <= 0:
-            return False
-        if is_locked(getattr(session, "name_source", HUMAN)):
-            return False
-        if float(getattr(st, "green_time_seconds", 0) or 0) < minutes * 60:
+        if not cfg.get("enabled") or is_locked(getattr(session, "name_source", HUMAN)):
             return False
         ts = now.timestamp()
-        if ts < self._work_next.get(session.id, 0.0):
+        if ts < self._first_next.get(session.id, 0.0):
             return False
-        self._work_next[session.id] = ts + WORK_RECHECK_SECONDS
-        state = load_state(session.tmux_session or self.tmux_session, session.id)
+        self._first_next[session.id] = ts + FIRST_RECHECK_SECONDS
+        tmux_session = session.tmux_session or self.tmux_session
+        state = load_state(tmux_session, session.id)
         if state.first_done or state.renames:
-            self._work_next[session.id] = float("inf")
             return False
-        if state.attempted_at and ts - state.attempted_at < RETRY_GAP_SECONDS:
+        since = self._task_at.get(session.id)
+        if since is None:
+            since = first_task_at(session, tmux_session)
+            if since is None:
+                return False
+            self._task_at[session.id] = since
+        if not first_due(state, source=getattr(session, "name_source", HUMAN), task_since=since,
+                         green_seconds=float(getattr(st, "green_time_seconds", 0) or 0),
+                         cfg=cfg, now=ts):
+            minutes = float((cfg.get("first_after") or {}).get("minutes", FIRST_AFTER_MINUTES) or 0)
+            due_at = since + minutes * 60
+            if state.attempted_at:
+                due_at = max(due_at, state.attempted_at + RETRY_GAP_SECONDS)
+            self._first_next[session.id] = max(ts + 1, min(due_at, ts + FIRST_RECHECK_SECONDS))
             return False
         return not self._human_typing() and not self._over_cap(cfg, now)
 
@@ -964,13 +1029,17 @@ class Namer:
             return
 
         state = load_state(tmux_session, session_id)
-        if stage == "first":
-            state.first_done = True
-        else:
-            state.refine_done = True
-        save_state(tmux_session, session_id, state)
         pick = result.pick
-        if result.keep or not pick or pick == session.name:
+        keeps = result.keep or not pick or pick == session.name
+        if stage != "first":
+            state.refine_done = True
+        elif keeps and getattr(session, "name_source", HUMAN) == DEFAULT \
+                and state.first_tries + 1 < FIRST_TRIES:
+            state.first_tries += 1  # a placeholder: ask again later (first_due)
+        else:
+            state.first_done = True
+        save_state(tmux_session, session_id, state)
+        if keeps:
             self._info(f"namer: [{session.name}] keeps its name"
                        + (f" ({result.why})" if result.why else ""))
             return

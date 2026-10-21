@@ -47,7 +47,7 @@ class RenameAgentModal(ModalBase):
             self.old_name = old_name
             self.new_name = new_name
             self.force = force
-            # "auto" (overcode names it) or "human" (kept); new_name may equal old_name
+            # "default" (handed to overcode's namer) or "human" (kept); new_name may equal old_name
             self.name_source = name_source
 
     class Cancelled(Message):
@@ -233,6 +233,6 @@ class RenameAgentModal(ModalBase):
             return  # the red line already says why
         self.post_message(self.RenameRequested(
             self.session_id, self.old_name, self.value, self.force,
-            "auto" if self.by_overcode else "human",
+            "default" if self.by_overcode else "human",
         ))
         self._hide()

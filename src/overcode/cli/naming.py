@@ -195,7 +195,7 @@ def name_policy(
 
     rprint(f"\n[bold]Auto-naming[/bold] {escape(describe_auto_naming(cfg))}")
     rprint("[dim](naming.enabled in config.yaml, or / Auto-naming in the TUI; "
-           "naming.first_after.work_minutes sets the work before a name)[/dim]")
+           "naming.first_after.minutes sets how long after its first prompt)[/dim]")
 
     rprint("\n[bold]Always refused[/bold] (even with --force-name)")
     rprint("  a name outside letters, digits, - and _ (at most 64)")

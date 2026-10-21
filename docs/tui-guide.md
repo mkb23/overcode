@@ -472,9 +472,10 @@ name Claude still shows.
 
 With auto-naming on (`/` → "Auto-naming", or `naming.enabled`; see
 [Naming](configuration.md#naming)), the engine names an agent with a
-default name once it has worked 5 minutes (`naming.first_after.work_minutes`;
-it need not have finished its turn, and an agent that sits idle is never
-named) or at an earlier turn end, and at most once more later. The palette
+default name 5 minutes after its first prompt
+(`naming.first_after.minutes`), once it has started on it, working or
+waiting; an agent never given a task is not named. It may rename it once
+more much later, if the task changed. The palette
 row says whether it is on; the new-agent dialog's tip for the name says
 what will happen to a name left as it is. A toast says so
 (`overcode-main2 → jwt-refresh (auto)`), the name gets its `~`, and the

@@ -1051,8 +1051,7 @@ _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "max_
                 "cost_cap_per_day", "provider", "cli_title")
 _NAMING_RULE_KEYS = ("pattern", "max_length", "forbid", "require", "no_repo_prefix",
                      "recent_archived_hours", "llm_check", "warn_humans")
-_NAMING_FIRST_AFTER = {"turns": 2, "green_minutes": 3.0, "output_tokens": 15000,
-                       "work_minutes": 5.0}
+_NAMING_FIRST_AFTER = {"minutes": 5.0}
 
 
 def _positive_int(value) -> Optional[int]:
@@ -1096,9 +1095,9 @@ def describe_auto_naming(cfg: Optional[dict] = None) -> str:
     if not cfg.get("enabled"):
         return "off: agents keep the names they are launched with"
     first = cfg.get("first_after") or {}
-    work = float(first.get("work_minutes") or 0)
-    when = (f"after {work:g} min of work" if work
-            else "at a turn end, once it has done some work")
+    minutes = float(first.get("minutes") or 0)
+    when = (f"{minutes:g} min after its first prompt" if minutes
+            else "as soon as it starts on its first prompt")
     return f"on: a default name is replaced {when}, following the naming advice"
 
 
@@ -1120,9 +1119,8 @@ def get_naming_config() -> dict:
             recent_archived_hours: 0   # refuse names archived this recently (0 = off)
             llm_check: false    # ask the summarizer model whether the name follows the advice
             warn_humans: false  # warn (never refuse) a human's -n too
-          first_after: {turns: 2, green_minutes: 3, output_tokens: 15000, work_minutes: 5}
-                                # at a turn end after that much work; or, mid-turn,
-                                # once it has worked work_minutes (0 = only at turn ends)
+          first_after: {minutes: 5}  # the first name, this long after the agent's
+                                # first prompt, once it has started on it
           max_renames: 2
           cost_cap_per_day: 0.50
           provider: {...}       # api_type/api_url/model/api_key_var; default: the summarizer: block
@@ -1197,6 +1195,10 @@ def get_naming_config() -> dict:
     if not isinstance(raw_first, dict):
         warnings.append("naming.first_after: should be a mapping — ignored")
         raw_first = {}
+    for key in raw_first:
+        if key not in _NAMING_FIRST_AFTER:
+            warnings.append(f"naming.first_after: '{key}' is not used — the first name comes "
+                            "first_after.minutes after the agent's first prompt")
     first_after = {k: _non_negative(raw_first.get(k, d), d) for k, d in _NAMING_FIRST_AFTER.items()}
     max_renames = cfg.get("max_renames", 2)
     max_renames = max_renames if isinstance(max_renames, int) and not isinstance(

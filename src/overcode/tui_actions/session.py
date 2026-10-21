@@ -651,7 +651,7 @@ class SessionActionsMixin:
 
     def action_name_by_overcode(self) -> None:
         """Hand the focused agent's name to overcode's auto-naming (palette, #542)."""
-        self._set_focused_name_source("auto")
+        self._set_focused_name_source("default")
 
     def action_keep_name(self) -> None:
         """Lock the focused agent's name: overcode never renames it (palette, #542)."""
@@ -665,7 +665,7 @@ class SessionActionsMixin:
             return
         session = focused.session
         if self._is_remote(session):
-            flag = "--auto" if source == "auto" else "--lock"
+            flag = "--auto" if source != "human" else "--lock"
             self.notify(f"Run overcode rename {session.name} {flag} on its own machine",
                         severity="warning")
             return
