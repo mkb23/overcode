@@ -67,6 +67,12 @@ def _dicts(sessions):
 
 
 class TestJsonlArchive:
+    @pytest.fixture(autouse=True)
+    def _conversion_agreed(self, tmp_path):
+        """These tests convert 0.5 archives: the person has said yes (upgrade_consent)."""
+        from overcode import upgrade_consent
+        upgrade_consent.grant(tmp_path)
+
     def test_delete_session_appends_the_cleanup_record(self, tmp_path):
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         s = sm.create_session(name="a", tmux_session="agents", tmux_window="w", command=["claude"])

@@ -237,7 +237,7 @@ class SessionArchiveMixin:
         """Add ``records`` to this month's file, slimmed: one lock, one fsync."""
         if not records:
             return
-        self._migrate_legacy_archive()
+        self._migrate_legacy_archive_if_agreed()
         with self._archive_lock():
             # Chosen under the lock, never a closed (gzipped) month: a late
             # write goes to the newest open one (``month_files``)
@@ -319,6 +319,13 @@ class SessionArchiveMixin:
         return removed
 
     # ── migration from the single-file archives ─────────────────────────
+
+    def _migrate_legacy_archive_if_agreed(self) -> None:
+        """Split an earlier version's archive, once the person has agreed to
+        converting 0.5 data (upgrade_consent); until then it is left as it is."""
+        from .upgrade_consent import needs_consent
+        if not needs_consent(self.state_dir):
+            self._migrate_legacy_archive()
 
     def _migrate_legacy_archive(self) -> None:
         """Split ``archive.json`` / ``archive.jsonl`` into slim months, then delete them.
@@ -423,7 +430,7 @@ class SessionArchiveMixin:
         return _complete_lines(data)
 
     def _months_since(self, since: Optional[datetime]) -> List[Tuple[str, Path]]:
-        self._migrate_legacy_archive()
+        self._migrate_legacy_archive_if_agreed()
         months = self.archive_months()
         if since is None:
             return months

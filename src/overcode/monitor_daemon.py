@@ -2322,6 +2322,12 @@ class MonitorDaemon:
 
     def run(self, check_interval: int = INTERVAL_FAST):
         """Main daemon loop."""
+        # 0.5 data nobody has agreed to convert: start nothing (upgrade_consent)
+        from .upgrade_consent import needs_consent
+        if needs_consent():
+            self.log.error("overcode 0.5 data is waiting to be converted: run `overcode` in a "
+                           "terminal to read what changes and agree (back up first)")
+            sys.exit(1)
         # Atomically check if already running and acquire lock
         # This prevents TOCTOU race conditions that could cause multiple daemons
         acquired, existing_pid = acquire_daemon_lock(self.pid_path)

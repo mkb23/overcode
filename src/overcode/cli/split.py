@@ -771,6 +771,10 @@ def open_split(session: str = "agents", ratio: int = 25, *, restart: bool = Fals
     Also what `overcode` with no command and `overcode monitor` run.
     monitor_args: extra flags for the monitor pane (e.g. ``--jobs``).
     """
+    # 0.5 data waiting to be converted: explain, suggest a backup, ask first
+    from ..upgrade_consent import confirm_or_exit
+    confirm_or_exit(rprint, assume_yes=yes)
+
     # Create agents session if it doesn't exist (#397)
     if not _tmux_check("has-session", "-t", session):
         rprint(f"[dim]Creating tmux session '{session}'...[/dim]")
