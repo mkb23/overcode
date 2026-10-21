@@ -118,7 +118,10 @@ class TestCreateAgentWorktree:
 
 
 @pytest.fixture
-def fleet(tmp_path):
+def fleet(tmp_path, monkeypatch):
+    # No agent CLI or tmux on CI runners: launching only needs them to exist
+    monkeypatch.setattr("overcode.launcher.require_tmux", lambda: "tmux")
+    monkeypatch.setattr("overcode.launcher.require_agent_cli", lambda backend: "claude")
     mock_tmux = MockTmux()
     sessions = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)
     launcher = AgentLauncher("agents", TmuxManager("agents", tmux=mock_tmux), sessions)
