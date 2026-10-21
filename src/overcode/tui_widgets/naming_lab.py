@@ -251,6 +251,8 @@ class NamingLab(Vertical):
     def _legend(self) -> str:
         """The keys along the bottom border; while A asks, its answers."""
         close = self._key("close").replace("Esc", "esc")
+        # ASCII <->: ↔ is ambiguous-width and could push the border out
+        switch = f"switch focus: {KIND_LABELS[self.kind]} <-> agent list"
         if self._confirm_all == "ask":
             keys = (("y", "rename default/auto names"), ("a", "all names…"), (close, "cancel"))
         elif self._confirm_all == "all":
@@ -260,21 +262,22 @@ class NamingLab(Vertical):
             keys = [
                 ("↑↓", "pick"), (self._key("apply"), "rename"),
                 (self._key("apply_all"), "rename all"),
-                (self._key("switch_focus"), "back to the editor"),
+                (self._key("switch_focus"), switch),
                 (self._key("save"), "save"), (self._key("switch_view"), "live/archived"),
                 (self._key("pin"), "pin A"), (self._key("revert"), "revert"),
                 (self._key("load_default"), "default"), (close, "close"),
             ]
         else:
             keys = [
-                (self._key("switch_focus"), "focus the agents (to rename)"),
+                (self._key("switch_focus"), switch),
                 (self._key("save"), "save"), (self._key("switch_view"), "live/archived"),
                 (self._key("switch_text"), "advice/prompt"), (self._key("pin"), "pin A"),
                 (self._key("revert"), "revert"), (self._key("load_default"), "default"),
                 (close, "close"),
             ]
         # A narrow lab drops the keys least needed first: they stay in the help
-        for least in ("default", "revert", "pin A", "live/archived", "advice/prompt", "save"):
+        for least in ("default", "revert", "pin A", "live/archived", "advice/prompt", "save",
+                      "pick", "close"):
             if cell_len(Text.from_markup(ds.hints(*((k, w) for k, w in keys if k))).plain) \
                     <= self._inner_width - 2:
                 break
@@ -630,7 +633,7 @@ class NamingLab(Vertical):
         left = Text(" FLEET ", style=f"bold {ds.ACCENT}" if focused else f"bold {ds.MUTED}")
         left.append_text(ds.options(tuple(VIEW_LABELS.values()), VIEW_LABELS[self.view]))
         left.append(f"  {len(self.agents)} " if not self.loading else "  … ", style=ds.STATE_OTHER)
-        left.append("· focused " if focused else f"· {self._key('switch_focus')} to focus ",
+        left.append("· focused " if focused else f"· {self._key('switch_focus')} to switch here ",
                     style=ds.ACCENT if focused else ds.STATE_OTHER)
         right = Text(style=ds.STATE_OTHER)
         b = stats(self.agents, [self._pick(a, self.current()) for a in self.agents])
@@ -802,7 +805,7 @@ class NamingLab(Vertical):
         if problem is not None:
             return problem
         if not self._rows_focused():
-            return Text(f" in the advice · {self._key('switch_focus')} to the agents: "
+            return Text(f" {self._key('switch_focus')} switches focus to the agent list: "
                         f"{self._key('apply')} renames one, {self._key('apply_all')} all",
                         style=ds.STATE_OTHER)
         tip = Text(" ")
