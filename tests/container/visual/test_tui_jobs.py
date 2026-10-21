@@ -22,7 +22,9 @@ def test_jobs_column_and_orphans(oc, oc_wait, sandbox, screenshots):
     sandbox.new_sized_session(
         TUI_SESSION,
         f"env -u TMUX -u TMUX_PANE python -m overcode.cli monitor --session {oc.session} --sync-target {oc.session}",
-        env=oc.env, width=200, height=40,
+        # 300 wide: since the summary keeps its 24 cells (columns.layout.grid_room),
+        # JOB, near the end of the grid, is cut at high/full below ~280 columns
+        env=oc.env, width=300, height=40,
     )
 
     def pane():
@@ -46,8 +48,9 @@ def test_jobs_column_and_orphans(oc, oc_wait, sandbox, screenshots):
         before = header()
         sandbox.send_keys(TUI_SESSION, "", "s")
         oc_wait(lambda: header() != before, timeout=10, desc="summary detail changed")
+    assert " JOB " in header(), f"the JOB column never showed: {header()!r}"
     oc_wait(lambda: "🚜 1" in agent_row(), timeout=20, desc="JOB column counts 1")
 
     from overcode.testing.renderer import render_terminal_to_png
     render_terminal_to_png(sandbox.capture_pane_ansi(TUI_SESSION),
-                           str(screenshots / "tui-jobs.png"), width=200, height=40)
+                           str(screenshots / "tui-jobs.png"), width=300, height=40)
