@@ -462,6 +462,127 @@ class TestEffort:
         assert full_stats(path)[0]["effort"] is None
 
 
+def _confirm(ts: datetime, text: str) -> str:
+    """The record Claude Code writes when a slash command answers locally."""
+    return json.dumps({
+        "type": "user", "timestamp": _iso_z(ts),
+        "message": {"role": "user",
+                    "content": f"<local-command-stdout>{text}</local-command-stdout>"},
+    })
+
+
+SET_SONNET = "Set model to `Sonnet 5.5` and saved as your default for new sessions"
+SET_HIGH = ("Set effort level to high (saved as your default for new sessions): "
+            "Comprehensive implementation with extensive testing and documentation")
+
+
+class TestSettingRecords:
+    """A /model or /effort Claude confirmed counts before the next reply (#539)."""
+
+    def _write(self, tmp_path, *lines):
+        path = tmp_path / "s.jsonl"
+        _Writer(path).write("\n".join(lines) + "\n")
+        index = TranscriptIndex(str(path))
+        _check(index, path, SINCES, [])
+        return index.stats(None)[0]
+
+    def test_model_switch_is_selected_and_makes_effort_unknown(self, tmp_path):
+        totals = self._write(
+            tmp_path,
+            _assistant(T0, model="claude-haiku-5-5", effort="medium"),
+            _confirm(T0 + timedelta(minutes=1), SET_SONNET),
+        )
+        # The replies' model (what spend is priced at) is untouched
+        assert (totals["model"], totals["effort"]) == ("claude-haiku-5-5", "medium")
+        assert totals["selected_model"] == "claude-sonnet-5-5"
+        assert totals["selected_effort"] is None and totals["effort_cleared"]
+        assert totals["model_at"] == datetime_key(T0 + timedelta(minutes=1))
+
+    def test_effort_setting_is_selected(self, tmp_path):
+        totals = self._write(
+            tmp_path,
+            _assistant(T0, model="claude-sonnet-5-5", effort="low"),
+            _confirm(T0 + timedelta(minutes=1), SET_SONNET),  # same model: effort stands
+            _confirm(T0 + timedelta(minutes=2), SET_HIGH),
+        )
+        assert totals["selected_effort"] == "high" and not totals["effort_cleared"]
+
+    def test_model_switch_after_effort_makes_it_unknown_again(self, tmp_path):
+        totals = self._write(
+            tmp_path,
+            _assistant(T0, model="claude-haiku-5-5", effort="medium"),
+            _confirm(T0 + timedelta(minutes=1), SET_HIGH),
+            _confirm(T0 + timedelta(minutes=2), SET_SONNET),
+        )
+        assert totals["selected_effort"] is None and totals["effort_cleared"]
+
+    def test_the_next_reply_replaces_the_selection(self, tmp_path):
+        totals = self._write(
+            tmp_path,
+            _assistant(T0, model="claude-haiku-5-5", effort="medium"),
+            _confirm(T0 + timedelta(minutes=1), SET_SONNET),
+            _user(T0 + timedelta(minutes=2)),
+            _assistant(T0 + timedelta(minutes=3), model="claude-sonnet-5-5", effort="low"),
+        )
+        assert (totals["model"], totals["effort"]) == ("claude-sonnet-5-5", "low")
+        assert totals["selected_model"] is None and totals["selected_effort"] is None
+        assert not totals["effort_cleared"]
+        assert totals["model_at"] == datetime_key(T0 + timedelta(minutes=3))
+
+    def test_auto_effort_is_unknown_until_a_reply(self, tmp_path):
+        totals = self._write(
+            tmp_path,
+            _assistant(T0, effort="high"),
+            _confirm(T0 + timedelta(minutes=1), "Effort level set to auto"),
+        )
+        assert totals["selected_effort"] is None and totals["effort_cleared"]
+
+    def test_capped_effort_takes_the_level_applied(self, tmp_path):
+        totals = self._write(
+            tmp_path,
+            _assistant(T0, effort="high"),
+            _confirm(T0 + timedelta(minutes=1),
+                     "Effort 'max' exceeds the cap for claude-sonnet-5-5 set by your settings "
+                     "or organization; set to 'xhigh' instead (this session only): Deeper"),
+        )
+        assert totals["selected_effort"] == "xhigh"
+
+    def test_a_setting_before_since_is_left_out(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        _Writer(path).write(
+            _assistant(T0, model="claude-haiku-5-5") + "\n"
+            + _confirm(T0 + timedelta(minutes=1), SET_SONNET) + "\n")
+        index = TranscriptIndex(str(path))
+        _check(index, path, SINCES, [])
+        assert index.stats(T0 + timedelta(minutes=3))[0]["selected_model"] is None
+
+    def test_a_setting_still_counts_as_a_prompt_time(self, tmp_path):
+        """Work times are as before: the confirmation is a user record."""
+        self._write(tmp_path, _user(T0), _confirm(T0 + timedelta(minutes=2), SET_SONNET))
+        assert TranscriptIndex(str(tmp_path / "s.jsonl")).stats(None)[1] == [120.0]
+
+    @pytest.mark.parametrize("text, expected", [
+        (SET_SONNET, ("model", "claude-sonnet-5-5")),
+        ("Set model to `Opus 4.6 (1M context)` for this session only", ("model", "claude-opus-4-6[1m]")),
+        ("Set model to `Opus 5.5 (default)` and saved as your default for new sessions",
+         ("model", "claude-opus-5-5")),
+        ("Set model to `Haiku 5.5`", ("model", "claude-haiku-5-5")),
+        ("\x1b[1mSet model to `Sonnet 5.5`\x1b[22m", ("model", "claude-sonnet-5-5")),
+        (SET_HIGH, ("effort", "high")),
+        ("Set effort level to low (this session only): Quick", ("effort", "low")),
+        ("Effort level set to auto", ("effort", None)),
+        # A name with no id we can be sure of: the next reply tells
+        ("Set model to `Fable` and saved as your default for new sessions", None),
+        ("Kept model as `Sonnet 5.5`", None),
+        ("Not applied: CLAUDE_CODE_EFFORT_LEVEL=high overrides effort this session", None),
+        ("Catch you later!", None),
+    ])
+    def test_confirmations_read(self, text, expected):
+        from overcode.transcript_index import local_command_setting
+
+        assert local_command_setting(f"<local-command-stdout>{text}</local-command-stdout>") == expected
+
+
 class TestPrLink:
     """pr-link records (#489): the latest PR the session was linked to."""
 

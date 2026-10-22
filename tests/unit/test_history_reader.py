@@ -6,7 +6,7 @@ import pytest
 import sys
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -1717,3 +1717,62 @@ class TestPerConversation:
         stats = get_session_stats(session, history_path=history_file,
                                   projects_path=project_dir.parent)
         assert list(stats.per_conversation) == ["session-b"]
+
+
+class TestModelAndEffortInForce:
+    """A /model or /effort typed into the agent shows before its next reply (#539)."""
+
+    def _stats(self, tmp_path, records):
+        from overcode.history_reader import encode_project_path, get_session_stats
+
+        start = datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+        history_file = tmp_path / "history.jsonl"
+        history_file.write_text(json.dumps({
+            "display": "1", "timestamp": int(start.timestamp() * 1000) + 1000,
+            "project": "/test/project", "sessionId": "session-a"}))
+        project_dir = tmp_path / "projects" / encode_project_path("/test/project")
+        project_dir.mkdir(parents=True)
+        (project_dir / "session-a.jsonl").write_text("\n".join(json.dumps(r) for r in records))
+        session = create_test_session(start_directory="/test/project", start_time=start.isoformat())
+        session.agent_session_ids = ["session-a"]
+        session.active_agent_session_id = "session-a"
+        return get_session_stats(session, history_path=history_file,
+                                 projects_path=project_dir.parent)
+
+    @staticmethod
+    def _reply(minute, model, effort):
+        return {"type": "assistant", "timestamp": f"2026-01-15T10:0{minute}:00.000Z",
+                "effort": effort, "message": {"id": f"msg_{minute}", "model": model,
+                                              "usage": {"input_tokens": 5, "output_tokens": 5}}}
+
+    @staticmethod
+    def _stdout(minute, text):
+        return {"type": "user", "timestamp": f"2026-01-15T10:0{minute}:00.000Z",
+                "message": {"role": "user",
+                            "content": f"<local-command-stdout>{text}</local-command-stdout>"}}
+
+    def test_model_switch_shows_at_once_with_effort_unknown(self, tmp_path):
+        stats = self._stats(tmp_path, [
+            self._reply(1, "claude-haiku-5-5", "medium"),
+            self._stdout(2, "Set model to `Sonnet 5.5` and saved as your default for new sessions"),
+        ])
+        assert (stats.model, stats.effort, stats.effort_cleared) == ("claude-sonnet-5-5", None, True)
+        at = datetime(2026, 1, 15, 10, 2, tzinfo=timezone.utc).timestamp()
+        assert stats.model_at == stats.effort_at == at
+        # Spend stays priced at the model the reply ran on
+        assert stats.per_conversation["session-a"]["model"] == "claude-haiku-5-5"
+
+    def test_effort_setting_shows_at_once(self, tmp_path):
+        stats = self._stats(tmp_path, [
+            self._reply(1, "claude-sonnet-5-5", "low"),
+            self._stdout(2, "Set effort level to high (this session only): Comprehensive"),
+        ])
+        assert (stats.model, stats.effort, stats.effort_cleared) == ("claude-sonnet-5-5", "high", False)
+
+    def test_the_next_reply_is_what_counts(self, tmp_path):
+        stats = self._stats(tmp_path, [
+            self._reply(1, "claude-haiku-5-5", "medium"),
+            self._stdout(2, "Set model to `Sonnet 5.5`"),
+            self._reply(3, "claude-sonnet-5-5", "low"),
+        ])
+        assert (stats.model, stats.effort, stats.effort_cleared) == ("claude-sonnet-5-5", "low", False)

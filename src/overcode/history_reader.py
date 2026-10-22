@@ -24,7 +24,7 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from . import conversation_spend, model_metadata
@@ -36,10 +36,14 @@ from .transcript_index import (
     TranscriptRegistry,
     cache_write_1h,
     datetime_key,
+    empty_selection,
     empty_stats,
     empty_window,
+    fold_setting,
+    local_command_setting,
     is_long_request,
     key_before,
+    key_datetime,
     parse_message_time,
 )
 
@@ -438,6 +442,40 @@ def provider_from_message_id(msg_id: Optional[str]) -> Optional[str]:
     return None
 
 
+class InForce(NamedTuple):
+    """The model and effort in force after one transcript's read (#539)."""
+    model: Optional[str]
+    effort: Optional[str]
+    effort_cleared: bool  # a model switch since the last reply: effort unknown
+    model_at: Optional[float]  # when each was last stated, epoch seconds
+    effort_at: Optional[float]
+
+
+def _epoch(key) -> Optional[float]:
+    if not isinstance(key, int):
+        return None
+    try:
+        return key_datetime(key).timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def current_model_effort(read: dict) -> InForce:
+    """The model and effort in force after one transcript's ``read``.
+
+    A /model or /effort Claude confirmed since the last reply wins over
+    that reply's (``transcript_index.fold_setting``).
+    """
+    if read.get("selected_effort"):
+        effort, cleared = read["selected_effort"], False
+    elif read.get("effort_cleared"):
+        effort, cleared = None, True
+    else:
+        effort, cleared = read.get("effort"), False
+    return InForce(read.get("selected_model") or read.get("model"), effort, cleared,
+                   _epoch(read.get("model_at")), _epoch(read.get("effort_at")))
+
+
 @dataclass
 class AgentSessionStats:
     """Statistics for one agent session (tokens, context, work times)."""
@@ -459,6 +497,15 @@ class AgentSessionStats:
     # store ("low"/"medium"/"high"/"xhigh"/"max"/… — vocabularies differ
     # per harness) (#497)
     effort: Optional[str] = None
+    # Claude (#539): the model and effort above are the ones in force now, a
+    # /model or /effort typed since the last reply included. A switch to
+    # another model leaves the effort unknown until the next reply:
+    # ``effort`` is then None and ``effort_cleared`` True. ``model_at`` is
+    # ``model_at``/``effort_at`` when the transcript last stated each (epoch
+    # seconds).
+    effort_cleared: bool = False
+    model_at: Optional[float] = None
+    effort_at: Optional[float] = None
     agent: Optional[str] = None  # detected agent persona, opencode2's NULL-row fallback
     pr_number: Optional[int] = None  # PR the session is linked to (Claude pr-link, #489)
     custom_title: Optional[str] = None  # the session's own name (Claude custom-title, #542)
@@ -979,20 +1026,7 @@ def _parse_session_lines(
     Returns:
         (token_usage_dict, work_times_list)
     """
-    totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_creation_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_creation_1h_tokens": 0,
-        **dict.fromkeys(LONG_KEYS, 0),
-        "current_context_tokens": 0,
-        "model": None,
-        "provider": None,
-        "effort": None,
-        "pr_number": None,
-        "custom_title": None,
-    }
+    totals = empty_stats()[0]
     token_keys = ("input_tokens", "output_tokens", "cache_creation_tokens",
                   "cache_read_tokens", "cache_creation_1h_tokens")
     # message id -> (its first line's time, its last line's usage)
@@ -1059,6 +1093,8 @@ def _parse_session_lines(
                     model = message.get("model")
                     if model:
                         totals["model"] = model
+                        totals["model_at"] = (datetime_key(msg_time)
+                                              if msg_time is not None else None)
                     detected = provider_from_message_id(message.get("id"))
                     if detected:
                         totals["provider"] = detected
@@ -1067,6 +1103,10 @@ def _parse_session_lines(
                     effort = data.get("effort")
                     if effort and isinstance(effort, str):
                         totals["effort"] = effort
+                        totals["effort_at"] = (datetime_key(msg_time)
+                                               if msg_time is not None else None)
+                    # The reply says what it ran on (transcript_index.fold_setting)
+                    totals.update(empty_selection())
 
             elif msg_type == "user":
                 # Check if this is an actual user prompt (not a tool result)
@@ -1087,6 +1127,10 @@ def _parse_session_lines(
                     if since and msg_time < since:
                         continue
                     user_prompt_times.append(msg_time)
+                    # A /model or /effort confirmation (#539)
+                    setting = local_command_setting(content)
+                    if setting is not None:
+                        fold_setting(totals, datetime_key(msg_time), setting)
                 except (ValueError, TypeError):
                     continue
 
@@ -1507,6 +1551,9 @@ def get_session_stats(
     detected_model: Optional[str] = None
     detected_provider: Optional[str] = None
     detected_effort: Optional[str] = None
+    effort_cleared = False
+    model_at: Optional[float] = None
+    effort_at: Optional[float] = None
     detected_pr: Optional[int] = None
     detected_title: Optional[str] = None
     all_work_times: List[float] = []
@@ -1564,12 +1611,14 @@ def get_session_stats(
         if active_session_id:
             if sid == active_session_id:
                 current_context = usage["current_context_tokens"]
-                if usage["model"]:
-                    detected_model = usage["model"]
+                in_force = current_model_effort(usage)
+                if in_force.model:
+                    detected_model, model_at = in_force.model, in_force.model_at
                 if usage["provider"]:
                     detected_provider = usage["provider"]
-                if usage.get("effort"):
-                    detected_effort = usage.get("effort")
+                if in_force.effort or in_force.effort_cleared:
+                    detected_effort, effort_cleared = in_force.effort, in_force.effort_cleared
+                    effort_at = in_force.effort_at
                 if usage.get("pr_number"):
                     detected_pr = usage["pr_number"]
                 if usage.get("custom_title"):
@@ -1577,12 +1626,14 @@ def get_session_stats(
         else:
             if usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
-            if usage["model"]:
-                detected_model = usage["model"]
+            in_force = current_model_effort(usage)
+            if in_force.model:
+                detected_model, model_at = in_force.model, in_force.model_at
             if usage["provider"]:
                 detected_provider = usage["provider"]
-            if usage.get("effort"):
-                detected_effort = usage.get("effort")
+            if in_force.effort or in_force.effort_cleared:
+                detected_effort, effort_cleared = in_force.effort, in_force.effort_cleared
+                effort_at = in_force.effort_at
             if usage.get("pr_number"):
                 detected_pr = usage["pr_number"]
             if usage.get("custom_title"):
@@ -1636,6 +1687,9 @@ def get_session_stats(
         model=detected_model,
         provider=detected_provider,
         effort=detected_effort,
+        effort_cleared=effort_cleared,
+        model_at=model_at,
+        effort_at=effort_at,
         pr_number=detected_pr,
         custom_title=detected_title,
         last_command=last_command,

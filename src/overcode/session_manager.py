@@ -224,6 +224,10 @@ class Session:
     # changes, so a model picked by `restart --model` survives until the
     # agent answers on it (#505).
     transcript_model: Optional[str] = None
+    # When `restart --model` picked `model` (epoch seconds), until the
+    # transcript states a model after it: what the transcript said before
+    # then (its model and effort) no longer applies (#539).
+    model_chosen_at: Optional[float] = None
     effort: Optional[str] = None  # Reasoning effort, detected from the backend's store (#497)
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
     # A bedrock launch's routing (``pricing.bedrock_routing``): "global" is

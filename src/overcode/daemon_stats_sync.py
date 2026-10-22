@@ -20,6 +20,13 @@ from .session_manager import PendingUpdates
 from .stats_reader import AgentSessionStats, stats_reader_for_session
 
 
+def _number(value) -> Optional[float]:
+    """``value`` when it is a real number (not a bool), else None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
 class StatsSync:
     """One daemon's transcript-stats sync.
 
@@ -136,17 +143,47 @@ class StatsSync:
                 session.id, discovered.latest
             )
 
-    def sync_model(self, session, detected: Optional[str], pending: PendingUpdates) -> None:
-        """Follow a model change seen in the transcript (e.g. /model).
+    def sync_model(self, session, detected: Optional[str], pending: PendingUpdates,
+                   model_at: Optional[float] = None) -> None:
+        """Follow a model change seen in the transcript (a reply, or /model).
 
         Only a change counts: after `restart --model`, the resumed
         transcript still ends on the old model until the agent replies,
-        and must not undo the new choice (#505).
+        and must not undo the new choice (#505). Once the transcript says
+        when (``model_at``), anything it states after the choice
+        (``model_chosen_at``) wins, even a model it named before (#539).
         """
-        if detected and detected != session.transcript_model:
+        if not detected:
+            return
+        chosen_at = _number(getattr(session, "model_chosen_at", None))
+        if chosen_at is not None and model_at is not None:
+            if model_at > chosen_at:
+                pending.update_session(session.id, model=detected, transcript_model=detected,
+                                       model_chosen_at=None)
+            return
+        # A reader that does not date it: by value, as before
+        if detected != session.transcript_model:
             pending.update_session(
                 session.id, model=detected, transcript_model=detected
             )
+
+    def sync_effort(self, session, stats, pending: PendingUpdates) -> None:
+        """Follow the effort the transcript shows in force (#497, #539).
+
+        A switch to another model makes it unknown (``effort_cleared``)
+        until the next reply names it: shown as unknown, not as the old
+        model's. What the transcript stated before a `restart --model`
+        choice no longer applies.
+        """
+        chosen_at = _number(getattr(session, "model_chosen_at", None))
+        effort_at = _number(getattr(stats, "effort_at", None))
+        if chosen_at is not None and effort_at is not None and effort_at <= chosen_at:
+            return
+        if stats.effort:
+            if stats.effort != session.effort:
+                pending.update_session(session.id, effort=stats.effort)
+        elif getattr(stats, "effort_cleared", False) is True and session.effort:
+            pending.update_session(session.id, effort=None)
 
     def sync_pr(self, session, pr_number: Optional[int], pending: PendingUpdates) -> None:
         """Take the PR from the transcript's pr-link records (#489).
@@ -173,11 +210,10 @@ class StatsSync:
         self.note_stats_view(session, stats)
 
         # Update model/provider if detected
-        self.sync_model(session, detected_model, pending)
+        self.sync_model(session, detected_model, pending, _number(getattr(stats, "model_at", None)))
         if detected_provider and detected_provider != session.provider:
             pending.update_session(session.id, provider=detected_provider)
-        if stats.effort and stats.effort != session.effort:
-            pending.update_session(session.id, effort=stats.effort)
+        self.sync_effort(session, stats, pending)
 
         self._stage_usage(session, stats, pending)
 
@@ -212,15 +248,15 @@ class StatsSync:
             # ("msg_bdrk_" = bedrock, "msg_" = web), which stays correct
             # across /clear (fixing cases where a bedrock agent switches
             # to Claude Max and vice versa).
-            self.sync_model(session, stats.model, pending)
+            self.sync_model(session, stats.model, pending,
+                            _number(getattr(stats, "model_at", None)))
             self.sync_pr(session, stats.pr_number, pending)
             title = getattr(stats, "custom_title", None)
             if title:
                 self.transcript_titles[session.id] = title
             if stats.provider and stats.provider != session.provider:
                 pending.update_session(session.id, provider=stats.provider)
-            if stats.effort and stats.effort != session.effort:
-                pending.update_session(session.id, effort=stats.effort)
+            self.sync_effort(session, stats, pending)
 
             # Cache last command for daemon state publishing
             if stats.last_command:

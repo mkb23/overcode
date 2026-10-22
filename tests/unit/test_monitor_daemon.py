@@ -7,6 +7,7 @@ without running the actual daemon loop.
 
 import json
 import threading
+from types import SimpleNamespace
 
 import pytest
 from datetime import datetime, timedelta
@@ -604,6 +605,59 @@ class TestSyncClaudeCodeStats:
         daemon.stats_sync.sync_model(session, "claude-fable-5-1", daemon._pending)  # /model in the agent
         assert daemon._pending.fields["sess-1"]["model"] == "claude-fable-5-1"
 
+
+    def test_restart_model_choice_yields_to_anything_the_transcript_says_later(
+            self, tmp_path, monkeypatch):
+        """`restart --model haiku`, then /model back to the old transcript's
+        model before any reply: the view follows the /model (#539)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = Mock(id="sess-1", model="haiku", transcript_model="claude-sonnet-5-5",
+                       model_chosen_at=1000.0)
+        sync = daemon.stats_sync.sync_model
+
+        sync(session, "claude-sonnet-5-5", daemon._pending, model_at=900.0)  # before the choice
+        assert "sess-1" not in daemon._pending.fields
+
+        sync(session, "claude-sonnet-5-5", daemon._pending, model_at=1100.0)  # /model sonnet
+        assert daemon._pending.fields["sess-1"] == {
+            "model": "claude-sonnet-5-5", "transcript_model": "claude-sonnet-5-5",
+            "model_chosen_at": None}
+
+    def test_undated_model_reader_keeps_the_value_rule_after_a_choice(
+            self, tmp_path, monkeypatch):
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = Mock(id="sess-1", model="gpt-5", transcript_model="gpt-4",
+                       model_chosen_at=1000.0)
+        daemon.stats_sync.sync_model(session, "gpt-4", daemon._pending)
+        assert "sess-1" not in daemon._pending.fields
+        daemon.stats_sync.sync_model(session, "gpt-5.1", daemon._pending)
+        assert daemon._pending.fields["sess-1"]["model"] == "gpt-5.1"
+
+    @pytest.mark.parametrize("stats, session_effort, staged", [
+        ({"effort": "high"}, "low", {"effort": "high"}),
+        ({"effort": "low"}, "low", None),
+        # A model switch since the last reply: unknown, not the old model's
+        ({"effort": None, "effort_cleared": True}, "medium", {"effort": None}),
+        ({"effort": None, "effort_cleared": True}, None, None),
+        # A backend that reports nothing leaves it alone
+        ({"effort": None}, "high", None),
+    ])
+    def test_sync_effort(self, tmp_path, monkeypatch, stats, session_effort, staged):
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = Mock(id="sess-1", effort=session_effort, model_chosen_at=None)
+        daemon.stats_sync.sync_effort(session, SimpleNamespace(**stats), daemon._pending)
+        assert daemon._pending.fields.get("sess-1") == staged
+
+    def test_effort_stated_before_a_restart_model_choice_is_left_alone(
+            self, tmp_path, monkeypatch):
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = Mock(id="sess-1", effort=None, model_chosen_at=1000.0)
+        old = SimpleNamespace(effort="high", effort_cleared=False, effort_at=900.0)
+        daemon.stats_sync.sync_effort(session, old, daemon._pending)
+        assert "sess-1" not in daemon._pending.fields
+        new = SimpleNamespace(effort="medium", effort_cleared=False, effort_at=1100.0)
+        daemon.stats_sync.sync_effort(session, new, daemon._pending)
+        assert daemon._pending.fields["sess-1"] == {"effort": "medium"}
 
     def test_sync_pr_takes_transcript_pr_once(self, tmp_path, monkeypatch):
         """The pr-link PR is applied when it changes, not re-applied after a

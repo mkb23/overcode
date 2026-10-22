@@ -82,6 +82,7 @@ total number of retained per-message entries.
 import bisect
 import json
 import os
+import re
 import threading
 from array import array
 from collections import OrderedDict
@@ -179,7 +180,84 @@ def empty_stats() -> Tuple[dict, List[float]]:
         "effort": None,
         "pr_number": None,
         "custom_title": None,
+        **empty_selection(),
+        "model_at": None,
+        "effort_at": None,
     }, []
+
+
+def empty_selection() -> dict:
+    """No /model or /effort since the last reply (see ``fold_setting``)."""
+    return {"selected_model": None, "selected_effort": None, "effort_cleared": False}
+
+
+# What Claude Code writes when /model or /effort answers in the CLI itself
+# (a ``<local-command-stdout>`` user record, the moment the setting takes):
+#   Set model to `Sonnet 5.5` and saved as your default for new sessions
+#   Set effort level to low (this session only): Quick, ...
+#   Effort 'max' exceeds the cap for X ...; set to 'xhigh' instead ...
+#   Effort level set to auto
+# The model is named for people; the families below map back to the id its
+# replies carry (claude-sonnet-5-5). Any other name is left to the next reply.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_STDOUT = re.compile(r"^<local-command-stdout>(.*?)</local-command-stdout>\s*$", re.S)
+_SET_MODEL = re.compile(r"^Set model to `([^`]+)`")
+_MODEL_NAME = re.compile(
+    r"^(Opus|Sonnet|Haiku)\s+(\d+(?:\.\d+)*)(\s*\(1M context\))?(?:\s*\(default\))?$", re.I)
+_SET_EFFORT = re.compile(r"^Set effort level to ([a-z]+)\b")
+_CAPPED_EFFORT = re.compile(r"^Effort '[^']*' exceeds the cap .*?; set to '([a-z]+)' instead", re.S)
+_AUTO_EFFORT = "Effort level set to auto"
+
+
+def local_command_setting(content) -> Optional[Tuple[str, Optional[str]]]:
+    """``("model", id)`` or ``("effort", level)`` a slash command's confirmation set, else None.
+
+    ``("effort", None)``: effort back to the model's default, which only
+    the next reply names.
+    """
+    if not isinstance(content, str) or not content.startswith("<local-command-stdout>"):
+        return None
+    match = _STDOUT.match(content)
+    if not match:
+        return None
+    text = _ANSI.sub("", match.group(1)).strip()
+    model = _SET_MODEL.match(text)
+    if model:
+        name = _MODEL_NAME.match(model.group(1).strip())
+        if not name:
+            return None
+        family, version, one_m = name.groups()
+        return "model", (f"claude-{family.lower()}-{version.replace('.', '-')}"
+                         + ("[1m]" if one_m else ""))
+    effort = _SET_EFFORT.match(text) or _CAPPED_EFFORT.match(text)
+    if effort:
+        return "effort", effort.group(1)
+    if text.startswith(_AUTO_EFFORT):
+        return "effort", None
+    return None
+
+
+def fold_setting(totals: dict, key: Optional[int], setting: Tuple[str, Optional[str]]) -> None:
+    """Apply a /model or /effort confirmation (``local_command_setting``).
+
+    It holds until the next reply, whose own model and effort replace it
+    (``fold_assistant``). A switch to another model leaves the effort
+    unknown: Claude picks it per model and says which only in that reply.
+    ``model_at`` and ``effort_at`` are when each was last stated.
+    """
+    kind, value = setting
+    if kind == "model":
+        current = totals["selected_model"] or totals["model"]
+        totals["selected_model"] = value
+        totals["model_at"] = key
+        if value != current:
+            totals["selected_effort"] = None
+            totals["effort_cleared"] = True
+            totals["effort_at"] = key
+    else:
+        totals["selected_effort"] = value
+        totals["effort_cleared"] = value is None
+        totals["effort_at"] = key
 
 
 def empty_window() -> dict:
@@ -247,6 +325,9 @@ def parse_message_time(ts_str) -> Optional[datetime]:
 #       whether its prompt is past the model's long-context threshold
 #   ("u", key, datetime)
 #       a user prompt (not a tool result) with a parseable timestamp
+#   ("s", key, datetime, setting)
+#       the same, when it is a /model or /effort confirmation
+#       (``local_command_setting``)
 #   ("p", pr_number)
 #       a pr-link record: the PR Claude Code linked the session to (#489)
 #   ("t", title)
@@ -371,6 +452,9 @@ def parse_line(
             )
         except (ValueError, TypeError, OverflowError, OSError):
             return None
+        setting = local_command_setting(content)
+        if setting is not None:
+            return ("s", datetime_key(dt), dt, setting)
         return ("u", datetime_key(dt), dt)
     if msg_type == "pr-link":
         pr = data.get("prNumber")
@@ -421,10 +505,14 @@ def fold_assistant(
     if input_tokens + output_tokens + cache_creation + cache_read > 0:
         if event[7]:
             totals["model"] = event[7]
+            totals["model_at"] = message_key
         if event[8]:
             totals["provider"] = event[8]
         if event[9]:
             totals["effort"] = event[9]
+            totals["effort_at"] = message_key
+        # The reply says what it ran on: any /model or /effort before it is spent
+        totals.update(empty_selection())
 
 
 def fold_event(
@@ -450,6 +538,9 @@ def fold_event(
     key, prompt_time = event[1], event[2]
     if since_key is not None and key < since_key:
         return last_prompt
+    if event[0] == "s":
+        # A /model or /effort confirmation; still a user record's time, as before
+        fold_setting(totals, key, event[3])
     if last_prompt is not None:
         duration = (prompt_time - last_prompt).total_seconds()
         if duration > 0:
