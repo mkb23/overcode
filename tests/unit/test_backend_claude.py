@@ -280,6 +280,13 @@ class TestEnvPrefix:
         assert backend.env_prefix(LaunchSpec(provider="web")) == {}
 
 
+def _unset(*set_on_line):
+    """The line's ``env -u`` prefix: the host markers it does not set itself."""
+    from overcode.launcher import HOST_SESSION_VARS
+    keys = [k for k in HOST_SESSION_VARS if k not in set_on_line]
+    return "env " + " ".join(f"-u {k}" for k in keys)
+
+
 class TestLaunchCmdStr:
     """The rendered shell line: env prefix + wrapper/mock + argv."""
 
@@ -298,6 +305,12 @@ class TestLaunchCmdStr:
         spec = LaunchSpec(name="agent-1", session_id="sid", tmux_session="agents")
         cmd = launcher._build_launch_cmd_str(backend, spec, ["claude", "--foo"])
         assert cmd == (
+            "env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID "
+            "-u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ATTENDED "
+            "-u CLAUDE_CODE_BRIDGE_SESSION_ID -u CLAUDE_CODE_MESSAGING_SOCKET "
+            "-u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_AGENT -u CLAUDE_CODE_EXECPATH "
+            "-u CLAUDE_PID -u CLAUDE_EFFORT -u CLAUDE_JOB_DIR "
+            "-u OVERCODE_PARENT_SESSION_ID -u OVERCODE_PARENT_NAME -u OVERCODE_BACKEND "
             "OVERCODE_SESSION_NAME=agent-1 OVERCODE_SESSION_ID=sid "
             "OVERCODE_TMUX_SESSION=agents claude --foo"
         )
@@ -309,7 +322,7 @@ class TestLaunchCmdStr:
             parent_session_id="psid", parent_name="parent",
         )
         cmd = launcher._build_launch_cmd_str(backend, spec, ["claude"])
-        assert cmd == (
+        assert cmd == _unset("OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME") + " " + (
             "OVERCODE_SESSION_NAME=child OVERCODE_SESSION_ID=sid "
             "OVERCODE_TMUX_SESSION=agents OVERCODE_PARENT_SESSION_ID=psid "
             "OVERCODE_PARENT_NAME=parent claude"
@@ -325,7 +338,7 @@ class TestLaunchCmdStr:
             "overcode.config.get_bedrock_config", return_value={"region": "eu-west-1"}
         ):
             cmd = launcher._build_launch_cmd_str(backend, spec, ["claude"])
-        assert cmd == (
+        assert cmd == _unset() + " " + (
             "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s OVERCODE_TMUX_SESSION=agents "
             "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_CODE_USE_BEDROCK=1 "
             "AWS_REGION=eu-west-1 claude"
@@ -338,7 +351,7 @@ class TestLaunchCmdStr:
             wrapper="/opt/w.sh", start_directory="/tmp/proj",
         )
         cmd = launcher._build_launch_cmd_str(backend, spec, ["claude"])
-        assert cmd == (
+        assert cmd == _unset() + " " + (
             "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s OVERCODE_TMUX_SESSION=agents "
             "OVERCODE_WRAPPER_DIR=/tmp/proj /opt/w.sh claude"
         )
@@ -359,18 +372,18 @@ class TestLaunchCmdStr:
             mock_scenario="idle",
         )
         cmd = launcher._build_launch_cmd_str(backend, spec, ["/tmp/mock_claude.py"])
-        assert cmd == (
-            "MOCK_SCENARIO=idle OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s "
+        assert cmd == "MOCK_SCENARIO=idle " + _unset() + " " + (
+            "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s "
             "OVERCODE_TMUX_SESSION=agents OVERCODE_WRAPPER_DIR=/tmp/proj "
             "python /tmp/mock_claude.py"
         )
 
     def test_claude_code_does_not_export_overcode_backend(self, tmp_path, backend):
-        # The default backend's launch line must stay byte-identical, and
-        # wrappers read "unset" as claude-code.
+        # Wrappers read "unset" as claude-code: the line clears an inherited
+        # one and sets none.
         launcher = self._launcher(tmp_path)
         spec = LaunchSpec(name="a", session_id="s", tmux_session="agents")
-        assert "OVERCODE_BACKEND" not in launcher._build_launch_cmd_str(
+        assert "OVERCODE_BACKEND=" not in launcher._build_launch_cmd_str(
             backend, spec, ["claude"]
         )
 
