@@ -201,6 +201,7 @@ def missing_pane_content(template: str) -> bool:
 # at {advice}: it is the primary naming policy.
 
 NAMING_PLACEHOLDERS = ("advice", "brief", "prompts", "repo", "branch", "files",
+                       "recent_prompts", "recent_files", "why",
                        "current_name", "name_source", "parent", "fleet", "siblings",
                        "max_length")
 
@@ -218,7 +219,12 @@ DEFAULT_NAMING_PROMPT = """Name this coding agent. The name is how people and ot
 ## Where it works: repo {repo}, branch {branch}
 Files it edits most: {files}
 
+## What it is doing now (its latest prompts, newest last):
+{recent_prompts}
+Files edited since the last check: {recent_files}
+
 ## Its name now: {current_name} ({name_source}); its parent: {parent}
+Why that name was chosen: {why}
 
 ## The other agents (a new name must differ from all of them):
 {fleet}
@@ -229,9 +235,13 @@ Files it edits most: {files}
 RULES:
 - At most {max_length} characters: letters, digits, - and _ only; case and
   separators as the naming advice says
-- Name the work, not the tool or the agent
+- Name the work, not the tool or the agent; name what it is doing now
+  when that differs from where it started
 - Reply with JSON only: {"candidates": ["best", "next", "third"], "keep": false, "why": "..."}
-- "keep": true when the current name still fits"""
+- "keep": true when the current name still fits. A name from overcode
+  ("auto") is kept unless the focus of the work has clearly moved on: a
+  rename is disruptive, so do not rename for a small shift or a better
+  synonym"""
 
 DEFAULT_NAMING_ADVICE = "lowercase kebab-case, 1-3 words, what the work is about, not how."
 

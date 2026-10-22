@@ -122,7 +122,8 @@ class TestNamingConfig:
             "warn_humans": False,
         }
         assert cfg["first_after"] == {"minutes": 5.0}
-        assert (cfg["max_renames"], cfg["cost_cap_per_day"], cfg["warnings"]) == (2, 0.5, [])
+        assert cfg["rename_every"] == {"minutes": 30.0}
+        assert (cfg["max_renames"], cfg["cost_cap_per_day"], cfg["warnings"]) == (None, 0.5, [])
 
     def test_a_full_block(self, load_naming):
         cfg = load_naming(
@@ -140,6 +141,7 @@ class TestNamingConfig:
             "    llm_check: true\n"
             "    warn_humans: true\n"
             "  first_after: {minutes: 3}\n"
+            "  rename_every: {minutes: 45}\n"
             "  max_renames: 1\n"
             "  cost_cap_per_day: 0.25\n"
         )
@@ -151,6 +153,7 @@ class TestNamingConfig:
         assert r["no_repo_prefix"] and r["llm_check"] and r["warn_humans"]
         assert r["recent_archived_hours"] == 24.0
         assert cfg["first_after"] == {"minutes": 3.0} and cfg["max_renames"] == 1
+        assert cfg["rename_every"] == {"minutes": 45.0}
         assert cfg["warnings"] == []
 
     def test_bad_values_warn_and_never_raise(self, load_naming):

@@ -907,7 +907,8 @@ naming:
     warn_humans: false      # warn (never refuse) when a name you type breaks the rules
   enabled: false            # auto-naming: the engine names agents (off by default)
   first_after: {minutes: 5} # the first name, this long after the agent's first prompt
-  max_renames: 2            # auto renames in an agent's life (the first name + one refinement)
+  rename_every: {minutes: 30}  # then a check per this much work (0: never re-checked)
+  max_renames: null         # a cap on auto renames per agent (null: none)
   cost_cap_per_day: 0.50    # USD a day for the namer's model calls (per tmux session)
   # provider:               # the namer's model; default: the summarizer: block
   #   api_type: anthropic
@@ -929,13 +930,23 @@ naming advice, case included ("use capitals" gets capitals); names that
 differ only in case count as the same name. `overcode name policy` says
 whether auto-naming is on and when it names, the new-agent dialog's tip
 for the name says what will happen to a name you leave as it is, and the
-naming lab's header says it too. One refinement comes after 20 turns and
-30 minutes of work (or 150k output tokens), and renames only if the model
-says the task has changed. "Let overcode name it" (`overcode rename
+naming lab's header says it too.
+
+After the first name, the engine asks again every `rename_every.minutes`
+(default 30) of work: green time, counted from the last check, so an agent
+at rest is never asked, and the check comes mid-turn or idle, whenever
+the work adds up. The model sees what the agent is doing now (its last
+three prompts with how long ago each was, the files it edited since the
+last check, and why its name was chosen) beside its brief, and keeps the
+name unless the focus of the work has clearly moved on, so most checks
+rename nothing. There is no cap on auto renames unless you set
+`max_renames`. A check costs one call (well under a cent with a mini model);
+`cost_cap_per_day` still bounds the lot. A naming prompt saved from the
+naming lab before this had no place for the recent work; the engine adds
+it at the end. "Let overcode name it" (`overcode rename
 <agent> --auto`, or "Named by" in the rename dialog) makes the name a
 `default` one again, without a `~` (overcode did not choose it), and the
-agent is named afresh by the same rule. An auto
-name changes at most `max_renames` times, at least 10 minutes apart. The
+agent is named afresh by the same rule. The
 namer never renames a `human` or `parent` name. It does not wait for the
 TUI to go quiet: a rename interrupts nothing, and the old name still
 reaches the agent. A rename is overcode's ordinary

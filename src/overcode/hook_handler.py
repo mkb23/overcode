@@ -714,20 +714,33 @@ PROMPT_BYTES = 1024
 
 
 def _capture_prompt(tmux_session: str, prompt) -> None:
-    """Append one of the agent's first ``PROMPTS_KEPT`` prompts to its ``prompts.jsonl``."""
+    """Keep a prompt for the namer: one of the agent's first ``PROMPTS_KEPT``
+    in its ``prompts.jsonl``, and its last ``PROMPTS_KEPT`` in
+    ``recent_prompts.jsonl`` (what it is doing now, #547)."""
     sid = _agent_session_id()
     if not sid or not isinstance(prompt, str) or not prompt.strip():
         return
+    text = prompt.encode("utf-8")[:PROMPT_BYTES].decode("utf-8", "ignore")
+    line = (json.dumps({"t": time.time(), "prompt": text}) + "\n").encode("utf-8")
     path = agent_file(tmux_session, sid, "prompts")
     try:
         with open(path, "a+b") as f:
             f.seek(0)
-            if f.read().count(b"\n") >= PROMPTS_KEPT:
-                return
-            text = prompt.encode("utf-8")[:PROMPT_BYTES].decode("utf-8", "ignore")
-            f.write((json.dumps({"t": time.time(), "prompt": text}) + "\n").encode("utf-8"))
+            if f.read().count(b"\n") < PROMPTS_KEPT:
+                f.write(line)
     except OSError:
         pass  # the namer reads what there is
+    recent = agent_file(tmux_session, sid, "recent_prompts")
+    try:
+        try:
+            kept = recent.read_bytes().splitlines(keepends=True)[-(PROMPTS_KEPT - 1):]
+        except FileNotFoundError:
+            kept = []
+        tmp = recent.with_name(f".{recent.name}.{os.getpid()}.tmp")
+        tmp.write_bytes(b"".join(kept) + line)
+        os.replace(tmp, recent)
+    except OSError:
+        pass
 
 
 def emit_prompt_context(tmux_session: str, session_name: str) -> None:

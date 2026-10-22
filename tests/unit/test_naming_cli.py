@@ -215,6 +215,19 @@ class TestAutoNamingSwitch:
         assert config.describe_auto_naming().startswith("off")
         naming_config("naming:\n  enabled: true\n  first_after: {minutes: 0}\n")
         assert "as soon as it starts on its first prompt" in config.describe_auto_naming()
+        assert ("then re-checked every 30 min of work, renamed when the work has moved on"
+                in config.describe_auto_naming())
+        naming_config("naming:\n  enabled: true\n  rename_every: {minutes: 0}\n")
+        assert "re-checked" not in config.describe_auto_naming()
+        naming_config("naming:\n  enabled: true\n  max_renames: 4\n")
+        assert config.describe_auto_naming().endswith("(at most 4 auto renames)")
+
+    def test_rename_every_warns_on_a_bad_value(self, naming_config):
+        naming_config("naming:\n  rename_every: 30\n  max_renames: lots\n")
+        cfg = config.get_naming_config()
+        assert cfg["rename_every"] == {"minutes": 30.0} and cfg["max_renames"] is None
+        assert any("rename_every" in w for w in cfg["warnings"])
+        assert any("max_renames" in w for w in cfg["warnings"])
 
     def test_the_switch_keeps_the_rest_of_naming(self, naming_config):
         naming_config(FORBID)

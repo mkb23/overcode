@@ -41,7 +41,8 @@ def _state_dir(tmp_path, monkeypatch):
 def _cfg(**over):
     cfg = {"enabled": True, "advice": "", "max_length": 18, "rules": {},
            "first_after": {"minutes": 4},   # two Fleet.turn()s after the launch prompt
-           "max_renames": 2, "cost_cap_per_day": 0.50, "provider": None, "cli_title": True}
+           "rename_every": {"minutes": 30}, "max_renames": None,
+           "cost_cap_per_day": 0.50, "provider": None, "cli_title": True}
     cfg.update(over)
     return cfg
 
@@ -161,12 +162,13 @@ class TestDue:
         args.update(kw)
         return nm.first_due(state or nm.NamerState(), **args)
 
-    def _due(self, state=None, **kw):
-        args = dict(source="auto", turns=20, green_seconds=1800, output_tokens=0, cfg=_cfg(),
-                    now=T0.timestamp())
+    def _refresh(self, state=None, **kw):
+        args = dict(source="auto", green_seconds=300 + 1800, cfg=_cfg(), now=T0.timestamp())
         args.update(kw)
-        return nm.due(state or nm.NamerState(first_done=True, renames=1,
-                                                last_rename_at=T0.timestamp() - 3600), **args)
+        return nm.refresh_due(state or nm.NamerState(first_done=True, renames=1,
+                                                     checked_green=300,
+                                                     last_rename_at=T0.timestamp() - 3600),
+                              **args)
 
     def test_first_name_minutes_after_the_first_prompt_once_it_has_worked(self):
         assert self._first()
@@ -178,7 +180,7 @@ class TestDue:
     @pytest.mark.parametrize("source", ["human", "parent", None, "made-up"])
     def test_locked_names_are_never_due(self, source):
         assert not self._first(source=source)
-        assert self._due(source=source) is None
+        assert not self._refresh(source=source)
 
     def test_named_once_and_retried_ten_minutes_after_a_call(self):
         assert not self._first(nm.NamerState(first_done=True))
@@ -186,20 +188,30 @@ class TestDue:
         assert not self._first(nm.NamerState(attempted_at=T0.timestamp() - 599))
         assert self._first(nm.NamerState(attempted_at=T0.timestamp() - 601))
 
-    def test_refinement_at_the_fixed_bar(self):
-        assert self._due(turns=19) is None
-        assert self._due(green_seconds=1799) is None
-        assert self._due() == "refine"
-        assert self._due(green_seconds=0, output_tokens=150000) == "refine"
-        assert self._due(nm.NamerState()) is None              # no first name yet
-        assert self._due(nm.NamerState(first_done=True, refine_done=True)) is None
+    def test_a_check_every_rename_every_minutes_of_work(self):
+        assert self._refresh()
+        assert not self._refresh(green_seconds=300 + 1799)     # 1 s of work short
+        assert not self._refresh(nm.NamerState())              # no first name yet
+        assert self._refresh(cfg=_cfg(rename_every={"minutes": 5}), green_seconds=300 + 300)
+        assert not self._refresh(cfg=_cfg(rename_every={"minutes": 0}))   # off
 
-    def test_refinement_within_limits(self):
-        st = nm.NamerState(first_done=True, renames=1, last_rename_at=T0.timestamp() - 599)
-        assert self._due(st) is None
-        st = nm.NamerState(first_done=True, renames=2)
-        assert self._due(st) is None
-        assert self._due(cfg=_cfg(max_renames=1)) is None
+    def test_a_kept_first_name_is_checked_too(self):
+        """A first check the model answered "keep" (no rename) still starts the clock."""
+        st = nm.NamerState(first_done=True, checked_green=300)
+        assert self._refresh(st)
+
+    def test_no_cap_unless_max_renames_is_set(self):
+        st = nm.NamerState(first_done=True, renames=40, checked_green=300)
+        assert self._refresh(st)
+        assert not self._refresh(st, cfg=_cfg(max_renames=40))
+        assert self._refresh(st, cfg=_cfg(max_renames=41))
+
+    def test_a_failed_call_waits_ten_minutes(self):
+        st = nm.NamerState(first_done=True, checked_green=300,
+                           attempted_at=T0.timestamp() - 599)
+        assert not self._refresh(st)
+        st.attempted_at = T0.timestamp() - 601
+        assert self._refresh(st)
 
 
 # ── the namer, replayed ──────────────────────────────────────────────
@@ -207,14 +219,17 @@ class TestDue:
 
 class TestReplay:
 
-    def test_first_name_at_the_second_stop_then_one_refinement(self, tmp_path):
-        fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-refresh", "auth-refresh"),
-                                                _reply("jwt-refresh", keep=True, why="same")))
+    def test_first_name_then_a_check_every_30_minutes_of_work(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(
+            _reply("jwt-refresh", "auth-refresh"),
+            _reply("jwt-refresh", keep=True, why="same"),
+            _reply("jwt-refresh", keep=True, why="same"),
+            _reply("db-migrate", why="now migrating the db")))
         a = fleet.add("overcode-main2")
 
-        fleet.turn(a)                              # 1 turn, 2 min
+        fleet.turn(a)                              # 2 min
         assert fleet.model.prompts == []
-        fleet.turn(a)                              # 2 turns, 4 min: due
+        fleet.turn(a)                              # 4 min: the first name
         assert len(fleet.model.prompts) == 1
         renamed = fleet.get(a)
         assert renamed.name == "jwt-refresh"
@@ -223,16 +238,57 @@ class TestReplay:
         assert fleet.state(a).renames == 1
         assert any("auto-named 'overcode-main2' → 'jwt-refresh'" in m for m in fleet.log)
 
-        for _ in range(17):                        # up to 19 turns, 38 min
+        for _ in range(14):                        # 32 min: 28 min of work since
             fleet.turn(a)
         assert len(fleet.model.prompts) == 1
-        fleet.turn(a)                              # 20 turns, 40 min: refinement
+        fleet.turn(a)                              # 34 min: 30 since: a check, kept
         assert len(fleet.model.prompts) == 2
-        assert fleet.get(a).name == "jwt-refresh"  # keep: true
-        for _ in range(30):
-            fleet.turn(a, minutes=10)
-        assert len(fleet.model.prompts) == 2       # nothing after the refinement
-        assert fleet.state(a).refine_done
+        assert fleet.get(a).name == "jwt-refresh"
+        for _ in range(15):
+            fleet.turn(a)                          # 64 min: kept again
+        assert len(fleet.model.prompts) == 3
+        for _ in range(15):
+            fleet.turn(a)                          # 94 min: the work moved on
+        assert len(fleet.model.prompts) == 4
+        got = fleet.get(a)
+        assert got.name == "db-migrate"
+        assert got.previous_names == ["overcode-main2", "jwt-refresh"]
+        state = fleet.state(a)
+        assert state.renames == 2 and state.why == "now migrating the db"
+        assert "Why that name was chosen: same" not in fleet.model.prompts[-1]
+        assert "Why that name was chosen: the task" in fleet.model.prompts[-1]
+
+    def test_the_check_comes_mid_turn(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-refresh"), _reply("db-migrate")))
+        a = fleet.add("overcode-main2")
+        fleet.turn(a, minutes=4)                   # the first name
+        assert len(fleet.model.prompts) == 1
+        fleet.clock.now += timedelta(minutes=31)   # one long turn, still running
+        fleet.green[a.id] += 31 * 60
+        fleet.idle(a, status="running")
+        assert len(fleet.model.prompts) == 2
+        assert fleet.get(a).name == "db-migrate"
+
+    def test_an_idle_agent_is_not_checked(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-refresh"), _reply("db-migrate")))
+        a = fleet.add("overcode-main2")
+        fleet.turn(a, minutes=4)
+        for _ in range(48):
+            fleet.idle(a, seconds=1800)            # a day at rest: no work, no call
+        assert len(fleet.model.prompts) == 1
+
+    def test_green_time_starting_again_restarts_the_count(self, tmp_path):
+        fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-refresh"), _reply("db-migrate")))
+        a = fleet.add("overcode-main2")
+        fleet.turn(a, minutes=20)                  # first name at 20 min of green
+        assert fleet.state(a).checked_green == 20 * 60
+        fleet.green[a.id] = 0.0                    # the count starts again (a restart)
+        fleet.turn(a, minutes=1)
+        assert fleet.state(a).checked_green == 60.0
+        fleet.turn(a, minutes=29)
+        assert len(fleet.model.prompts) == 1
+        fleet.turn(a, minutes=1)                   # 30 min of work since the restart
+        assert len(fleet.model.prompts) == 2
 
     def test_a_refinement_renames_when_the_task_changed(self, tmp_path):
         fleet = Fleet(tmp_path, model=StubModel(_reply("jwt-refresh"), _reply("db-migrate")))
@@ -542,11 +598,19 @@ class TestInputs:
                                     "tool_input": {"file_path": path}}) + "\n")
             f.write(json.dumps({"event": "PostToolUse", "tool_name": "Read",
                                 "tool_input": {"file_path": "/repo/README.md"}}) + "\n")
+        now = T0.timestamp()
+        with open(agent_file("agents", a.id, "recent_prompts"), "w") as f:
+            f.write(json.dumps({"t": now - 3 * 3600, "prompt": "also add tests"}) + "\n")
+            f.write(json.dumps({"t": now - 720, "prompt": "now the docs"}) + "\n")
+        with open(agent_file("agents", a.id, "hook_events"), "a") as f:
+            f.write(json.dumps({"event": "PostToolUse", "tool_name": "Write", "timestamp": now - 60,
+                                "tool_input": {"file_path": "/repo/docs/auth.md"}}) + "\n")
+        state = nm.NamerState(first_done=True, checked_at=now - 1800, why="the JWT fix")
         archived = [{"id": "gone", "name": "old-wiki", "name_source": "auto",
                      "repo_name": "docs"}]
         session = fleet.get(a)
         inputs = nm.gather_inputs(session, tmux_session="agents", sessions=fleet.sm.list_sessions(),
-                                  archived=archived, max_length=16)
+                                  archived=archived, max_length=16, state=state, now=now)
         from overcode.summarizer_prompts import DEFAULT_NAMING_PROMPT
         prompt = nm.render(inputs, DEFAULT_NAMING_PROMPT, "kebab-case please")
         assert "kebab-case please" in prompt
@@ -555,6 +619,9 @@ class TestInputs:
         assert "repo overcode, branch fix-jwt (PR #542)" in prompt
         assert "Files it edits most: auth/session.py, auth/jwt.py" in prompt
         assert "README" not in prompt
+        assert "- also add tests (3 h 00 min ago)\n- now the docs (12 min ago)" in prompt
+        assert "Files edited since the last check: docs/auth.md\n" in prompt
+        assert "Why that name was chosen: the JWT fix" in prompt
         assert "Its name now: work (default); its parent: lead" in prompt
         assert "- lead [human] repo overcode" in prompt
         assert "- old-wiki [auto] repo docs (ended)" in prompt
@@ -710,6 +777,24 @@ class TestCapture:
         for text in ["one", "", "two", "x" * 5000, "four"]:
             hook_handler._capture_prompt("agents", text)
         assert nm.read_prompts("agents", sid) == ["one", "two", "x" * 1024]
+        recent = nm.parse_timed_prompts(agent_file("agents", sid, "recent_prompts").read_text())
+        assert [p for _, p in recent] == ["two", "x" * 1024, "four"]   # the last three
+
+    def test_recent_prompt_times_read_epoch_and_iso(self):
+        text = (json.dumps({"t": 100, "prompt": "a"}) + "\n"
+                + json.dumps({"t": "1970-01-01T00:03:20.000Z", "prompt": "b"}) + "\n"
+                + json.dumps({"t": "soon", "prompt": "c"}) + "\n"
+                + json.dumps({"t": True, "prompt": "d"}) + "\n")
+        assert nm.parse_timed_prompts(text) == [(100.0, "a"), (200.0, "b")]
+
+    def test_a_saved_template_without_the_recent_placeholders_still_sees_them(self, tmp_path):
+        inputs = nm.NamerInputs(session_id="s", name="jwt", name_source="auto",
+                                recent_prompts=[(940.0, "now the docs")], now=1000.0,
+                                recent_files=["docs/auth.md"])
+        prompt = nm.render(inputs, "Name it. {brief}", "")
+        assert "- now the docs (1 min ago)" in prompt and "docs/auth.md" in prompt
+        assert "What it is doing now" not in nm.render(
+            nm.NamerInputs(session_id="s", name="jwt", name_source="auto"), "Name it.", "")
 
     def test_files_are_bundled(self, tmp_path):
         from overcode.agent_bundle import collect_files
