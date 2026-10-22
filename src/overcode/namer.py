@@ -2,11 +2,11 @@
 The auto-namer (#542, docs/design/auto-naming.md §3-5, §7-8).
 
 The daemon names agents, because it owns per-agent values (AGENTS.md). It
-works from turn ends (an agent going from a green status to waiting), adds
-no polling, and calls the model on one worker thread, never in the tick:
+works from the published states (green time, turn ends), adds no polling,
+and calls the model on one worker thread, never in the tick:
 
-    Namer.on_tick(sessions, states, now)    # each tick: turn ends, Claude titles
-      due(...)                              # §3: is a name due at this Stop?
+    Namer.on_tick(sessions, states, now)    # each tick: names due, turn ends, Claude titles
+      first_due(...) / refresh_due(...)     # §3: the first name; a check every N min of work
       worker: gather_inputs -> suggest -> naming_policy.choose -> rename(source="auto")
 
 ``suggest`` is the same path for one agent without the rename
@@ -26,7 +26,8 @@ taken as a human rename. That part runs whether or not the namer is on
 (``naming.cli_title``, default on).
 
 Per agent, ``agents/<id>/namer.json`` keeps the turn count, the renames
-done, and what Claude's title is believed to be.
+done, the green time and time of the last check, why the name was chosen,
+and what Claude's title is believed to be.
 """
 
 from __future__ import annotations
@@ -45,7 +46,6 @@ from .status_constants import (
     GREEN_STATUSES,
     STATUS_ASLEEP,
     STATUS_DONE,
-    STATUS_WAITING_APPROVAL,
     STATUS_WAITING_HEARTBEAT,
     STATUS_WAITING_OVERSIGHT,
     STATUS_WAITING_USER,
@@ -59,15 +59,12 @@ TURN_END_STATUSES = frozenset({STATUS_WAITING_USER, STATUS_WAITING_HEARTBEAT,
 # tick, not only at a Stop (asleep: snoozed, or the last idle stage)
 IDLE_STATUSES = TURN_END_STATUSES | {STATUS_ASLEEP}
 
-MIN_RENAME_GAP_SECONDS = 600     # auto names change at least this far apart
 RETRY_GAP_SECONDS = 600          # after a call that failed or was skipped
-REFINE_FACTOR = 10               # the refinement comes at 10x the first's work
 TITLE_RETRY_SECONDS = 10         # an idle agent's lagging title is tried again this often
 FIRST_AFTER_MINUTES = 5.0        # the first name, this long after the first prompt
 FIRST_TRIES = 3                  # first-name calls a "keep" answer may use up
-FIRST_RECHECK_SECONDS = 60       # an agent waiting for its first name is looked at this often
-# The one refinement: this much work (turns, and green minutes or output tokens)
-REFINE_AFTER = {"turns": 20, "green_minutes": 30, "output_tokens": 150000}
+FIRST_RECHECK_SECONDS = 60       # an agent waiting for a name check is looked at this often
+RENAME_EVERY_MINUTES = 30.0      # after the first name, a check per this much green time (#547)
 ARCHIVED_HOURS = 24              # archived agents the model sees
 FLEET_LINES = 120                # at most this many fleet lines in the prompt
 PANE_LINES = 60                  # a hookless agent's fallback input
@@ -91,12 +88,14 @@ class NamerState:
     turns: int = 0                      # turn ends seen
     renames: int = 0                    # auto renames made
     first_done: bool = False
-    refine_done: bool = False
     last_rename_at: float = 0.0
     attempted_at: float = 0.0           # the last model call (or a skipped one)
     first_tries: int = 0                # first-name calls the model answered "keep"
     cli_title: Optional[str] = None     # what the CLI's own session name is
     seen_title: Optional[str] = None    # the last custom-title acted on
+    checked_green: float = 0.0          # the agent's green seconds at the last answered check
+    checked_at: float = 0.0             # when that was (epoch): "recent" work is after it
+    why: str = ""                       # why the model chose the current auto name
 
     @classmethod
     def from_dict(cls, data: Mapping) -> "NamerState":
@@ -153,29 +152,27 @@ def first_due(state: NamerState, *, source: Optional[str], task_since: Optional[
     return now >= task_since + minutes * 60
 
 
-def due(state: NamerState, *, source: Optional[str], turns: int, green_seconds: float,
-        output_tokens: int, cfg: Mapping, now: float) -> Optional[str]:
-    """``"refine"`` when the one refinement is due at this Stop, else None.
+def refresh_due(state: NamerState, *, source: Optional[str], green_seconds: float,
+                cfg: Mapping, now: float) -> bool:
+    """Whether to ask again if the name still fits (#547): after the first
+    name, each ``rename_every.minutes`` of green time since the last
+    answered check, mid-turn or idle.
 
-    After the first name (``first_due``), once the agent has done
-    ``REFINE_AFTER`` work (turns, and green minutes or output tokens); at
-    most ``max_renames`` auto renames, ``MIN_RENAME_GAP`` apart; never a
-    locked name.
+    The model keeps the name unless the work has moved on, so most checks
+    rename nothing. ``max_renames`` (default none) caps auto renames; a
+    locked name is never checked; ``rename_every.minutes: 0`` turns it off.
     """
     if is_locked(source) or not state.first_done:
-        return None
-    if state.renames >= cfg.get("max_renames", 2) or state.refine_done:
-        return None
-    if state.last_rename_at and now - state.last_rename_at < MIN_RENAME_GAP_SECONDS:
-        return None
+        return False
+    cap = cfg.get("max_renames")
+    if cap is not None and state.renames >= cap:
+        return False
+    minutes = float((cfg.get("rename_every") or {}).get("minutes", RENAME_EVERY_MINUTES) or 0)
+    if minutes <= 0:
+        return False
     if state.attempted_at and now - state.attempted_at < RETRY_GAP_SECONDS:
-        return None
-    if turns < REFINE_AFTER["turns"]:
-        return None
-    if (green_seconds >= REFINE_AFTER["green_minutes"] * 60
-            or output_tokens >= REFINE_AFTER["output_tokens"]):
-        return "refine"
-    return None
+        return False
+    return green_seconds - state.checked_green >= minutes * 60
 
 
 def first_task_at(session, tmux_session: str) -> Optional[float]:
@@ -205,10 +202,20 @@ def hand_to_namer(session_manager, session, tmux_session: str) -> None:
     session_manager.update_session(session.id, name_source=DEFAULT)
     tmux_session = session.tmux_session or tmux_session
     state = load_state(tmux_session, session.id)
-    state.first_done = state.refine_done = False
+    state.first_done = False
     state.renames = state.first_tries = 0
-    state.attempted_at = state.last_rename_at = 0.0
+    state.attempted_at = state.last_rename_at = state.checked_at = state.checked_green = 0.0
+    state.why = ""
     save_state(tmux_session, session.id, state)
+
+
+def bundle_state(files: Callable[[str], str]) -> Optional[NamerState]:
+    """An archived agent's ``namer.json`` from its bundle files, or None."""
+    try:
+        data = json.loads(files("namer") or "null")
+    except ValueError:
+        return None
+    return NamerState.from_dict(data) if isinstance(data, dict) else None
 
 
 # ── what the namer reads (§4) ─────────────────────────────────────────────
@@ -238,6 +245,11 @@ class NamerInputs:
     branch: Optional[str] = None
     pr: Optional[int] = None
     files: List[str] = field(default_factory=list)
+    recent_prompts: List[Tuple[float, str]] = field(default_factory=list)  # (when, prompt), last few
+    recent_files: List[str] = field(default_factory=list)  # edited since the last check
+    since: Optional[float] = None       # the last check (epoch); None before the first name
+    why: str = ""                       # why the current auto name was chosen
+    now: Optional[float] = None         # when the inputs were read (for "12 min ago")
     parent: Optional[str] = None
     parent_id: Optional[str] = None
     fleet: List[FleetEntry] = field(default_factory=list)
@@ -294,9 +306,40 @@ def read_prompts(tmux_session: str, session_id: str) -> List[str]:
     return parse_prompts(live_files(tmux_session, session_id)("prompts"))
 
 
+def _epoch(t) -> Optional[float]:
+    """A prompt's time: epoch seconds (hook handler) or ISO (the opencode plugins)."""
+    if isinstance(t, bool):
+        return None
+    if isinstance(t, (int, float)):
+        return float(t)
+    if isinstance(t, str):
+        try:
+            return datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def parse_timed_prompts(text: str) -> List[Tuple[float, str]]:
+    """``(time, prompt)`` from a ``recent_prompts.jsonl`` text, oldest first."""
+    out: List[Tuple[float, str]] = []
+    for line in text.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        prompt, t = entry.get("prompt"), _epoch(entry.get("t"))
+        if isinstance(prompt, str) and prompt.strip() and t is not None:
+            out.append((t, prompt.strip()))
+    return out
+
+
 def edited_files(lines: Iterable[str], directory: Optional[str] = None,
-                 limit: int = TOP_FILES) -> List[str]:
-    """The files a hook event log shows the agent editing most, most first."""
+                 limit: int = TOP_FILES, since: Optional[float] = None) -> List[str]:
+    """The files a hook event log shows the agent editing most, most first
+    (only edits after ``since``, when given)."""
     from collections import Counter
     counts: Counter = Counter()
     for line in lines:
@@ -307,6 +350,9 @@ def edited_files(lines: Iterable[str], directory: Optional[str] = None,
         except ValueError:
             continue
         if not isinstance(entry, dict) or entry.get("tool_name") not in _EDIT_TOOLS:
+            continue
+        if since is not None and not (isinstance(entry.get("timestamp"), (int, float))
+                                      and entry["timestamp"] > since):
             continue
         path = (entry.get("tool_input") or {}).get("file_path")
         if isinstance(path, str) and path:
@@ -320,13 +366,13 @@ def edited_files(lines: Iterable[str], directory: Optional[str] = None,
 
 
 def most_edited_files(tmux_session: str, session_id: str, directory: Optional[str] = None,
-                      limit: int = TOP_FILES) -> List[str]:
+                      limit: int = TOP_FILES, since: Optional[float] = None) -> List[str]:
     """The files the agent's hook events show it editing most, most first."""
     from .paths import agent_file
     try:
         with open(agent_file(tmux_session, session_id, "hook_events"), encoding="utf-8",
                   errors="replace") as f:
-            return edited_files(f, directory, limit)
+            return edited_files(f, directory, limit, since)
     except OSError:
         return []
 
@@ -391,13 +437,15 @@ def fleet_entries(sessions: Iterable, archived: Iterable[Mapping] = (),
 
 def gather_inputs(session, *, tmux_session: str, sessions: Sequence, archived: Sequence = (),
                   max_length: int = 18, pane: Optional[Callable[[], str]] = None,
-                  files: Optional[Callable[[str], str]] = None) -> NamerInputs:
+                  files: Optional[Callable[[str], str]] = None,
+                  state: Optional[NamerState] = None, now: Optional[float] = None) -> NamerInputs:
     """The namer's inputs for ``session`` (a Session), from its files and the fleet.
 
     ``files`` reads the agent's files by kind (default: its live directory;
     ``bundle_files`` for an archived agent). ``pane`` gives the agent's last
     lines; read only when it has neither a brief nor a captured prompt (a
-    hookless agent).
+    hookless agent). ``state`` (its ``namer.json``) gives the last check:
+    what it has done since is "what it is doing now" (#547).
     """
     sid = session.id
     by_id = {s.id: s for s in sessions}
@@ -406,19 +454,29 @@ def gather_inputs(session, *, tmux_session: str, sessions: Sequence, archived: S
     if parent_name is None and session.parent_session_id:
         parent_name = next((r.get("name") for r in archived
                             if r.get("id") == session.parent_session_id), None)
+    since = state.checked_at if state is not None and state.checked_at else None
     if files is None:
         from .agent_files import read_brief
         brief = read_brief(tmux_session, sid)
         prompts = read_prompts(tmux_session, sid)
+        recent = parse_timed_prompts(live_files(tmux_session, sid)("recent_prompts"))
         edited = most_edited_files(tmux_session, sid, session.start_directory)
+        recent_files = (most_edited_files(tmux_session, sid, session.start_directory, since=since)
+                        if since is not None else [])
     else:
         brief = files("brief")
         prompts = parse_prompts(files("prompts"))
-        edited = edited_files(files("hook_events").splitlines(), session.start_directory)
+        recent = parse_timed_prompts(files("recent_prompts"))
+        events = files("hook_events").splitlines()
+        edited = edited_files(events, session.start_directory)
+        recent_files = (edited_files(events, session.start_directory, since=since)
+                        if since is not None else [])
     inputs = NamerInputs(
         session_id=sid, name=session.name,
         name_source=getattr(session, "name_source", "human"),
         brief=brief.strip(), prompts=prompts,
+        recent_prompts=recent, recent_files=recent_files, since=since,
+        why=state.why if state is not None else "", now=now,
         repo=session.repo_name, branch=session.branch, pr=session.pr_number,
         files=edited,
         parent=parent_name, parent_id=session.parent_session_id,
@@ -454,9 +512,41 @@ def _fleet_text(entries: Sequence[FleetEntry]) -> str:
     return "\n".join(lines)
 
 
+def _ago(seconds: float) -> str:
+    minutes = max(0, int(seconds // 60))
+    if minutes < 60:
+        return f"{minutes} min ago"
+    return f"{minutes // 60} h {minutes % 60:02d} min ago"
+
+
+def recent_text(inputs: NamerInputs) -> Tuple[str, str]:
+    """``(recent prompts, recent files)`` for the prompt: its last prompts with
+    how long ago each was, and the files edited since the last check."""
+    now = inputs.now
+    lines = []
+    for t, prompt in inputs.recent_prompts:
+        when = f" ({_ago(now - t)})" if now is not None else ""
+        lines.append(f"- {prompt}{when}")
+    return "\n".join(lines), ", ".join(inputs.recent_files)
+
+
+# Added to a saved template that predates them (the naming lab saves the
+# whole template), so a periodic check still sees what the agent does now
+RECENT_SECTION = """
+
+## What it is doing now (its latest prompts, newest last):
+{recent_prompts}
+Files edited since the last check: {recent_files}
+Why its current name was chosen: {why}"""
+
+
 def render(inputs: NamerInputs, template: str, advice: str) -> str:
     """The model's prompt: ``template`` with every placeholder filled."""
     from .summarizer_prompts import render_naming_prompt
+
+    if "{recent_prompts}" not in template and (inputs.recent_prompts or inputs.recent_files):
+        template = template + RECENT_SECTION
+    recent_prompts, recent_files = recent_text(inputs)
 
     prompts = "\n".join(f"{i}. {p}" for i, p in enumerate(inputs.prompts, 1))
     if not prompts and inputs.pane:
@@ -472,6 +562,9 @@ def render(inputs: NamerInputs, template: str, advice: str) -> str:
         repo=inputs.repo,
         branch=branch,
         files=", ".join(inputs.files),
+        recent_prompts=recent_prompts,
+        recent_files=recent_files,
+        why=inputs.why,
         current_name=inputs.name,
         name_source=inputs.name_source,
         parent=inputs.parent,
@@ -847,8 +940,11 @@ class Namer:
             if float(getattr(st, "green_time_seconds", 0) or 0) > 0:
                 if cfg is None:
                     cfg = self.config()
-                if self._first_name_due(session, st, cfg, now):
-                    self._run(f"name:{sid}", lambda sid=sid, cfg=cfg: self._name(sid, "first", cfg))
+                stage = self._name_due(session, st, cfg, now)
+                if stage is not None:
+                    green = float(st.green_time_seconds)
+                    self._run(f"name:{sid}", lambda sid=sid, cfg=cfg, stage=stage, green=green:
+                              self._name(sid, stage, cfg, green))
             if not turn_end and not title:
                 continue
             if cfg is None:
@@ -866,8 +962,8 @@ class Namer:
                 self._first_next.pop(sid, None)
                 self._task_at.pop(sid, None)
 
-    def _first_name_due(self, session, st, cfg: dict, now: datetime) -> bool:
-        """Whether an agent gets its first name on this tick (``first_due``).
+    def _name_due(self, session, st, cfg: dict, now: datetime) -> Optional[str]:
+        """``"first"`` or ``"refresh"`` when a name check is due on this tick, else None.
 
         Checked on any tick, mid-turn or idle, for an agent that has worked
         at all. Its files are read at most every ``FIRST_RECHECK_SECONDS``
@@ -876,15 +972,28 @@ class Namer:
         minute.
         """
         if not cfg.get("enabled") or is_locked(getattr(session, "name_source", HUMAN)):
-            return False
+            return None
         ts = now.timestamp()
         if ts < self._first_next.get(session.id, 0.0):
-            return False
+            return None
         self._first_next[session.id] = ts + FIRST_RECHECK_SECONDS
         tmux_session = session.tmux_session or self.tmux_session
         state = load_state(tmux_session, session.id)
+        green = float(getattr(st, "green_time_seconds", 0) or 0)
         if state.first_done or state.renames:
-            return False
+            if green < state.checked_green:  # the count started again (a restart)
+                state.checked_green = green
+                save_state(tmux_session, session.id, state)
+            if not refresh_due(state, source=getattr(session, "name_source", HUMAN),
+                               green_seconds=green, cfg=cfg, now=ts):
+                return None
+            return None if self._over_cap(cfg, now) else "refresh"
+        return "first" if self._first_name_due(session, state, green, cfg, ts, now) else None
+
+    def _first_name_due(self, session, state: NamerState, green: float, cfg: dict, ts: float,
+                        now: datetime) -> bool:
+        """Whether an agent with no name from the namer yet gets one now (``first_due``)."""
+        tmux_session = session.tmux_session or self.tmux_session
         since = self._task_at.get(session.id)
         if since is None:
             since = first_task_at(session, tmux_session)
@@ -892,8 +1001,7 @@ class Namer:
                 return False
             self._task_at[session.id] = since
         if not first_due(state, source=getattr(session, "name_source", HUMAN), task_since=since,
-                         green_seconds=float(getattr(st, "green_time_seconds", 0) or 0),
-                         cfg=cfg, now=ts):
+                         green_seconds=green, cfg=cfg, now=ts):
             minutes = float((cfg.get("first_after") or {}).get("minutes", FIRST_AFTER_MINUTES) or 0)
             due_at = since + minutes * 60
             if state.attempted_at:
@@ -940,20 +1048,6 @@ class Namer:
         save_state(tmux_session, session.id, state)
         if cfg.get("cli_title", True) and self._is_claude(session) and state.cli_title != session.name:
             self._run(f"align:{session.id}", lambda: self._align(session.id))
-        if not cfg.get("enabled"):
-            return
-        turns = max(state.turns, int(getattr(session.stats, "interaction_count", 0) or 0))
-        stage = due(state, source=getattr(session, "name_source", HUMAN), turns=turns,
-                    green_seconds=float(getattr(st, "green_time_seconds", 0) or 0),
-                    output_tokens=int(getattr(st, "output_tokens", 0) or 0),
-                    cfg=cfg, now=now.timestamp())
-        if stage is None:
-            return
-        if st.current_status == STATUS_WAITING_APPROVAL:
-            return  # at the next Stop
-        if self._over_cap(cfg, now):
-            return
-        self._run(f"name:{session.id}", lambda: self._name(session.id, stage, cfg))
 
     def _over_cap(self, cfg: dict, now: datetime) -> bool:
         cap = float(cfg.get("cost_cap_per_day", 0.5) or 0.0)
@@ -972,8 +1066,13 @@ class Namer:
 
     # ── the worker's jobs ─────────────────────────────────────────────
 
-    def _name(self, session_id: str, stage: str, cfg: dict) -> None:
-        """Name one agent: gather, ask, choose, rename (worker thread)."""
+    def _name(self, session_id: str, stage: str, cfg: dict, green: float = 0.0) -> None:
+        """Name one agent: gather, ask, choose, rename (worker thread).
+
+        ``stage`` is ``"first"`` or ``"refresh"`` (a check every
+        ``rename_every`` minutes of work); ``green`` is the agent's green
+        time when it was due, where the next check's count starts.
+        """
         sm = self.session_manager
         session = sm.get_session(session_id)
         if session is None or is_locked(getattr(session, "name_source", HUMAN)):
@@ -997,7 +1096,8 @@ class Namer:
         archived = recent_archived(sm, now)
         inputs = gather_inputs(session, tmux_session=tmux_session, sessions=sessions,
                                archived=archived, max_length=cfg.get("max_length", 18),
-                               pane=lambda: self._capture(session, PANE_LINES))
+                               pane=lambda: self._capture(session, PANE_LINES),
+                               state=state, now=now.timestamp())
         from .summarizer_prompts import load_naming_prompt
         result = suggest(inputs, naming_context(cfg, sessions, archived, session), client=client,
                          template=load_naming_prompt(),
@@ -1015,13 +1115,14 @@ class Namer:
         state = load_state(tmux_session, session_id)
         pick = result.pick
         keeps = result.keep or not pick or pick == session.name
-        if stage != "first":
-            state.refine_done = True
-        elif keeps and getattr(session, "name_source", HUMAN) == DEFAULT \
-                and state.first_tries + 1 < FIRST_TRIES:
-            state.first_tries += 1  # a placeholder: ask again later (first_due)
-        else:
-            state.first_done = True
+        # The next check counts rename_every minutes of work from here
+        state.checked_green, state.checked_at = green, now.timestamp()
+        if stage == "first":
+            if keeps and getattr(session, "name_source", HUMAN) == DEFAULT \
+                    and state.first_tries + 1 < FIRST_TRIES:
+                state.first_tries += 1  # a placeholder: ask again later (first_due)
+            else:
+                state.first_done = True
         save_state(tmux_session, session_id, state)
         if keeps:
             self._info(f"namer: [{session.name}] keeps its name"
@@ -1033,6 +1134,7 @@ class Namer:
         state = load_state(tmux_session, session_id)
         state.renames += 1
         state.last_rename_at = now.timestamp()
+        state.why = result.why
         save_state(tmux_session, session_id, state)
         self._info(f"namer: auto-named '{session.name}' → '{renamed}'"
                    + (f" ({result.why})" if result.why else ""))

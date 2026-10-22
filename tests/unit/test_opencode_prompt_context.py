@@ -231,6 +231,8 @@ class TestV1:
         rows = [json.loads(line) for line in lines]
         assert [r["prompt"] for r in rows] == ["fix the login bug", "x" * 1024, "third"]
         assert all(set(r) == {"t", "prompt"} and r["t"].endswith("Z") for r in rows)
+        recent = (agent_dir(agent_env) / "recent_prompts.jsonl").read_text().splitlines()
+        assert [json.loads(line)["prompt"] for line in recent] == ["x" * 1024, "third", "fourth"]
 
 
 # ── opencode2: the server's prompt hook ─────────────────────────────

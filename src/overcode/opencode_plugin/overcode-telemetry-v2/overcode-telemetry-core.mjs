@@ -657,7 +657,8 @@ function createTelemetry(env, options = {}) {
   }
 }
 
-// How many user prompts to keep in agents/<id>/prompts.jsonl, and how much
+// How many user prompts to keep in agents/<id>/prompts.jsonl (the first)
+// and recent_prompts.jsonl (the last), and how much
 // of each: the same shape hook_handler writes for the other backends (the
 // auto-namer reads them).
 const MAX_RECORDED_PROMPTS = 3
@@ -697,29 +698,37 @@ function readPromptContext(env, options = {}) {
   })
 }
 
+function readLines(file) {
+  try {
+    return fs.readFileSync(file, "utf8").split("\n").filter((l) => l !== "")
+  } catch (e) {
+    return []
+  }
+}
+
 /**
- * Append one of the agent's first user prompts to agents/<id>/prompts.jsonl
- * as {"t": iso, "prompt": text}. Needs OVERCODE_SESSION_ID; best-effort.
+ * Keep a user prompt as {"t": iso, "prompt": text}: one of the agent's
+ * first in agents/<id>/prompts.jsonl, and its last in recent_prompts.jsonl
+ * (what it is doing now, #547). Needs OVERCODE_SESSION_ID; best-effort.
  */
 function recordPrompt(env, text, options = {}) {
   if (!env || !env.OVERCODE_SESSION_ID || typeof text !== "string" || !text.trim()) return
   try {
     const dir = path.join(
       resolveStateDir(env, options.homedir || os.homedir()), "agents", env.OVERCODE_SESSION_ID)
-    const file = path.join(dir, "prompts.jsonl")
-    let count = 0
-    try {
-      count = fs.readFileSync(file, "utf8").split("\n").filter((l) => l !== "").length
-    } catch (e) {
-      count = 0
-    }
-    if (count >= MAX_RECORDED_PROMPTS) return
     const t = options.now ? new Date(options.now() * 1000) : new Date()
-    fs.mkdirSync(dir, { recursive: true })
-    fs.appendFileSync(file, JSON.stringify({
+    const line = JSON.stringify({
       t: t.toISOString(),
       prompt: text.slice(0, MAX_RECORDED_PROMPT_CHARS),
-    }) + "\n")
+    })
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, "prompts.jsonl")
+    if (readLines(file).length < MAX_RECORDED_PROMPTS) fs.appendFileSync(file, line + "\n")
+    const recent = path.join(dir, "recent_prompts.jsonl")
+    const kept = readLines(recent).slice(-(MAX_RECORDED_PROMPTS - 1))
+    const tmp = `${recent}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, [...kept, line].join("\n") + "\n")
+    fs.renameSync(tmp, recent)
   } catch (e) {
     /* best-effort */
   }

@@ -142,15 +142,20 @@ def load_live(session_manager, tmux_session: str, cfg: Mapping,
 
     ``pane(session)`` gives a hookless agent's last lines.
     """
-    from .namer import gather_inputs, naming_context, recent_archived
+    import time
+
+    from .namer import gather_inputs, load_state, naming_context, recent_archived
 
     sessions = [s for s in session_manager.list_sessions() if not getattr(s, "is_remote", False)]
     archived = recent_archived(session_manager)
+    now = time.time()
     out = []
     for s in sessions:
-        inputs = gather_inputs(s, tmux_session=s.tmux_session or tmux_session, sessions=sessions,
+        tmux = s.tmux_session or tmux_session
+        inputs = gather_inputs(s, tmux_session=tmux, sessions=sessions,
                                archived=archived, max_length=cfg.get("max_length", 18),
-                               pane=(lambda s=s: pane(s)) if pane else None)
+                               pane=(lambda s=s: pane(s)) if pane else None,
+                               state=load_state(tmux, s.id), now=now)
         out.append(LabAgent(s, inputs, naming_context(cfg, sessions, archived, s),
                             project_advice=_project_advice(s.start_directory)))
     return out
@@ -170,7 +175,7 @@ def load_archived(session_manager, tmux_session: str, cfg: Mapping,
     bundle is gone (or never had one) has no inputs, and is shown, not run.
     """
     from .agent_bundle import read_agent
-    from .namer import bundle_files, gather_inputs
+    from .namer import bundle_files, bundle_state, gather_inputs
     from .naming_policy import NamingContext, NamingRules
 
     live_ids = {s.id for s in session_manager.list_sessions()}
@@ -190,8 +195,10 @@ def load_archived(session_manager, tmux_session: str, cfg: Mapping,
         tmux = s.tmux_session or tmux_session
         pointer = getattr(s, "_bundle", None)
         member = read_agent(tmux, pointer) if isinstance(pointer, dict) else None
+        files = bundle_files(member)
         inputs = gather_inputs(s, tmux_session=tmux, sessions=sessions,
-                               max_length=cfg.get("max_length", 18), files=bundle_files(member))
+                               max_length=cfg.get("max_length", 18), files=files,
+                               state=bundle_state(files))
         ctx = NamingContext.from_fleet(rules, sessions, repo=s.repo_name, self_id=s.id)
         out.append(LabAgent(s, inputs, ctx, archived=True,
                             project_advice=_project_advice(s.start_directory)))

@@ -1047,11 +1047,12 @@ def save_billing_defaults(new_agent_code: str, default_code: str) -> None:
 
 
 NAMING_MAX_LENGTH_DEFAULT = 18
-_NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "max_renames",
-                "cost_cap_per_day", "provider", "cli_title")
+_NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "rename_every",
+                "max_renames", "cost_cap_per_day", "provider", "cli_title")
 _NAMING_RULE_KEYS = ("pattern", "max_length", "forbid", "require", "no_repo_prefix",
                      "recent_archived_hours", "llm_check", "warn_humans")
 _NAMING_FIRST_AFTER = {"minutes": 5.0}
+_NAMING_RENAME_EVERY = {"minutes": 30.0}
 
 
 def _positive_int(value) -> Optional[int]:
@@ -1098,7 +1099,13 @@ def describe_auto_naming(cfg: Optional[dict] = None) -> str:
     minutes = float(first.get("minutes") or 0)
     when = (f"{minutes:g} min after its first prompt" if minutes
             else "as soon as it starts on its first prompt")
-    return f"on: a default name is replaced {when}, following the naming advice"
+    every = float((cfg.get("rename_every") or {}).get("minutes") or 0)
+    then = (f"; then re-checked every {every:g} min of work, renamed when the work has moved on"
+            if every else "")
+    cap = cfg.get("max_renames")
+    if every and cap is not None:
+        then += f" (at most {cap} auto renames)"
+    return f"on: a default name is replaced {when}, following the naming advice{then}"
 
 
 def get_naming_config() -> dict:
@@ -1121,7 +1128,8 @@ def get_naming_config() -> dict:
             warn_humans: false  # warn (never refuse) a human's -n too
           first_after: {minutes: 5}  # the first name, this long after the agent's
                                 # first prompt, once it has started on it
-          max_renames: 2
+          rename_every: {minutes: 30}  # then a check per this much work (0 = never)
+          max_renames: null     # a cap on auto renames per agent (null = none)
           cost_cap_per_day: 0.50
           provider: {...}       # api_type/api_url/model/api_key_var; default: the summarizer: block
           cli_title: true       # keep Claude's own session name (--name, /rename) in step
@@ -1200,9 +1208,20 @@ def get_naming_config() -> dict:
             warnings.append(f"naming.first_after: '{key}' is not used — the first name comes "
                             "first_after.minutes after the agent's first prompt")
     first_after = {k: _non_negative(raw_first.get(k, d), d) for k, d in _NAMING_FIRST_AFTER.items()}
-    max_renames = cfg.get("max_renames", 2)
-    max_renames = max_renames if isinstance(max_renames, int) and not isinstance(
-        max_renames, bool) and max_renames >= 0 else 2
+    raw_every = cfg.get("rename_every") or {}
+    if not isinstance(raw_every, dict):
+        warnings.append("naming.rename_every: should be a mapping like {minutes: 30} — ignored")
+        raw_every = {}
+    for key in raw_every:
+        if key not in _NAMING_RENAME_EVERY:
+            warnings.append(f"naming.rename_every: '{key}' is not used — names are re-checked "
+                            "every rename_every.minutes of work")
+    rename_every = {k: _non_negative(raw_every.get(k, d), d) for k, d in _NAMING_RENAME_EVERY.items()}
+    max_renames = cfg.get("max_renames")
+    if max_renames is not None and not (isinstance(max_renames, int) and not isinstance(
+            max_renames, bool) and max_renames >= 0):
+        warnings.append("naming.max_renames: should be a whole number or null — no cap")
+        max_renames = None
     provider = cfg.get("provider") if isinstance(cfg.get("provider"), dict) else None
     if cfg.get("provider") is not None and provider is None:
         warnings.append("naming.provider: should be a mapping — using the summarizer: block")
@@ -1213,6 +1232,7 @@ def get_naming_config() -> dict:
         "max_length": max_length,
         "rules": rules,
         "first_after": first_after,
+        "rename_every": rename_every,
         "max_renames": max_renames,
         "cost_cap_per_day": _non_negative(cfg.get("cost_cap_per_day", 0.50), 0.50),
         "provider": provider,

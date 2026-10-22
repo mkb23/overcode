@@ -75,6 +75,7 @@ AGENT_DIR_FILES = {
     # The namer's inputs and state (#542, auto-naming §4); no name-keyed form
     "brief": "brief.txt",                   # first 2 KB of the launch prompt
     "prompts": "prompts.jsonl",             # first 3 user prompts, 1 KB each
+    "recent_prompts": "recent_prompts.jsonl",  # last 3 user prompts, 1 KB each (#547)
     "namer": "namer.json",                  # the daemon namer's per-agent state
     "child_notice": "child_notice.txt",     # one-shot "your child X is now Y"
 }

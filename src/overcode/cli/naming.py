@@ -246,10 +246,11 @@ def name_suggest(
     One model call (the summarizer's, or naming.provider), billed to the
     `overcode` billing code. Works whether or not naming.enabled is on.
     """
+    import time
     from pathlib import Path
     from ..config import get_naming_config
-    from ..namer import (advice_for, gather_inputs, make_client, naming_context, recent_archived,
-                         record_spend, suggest)
+    from ..namer import (advice_for, gather_inputs, load_state, make_client, naming_context,
+                         recent_archived, record_spend, suggest)
     from ..session_manager import SessionManager
     from ..summarizer_prompts import load_naming_prompt
     from ._shared import find_agent
@@ -278,7 +279,8 @@ def name_suggest(
     sessions = sm.list_sessions()
     archived = recent_archived(sm)
     inputs = gather_inputs(sess, tmux_session=tmux_session, sessions=sessions, archived=archived,
-                           max_length=cfg["max_length"], pane=pane)
+                           max_length=cfg["max_length"], pane=pane,
+                           state=load_state(tmux_session, sess.id), now=time.time())
     result = suggest(inputs, naming_context(cfg, sessions, archived, sess),
                      client=make_client(cfg.get("provider")), template=load_naming_prompt(),
                      advice=advice)

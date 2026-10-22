@@ -181,7 +181,7 @@ status going from green to waiting_user / waiting_heartbeat /
 waiting_oversight / done, as the daemon publishes it (so hookless agents
 count too); the turn count is the larger of those seen (kept in
 `agents/<id>/namer.json`) and the transcript's interaction count; the
-refinement needs 10x every threshold (turns and green minutes or tokens);
+refinement needs 10x every threshold (turns and green minutes or tokens; replaced by `rename_every` in #547);
 a failed or unreadable call is retried no sooner than 10 minutes later.
 There is no wait for the TUI to go quiet (an earlier draft held renames
 for 30 s after any TUI keypress; it only delayed names, since a rename
@@ -204,11 +204,16 @@ from events and adds no polling.
   most 3 times (`first_tries`). "Let overcode name it" sets the source to
   `default` (no `~`: overcode did not choose the name) and clears the
   naming history (`hand_to_namer`), so the rule applies afresh.
-- **One refinement** comes at a Stop after 20 turns and 30 green minutes or
-  150k output tokens (`REFINE_AFTER`).
-  It renames only when the namer is confident the task has changed (see the
-  `keep` reply below). So `auto` names change at most twice in an agent's
-  life (`max_renames`, default 2), and at least 10 minutes apart.
+- **A check every `rename_every.minutes` of work** (default 30; #547,
+  replacing the one refinement after 20 turns). Green time since the last
+  answered check, any tick, mid-turn or idle (owner decision 2026-10-22:
+  "any time", not only at a Stop). The model sees the recent window (last
+  3 prompts from `recent_prompts.jsonl` with their age, files edited since
+  the check, and the `why` of the current name) beside the brief, and is
+  told to keep an `auto` name unless the focus has clearly moved on.
+  No cap on auto renames by default (`max_renames: null`); a failed call
+  waits 10 minutes. A green-time count that starts again (a restart)
+  restarts the check's count.
 - Never while the name is `human` (or `parent`).
 - Calls run on the daemon's worker pool, with a per-day cost cap
   (`naming.cost_cap_per_day`, default $0.50). Spend goes in the ledger
@@ -262,7 +267,7 @@ of a root agent calls `codes.follow_agent_name` on its code (owner decision
 
 The model returns JSON: `{"candidates": ["jwt-refresh", "auth-refresh",
 "jwt-fix"], "keep": false, "why": "..."}`, best first. `keep: true` means
-the current name still fits, which is how refinements stay rare. Overcode
+the current name still fits, which is how most checks rename nothing. Overcode
 then decides on its own, without the model:
 
 1. Normalise each candidate to overcode's name pattern. Drop any that
@@ -304,7 +309,8 @@ naming:
     llm_check: false         # check the advice with the model too
     warn_humans: false
   first_after: {minutes: 5}
-  max_renames: 2
+  rename_every: {minutes: 30}
+  max_renames: null
   cost_cap_per_day: 0.50
   # provider: falls back to the summarizer: block (api_type, url, model, key var)
 ```
