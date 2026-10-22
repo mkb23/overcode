@@ -462,6 +462,19 @@ def test_every_column_renders_a_virtual_row_or_its_placeholder(col, emoji_free):
             col.virtual_hover(ctx)
 
 
+@pytest.mark.parametrize("emoji_free", [False, True])
+def test_a_member_s_bell_cell_is_blank_not_a_dash(emoji_free):
+    """Blank, as an agent's with no bell: the grid's "-" (drawn at the bell's
+    edge once any agent rings) touched the time in state and read as
+    "-12.3m" (#545)."""
+    from overcode.summary_columns import COLUMNS_BY_ID
+    parent = _parent_ctx(emoji_free=emoji_free)
+    for line in _sample_lines():
+        ctx = ColumnContext.for_virtual(line, parent)
+        segs = cell_segments(COLUMNS_BY_ID["unvisited_alert"], ctx)
+        assert segs and "".join(t for t, _ in segs).strip() == ""
+
+
 def test_a_virtual_context_carries_none_of_the_parent_s_agent_data():
     parent = _parent_ctx(swarm_rollup={"total": 1, "running": 1}, child_count=3,
                          pr_number=12, model="claude-opus-4-6")

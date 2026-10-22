@@ -97,6 +97,7 @@ from .render_supervision import (
     render_wrapper_plain,
 )
 from .render_virtual import (
+    render_virtual_alert,
     hover_virtual_name,
     render_virtual_cost,
     render_virtual_expand,
@@ -251,7 +252,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   name="Alert",
                   description="Flags an agent that stalled and you haven't looked at since",
                   sort_key=lambda ctx: int(ctx.is_unvisited_stalled),
-                  sort_desc=True),
+                  sort_desc=True,
+                  virtual_render=render_virtual_alert),
     SummaryColumn(id="time_in_state", ticks=True, group="identity", detail_levels=ALL, render=render_time_in_state,
                   header="ST", name="Time in State",
                   description="How long the agent has been in its current status",

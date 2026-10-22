@@ -115,6 +115,15 @@ def render_virtual_status(ctx: ColumnContext) -> ColumnOutput:
     return render_status_symbol(ctx)
 
 
+def render_virtual_alert(ctx: ColumnContext) -> ColumnOutput:
+    """Blank, as an agent's bell cell with no bell: a member never rings it.
+
+    The "-" placeholder there would touch the time in state and read as a
+    minus sign (#545).
+    """
+    return [("  ", "dim")]
+
+
 def render_virtual_time(ctx: ColumnContext) -> ColumnOutput:
     """Time in state: since it started; its run time once finished."""
     seconds = virtual_seconds(_line(ctx), _now())
