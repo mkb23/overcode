@@ -106,6 +106,21 @@ def drop_model_flag(extra_args: Optional[List[str]]) -> Optional[List[str]]:
     return kept
 
 
+# Variables that mark the process that started the tmux server, never the
+# agent: a host Claude session's (CLAUDE_CODE_* identity, socket, pid,
+# effort, job dir) and an overcode agent's parent link and backend, which
+# the launch line sets itself when they apply. Cleared from every launch
+# line (_build_launch_cmd_str) unless the line sets them.
+HOST_SESSION_VARS = (
+    "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_AGENT", "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_JOB_DIR",
+    "OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME", "OVERCODE_BACKEND",
+)
+
+
 def launch_bedrock_routing(model: Optional[str], environ=None) -> str:
     """The routing a Bedrock launch's requests take (``pricing.bedrock_routing``).
 
@@ -373,7 +388,16 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         if spec.wrapper:
             env["OVERCODE_WRAPPER_DIR"] = shlex.quote(spec.start_directory)
 
-        env_prefix = " ".join(f"{k}={v}" for k, v in env.items())
+        # A tmux server started from inside a Claude session (an agent's
+        # `overcode launch` while the server was down, `overcode tmux` from a
+        # Claude shell) hands that session's markers to every window: the
+        # agent would take its title, its messaging socket, its effort, or
+        # its overcode parent. `env -u` drops them; credentials and the
+        # user's CLAUDE_CODE_* settings stay.
+        unset = [k for k in HOST_SESSION_VARS if k not in env]
+        env_prefix = " ".join([f"env -u {k}" if i == 0 else f"-u {k}"
+                               for i, k in enumerate(unset)]
+                              + [f"{k}={v}" for k, v in env.items()])
         # The shell reads the prompt from its file: the text itself never
         # rides on the typed line (quoting, length). `--` ends the options:
         # claude's variadic ones (--allowedTools <tools...>, --add-dir,
