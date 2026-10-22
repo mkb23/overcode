@@ -241,9 +241,8 @@ class RenameMixin:
             if status in self.RENAME_BUSY_STATUSES:
                 raise AgentBusyError(old_name, status)
 
-        if window_exists:
-            self._send_graceful_exit(self.backend_for(session), old_window)
-            self.sleep(graceful_exit_wait)
+        if window_exists and not self._stop_in_window(session, old_window, graceful_exit_wait):
+            return False  # still running: nothing renamed, nothing typed
 
         new_window = f"{new_name}-{session.id[:4]}"
         if window_exists and not self.tmux.rename_window(old_window, new_window):

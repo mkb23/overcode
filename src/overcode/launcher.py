@@ -121,6 +121,12 @@ HOST_SESSION_VARS = (
 )
 
 
+# Restart and rename-by-restart wait this long for an agent to give its
+# shell the terminal back after the exit gesture, looking this often (#549)
+EXIT_WAIT_SECONDS = 15.0
+EXIT_POLL_SECONDS = 0.25
+
+
 def launch_bedrock_routing(model: Optional[str], environ=None) -> str:
     """The routing a Bedrock launch's requests take (``pricing.bedrock_routing``).
 
@@ -269,6 +275,44 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             self.tmux.send_keys(window_name, press.keys, enter=press.enter)
             if press.delay_after:
                 self.sleep(press.delay_after)
+
+    def _shell_in_foreground(self, window_name: str) -> Optional[bool]:
+        """Whether the window's shell is at its prompt (nothing running in
+        front of it); None when it can't be told. From the process table, not
+        the screen (#549)."""
+        from .process_resources import shell_in_foreground
+        try:
+            return shell_in_foreground(self.tmux.get_pane_pid(window_name))
+        except TmuxTimeoutError:
+            return None
+
+    def _stop_in_window(self, session: Session, window_name: str,
+                        graceful_exit_wait: float) -> bool:
+        """Stop the agent in a window and wait for its shell (#549).
+
+        Sends the exit gesture only when something runs in front of the
+        shell, then waits until the shell has the terminal again, at most
+        ``EXIT_WAIT_SECONDS``. False when the agent is still running then
+        (a dialog that ate the gesture, a conversation in Claude's background
+        worker): the caller types nothing. When the process table can't
+        tell, waits ``graceful_exit_wait`` as before.
+        """
+        if self._shell_in_foreground(window_name) is True:
+            return True  # nothing to stop
+        self._send_graceful_exit(self.backend_for(session), window_name)
+        steps = int(EXIT_WAIT_SECONDS / EXIT_POLL_SECONDS)
+        for _ in range(steps):
+            state = self._shell_in_foreground(window_name)
+            if state is None:
+                self.sleep(graceful_exit_wait)
+                return True
+            if state:
+                return True
+            self.sleep(EXIT_POLL_SECONDS)
+        print(f"'{session.name}' did not exit within {EXIT_WAIT_SECONDS:g}s "
+              "(something is still running in its window); nothing was typed into it",
+              file=sys.stderr)
+        return False
 
     def _build_session_metadata(
         self,
@@ -991,8 +1035,14 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
           * otherwise: --resume <active_agent_session_id> preserves history.
 
         Does NOT create windows, send graceful-exit keys, or touch session
-        stats — callers own those concerns.
+        stats — callers own those concerns. Refuses (False) when a process
+        other than the window's shell holds the terminal: the line would be
+        typed into a running agent as a prompt (#549).
         """
+        if self._shell_in_foreground(window_name) is False:
+            print(f"Not relaunching '{session.name}': something is still running "
+                  "in its window", file=sys.stderr)
+            return False
         parent_session = None
         if session.parent_session_id:
             parent_session = self.sessions.get_session(session.parent_session_id)
@@ -1168,8 +1218,8 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             print(f"Cannot restart '{session.name}': {TMUX_NOT_ANSWERING}", file=sys.stderr)
             return False
 
-        self._send_graceful_exit(self.backend_for(session), session.tmux_window)
-        self.sleep(graceful_exit_wait)
+        if not self._stop_in_window(session, session.tmux_window, graceful_exit_wait):
+            return False
 
         if not self._send_launch_for_session(session, session.tmux_window, fresh=fresh,
                                              reset_agent_state=True):

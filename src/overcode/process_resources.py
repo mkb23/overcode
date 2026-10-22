@@ -112,3 +112,56 @@ def aggregate_tree(
         cpu += info.cpu_pct
         rss_kb += info.rss_kb
     return cpu, rss_kb * 1024
+
+
+def shell_in_foreground(pid: Optional[int]) -> Optional[bool]:
+    """Whether the shell ``pid`` (a tmux pane's) owns its terminal: at its prompt,
+    with nothing running in the foreground (#549).
+
+    The terminal's foreground process group (``tpgid``) is the shell's own
+    group exactly when no command is running in front of it: the kernel's
+    answer, not the screen's. Read from ``/proc/<pid>/stat`` on Linux
+    (minimal containers often have no ``ps``), else from ``ps`` (macOS).
+    None when it can't be told (no pid, the process is gone).
+    """
+    if not pid:
+        return None
+    ids = _proc_stat_groups(pid)
+    if ids is None:
+        ids = _ps_groups(pid)
+    if ids is None:
+        return None
+    pgid, tpgid = ids
+    if tpgid <= 0:
+        return None  # no controlling terminal
+    return pgid == tpgid
+
+
+def _proc_stat_groups(pid: int) -> Optional[Tuple[int, int]]:
+    """``(pgrp, tpgid)`` from ``/proc/<pid>/stat`` (Linux), or None."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
+            stat = f.read()
+    except OSError:
+        return None
+    # pid (comm) state ppid pgrp session tty_nr tpgid ...; comm may hold
+    # spaces and parentheses, so the fields start after the last ")"
+    fields = stat.rpartition(")")[2].split()
+    try:
+        return int(fields[2]), int(fields[5])
+    except (IndexError, ValueError):
+        return None
+
+
+def _ps_groups(pid: int) -> Optional[Tuple[int, int]]:
+    """``(pgid, tpgid)`` from ``ps`` (macOS, or a Linux without /proc), or None."""
+    try:
+        result = subprocess.run(["ps", "-o", "pgid=,tpgid=", "-p", str(pid)],
+                                capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    try:
+        pgid, tpgid = (int(v) for v in result.stdout.split())
+    except ValueError:
+        return None
+    return pgid, tpgid

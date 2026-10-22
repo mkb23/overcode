@@ -599,9 +599,11 @@ class TestRealTmux:
 
         launcher = AgentLauncher("agents", session_manager=sm)
         launcher._live_status = lambda session: "waiting_user"
-        launcher._send_graceful_exit = lambda backend, window: real_tmux.cmd(
+        # The window goes while the agent is being stopped (an idle `sh`
+        # would get no exit keys at all, so the stop itself takes it)
+        launcher._stop_in_window = lambda session, window, wait: real_tmux.cmd(
             "kill-window", "-t", f"agents:={window}",
-        )
+        ) or True
         relaunched = []
         launcher._send_launch_for_session = (
             lambda session, window, **kw: relaunched.append((session.name, window)) or True
@@ -812,3 +814,21 @@ class TestFollowAcrossRename:
 
         assert set(captured) == {"beta-sid1"}
         assert "'alpha' was renamed to 'beta'" in capsys.readouterr().err
+
+
+class TestLegacyRenameWaitsForTheShell:
+    """A pre-0.6 rename restarts the agent: nothing is renamed or typed when
+    it does not exit (#549)."""
+
+    def test_an_agent_that_never_exits_is_left_as_it_was(self, tmp_path, monkeypatch):
+        launcher, sm = _launcher(tmp_path, legacy=True)
+        sess = launcher.launch(name="alpha")
+        monkeypatch.setattr("overcode.process_resources.shell_in_foreground", lambda pid: False)
+        launched = len(launcher.tmux.client.sent_keys)
+        launcher.sleep = lambda s: None
+
+        assert launcher.rename(sess, "beta", graceful_exit_wait=0) is False
+
+        after = launcher.tmux.client.sent_keys[launched:]
+        assert not [k for k in after if "OVERCODE_SESSION_NAME" in k[2]]
+        assert sm.get_session(sess.id).name == "alpha"

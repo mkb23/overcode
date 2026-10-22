@@ -3682,3 +3682,88 @@ class TestNameTakenInAnotherTmuxSession:
 
         assert sm.get_session(live.id) is not None
         assert forked.id == live.id
+
+
+class TestRestartWaitsForTheShell:
+    """Restart types its launch line only into a shell at its prompt (#549):
+    the pane's foreground process group, from the process table, not the screen."""
+
+    def _agent(self, tmp_path, monkeypatch, foreground):
+        """``foreground``: the probe's answers in turn (the last repeats)."""
+        answers = list(foreground)
+        calls = []
+
+        def probe(pid):
+            calls.append(pid)
+            return answers.pop(0) if len(answers) > 1 else answers[0]
+
+        mock_tmux = MockTmux()
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher("agents", TmuxManager("agents", tmux=mock_tmux), sm)
+        session = launcher.launch(name="agent")
+        sm.set_active_agent_session_id(session.id, "conv-1")
+        monkeypatch.setattr("overcode.process_resources.shell_in_foreground", probe)
+        mock_tmux.sent_keys.clear()
+        slept = []
+        launcher.sleep = slept.append
+        return launcher, sm.get_session(session.id), mock_tmux, slept
+
+    @staticmethod
+    def _relaunches(mock_tmux):
+        return [k[2] for k in mock_tmux.sent_keys if "OVERCODE_SESSION_NAME=" in k[2]]
+
+    def test_an_agent_that_never_exits_gets_nothing_typed(self, tmp_path, monkeypatch, capsys):
+        # A conversation in Claude's background worker, or a dialog that ate /exit
+        launcher, session, mock_tmux, _ = self._agent(tmp_path, monkeypatch, [False])
+        assert launcher.restart(session) is False
+        assert self._relaunches(mock_tmux) == []
+        assert "did not exit" in capsys.readouterr().err
+
+    def test_the_line_goes_in_once_the_shell_has_the_terminal(self, tmp_path, monkeypatch):
+        launcher, session, mock_tmux, slept = self._agent(
+            tmp_path, monkeypatch, [False, False, False, True])
+        assert launcher.restart(session) is True
+        assert len(self._relaunches(mock_tmux)) == 1
+        assert 3.0 not in slept  # no fixed wait: as soon as the shell is back
+
+    def test_a_dead_agent_gets_no_exit_keys(self, tmp_path, monkeypatch):
+        launcher, session, mock_tmux, _ = self._agent(tmp_path, monkeypatch, [True])
+        assert launcher.restart(session) is True
+        sent = [k[2] for k in mock_tmux.sent_keys]
+        assert "/exit" not in sent
+        assert len(self._relaunches(mock_tmux)) == 1
+
+    def test_when_it_cannot_be_told_it_waits_as_before(self, tmp_path, monkeypatch):
+        launcher, session, mock_tmux, slept = self._agent(tmp_path, monkeypatch, [None])
+        assert launcher.restart(session, graceful_exit_wait=3.0) is True
+        assert 3.0 in slept and len(self._relaunches(mock_tmux)) == 1
+
+    def test_no_launch_line_into_a_running_program(self, tmp_path, monkeypatch, capsys):
+        launcher, session, mock_tmux, _ = self._agent(tmp_path, monkeypatch, [False])
+        assert launcher._send_launch_for_session(session, session.tmux_window) is False
+        assert self._relaunches(mock_tmux) == []
+        assert "still running" in capsys.readouterr().err
+
+
+class TestShellInForeground:
+    """The probe itself: /proc/<pid>/stat on Linux, ps elsewhere."""
+
+    def test_proc_stat_fields_after_the_command_name(self, tmp_path, monkeypatch):
+        from overcode import process_resources as pr
+        stat = "4242 (my (odd) shell) S 1 4242 4242 34816 4242 4194304 0 0\n"
+        real_open = open
+        monkeypatch.setattr("builtins.open", lambda path, *a, **k: (
+            __import__("io").StringIO(stat) if path == "/proc/4242/stat" else real_open(path, *a, **k)))
+        assert pr._proc_stat_groups(4242) == (4242, 4242)
+        assert pr.shell_in_foreground(4242) is True
+        stat = "4242 (zsh) S 1 4242 4242 34816 5000 4194304 0 0\n"
+        assert pr.shell_in_foreground(4242) is False   # 5000 runs in front of it
+
+    def test_unknown_without_a_pid_or_a_terminal(self, monkeypatch):
+        from overcode import process_resources as pr
+        assert pr.shell_in_foreground(None) is None
+        monkeypatch.setattr(pr, "_proc_stat_groups", lambda pid: None)
+        monkeypatch.setattr(pr, "_ps_groups", lambda pid: (10, -1))
+        assert pr.shell_in_foreground(10) is None       # no controlling terminal
+        monkeypatch.setattr(pr, "_ps_groups", lambda pid: None)
+        assert pr.shell_in_foreground(10) is None       # gone, or no ps

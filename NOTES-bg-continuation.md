@@ -68,6 +68,14 @@ the agent's light went stale and a 🌙 row flickered under it.
   job record and transcripts: True for the moved conversation, False for an
   older one and for the same record with fork fields.
 
+- Restart / rename-by-restart of such an agent used to type its launch
+  line into the still-running Claude after a fixed 3 s (#549). Fixed
+  generically: the line is typed only when the pane's shell owns the
+  terminal (`process_resources.shell_in_foreground`: /proc on Linux, ps on
+  macOS), and a restart whose agent doesn't exit within 15 s types
+  nothing. A restart still doesn't ask whether to pull the conversation
+  back from the worker.
+
 ## Tests
 
 `tests/unit/test_bg_continuation.py` (36, both hook-state layouts),
