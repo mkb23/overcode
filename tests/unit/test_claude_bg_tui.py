@@ -9,6 +9,7 @@ split stands in for tmux and the ``claude`` CLI.
 import pytest
 
 from overcode.engine_protocol import Snapshot
+from overcode.tui_actions.session import KEY_REPEAT_GAP
 from overcode.tui_split import NullSplit
 from tests.tui_harness import FakeEngine, palette, ready, three_agents
 
@@ -184,7 +185,9 @@ class TestActions:
             await _on_bg(pilot)
             await pilot.press("x")
             assert app.split.ran == []  # the first press only asks
+            await pilot.pause(KEY_REPEAT_GAP + 0.05)  # a person's second press
             await pilot.press("x")
+            await pilot.pause(KEY_REPEAT_GAP + 0.05)  # no repeat after it: it runs
             await app.workers.wait_for_complete()
             assert app.split.ran == [["stop", SID[:8]]]
 
@@ -195,10 +198,14 @@ class TestActions:
         async with app.run_test() as pilot:
             await _on_bg(pilot)
             await pilot.press("x")
+            await pilot.pause(KEY_REPEAT_GAP + 0.05)
             await pilot.press("x")
+            await pilot.pause(KEY_REPEAT_GAP + 0.05)
             assert app.split.ran == []  # already over: nothing to stop
             app.action_remove_background_session()
+            await pilot.pause(KEY_REPEAT_GAP + 0.05)
             app.action_remove_background_session()
+            await pilot.pause(KEY_REPEAT_GAP + 0.05)
             await app.workers.wait_for_complete()
             assert app.split.ran == [["rm", SID[:8]]]
 

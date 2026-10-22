@@ -48,6 +48,21 @@ def _row(session, status=STATUS_WAITING_USER):
     return widget
 
 
+class _Timer:
+    """A Textual timer: fire() runs it unless stopped."""
+
+    def __init__(self, callback):
+        self.callback = callback
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+    def fire(self):
+        if not self.stopped:
+            self.callback()
+
+
 class Tui(SessionActionsMixin):
     """The SupervisorTUI attributes SessionActionsMixin uses, as plain values."""
 
@@ -62,6 +77,11 @@ class Tui(SessionActionsMixin):
         self.sessions = list(sessions)
         self.detector = SimpleNamespace(mode=fleet_mode)
         self._pending_confirmations = {}
+        self._confirm_last_press = {}
+        self._confirm_timers = {}
+        # Timers run at once unless a test holds them (key-repeat tests)
+        self.hold_timers = False
+        self.timers = []
         self._sister_poller = SimpleNamespace(get_sister_states=lambda: [
             SisterState(name="remote", url=REMOTE_URL, reachable=sisters_reachable)])
         self._sister_controller = MagicMock(spec=SisterController)
@@ -72,6 +92,19 @@ class Tui(SessionActionsMixin):
 
     def notify(self, message, severity="information", timeout=None):
         self.notifications.append((message, severity))
+
+    def set_timer(self, delay, callback):
+        timer = _Timer(callback)
+        if self.hold_timers:
+            self.timers.append(timer)
+        else:
+            timer.fire()
+        return timer
+
+    def pause(self):
+        """Let a person's pause pass before the next press (not a key repeat)."""
+        for action_key in self._confirm_last_press:
+            self._confirm_last_press[action_key] -= 1.0
 
     @property
     def last(self):
@@ -599,9 +632,58 @@ class TestKillFocused:
         assert "remote agent" in tui.last[0]
 
         # Second press within timeout: the sister kills it
+        tui.pause()
         tui.action_kill_focused()
         tui._sister_controller.kill_agent.assert_called_once_with(REMOTE_URL, "key-abc", "remote-agent")
         assert tui.executed == []
+
+
+class TestHeldKey:
+    """A held key's repeats never confirm a double-press action (#548)."""
+
+    def test_held_x_kills_nothing(self):
+        """First repeat (after the OS delay) confirms; the next repeat cancels it."""
+        tui = Tui(_row(_session()))
+        tui.hold_timers = True
+
+        tui.action_kill_focused()   # the press
+        tui.pause()                 # the OS repeat delay: looks like a second press
+        tui.action_kill_focused()
+        tui.action_kill_focused()   # the repeat stream
+        tui.action_kill_focused()
+        for timer in tui.timers:
+            timer.fire()
+
+        assert tui.executed == []
+        assert "kill" not in tui._pending_confirmations
+        assert tui.notifications[-1][0].startswith("Key held down")
+
+    def test_held_x_arms_nothing_for_after_release(self):
+        """After a held key, the next press asks again; it does not confirm."""
+        tui = Tui(_row(_session()))
+        tui.hold_timers = True
+        for _ in range(4):
+            tui.action_kill_focused()
+        tui.pause()
+
+        tui.action_kill_focused()
+
+        assert tui.executed == [] and tui.timers == []
+        assert "Press x again" in tui.notifications[-1][0]
+
+    def test_double_press_runs_after_the_repeat_gap(self):
+        row = _row(_session())
+        tui = Tui(row)
+        tui.hold_timers = True
+        tui.action_kill_focused()
+        tui.pause()
+        tui.action_kill_focused()
+        assert tui.executed == []   # waits out KEY_REPEAT_GAP
+
+        tui.timers[0].fire()
+
+        assert tui.executed == [("kill", row, "test-agent", "session-123")]
+        assert tui._confirm_timers == {}
 
 
 class TestRestartFocused:
@@ -661,6 +743,7 @@ class TestRestartFocused:
         assert "restart" in tui._pending_confirmations
         assert "remote agent" in tui.last[0]
 
+        tui.pause()
         tui.action_restart_focused()
         tui._sister_controller.restart_agent.assert_called_once_with(REMOTE_URL, "key-abc", "remote-agent")
         assert tui.executed == []

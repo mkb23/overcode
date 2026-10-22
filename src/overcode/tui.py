@@ -481,6 +481,10 @@ class SupervisorTUI(
         self._instruction_history: list = []
         # Pending double-press confirmations: action_key -> (session_name | None, timestamp)
         self._pending_confirmations: dict[str, tuple[str | None, float]] = {}
+        # Last press per confirmed action, and confirmed actions waiting out
+        # KEY_REPEAT_GAP (a held key cancels them)
+        self._confirm_last_press: dict[str, float] = {}
+        self._confirm_timers: dict[str, object] = {}
         # Attended state: whether a tmux client is attached to the pane this
         # TUI runs in. False pauses every timer in PAUSED_WHEN_UNATTENDED
         # (_on_attended_changed is the one place that reacts). Written only

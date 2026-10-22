@@ -18,6 +18,14 @@ if TYPE_CHECKING:
     from ..session_manager import Session
 
 
+# Presses of one action closer together than this are a held key's repeats
+# (repeat intervals run 30-90 ms; a deliberate double-press is slower). A
+# confirmed action also waits this long, so a held key's first repeat, which
+# arrives after the OS repeat delay and looks like a second press, is caught
+# by the repeat after it (#548).
+KEY_REPEAT_GAP = 0.2
+
+
 def _get_focused_session(tui) -> "SessionSummary | None":
     """Return the focused widget if it's a SessionSummary, else None."""
     from ..tui_widgets import SessionSummary
@@ -64,8 +72,8 @@ class SessionActionsMixin:
         """Generic double-press confirmation pattern.
 
         First press shows a warning notification. Second press within timeout
-        executes the callback. If the session_name changes, the confirmation
-        resets.
+        executes the callback, KEY_REPEAT_GAP later unless a held key's repeat
+        cancels it. If the session_name changes, the confirmation resets.
 
         Args:
             action_key: Unique key for this action (e.g., "kill", "restart")
@@ -75,13 +83,31 @@ class SessionActionsMixin:
             timeout: Seconds before confirmation expires
         """
         now = time.time()
+        last_press = self._confirm_last_press.get(action_key)
+        self._confirm_last_press[action_key] = now
+        if last_press is not None and now - last_press < KEY_REPEAT_GAP:
+            # A held key: drop what it armed or confirmed, do nothing (#548)
+            armed = self._pending_confirmations.pop(action_key, None) is not None
+            timer = self._confirm_timers.pop(action_key, None)
+            if timer is not None:
+                timer.stop()
+            if armed or timer is not None:
+                self.notify("Key held down: nothing done. Press it twice to confirm",
+                            severity="warning")
+            return
+
         pending = self._pending_confirmations.get(action_key)
 
         if pending is not None:
             pending_name, pending_time = pending
             if pending_name == session_name and (now - pending_time) < timeout:
                 del self._pending_confirmations[action_key]
-                callback()
+
+                def run() -> None:
+                    self._confirm_timers.pop(action_key, None)
+                    callback()
+
+                self._confirm_timers[action_key] = self.set_timer(KEY_REPEAT_GAP, run)
                 return
             # Different session or expired — reset
             del self._pending_confirmations[action_key]
