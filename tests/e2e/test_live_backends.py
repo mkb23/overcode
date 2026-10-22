@@ -362,6 +362,10 @@ def live_env(spec):
         # No resolve(): an npm `.bin/opencode2` is a symlink to
         # `…/cli/bin/opencode2.exe`, and it is the link's name that matters.
         env["PATH"] = str(Path(override).absolute().parent) + os.pathsep + env.get("PATH", "")
+    # The data dir too (config, usage store, logs): unset, it is the
+    # user's real ~/.overcode
+    data_dir = tempfile.mkdtemp(prefix=f"overcode-live-{spec.backend}-data-")
+    env["OVERCODE_DIR"] = data_dir
     env["OVERCODE_STATE_DIR"] = state_dir
     env["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
     env["PYTHONPATH"] = str(_PROJECT_ROOT / "src")
@@ -389,10 +393,18 @@ def live_env(spec):
         "PYTEST_CURRENT_TEST", "PYTEST_ADDOPTS",
     ]:
         env.pop(key, None)
+    # A host Claude's own markers (its pid, session, job dir, messaging
+    # socket, effort): a CLI launched with them takes the host's name as
+    # its session title, which the namer then adopts. Credentials stay.
+    for key in list(env):
+        if (key.startswith("CLAUDE_CODE_") and key != "CLAUDE_CODE_OAUTH_TOKEN") or key in (
+                "CLAUDE_PID", "CLAUDE_JOB_DIR", "CLAUDE_EFFORT", "AI_AGENT"):
+            env.pop(key)
     env.update(spec.extra_env)
 
     # The in-process detector/launcher helpers read these from os.environ.
-    saved = {k: os.environ.get(k) for k in ("OVERCODE_STATE_DIR", "OVERCODE_TMUX_SOCKET")}
+    saved = {k: os.environ.get(k) for k in ("OVERCODE_DIR", "OVERCODE_STATE_DIR", "OVERCODE_TMUX_SOCKET")}
+    os.environ["OVERCODE_DIR"] = data_dir
     os.environ["OVERCODE_STATE_DIR"] = state_dir
     os.environ["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
 

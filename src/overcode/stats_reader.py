@@ -282,7 +282,8 @@ class ClaudeStatsReader:
         so the caller falls back to the normal host path.
         """
         from .history_reader import (
-            CLAUDE_READER_VERSION, long_usage, read_session_stats_from_content)
+            CLAUDE_READER_VERSION, current_model_effort, long_usage,
+            read_session_stats_from_content)
 
         if not session.wrapper:
             return None
@@ -314,6 +315,8 @@ class ClaudeStatsReader:
         detected_model = None
         detected_provider = None
         detected_effort = None
+        effort_cleared = False
+        model_at = effort_at = None
         all_work_times: List[float] = []
         # Only the transcripts read: one that failed this time is left out,
         # so its spend on record stays as it is (conversation_spend)
@@ -347,12 +350,14 @@ class ClaudeStatsReader:
 
             if sid == active_sid:
                 current_context = usage["current_context_tokens"]
-                if usage["model"]:
-                    detected_model = usage["model"]
+                in_force = current_model_effort(usage)
+                if in_force.model:
+                    detected_model, model_at = in_force.model, in_force.model_at
                 if usage["provider"]:
                     detected_provider = usage["provider"]
-                if usage.get("effort"):
-                    detected_effort = usage.get("effort")
+                if in_force.effort or in_force.effort_cleared:
+                    detected_effort, effort_cleared = in_force.effort, in_force.effort_cleared
+                    effort_at = in_force.effort_at
             elif usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
             if usage["model"] and not detected_model:
@@ -376,6 +381,9 @@ class ClaudeStatsReader:
             model=detected_model,
             provider=detected_provider,
             effort=detected_effort,
+            effort_cleared=effort_cleared,
+            model_at=model_at,
+            effort_at=effort_at,
             per_conversation=per_conversation,
         )
 

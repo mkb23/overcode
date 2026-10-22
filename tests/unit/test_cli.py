@@ -464,6 +464,27 @@ class TestAgentInAnotherTmuxSession:
         assert fleet.tmux.windows_created == []  # no revive into 'agents'
         assert fleet.get("worker").tmux_window == "worker-w"
 
+    def test_restart_model_dates_the_choice_and_leaves_effort_unknown(self, fleet):
+        """The old transcript's model and effort no longer apply (#539)."""
+        sess = self._worker(fleet)
+        fleet.sm.update_session(sess.id, model="claude-sonnet-5-5", effort="high")
+
+        result = runner.invoke(app, ["restart", "worker", "--model", "haiku"])
+
+        assert result.exit_code == 0, result.output
+        worker = fleet.get("worker")
+        assert worker.model == "haiku" and worker.effort is None
+        assert isinstance(worker.model_chosen_at, float)
+
+    def test_restart_on_the_same_model_keeps_the_effort(self, fleet):
+        sess = self._worker(fleet)
+        fleet.sm.update_session(sess.id, model="haiku", effort="high")
+
+        result = runner.invoke(app, ["restart", "worker", "--model", "haiku"])
+
+        assert result.exit_code == 0, result.output
+        assert fleet.get("worker").effort == "high"
+
     def test_revive_brings_it_back_in_its_own_tmux_session(self, fleet):
         sess = self._worker(fleet, window=False)
 

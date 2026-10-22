@@ -3,6 +3,7 @@ Agent commands: launch, list, attach, kill, follow, report, cleanup,
 set-value, set-budget, annotate, send, show.
 """
 
+import time
 from typing import Annotated, Optional, List
 
 import typer
@@ -1217,7 +1218,13 @@ def restart(
     launcher = launcher.for_agent(sess)
 
     if model:
-        launcher.sessions.update_session(sess.id, model=model)
+        # From now on the transcript's older model and effort no longer
+        # apply; on another model the effort is unknown until it replies
+        # (Claude picks it per model) (#539)
+        changes = {"model": model, "model_chosen_at": time.time()}
+        if model != sess.model:
+            changes["effort"] = None
+        launcher.sessions.update_session(sess.id, **changes)
         sess = launcher.sessions.get_session(sess.id)
 
     # Window gone (killed, reboot): bring it back in a new window, as the
