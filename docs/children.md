@@ -121,7 +121,7 @@ The command reads the child's identity from its environment (overcode sets
 launches), so it only works inside an agent. When the child's turn ends:
 
 - **with a report**, it is `done`: ⚪ with ✅ or ❌. Any budget it didn't
-  use goes back to its parent.
+  use goes back to its parent (unless budget reclaim is manual, below).
 - **without a report**, it is `waiting_oversight`: ⚪ with 📭. Its
   oversight policy (below) decides what happens next. If you or its parent
   prompt it again, it goes back to work.
@@ -212,7 +212,10 @@ children:
   its budget without a deduction. A preset can set a default budget, which
   `--budget` overrides.
 - When a child reports and turns done, whatever is left of its budget goes
-  back to its parent.
+  back to its parent. With `children.budget_reclaim: manual` (config.yaml,
+  or "Budget reclaim" in the TUI palette) it stays with the child, so you
+  can keep talking to it without it running out, until the parent takes it
+  back with `overcode budget reclaim <child>`. The default is `auto`.
 - Budgets are soft limits. When an agent goes over its budget, it isn't
   killed, but its heartbeats and supervisor nudges stop. See
   [Cost Budgets](advanced-features.md#cost-budgets).

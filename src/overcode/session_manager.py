@@ -1434,6 +1434,16 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
 
             return remaining
 
+    def auto_reclaim_budget(self, child_id: str) -> Optional[float]:
+        """``reclaim_budget`` when a child finishes, unless
+        ``children.budget_reclaim`` is ``manual`` (#546): then the budget
+        stays with the child until the parent reclaims it explicitly
+        (``overcode budget reclaim``), and this returns None."""
+        from .config import get_budget_reclaim_mode
+        if get_budget_reclaim_mode() == "manual":
+            return None
+        return self.reclaim_budget(child_id)
+
     def transfer_budget(self, from_id: str, to_id: str, amount: float) -> bool:
         """Transfer budget from one agent to another.
 

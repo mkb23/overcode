@@ -114,6 +114,10 @@ def budget_reclaim(
 
     Examples:
         overcode budget reclaim my-dead-child
+
+    A child that finishes gives its unused budget back by itself unless
+    children.budget_reclaim is manual (config.yaml, or "Budget reclaim" in
+    the TUI palette); then this is how the parent takes it back.
     """
     from ..session_manager import SessionManager
 

@@ -110,6 +110,8 @@ naming:
 children:
   preset: supervised              # default for children: supervised | balanced | autonomous | yours
   presets: {}                     # change a built-in or add your own
+  budget_reclaim: auto            # auto: a finished child's unused budget goes back to its
+                                  # parent; manual: only `overcode budget reclaim <child>`
 
 # Claude subscription quota: the Q% column's estimate
 # See "Subscription Quota" below

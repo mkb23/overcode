@@ -73,7 +73,7 @@ BUILTIN_PRESETS: Dict[str, ChildPreset] = {
 DEFAULT_PRESET = "supervised"
 
 _PRESET_KEYS = ("on_stuck", "oversight_timeout", "archive_after", "budget", "description")
-_SECTION_KEYS = ("preset", "presets")
+_SECTION_KEYS = ("preset", "presets", "budget_reclaim")
 _NEVER = ("never", "off", "none")
 
 
@@ -222,6 +222,9 @@ def load_presets(section: Any = None) -> Tuple[Dict[str, ChildPreset], str, List
             continue
         base = presets.get(name, BUILTIN_PRESETS[DEFAULT_PRESET])
         presets[name] = _apply_fields(base, name, raw, warnings)
+    reclaim = section.get("budget_reclaim")
+    if reclaim is not None and str(reclaim).strip().lower() not in ("auto", "manual"):
+        warnings.append(f"children.budget_reclaim: '{reclaim}' is not auto or manual — using auto")
     default = section.get("preset") or DEFAULT_PRESET
     default = str(default).strip()
     if default not in presets:

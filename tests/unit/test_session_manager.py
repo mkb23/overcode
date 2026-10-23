@@ -1158,6 +1158,22 @@ class TestSessionHierarchy:
         # Child capped at spent
         assert child_after.cost_budget_usd == pytest.approx(2.0)
 
+    def test_auto_reclaim_follows_the_reclaim_mode(self, tmp_path, monkeypatch):
+        """#546: auto refunds as reclaim_budget does; manual refunds nothing."""
+        manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
+        manager.set_cost_budget(root.id, 10.0)
+        manager.transfer_budget(root.id, child1.id, 5.0)
+        manager.update_stats(child1.id, estimated_cost_usd=2.0)
+
+        monkeypatch.setattr("overcode.config.get_budget_reclaim_mode", lambda: "manual")
+        assert manager.auto_reclaim_budget(child1.id) is None
+        assert manager.get_session(child1.id).cost_budget_usd == pytest.approx(5.0)
+        assert manager.get_session(root.id).cost_budget_usd == pytest.approx(5.0)
+
+        monkeypatch.setattr("overcode.config.get_budget_reclaim_mode", lambda: "auto")
+        assert manager.auto_reclaim_budget(child1.id) == pytest.approx(3.0)
+        assert manager.get_session(root.id).cost_budget_usd == pytest.approx(8.0)
+
     def test_reclaim_budget_is_idempotent(self, tmp_path):
         manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
         manager.set_cost_budget(root.id, 10.0)

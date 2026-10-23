@@ -1046,6 +1046,32 @@ def save_billing_defaults(new_agent_code: str, default_code: str) -> None:
     save_config(config)
 
 
+BUDGET_RECLAIM_MODES = ("auto", "manual")
+
+
+def get_budget_reclaim_mode() -> str:
+    """``children.budget_reclaim`` (#546): ``auto`` (default) refunds a
+    finished child's unused budget to its parent; ``manual`` leaves it with
+    the child until the parent runs ``overcode budget reclaim <child>``, so
+    the child can be talked to again without running out."""
+    section = _get_config_value("children", {})
+    mode = section.get("budget_reclaim", "auto") if isinstance(section, dict) else "auto"
+    mode = str(mode).strip().lower()
+    return mode if mode in BUDGET_RECLAIM_MODES else "auto"
+
+
+def save_budget_reclaim_mode(mode: str) -> None:
+    """Set ``children.budget_reclaim`` in config.yaml, keeping the rest of ``children:``."""
+    if mode not in BUDGET_RECLAIM_MODES:
+        raise ValueError(f"budget_reclaim must be one of {BUDGET_RECLAIM_MODES}, not {mode!r}")
+    config = load_config()
+    children = config.get("children")
+    children = dict(children) if isinstance(children, dict) else {}
+    children["budget_reclaim"] = mode
+    config["children"] = children
+    save_config(config)
+
+
 NAMING_MAX_LENGTH_DEFAULT = 18
 NAMING_COST_CAP_DEFAULT = 10.0  # USD a day for the namer's model calls
 _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "rename_every",

@@ -1735,11 +1735,12 @@ class MonitorDaemon:
         Runs after the tick's write, so the child's spend is this tick's.
         Once per child: a done child is never settled again, and
         ``reclaim_budget`` caps the child's budget at its spend, so a
-        repeated call refunds nothing.
+        repeated call refunds nothing. Nothing at all with
+        ``children.budget_reclaim: manual`` (#546).
         """
         for child_id in child_ids:
             try:
-                refunded = self.session_manager.reclaim_budget(child_id)
+                refunded = self.session_manager.auto_reclaim_budget(child_id)
             except Exception as e:
                 self.log.error(f"budget refund for {child_id} failed: {e}")
                 continue

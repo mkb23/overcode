@@ -253,6 +253,22 @@ class DaemonActionsMixin:
         else:
             self.notify("Failed to restart Monitor Daemon", severity="error")
 
+    def action_toggle_budget_reclaim(self) -> None:
+        """Budget reclaim auto <-> manual (children.budget_reclaim in config.yaml, #546)."""
+        from ..config import get_budget_reclaim_mode, save_budget_reclaim_mode
+        mode = "manual" if get_budget_reclaim_mode() == "auto" else "auto"
+        try:
+            save_budget_reclaim_mode(mode)
+        except Exception as e:
+            self.notify(f"Budget reclaim not changed: {e}", severity="error")
+            return
+        if mode == "auto":
+            message = "Budget reclaim auto: a finished child's unused budget goes back to its parent"
+        else:
+            message = ("Budget reclaim manual: a finished child keeps its budget until its parent "
+                       "runs overcode budget reclaim <child>")
+        self.notify(message, severity="information")
+
     def action_toggle_auto_naming(self) -> None:
         """Turn auto-naming on or off (naming.enabled in config.yaml; the daemon reads it each tick)."""
         from ..config import describe_auto_naming, get_naming_config, save_naming_enabled

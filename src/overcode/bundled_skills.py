@@ -82,6 +82,10 @@ Other options:
 - `-B opencode` (or `codex`, `grok`, ...) launches a different agent CLI.
 - `-m <model>` picks the model.
 - `--budget 2.00` caps its spend, and is taken from your budget if you have one.
+  What it doesn't spend comes back to you when it finishes, unless
+  `overcode config show` says `children.budget_reclaim: manual`: then take
+  it back yourself with `overcode budget reclaim <child>` once you are done
+  talking to it.
 - `--allowed-tools "Read,Grep,Glob"` makes a read-only Claude Code child.
 - `--skills <profile>` switches on a skill profile.
 

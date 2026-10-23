@@ -36,6 +36,8 @@ CONFIG_TEMPLATE = """\
 # agents (`overcode launch --preset`; `overcode config presets` lists them)
 # children:
 #   preset: supervised         # default for children: supervised | balanced | autonomous | yours
+#   budget_reclaim: auto       # auto: a finished child's unused budget goes back to its
+#                              # parent; manual: the parent runs `overcode budget reclaim`
 #   presets:
 #     overnight:
 #       on_stuck: timeout:8h   # wait | fail | timeout:DURATION
@@ -172,6 +174,10 @@ def _config_show():
             rprint(f"    model: {s['model']}")
         if "api_key_var" in s:
             rprint(f"    api_key_var: {s['api_key_var']}")
+
+    if "children" in config:
+        from ..config import get_budget_reclaim_mode
+        rprint(f"  children.budget_reclaim: {get_budget_reclaim_mode()}")
 
     if "naming" in config:
         from ..config import describe_auto_naming, get_naming_config

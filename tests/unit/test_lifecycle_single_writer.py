@@ -174,6 +174,22 @@ class TestDaemonSettlesLifecycleOnce:
         published = {s.session_id: s for s in daemon.state.sessions}
         assert published[child.id].current_status == "done"
 
+    def test_manual_reclaim_leaves_the_budget_with_the_finished_child(self, root, monkeypatch):
+        """children.budget_reclaim: manual (#546): done, but nothing flows back."""
+        monkeypatch.setattr("overcode.config.get_budget_reclaim_mode", lambda: "manual")
+        daemon, sm, sessions = _daemon(root)
+        parent, child = sessions[1], sessions[11]
+        before = sm.get_session(parent.id).cost_budget_usd
+        _hook_stop(child.name)
+        _report(child.name)
+        _ticks(daemon, 3)
+        assert sm.get_session(child.id).status == "done"
+        assert sm.get_session(child.id).cost_budget_usd == pytest.approx(5.0)
+        assert sm.get_session(parent.id).cost_budget_usd == pytest.approx(before)
+        # The parent takes it back explicitly
+        assert sm.reclaim_budget(child.id) == pytest.approx(2.25)
+        assert sm.get_session(parent.id).cost_budget_usd == pytest.approx(before + 2.25)
+
     def test_stopped_child_without_report_waits_then_done_on_report(self, root):
         daemon, sm, sessions = _daemon(root)
         parent, child = sessions[1], sessions[11]

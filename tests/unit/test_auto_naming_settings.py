@@ -19,6 +19,15 @@ def app(make_tui):
     return make_tui(three_agents(), engine=FakeEngine(), size=(200, 40))
 
 
+@pytest.fixture(autouse=True)
+def _own_config(tmp_path, monkeypatch):
+    """A config.yaml of this test's own: none of it outlives the test."""
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    config._clear_config_cache()
+    yield
+    config._clear_config_cache()
+
+
 def _naming():
     config._clear_config_cache()
     return config.get_naming_config()

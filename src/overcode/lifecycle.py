@@ -92,7 +92,8 @@ class AgentLifecycleMixin:
           waiting_oversight (without), whether or not its window is there.
         - Any other agent whose window is gone becomes terminated.
         - A child that just became done has its unused budget refunded to
-          its parent (#432; idempotent, ``reclaim_budget`` caps the child).
+          its parent (#432; idempotent, ``reclaim_budget`` caps the child),
+          unless ``children.budget_reclaim`` is ``manual`` (#546).
 
         Writes sessions.json, prints nothing; returns what changed.
         """
@@ -124,7 +125,7 @@ class AgentLifecycleMixin:
                 result.terminated.append(session.name)
             elif new_status == "done":
                 result.done.append(session.name)
-                refunded = self.sessions.reclaim_budget(session.id)
+                refunded = self.sessions.auto_reclaim_budget(session.id)
                 if refunded and refunded > 0:
                     result.refunds.append((session.name, refunded))
             else:

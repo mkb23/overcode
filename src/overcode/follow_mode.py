@@ -153,7 +153,7 @@ def _handle_report(
         sessions.update_session_status(session.id, "done")
         # Refund unused budget to parent on successful completion (#432).
         if report.get("status") == "success":
-            refunded = sessions.reclaim_budget(session.id)
+            refunded = sessions.auto_reclaim_budget(session.id)
             if isinstance(refunded, (int, float)) and refunded > 0:
                 print(
                     f"[follow] Refunded ${refunded:.4f} from '{name}' to parent",
