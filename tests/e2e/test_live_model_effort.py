@@ -246,6 +246,18 @@ def test_model_and_effort_follow_the_agent(spec, live_env, global_claude_setting
         turn()
         expected = truth()
         took = watch.wait(lambda v: v == expected, SHOW_TIMEOUT)
+        if took is None:  # what Claude and its transcript show, to tell a race from a bug
+            print("[DIAG] pane:\n" + pane(), flush=True)
+            try:
+                print("[DIAG] hook events:\n" + "\n".join(
+                    agent_file("hook_events").read_text().splitlines()[-12:]), flush=True)
+            except Exception as e:
+                print(f"[DIAG] no hook events: {e}")
+            sid = hook_state().get("agent_session_id")
+            found = list((Path.home() / ".claude" / "projects").glob(f"*/{sid}.jsonl"))
+            if found:
+                for line in found[0].read_text().splitlines()[-8:]:
+                    print("[DIAG] transcript: " + line[:300], flush=True)
         record(label, took is not None,
                (f"{took:4.1f} s after Stop" if took is not None
                 else f"not within {SHOW_TIMEOUT:.0f} s")
