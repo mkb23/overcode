@@ -919,7 +919,10 @@ naming:
 ```
 
 **Auto-naming** (`enabled: true`, `/` → "Auto-naming" in the TUI, or a
-children preset that sets it). The engine names an agent whose name is
+children preset that sets it). `/` → "Auto-naming settings…" sets
+`enabled`, `first_after`, `rename_every`, `max_renames`,
+`cost_cap_per_day` and `cli_title` from the TUI, saving each change here
+at once; `overcode config show` prints them. The engine names an agent whose name is
 `default` or `auto` `first_after.minutes` (default 5) after its first
 prompt (the launch prompt, or the first one you typed), once it has started
 on it: mid-turn or while it waits, whichever it is doing then. An agent

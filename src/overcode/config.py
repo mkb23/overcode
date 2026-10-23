@@ -1089,6 +1089,28 @@ def save_naming_enabled(enabled: bool) -> None:
     save_config(config)
 
 
+# naming: keys whose value is {minutes: N} in config.yaml
+_NAMING_MINUTES_KEYS = ("first_after", "rename_every")
+
+
+def save_naming_setting(key: str, value) -> None:
+    """Set one ``naming.<key>`` in config.yaml (the auto-naming dialog),
+    keeping the rest of ``naming:``. ``first_after`` and ``rename_every``
+    take minutes; ``max_renames`` None removes the cap."""
+    config = load_config()
+    naming = config.get("naming")
+    naming = dict(naming) if isinstance(naming, dict) else {}
+    if key in _NAMING_MINUTES_KEYS:
+        block = naming.get(key)
+        block = dict(block) if isinstance(block, dict) else {}
+        block["minutes"] = value
+        naming[key] = block
+    else:
+        naming[key] = value
+    config["naming"] = naming
+    save_config(config)
+
+
 def describe_auto_naming(cfg: Optional[dict] = None) -> str:
     """Auto-naming in one line, for the palette, the new-agent dialog, the
     naming lab and ``overcode name policy``."""

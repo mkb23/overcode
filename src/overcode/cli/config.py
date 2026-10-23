@@ -42,6 +42,19 @@ CONFIG_TEMPLATE = """\
 #       archive_after: never   # DURATION or never
 #       budget: 5.00           # USD
 
+# Auto-naming (Agent names in docs/configuration.md; "Auto-naming settings…"
+# in the TUI palette sets the switches and timings)
+# naming:
+#   enabled: false             # the engine names agents with default/auto names
+#   advice: |                  # free text: how names should look (the policy)
+#     lowercase kebab-case, 1-3 words, what the work is about
+#   max_length: 18             # the namer's target length
+#   first_after: {minutes: 5}  # the first name, this long after the first prompt
+#   rename_every: {minutes: 30}  # then a check per this much work (0: never)
+#   max_renames: null          # a cap on auto renames per agent (null: none)
+#   cost_cap_per_day: 0.50     # USD a day for the namer's model calls
+#   cli_title: true            # keep Claude Code's session title in step
+
 # AI summarizer settings (for corporate API gateways)
 # summarizer:
 #   api_url: https://api.openai.com/v1/chat/completions
@@ -159,6 +172,21 @@ def _config_show():
             rprint(f"    model: {s['model']}")
         if "api_key_var" in s:
             rprint(f"    api_key_var: {s['api_key_var']}")
+
+    if "naming" in config:
+        from ..config import describe_auto_naming, get_naming_config
+        cfg = get_naming_config()
+        every = cfg["rename_every"]["minutes"]
+        rprint("  naming:")
+        rprint(f"    enabled: {cfg['enabled']}")
+        rprint(f"    first_after: {cfg['first_after']['minutes']:g} min")
+        rprint(f"    rename_every: {f'{every:g} min of work' if every else 'never'}")
+        rprint(f"    max_renames: {cfg['max_renames'] if cfg['max_renames'] is not None else 'no cap'}")
+        rprint(f"    cost_cap_per_day: ${cfg['cost_cap_per_day']:.2f}")
+        rprint(f"    cli_title: {cfg['cli_title']}")
+        rprint(f"    [dim]{describe_auto_naming(cfg)}[/dim]")
+        for warning in cfg["warnings"]:
+            rprint(f"    [yellow]Warning:[/yellow] {warning}")
 
     if "status_theme" in config:
         from ..status_theme import resolve

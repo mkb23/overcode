@@ -194,8 +194,8 @@ def name_policy(
     rprint(f"Aim for at most {cfg['max_length']} characters.")
 
     rprint(f"\n[bold]Auto-naming[/bold] {escape(describe_auto_naming(cfg))}")
-    rprint("[dim](naming.enabled in config.yaml, or / Auto-naming in the TUI; "
-           "naming.first_after.minutes sets how long after its first prompt)[/dim]")
+    rprint("[dim](naming: in config.yaml, or \"Auto-naming settings…\" in the TUI palette: "
+           "enabled, first_after.minutes, rename_every.minutes, max_renames)[/dim]")
 
     rprint("\n[bold]Always refused[/bold] (even with --force-name)")
     rprint("  a name outside letters, digits, - and _ (at most 64)")

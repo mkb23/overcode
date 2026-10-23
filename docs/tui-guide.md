@@ -471,7 +471,8 @@ name Claude still shows.
   same for the focused agent (`overcode rename <agent> --auto` / `--lock`).
 
 With auto-naming on (`/` → "Auto-naming", or `naming.enabled`; see
-[Naming](configuration.md#naming)), the engine names an agent with a
+[Naming](configuration.md#naming); `/` → "Auto-naming settings…" sets
+its timings, cap and cost cap), the engine names an agent with a
 default name 5 minutes after its first prompt
 (`naming.first_after.minutes`), once it has started on it, working or
 waiting; an agent never given a task is not named. It may rename it once

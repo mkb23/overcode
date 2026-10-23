@@ -28,6 +28,7 @@ from ..tui_widgets import (
     NewAgentModal,
     PassthruConfigModal,
     AgentVisibilityModal,
+    AutoNamingModal,
     BillingCodeModal,
     BillingCodesModal,
     RenameAgentModal,
@@ -793,6 +794,25 @@ class DialogsMixin:
             self.action_toggle_hide_asleep()
 
     def on_agent_visibility_modal_closed(self, message: AgentVisibilityModal.Closed) -> None:
+        self._dialog_did_close()
+
+    def action_open_auto_naming_settings(self) -> None:
+        """The auto-naming settings dialog (#547): naming: in config.yaml."""
+        from ..config import get_naming_config
+        from ..tui_widgets.auto_naming_modal import values_from_config
+        try:
+            modal = self.query_one("#auto-naming-modal", AutoNamingModal)
+        except NoMatches:
+            return
+        self._dialog_will_open()
+        modal.show(values_from_config(get_naming_config()), self)
+
+    def on_auto_naming_modal_changed(self, message: AutoNamingModal.Changed) -> None:
+        """Save one naming setting as it changes; the engine reads it on its next tick."""
+        from ..config import save_naming_setting
+        save_naming_setting(message.setting, message.value)
+
+    def on_auto_naming_modal_closed(self, message: AutoNamingModal.Closed) -> None:
         self._dialog_did_close()
 
     def _record_instruction(self, text: str, agent_name: str) -> None:

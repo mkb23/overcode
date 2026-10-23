@@ -99,6 +99,7 @@ from .tui_widgets import (
     TmuxConfigModal,
     PassthruConfigModal,
     AgentVisibilityModal,
+    AutoNamingModal,
     StatusColoursModal,
     NewAgentModal,
     RenameAgentModal,
@@ -626,6 +627,7 @@ class SupervisorTUI(
         yield PassthruConfigModal(id="passthru-config-modal", classes="modal")
         # Modal for agent and subagent visibility (d)
         yield AgentVisibilityModal(id="agent-visibility-modal", classes="modal")
+        yield AutoNamingModal(id="auto-naming-modal", classes="modal")
         yield StatusColoursModal(id="status-colours-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")

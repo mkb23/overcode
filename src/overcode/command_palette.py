@@ -408,6 +408,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("open_passthru_config", "Passthru keys…", "Settings", "forward ctrl"),
     _C("open_status_colours", "Status colours…", "Settings",
        "theme light lights colour color blind colorblind custom glyph emoji legend"),
+    _C("open_auto_naming_settings", "Auto-naming settings…", "Settings",
+       "names namer rename auto-name first name re-check every minutes cap cost title"),
     _C("open_agent_visibility", "Agent visibility…", "Settings",
        "show hide killed terminated ghost sleeping asleep done children subagents "
        "delegated work finished failures rows seconds swarm"),
