@@ -123,7 +123,7 @@ class TestNamingConfig:
         }
         assert cfg["first_after"] == {"minutes": 5.0}
         assert cfg["rename_every"] == {"minutes": 30.0}
-        assert (cfg["max_renames"], cfg["cost_cap_per_day"], cfg["warnings"]) == (None, 0.5, [])
+        assert (cfg["max_renames"], cfg["cost_cap_per_day"], cfg["warnings"]) == (None, 10.0, [])
 
     def test_a_full_block(self, load_naming):
         cfg = load_naming(

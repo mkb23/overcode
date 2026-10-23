@@ -60,12 +60,37 @@ class TestDialog:
             await pilot.press("left")                        # back to no cap
             await pilot.pause()
             assert _naming()["max_renames"] is None
-            await pilot.press("j", "space")                  # Cost cap: $0.50 → $1
+            await pilot.press("j", "enter")                  # Cost cap: type an amount
+            await pilot.pause()
+            assert modal.editing and modal.buffer == "10.00"
+            await pilot.press(*["backspace"] * 5, "2", "5", "enter")
+            await pilot.pause()
+            assert not modal.editing and _naming()["cost_cap_per_day"] == 25.0
             await pilot.press("j", "space")                  # Claude title: on → off
             await pilot.pause()
             cfg = _naming()
-            assert cfg["cost_cap_per_day"] == 1.0 and cfg["cli_title"] is False
+            assert cfg["cost_cap_per_day"] == 25.0 and cfg["cli_title"] is False
             await pilot.press("escape")
+            assert "visible" not in modal.classes
+
+    async def test_a_bad_amount_is_refused_and_esc_undoes_it(self, app):
+        from overcode.tui_widgets import AutoNamingModal
+
+        async with app.run_test() as pilot:
+            await ready(pilot)
+            app.action_open_auto_naming_settings()
+            await pilot.pause()
+            modal = app.query_one(AutoNamingModal)
+            await pilot.press(*["j"] * 4, "enter")
+            await pilot.press(".", ".", "enter")             # "10.00.." is no amount
+            await pilot.pause()
+            assert modal.editing and "not an amount" in modal.render().plain
+            assert "visible" in modal.classes                # Enter did not close it
+            await pilot.press("escape")                      # undo the edit, stay open
+            await pilot.pause()
+            assert not modal.editing and "visible" in modal.classes
+            assert _naming()["cost_cap_per_day"] == 10.0
+            await pilot.press("x", "escape")                 # letters are not typed; esc closes
             assert "visible" not in modal.classes
 
     async def test_the_palette_offers_it(self, app):
@@ -90,14 +115,20 @@ class TestRendering:
         text = modal.render().plain.splitlines()
         assert all(cell_len(line) <= modal.inner_width for line in text)
         joined = "\n".join(text)
-        assert "45m" in joined and "$0.30" in joined
+        assert "45m" in joined and "$0.30 a day" in joined
         assert "Re-check every" in joined and "Auto renames" in joined
 
     def test_values_from_config_defaults(self):
         from overcode.tui_widgets.auto_naming_modal import values_from_config
         assert values_from_config(_naming()) == {
             "enabled": False, "first_after": 5.0, "rename_every": 30.0, "max_renames": None,
-            "cost_cap_per_day": 0.5, "cli_title": True}
+            "cost_cap_per_day": 10.0, "cli_title": True}
+
+    def test_parse_dollars(self):
+        from overcode.tui_widgets.auto_naming_modal import parse_dollars
+        assert parse_dollars("10") == 10.0 and parse_dollars("$2.50") == 2.5
+        assert parse_dollars("0") == 0.0
+        assert parse_dollars("") is None and parse_dollars("1.2.3") is None
 
 
 class TestSaving:

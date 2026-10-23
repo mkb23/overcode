@@ -3,10 +3,10 @@ Auto-naming settings dialog ("Auto-naming settings…" in the palette, #547).
 
 The namer's switches and timings in one place: on or off, when an agent
 gets its first name, how much work between checks that the name still
-fits, a cap on auto renames, the daily cost cap, and whether Claude's own
-session title follows. Each change is saved to config.yaml (``naming:``)
-at once and the engine reads it on its next tick; the line at the top
-says what the settings add up to. Esc closes.
+fits, a cap on auto renames, the daily cost cap (a number you type), and
+whether Claude's own session title follows. Each change is saved to
+config.yaml (``naming:``) at once and the engine reads it on its next
+tick; the line at the top says what the settings add up to. Esc closes.
 """
 
 from typing import Any, Callable, List, Optional, Sequence, Tuple
@@ -27,11 +27,21 @@ def _minutes(value: Any) -> str:
 
 
 def _money(value: Any) -> str:
-    return f"${float(value):.2f}"
+    return f"${float(value):.2f} a day"
 
 
-# (setting, label, [(value, shown as)], how an off-list value shows, tip).
-# Settings are naming.<key>; first_after / rename_every are their .minutes.
+def parse_dollars(text: str) -> Optional[float]:
+    """Dollars from what was typed ("10", "2.50", "$5"); None if not a number >= 0."""
+    try:
+        value = float(text.strip().lstrip("$").strip())
+    except ValueError:
+        return None
+    return value if value >= 0 and value == value and value != float("inf") else None
+
+
+# (setting, label, [(value, shown as)] or None for a number typed in, how a
+# value shows when not one of the choices, tip). Settings are naming.<key>;
+# first_after / rename_every are their .minutes.
 _ROWS: List[Tuple[str, str, Sequence[Tuple[Any, str]], Callable[[Any], str], str]] = [
     ("enabled", "Auto-naming",
      ((True, "on"), (False, "off")), str,
@@ -50,11 +60,9 @@ _ROWS: List[Tuple[str, str, Sequence[Tuple[Any, str]], Callable[[Any], str], str
     ("max_renames", "Auto renames",
      ((None, "no cap"), (1, "1"), (2, "2"), (3, "3"), (5, "5"), (10, "10")), str,
      "The most auto renames one agent gets · naming.max_renames"),
-    ("cost_cap_per_day", "Cost cap a day",
-     ((0.1, "$0.10"), (0.25, "$0.25"), (0.5, "$0.50"), (1.0, "$1"), (2.0, "$2"), (5.0, "$5")),
-     _money,
-     "USD a day for the namer's model calls; naming waits for tomorrow past it · "
-     "naming.cost_cap_per_day"),
+    ("cost_cap_per_day", "Cost cap", None, _money,
+     "USD a day for the namer's model calls; past it, naming waits for tomorrow · "
+     "↵ to type an amount · naming.cost_cap_per_day"),
     ("cli_title", "Claude title follows",
      ((True, "on"), (False, "off")), str,
      "Type /rename into a Claude agent when its name changes, so Claude shows "
@@ -85,8 +93,14 @@ class AutoNamingModal(ModalBase):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._values: dict = {}
+        self.editing = False   # typing into a number row
+        self.buffer = ""
+        self.cursor = 0
+        self._error = ""
 
     def hints(self) -> str:
+        if self.editing:
+            return ds.hints(("↵", "save"), ("esc", "undo edit"))
         return ds.hints(("space", "change"), ("esc", "close"))
 
     def _current(self, setting: str, choices: Sequence[Tuple[Any, str]]) -> int:
@@ -119,6 +133,16 @@ class AutoNamingModal(ModalBase):
             line = ds.item(i == self.selected_index)
             line.append(f" {label:<{self._LABEL_W - 1}}", style="bold" if i == self.selected_index
                         else ds.TEXT)
+            if choices is None:  # a number typed in
+                if self.editing and i == self.selected_index:
+                    line.append("$", style="bold")
+                    line.append_text(ds.text_value(self.buffer, self.cursor))
+                    line.append(" a day", style=ds.MUTED)
+                else:
+                    line.append(fmt(self._values.get(setting, 0)))
+                text.append_text(ds.finish(line, w))
+                text.append("\n")
+                continue
             j = self._current(setting, choices)
             shown = [s for _, s in choices]
             current = shown[j] if j >= 0 else None
@@ -129,6 +153,8 @@ class AutoNamingModal(ModalBase):
             text.append_text(ds.finish(line, w))
             text.append("\n")
         tip = _ROWS[self.selected_index][4] if 0 <= self.selected_index < len(_ROWS) else ""
+        if self.editing:
+            tip = self._error or "type dollars a day, e.g. 10 or 2.50 · ↵ save · esc undo"
         text.append_text(ds.rule(w))
         for line in ds.wrap(tip, w, self._TIP_LINES, ds.MUTED):
             text.append("\n")
@@ -136,9 +162,23 @@ class AutoNamingModal(ModalBase):
         return text
 
     def on_key(self, event: events.Key) -> None:
+        if self.editing:
+            self._edit_key(event.key, event.character)
+            event.stop()
+            self.update_frame()
+            self.refresh()
+            return
         if self._navigate(event, len(_ROWS)):
             return
         key = event.key
+        if _ROWS[self.selected_index][2] is None:  # a number row
+            if key in ("space", "enter", "right", "l"):
+                self._start_edit()
+                event.stop()
+                return
+            if key in ("left", "h"):
+                event.stop()
+                return
         if key in ("space", "enter", "right", "l"):
             self._step(1)
             event.stop()
@@ -149,6 +189,45 @@ class AutoNamingModal(ModalBase):
             self.post_message(self.Closed())
             self._hide()
             event.stop()
+
+    def _start_edit(self) -> None:
+        value = self._values.get(_ROWS[self.selected_index][0])
+        self.buffer = f"{float(value):.2f}" if isinstance(value, (int, float)) else ""
+        self.cursor = len(self.buffer)
+        self._error = ""
+        self.editing = True
+        self.update_frame()
+        self.refresh()
+
+    def _edit_key(self, key: str, character: Optional[str]) -> None:
+        val, pos = self.buffer, self.cursor
+        if key == "enter":
+            value = parse_dollars(val)
+            if value is None:
+                self._error = f"not an amount of dollars: {val!r} · esc undo"
+                return
+            setting = _ROWS[self.selected_index][0]
+            self._values[setting] = value
+            self.editing = False
+            self.post_message(self.Changed(setting, value))
+        elif key == "escape":
+            self.editing = False
+        elif key == "backspace":
+            if pos > 0:
+                self.buffer, self.cursor = val[:pos - 1] + val[pos:], pos - 1
+        elif key == "delete":
+            self.buffer = val[:pos] + val[pos + 1:]
+        elif key == "left":
+            self.cursor = max(0, pos - 1)
+        elif key == "right":
+            self.cursor = min(len(val), pos + 1)
+        elif key == "home":
+            self.cursor = 0
+        elif key == "end":
+            self.cursor = len(val)
+        elif character and (character.isdigit() or character in ".$"):
+            self.buffer, self.cursor = val[:pos] + character + val[pos:], pos + 1
+            self._error = ""
 
     def _step(self, direction: int) -> None:
         setting, _, choices, _, _ = _ROWS[self.selected_index]
@@ -162,17 +241,19 @@ class AutoNamingModal(ModalBase):
     def show(self, values: dict, app_ref: Optional[Any] = None) -> None:
         """Open on the current values ({setting: value}, as get_naming_config reads them)."""
         self._values = dict(values)
+        self.editing = False
         self._save_focus(app_ref)
         self._show(self.selected_index if 0 <= self.selected_index < len(_ROWS) else 0)
 
 
 def values_from_config(cfg: dict) -> dict:
     """The dialog's values from get_naming_config()."""
+    from ..config import NAMING_COST_CAP_DEFAULT
     return {
         "enabled": bool(cfg.get("enabled")),
         "first_after": float((cfg.get("first_after") or {}).get("minutes", 0) or 0),
         "rename_every": float((cfg.get("rename_every") or {}).get("minutes", 0) or 0),
         "max_renames": cfg.get("max_renames"),
-        "cost_cap_per_day": float(cfg.get("cost_cap_per_day", 0.5) or 0),
+        "cost_cap_per_day": float(cfg.get("cost_cap_per_day", NAMING_COST_CAP_DEFAULT) or 0),
         "cli_title": cfg.get("cli_title") is not False,
     }

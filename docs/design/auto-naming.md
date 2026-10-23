@@ -216,7 +216,7 @@ from events and adds no polling.
   restarts the check's count.
 - Never while the name is `human` (or `parent`).
 - Calls run on the daemon's worker pool, with a per-day cost cap
-  (`naming.cost_cap_per_day`, default $0.50). Spend goes in the ledger
+  (`naming.cost_cap_per_day`, default $10; was $0.50). Spend goes in the ledger
   under the billing code `overcode` (closing the gap the summariser has).
   At about 2 calls per agent with a mini model, 100 agents cost about $0.05.
 
@@ -311,7 +311,7 @@ naming:
   first_after: {minutes: 5}
   rename_every: {minutes: 30}
   max_renames: null
-  cost_cap_per_day: 0.50
+  cost_cap_per_day: 10.00
   # provider: falls back to the summarizer: block (api_type, url, model, key var)
 ```
 

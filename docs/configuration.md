@@ -909,7 +909,7 @@ naming:
   first_after: {minutes: 5} # the first name, this long after the agent's first prompt
   rename_every: {minutes: 30}  # then a check per this much work (0: never re-checked)
   max_renames: null         # a cap on auto renames per agent (null: none)
-  cost_cap_per_day: 0.50    # USD a day for the namer's model calls (per tmux session)
+  cost_cap_per_day: 10.00   # USD a day for the namer's model calls (per tmux session)
   # provider:               # the namer's model; default: the summarizer: block
   #   api_type: anthropic
   #   api_url: https://api.anthropic.com/v1/messages

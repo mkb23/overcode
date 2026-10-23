@@ -1047,6 +1047,7 @@ def save_billing_defaults(new_agent_code: str, default_code: str) -> None:
 
 
 NAMING_MAX_LENGTH_DEFAULT = 18
+NAMING_COST_CAP_DEFAULT = 10.0  # USD a day for the namer's model calls
 _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "rename_every",
                 "max_renames", "cost_cap_per_day", "provider", "cli_title")
 _NAMING_RULE_KEYS = ("pattern", "max_length", "forbid", "require", "no_repo_prefix",
@@ -1152,7 +1153,7 @@ def get_naming_config() -> dict:
                                 # first prompt, once it has started on it
           rename_every: {minutes: 30}  # then a check per this much work (0 = never)
           max_renames: null     # a cap on auto renames per agent (null = none)
-          cost_cap_per_day: 0.50
+          cost_cap_per_day: 10.00
           provider: {...}       # api_type/api_url/model/api_key_var; default: the summarizer: block
           cli_title: true       # keep Claude's own session name (--name, /rename) in step
 
@@ -1256,7 +1257,8 @@ def get_naming_config() -> dict:
         "first_after": first_after,
         "rename_every": rename_every,
         "max_renames": max_renames,
-        "cost_cap_per_day": _non_negative(cfg.get("cost_cap_per_day", 0.50), 0.50),
+        "cost_cap_per_day": _non_negative(cfg.get("cost_cap_per_day", NAMING_COST_CAP_DEFAULT),
+                                          NAMING_COST_CAP_DEFAULT),
         "provider": provider,
         "cli_title": cfg.get("cli_title") is not False,
         "warnings": warnings,

@@ -217,7 +217,8 @@ class LabSpend:
         from .paths import session_dir
         self.daily = DailySpend(session_dir(tmux_session) / "namer_spend.json")
         self.ledger = ledger
-        self.cap = float(cfg.get("cost_cap_per_day", 0.5) or 0.0)
+        from .config import NAMING_COST_CAP_DEFAULT
+        self.cap = float(cfg.get("cost_cap_per_day", NAMING_COST_CAP_DEFAULT) or 0.0)
         self._now = clock or datetime.now
 
     def blocked(self) -> Optional[str]:

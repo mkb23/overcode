@@ -1050,7 +1050,8 @@ class Namer:
             self._run(f"align:{session.id}", lambda: self._align(session.id))
 
     def _over_cap(self, cfg: dict, now: datetime) -> bool:
-        cap = float(cfg.get("cost_cap_per_day", 0.5) or 0.0)
+        from .config import NAMING_COST_CAP_DEFAULT
+        cap = float(cfg.get("cost_cap_per_day", NAMING_COST_CAP_DEFAULT) or 0.0)
         if self.spend.today(now) < cap:
             return False
         day = now.strftime("%Y-%m-%d")

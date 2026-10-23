@@ -52,7 +52,7 @@ CONFIG_TEMPLATE = """\
 #   first_after: {minutes: 5}  # the first name, this long after the first prompt
 #   rename_every: {minutes: 30}  # then a check per this much work (0: never)
 #   max_renames: null          # a cap on auto renames per agent (null: none)
-#   cost_cap_per_day: 0.50     # USD a day for the namer's model calls
+#   cost_cap_per_day: 10.00    # USD a day for the namer's model calls
 #   cli_title: true            # keep Claude Code's session title in step
 
 # AI summarizer settings (for corporate API gateways)
