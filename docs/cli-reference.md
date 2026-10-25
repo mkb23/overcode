@@ -657,6 +657,24 @@ added. See [Subscription quota](configuration.md#subscription-quota).
 
 ---
 
+### `overcode archive`
+
+The transcript archive (see Configuration, "Transcript Archive"): every
+Claude Code transcript, byte-exact and compressed, kept for ever.
+
+```bash
+overcode archive status                     # sessions, sizes, last sweep, pending, flagged-secret count
+overcode archive sweep [--now]              # sweep in the foreground (--now: busy files too)
+overcode archive import <snapshot.tar.zst>  # a tar of ~/.claude; every file becomes a manifest row
+overcode archive find --repo github.com/org/repo [--since 30d] [--agent N] [--billing C]
+overcode archive cat <session-id> [--subagents]   # decompressed to stdout
+```
+
+`find` prints manifest rows as JSON lines (the current version of each
+archived file); `--repo` takes any spelling of a remote or a local
+checkout, and covers its worktrees. `find` and `cat` are a stable interface
+for other tools (shirka).
+
 ## Daemon Commands
 
 ### Monitor Daemon

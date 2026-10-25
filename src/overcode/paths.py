@@ -363,3 +363,9 @@ def usage_dir(registry_dir: "Path | None" = None) -> Path:
     """Subscription quota data (``quota_engine``): usage history per account,
     the token stream, the fitted model and statusline samples."""
     return data_dir_for(registry_dir or sessions_registry_dir()) / "usage"
+
+
+def transcripts_dir() -> Path:
+    """The transcript archive: byte-exact zstd copies of Claude Code's
+    transcripts and their manifest (``transcript_archive``). Private (700)."""
+    return overcode_dir() / "transcripts"

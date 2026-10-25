@@ -20,6 +20,7 @@ from .paths import agent_dir, agent_file, legacy_agent_file
 from .tmux_utils import AGENT_ID_OPTION
 from . import conversation_warning, hook_dialects
 from . import swarm
+from . import transcript_queue
 
 try:
     import fcntl
@@ -341,6 +342,9 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("StopFailure", "overcode hook-handler"),
     ("PermissionRequest", "overcode hook-handler"),
     ("SessionEnd", "overcode hook-handler"),
+    # The transcript archive: queue the transcript before Claude compacts it
+    # (SessionEnd queues it too); the daemon copies it (transcript_archive)
+    ("PreCompact", "overcode hook-handler"),
     # Bracket each subagent, background ones included (#507)
     ("SubagentStart", "overcode hook-handler"),
     ("SubagentStop", "overcode hook-handler"),
@@ -1331,6 +1335,14 @@ def handle_hook_event(backend: str | None = None) -> None:
     event = data.get("hook_event_name")
     if not event:
         return
+
+    if event in transcript_queue.CAPTURE_EVENTS:
+        # The transcript archive (S001): one appended line naming the
+        # transcript, nothing copied here (SessionEnd hooks share 1.5 s)
+        transcript_queue.enqueue(data)
+        if event == "PreCompact":
+            append_hook_event(event, tmux_session, session_name)
+            return
 
     tool_name = data.get("tool_name")
     tool_input = data.get("tool_input")

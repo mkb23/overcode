@@ -929,6 +929,31 @@ def get_archive_config() -> dict:
     return {"retention_months": int(_non_negative(cfg.get("retention_months", 0), 0))}
 
 
+def get_transcript_archive_config() -> dict:
+    """The transcript archive (``transcript_archive``): Claude Code's own
+    transcripts, kept byte-exact and compressed under ~/.overcode/transcripts.
+
+    Config format in ~/.overcode/config.yaml:
+        archive:
+          transcripts:
+            sweep: true           # the daemon's hourly sweep and hook-queue drain
+            max_bytes: 0          # 0 (default) no cap; e.g. 5GB warns at 80%
+                                  # and stops taking new copies past it
+                                  # (nothing is ever deleted)
+
+    Returns:
+        Dict with ``sweep`` (bool) and ``max_bytes`` (int, 0 = no cap).
+    """
+    cfg = _get_config_value("archive", {})
+    cfg = cfg.get("transcripts", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {
+        "sweep": bool(cfg.get("sweep", True)),
+        "max_bytes": parse_size(cfg.get("max_bytes", 0)),
+    }
+
+
 def get_ledger_config() -> dict:
     """The spend ledger: how often a long-running agent's spend is checkpointed.
 

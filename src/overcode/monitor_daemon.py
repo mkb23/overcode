@@ -89,6 +89,7 @@ from .engine_recorders import RecorderStore
 from .ledger import billing_name_of
 from .engine_wake import WakeLoop
 from .namer import Namer
+from .transcript_archive import ArchiveScheduler
 from .swarm_publisher import SwarmPublisher
 from . import swarm
 from .claude_bg import ClaudeBgSource, fleet_agents
@@ -378,6 +379,7 @@ class MonitorDaemon:
                 tmux_session, store=UsageStore(state_dir / "usage"),
                 fetch=lambda: {"error": "no token", "no_token": True},
                 account=lambda: "test", threaded=False),
+            transcript_archive=False,
         )
         return daemon
 
@@ -401,6 +403,7 @@ class MonitorDaemon:
         clock: Optional[Clock] = None,
         claude_jobs_dir: Optional[Path] = None,
         quota: Optional[QuotaEngine] = None,
+        transcript_archive: bool = True,
     ) -> None:
         """Every attribute the daemon has, from its resolved dependencies."""
         # Every time the daemon reads, wall and monotonic, comes from here;
@@ -591,6 +594,10 @@ class MonitorDaemon:
             model_metadata=self.cadence.model_metadata,
             clock=self.clock,
         )
+
+        # The transcript archive's hourly sweep and hook-queue drain, on its
+        # own thread (transcript_archive); machine-wide, one daemon at a time
+        self.transcripts = ArchiveScheduler(log) if transcript_archive else None
 
         # Loop interval while nobody is watching
         self._interval_unattended: int = interval_unattended
@@ -1540,6 +1547,8 @@ class MonitorDaemon:
             self._refund_done_children(newly_done)
         self.housekeeping.maybe_rotate_history(now)
         self.housekeeping.maybe_refresh_model_metadata(now)
+        if self.transcripts is not None:
+            self.transcripts.tick()
 
     def _flush_pending_writes(self) -> None:
         """Commit this tick's staged mutations to sessions.json in one write.

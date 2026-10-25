@@ -46,6 +46,8 @@ SAFE_SETTINGS = (
     '"PermissionRequest": [{"matcher": "", "hooks": [{"type": "command", "command": '
     '"/usr/local/bin/overcode hook-handler"}]}], "SessionEnd": [{"matcher": "", "hooks": '
     '[{"type": "command", "command": "/usr/local/bin/overcode hook-handler"}]}], '
+    '"PreCompact": [{"matcher": "", "hooks": '
+    '[{"type": "command", "command": "/usr/local/bin/overcode hook-handler"}]}], '
     '"SubagentStart": [{"matcher": "", "hooks": [{"type": "command", "command": '
     '"/usr/local/bin/overcode hook-handler"}]}], "SubagentStop": [{"matcher": "", "hooks": '
     '[{"type": "command", "command": "/usr/local/bin/overcode hook-handler"}]}], '
