@@ -689,3 +689,24 @@ class TestScheduler:
         from overcode.monitor_daemon import MonitorDaemon
 
         assert MonitorDaemon.for_test(tmp_path / "state").transcripts is None
+
+
+class TestArchiveRoot:
+    def test_env_and_root_option_put_the_archive_elsewhere(self, env, monkeypatch):
+        from overcode.paths import transcripts_dir
+
+        _cli_env(env, monkeypatch)
+        scratch = env["tmp"] / "scratch"
+        monkeypatch.setenv("OVERCODE_TRANSCRIPTS_DIR", str(scratch))
+        assert transcripts_dir() == scratch
+        from overcode.cli._shared import app
+
+        runner = CliRunner()
+        elsewhere = env["tmp"] / "elsewhere"
+        assert runner.invoke(app, ["archive", "--root", str(elsewhere), "sweep"]).exit_code == 0
+        assert len(_rows(TranscriptArchive(elsewhere))) == 4
+        assert not scratch.exists()
+        # Without --root the next command is back on the default
+        assert runner.invoke(app, ["archive", "sweep"]).exit_code == 0
+        assert len(_rows(TranscriptArchive(scratch))) == 4
+        assert not (env["tmp"] / "oc" / "transcripts").exists()

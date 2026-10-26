@@ -24,12 +24,27 @@ archive_app = typer.Typer(
 )
 app.add_typer(archive_app, name="archive")
 
+# --root: the archive these commands use (default $OVERCODE_TRANSCRIPTS_DIR,
+# else ~/.overcode/transcripts)
+_root: Optional[Path] = None
+
+
+@archive_app.callback()
+def archive_options(
+    root: Annotated[Optional[Path], typer.Option(
+        "--root", help="Use this archive directory instead of ~/.overcode/transcripts "
+                       "(e.g. a trial sweep or import into a scratch archive)")] = None,
+):
+    """The transcript archive: every Claude Code transcript, compressed and kept."""
+    global _root
+    _root = root.expanduser() if root is not None else None
+
 
 def _archive():
     from ..config import get_transcript_archive_config
     from ..transcript_archive import TranscriptArchive
 
-    return TranscriptArchive(max_bytes=get_transcript_archive_config()["max_bytes"])
+    return TranscriptArchive(_root, max_bytes=get_transcript_archive_config()["max_bytes"])
 
 
 def _size(n: Optional[int]) -> str:

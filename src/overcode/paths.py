@@ -367,5 +367,9 @@ def usage_dir(registry_dir: "Path | None" = None) -> Path:
 
 def transcripts_dir() -> Path:
     """The transcript archive: byte-exact zstd copies of Claude Code's
-    transcripts and their manifest (``transcript_archive``). Private (700)."""
-    return overcode_dir() / "transcripts"
+    transcripts and their manifest (``transcript_archive``). Private (700).
+
+    ``$OVERCODE_TRANSCRIPTS_DIR`` puts it elsewhere (a trial sweep or import
+    of the real ``~/.claude`` into a scratch archive)."""
+    env = os.environ.get("OVERCODE_TRANSCRIPTS_DIR")
+    return guard_real_state(Path(env)) if env else overcode_dir() / "transcripts"

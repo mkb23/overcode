@@ -675,6 +675,10 @@ archived file); `--repo` takes any spelling of a remote or a local
 checkout, and covers its worktrees. `find` and `cat` are a stable interface
 for other tools (shirka).
 
+`overcode archive --root <dir> <command>` (or `$OVERCODE_TRANSCRIPTS_DIR`)
+uses another archive directory: a trial sweep or import of the real
+`~/.claude` into a scratch archive leaves `~/.overcode/transcripts` alone.
+
 ## Daemon Commands
 
 ### Monitor Daemon
