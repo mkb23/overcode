@@ -37,6 +37,7 @@ from . import lifecycle  # noqa: F401
 from . import keys  # noqa: F401
 from . import naming  # noqa: F401
 from . import trip  # noqa: F401
+from . import archive  # noqa: F401
 
 
 def main():

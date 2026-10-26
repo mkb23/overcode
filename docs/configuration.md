@@ -82,6 +82,9 @@ session_archive:
   terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
 archive:
   retention_months: 0             # 0 keeps every month (the default)
+  transcripts:                    # See "Transcript Archive" below
+    sweep: true                   # hourly sweep + hook-queue drain in the daemon
+    max_bytes: 0                  # 0: no cap; warns at 80%, never deletes
 
 # Archived agents' own files (day bundles); kept for ever by default
 # See "Agent Files and Retention" below
@@ -670,6 +673,57 @@ name-keyed files (`hook_state_<name>.json` and the rest) into a bundle a
 batch at a time and writes `sessions/<tmux>/.layout`. An agent launched
 before the upgrade keeps writing its name-keyed files until it is
 relaunched (restart, revive), and they are left in place until then.
+
+## Transcript Archive
+
+Claude Code deletes its transcripts after `cleanupPeriodDays` (30 by
+default). overcode keeps a byte-exact copy of every one, whether or not it
+launched the session, under `~/.overcode/transcripts/` (directory mode 700,
+files 600; never in git):
+
+```
+~/.overcode/transcripts/
+  manifest.jsonl                       one row per captured file version (append-only)
+  YYYY-MM/<session id>/                month of the session's first record
+    main.v1.jsonl.zst                  the transcript (zstd -19)
+    subagents/agent-x.v1.jsonl.zst     its subagents, tool results, other session files
+    meta.json                          the session's latest manifest row
+```
+
+- **Sweep.** The monitor daemon walks `~/.claude/projects` once an hour on
+  a background thread and copies every file whose size or mtime changed
+  and whose content is new. A file that only grew replaces its version; one
+  rewritten or shrunk, and Claude's `*.superseded-*` / `*.orphaned-*`
+  copies, add `v2`, `v3`, ... and the old versions are kept. An append to
+  a transcript written in the last hour waits until it goes quiet (at most
+  a day).
+- **Hooks.** The `SessionEnd` and `PreCompact` hooks of overcode's agents
+  only queue the transcript's path; the daemon copies it within a minute.
+- **Rows.** Each manifest row carries the session id, kind, sizes and
+  sha256, first/last record times, Claude's version, the `cwd`, its
+  normalised git remote (a clone of a local clone takes that one's
+  remote), branch and root commit, and the overcode agent, agent id,
+  billing code and parent when overcode ran the session (null otherwise).
+  The copies are never redacted; a row only counts the key-like strings in
+  its file (`secrets_flagged`).
+- **Size.** Kept for ever by default (about 14x smaller than the raw
+  transcripts). `max_bytes` warns at 80% and stops taking new copies past
+  it; nothing is ever deleted.
+
+```yaml
+archive:
+  transcripts:
+    sweep: true      # false: no sweep or queue drain (overcode archive sweep still works)
+    max_bytes: 0     # e.g. 5GB
+```
+
+Commands: `overcode archive status`, `overcode archive sweep [--now]`,
+`overcode archive import <snapshot.tar.zst>` (a `tar --zstd` of
+`~/.claude`'s `projects/`, `file-history/` and `history.jsonl`; every file
+becomes a row), `overcode archive find --repo <remote|path> [--since 30d]
+[--agent N] [--billing C] [--session ID] [--kind main]` (manifest rows as
+JSON lines) and `overcode archive cat <session id> [--subagents]`
+(the transcript, decompressed). Needs the `zstd` command.
 
 ## Delegated Work
 
