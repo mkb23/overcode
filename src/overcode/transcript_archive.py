@@ -547,13 +547,28 @@ def decompress_to(path: Path, out: BinaryIO) -> None:
 # ── identity ─────────────────────────────────────────────────────────────
 
 class Identities:
-    """Which overcode agent each conversation belonged to."""
+    """Which overcode agent each conversation belonged to.
 
-    def __init__(self, by_session: Optional[Dict[str, dict]] = None):
+    An agent's own conversation ids (``agent_session_ids``, the active id)
+    say so; ``stats.conversations`` (its spend, per conversation) counts
+    only when no record owns the conversation and one record alone has it
+    there. Old records carry other agents' conversations in their spend
+    (a daemon once adopted every conversation of a directory: 13 records
+    of one checkout list the same 392), so a conversation two records
+    spend on belongs to neither: null beats a guess.
+    """
+
+    def __init__(self, by_session: Optional[Dict[str, dict]] = None,
+                 by_agent: Optional[Dict[str, dict]] = None):
         self.by_session: Dict[str, dict] = by_session or {}
+        self.by_agent: Dict[str, dict] = by_agent or {}
 
     def lookup(self, cc_session: Optional[str]) -> dict:
         return self.by_session.get(cc_session or "", {})
+
+    def of_agent(self, agent_id: Optional[str]) -> dict:
+        """The identity of the agent with overcode id ``agent_id`` ({} if unknown)."""
+        return self.by_agent.get(agent_id or "", {})
 
     @classmethod
     def load(cls) -> "Identities":
@@ -565,27 +580,21 @@ class Identities:
             records: List[dict] = list(manager.iter_archived_records())
             records.extend(manager._load_state().values())
         except Exception as e:  # identity is best-effort; capture is not
-            logger.warning("transcript archive: agent records not read: %s", e)
+            logger.warning("transcript archive: agent records not read: %s", type(e).__name__)
             return cls()
         return cls.from_records(records)
 
     @classmethod
     def from_records(cls, records: Iterable[dict]) -> "Identities":
-        """Later records win (archive oldest first, then the live ones)."""
+        """Later records of one agent win (archive oldest first, then the live ones)."""
         by_id: Dict[str, dict] = {}
         for record in records:
             if isinstance(record, dict) and isinstance(record.get("id"), str):
                 by_id[record["id"]] = record
-        by_session: Dict[str, dict] = {}
+        by_agent: Dict[str, dict] = {}
+        owned: Dict[str, dict] = {}
+        spent: Dict[str, List[dict]] = {}
         for record in by_id.values():
-            ids = set(record.get("agent_session_ids") or record.get("claude_session_ids") or [])
-            for key in ("active_agent_session_id", "active_claude_session_id"):
-                if isinstance(record.get(key), str):
-                    ids.add(record[key])
-            stats = record.get("stats") if isinstance(record.get("stats"), dict) else {}
-            conversations = stats.get("conversations")
-            if isinstance(conversations, dict):
-                ids.update(k for k in conversations if isinstance(k, str))
             parent = by_id.get(record.get("parent_session_id") or "")
             identity = {
                 "agent": record.get("name"),
@@ -594,9 +603,23 @@ class Identities:
                 "billing_code_id": record.get("billing_code_id"),
                 "parent_agent": parent.get("name") if parent else None,
             }
+            by_agent[record["id"]] = identity
+            ids = set(record.get("agent_session_ids") or record.get("claude_session_ids") or [])
+            for key in ("active_agent_session_id", "active_claude_session_id"):
+                if isinstance(record.get(key), str):
+                    ids.add(record[key])
             for cc_session in ids:
-                by_session[cc_session] = identity
-        return cls(by_session)
+                if isinstance(cc_session, str):
+                    owned[cc_session] = identity
+            stats = record.get("stats") if isinstance(record.get("stats"), dict) else {}
+            conversations = stats.get("conversations")
+            if isinstance(conversations, dict):
+                for cc_session in conversations:
+                    if isinstance(cc_session, str) and cc_session not in ids:
+                        spent.setdefault(cc_session, []).append(identity)
+        by_session = {cc: found[0] for cc, found in spent.items() if len(found) == 1}
+        by_session.update(owned)
+        return cls(by_session, by_agent)
 
 
 # ── the archive ──────────────────────────────────────────────────────────
@@ -801,9 +824,7 @@ class TranscriptArchive:
         remote, branch, _ = self._git(cwd)
         if cwd == session_context.get("cwd") and not remote and session_context.get("git_remote"):
             remote = session_context.get("git_remote")
-        identity = dict(self.identities().lookup(ref.cc_session))
-        if not identity and hint:
-            identity = {k: hint.get(k) for k in ("agent", "agent_id") if hint.get(k)}
+        identity = self._identity(ref.cc_session, hint)
         row = {
             "v": ROW_VERSION,
             "captured_at": utc_now(),
@@ -836,6 +857,15 @@ class TranscriptArchive:
         if ref.kind == KIND_MAIN and ref.cc_session:
             self.context[ref.cc_session] = _context_of(row)
         return row
+
+    def _identity(self, cc_session: Optional[str], hint: Optional[dict]) -> dict:
+        """The agent of a conversation: the one whose hook queued it, else the records'."""
+        if hint and hint.get("agent_id"):
+            known = self.identities().of_agent(hint["agent_id"])
+            if known:
+                return dict(known)
+            return {k: hint.get(k) for k in ("agent", "agent_id") if hint.get(k)}
+        return dict(self.identities().lookup(cc_session))
 
     def _rel(self, ref: FileRef, stored: str) -> str:
         return stored.split("/", 1)[1] if ref.kind == KIND_HISTORY else stored.split("/", 2)[2]

@@ -598,6 +598,37 @@ class TestIdentities:
         assert ids.lookup(SID2)["parent_agent"] == "new-name"
         assert ids.lookup("unknown") == {}
 
+    def test_spend_alone_names_an_agent_only_when_one_record_has_it(self):
+        """Old records list other agents' conversations in their spend: those
+        many records spend on belong to none of them; an owned id beats spend."""
+        crowd = [{"id": f"old-{i}", "name": f"old-{i}",
+                  "stats": {"conversations": {SID: {}, SID2: {}}}} for i in range(13)]
+        owner = {"id": "own", "name": "owner", "agent_session_ids": [SID2],
+                 "stats": {"conversations": {SID2: {}}}}
+        ids = Identities.from_records([*crowd, owner])
+        assert ids.lookup(SID) == {}
+        assert ids.lookup(SID2)["agent"] == "owner"
+        assert ids.of_agent("old-3")["agent"] == "old-3"
+
+    def test_the_hook_that_queued_a_conversation_names_its_agent(self, env):
+        archive = TranscriptArchive(env["archive"].root, source_root=env["claude"],
+                                    identities=Identities.from_records([
+                                        {"id": "agent-id-9", "name": "queuer", "billing_code": "q",
+                                         "parent_session_id": "agent-id-0"},
+                                        {"id": "agent-id-0", "name": "shirka"},
+                                        {"id": "other", "name": "other", "agent_session_ids": [SID]},
+                                    ]))
+        transcript_queue.enqueue({"transcript_path": str(env["main"]), "session_id": SID,
+                                  "hook_event_name": "SessionEnd"}, archive.root)
+        lines = transcript_queue.queue_path(archive.root).read_text().splitlines()
+        entry = dict(json.loads(lines[0]), agent="queuer", agent_id="agent-id-9")
+        transcript_queue.queue_path(archive.root).write_text(json.dumps(entry) + "\n")
+        with archive.locked():
+            archive.drain_queue()
+        main = next(r for r in _rows(archive) if r["kind"] == "main")
+        assert (main["agent"], main["agent_id"], main["billing_code"], main["parent_agent"]) == (
+            "queuer", "agent-id-9", "q", "shirka")
+
 
 class TestConfig:
     def test_defaults_and_values(self, monkeypatch):
