@@ -171,6 +171,8 @@ class ColumnContext:
     swarm_rollup: Optional[dict] = None
     # Its delegated work is expanded into rows under it (→ / ←, TUI only)
     swarm_expanded: bool = False
+    # Its background shells, classified (engine: background_shells, #515)
+    background_shells: Optional[list] = None
     # The delegated work's share of its spend (engine: subagent_cost_usd)
     subagent_cost_usd: Optional[float] = None
     # Its subscription quota estimate (engine: quota): pp7d, pp5h, w7, w5, conf

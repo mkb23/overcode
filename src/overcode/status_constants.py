@@ -202,6 +202,10 @@ EMOJI_ASCII = {
     "🔁": "Cr",
     "📡": "Mo",
     "🔌": "Bg",
+    "🏭": "Bb",
+    "🔭": "Wa",
+    "📻": "Bs",
+    "🧟": "St",
     "⚡": ">>",
     "😴": "Sl",
     "🔐": "Pm",  # permission (was 🛡 — text-default)
@@ -486,6 +490,11 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     "cron":            ("🔁", STATUS_COLOR_YELLOW, "Cr"),  # CronCreate registered
     "monitor":         ("📡", STATUS_COLOR_YELLOW, "Mo"),  # Monitor stream open
     "bg_task":         ("🔌", STATUS_COLOR_YELLOW, "Bg"),  # Background Bash/Workflow
+    # Background shells by kind (#515, background_shells): a service still
+    # arms the agent (owner decision), it just says what it is
+    "bg_batch":        ("🏭", STATUS_COLOR_YELLOW, "Bb"),  # build / tests: ends and wakes it
+    "bg_watcher":      ("🔭", STATUS_COLOR_YELLOW, "Wa"),  # waits for something, then wakes it
+    "bg_service":      ("📻", STATUS_COLOR_YELLOW, "Bs"),  # dev server, tail -f: never ends
     "subagent":        ("👥", STATUS_COLOR_YELLOW, "Sa"),  # Subagent still running (#507)
     "heartbeat":       ("💓", STATUS_COLOR_YELLOW, "Hb"),  # Overcode heartbeat will re-prompt
     "children":        ("👶", STATUS_COLOR_YELLOW, "Ch"),  # turn over, child agents still working
@@ -521,6 +530,7 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     "conv_shared":     ("🔀", STATUS_COLOR_REST,  "Cv"),   # in another agent's conversation
     "conv_unplaced":   ("🔀", STATUS_COLOR_REST,  "Cv"),   # a conversation it can't place: ignored
     "bg_worker":       ("🌙", STATUS_COLOR_REST,  "Bw"),   # its conversation is in Claude's background worker
+    "bg_stuck":        ("🧟", STATUS_COLOR_REST,  "St"),   # a watcher still polling a target that ended (#515)
 }
 
 
@@ -530,6 +540,9 @@ BADGE_MEANINGS: dict[str, str] = {
     "cron":            "cron job registered",
     "monitor":         "watching a Monitor stream",
     "bg_task":         "background shell or task running",
+    "bg_batch":        "background shell running (build, tests): wakes the agent when it ends",
+    "bg_watcher":      "background watcher: wakes the agent when what it waits for happens",
+    "bg_service":      "background service (server, tail -f): runs until stopped",
     "heartbeat":       "overcode heartbeat will re-prompt",
     "subagent":        "subagent, workflow or teammate still running",
     "children":        "child agents still working",
@@ -550,6 +563,7 @@ BADGE_MEANINGS: dict[str, str] = {
     "conv_shared":     "in a conversation another agent owns; not adopted, restart returns to the old one",
     "conv_unplaced":   "a conversation overcode can't place ran in this agent's name; its events are ignored",
     "bg_worker":       "running in Claude's background worker (Remote Control, /background); still this agent",
+    "bg_stuck":        "a watcher still polling something that ended: it will never fire (overcode shells)",
 }
 
 

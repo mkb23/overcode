@@ -629,6 +629,7 @@ class SessionSummary(Static, can_focus=True):
             child_rollup=self.child_rollup,
             swarm_rollup=swarm_view.shown_rollup(self.swarm_rollup, self.swarm_finished),
             swarm_expanded=self.swarm_expanded,
+            background_shells=self.engine.get("background_shells") if self.engine else None,
             subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
             quota=self.engine.get("quota") if self.engine else None,
             trip=self.engine.get("trip") if self.engine else None,

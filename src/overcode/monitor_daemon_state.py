@@ -197,6 +197,11 @@ class SessionDaemonState:
     # "running", "waiting", "idle", "ok", "failed", "workflows",
     # "workflows_running"} counts. None for an agent that never delegated.
     swarm_rollup: Optional[dict] = None
+    # Its background shells, classified (#515, background_shells.survey):
+    # [{"id", "kind": batch|watcher|service, "command", "since", "description"?,
+    # "pid"?, "target"?, "target_state"?, "stuck_since"?}], oldest first.
+    # None when it has none. Holds still between ticks.
+    background_shells: Optional[list] = None
     # What that delegated work cost: the subagents' share of
     # estimated_cost_usd (already inside it), for the $ hover's split.
     # None when nothing was delegated or it cost nothing yet.

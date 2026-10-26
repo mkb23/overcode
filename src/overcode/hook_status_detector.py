@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from . import conversation_warning, swarm
+from . import background_shells, conversation_warning, swarm
 from .clock import SYSTEM_CLOCK, Clock
 from .paths import agent_path, session_dir
 from .status_constants import (
@@ -285,7 +285,8 @@ def _badges_from_obligations(obligations: list[dict], now: float) -> list[Status
                 eta_at=at,
             )
     # Stable order: YELLOW kinds in a canonical order, then anything else.
-    order = ["schedule_wakeup", "cron", "monitor", "bg_task", "heartbeat"]
+    order = ["schedule_wakeup", "cron", "monitor", "bg_batch", "bg_watcher", "bg_service",
+             "bg_task", "heartbeat"]
     rank = {k: i for i, k in enumerate(order)}
     return sorted(by_kind.values(), key=lambda b: rank.get(b.kind, 99))
 
@@ -333,6 +334,9 @@ _ARMED_WORDS = {
     "cron": "cron",
     "monitor": "monitor",
     "bg_task": "background task",
+    "bg_batch": "background shell",
+    "bg_watcher": "watcher",
+    "bg_service": "service",
     "subagent": "background agent",
     "heartbeat": "heartbeat",
     "children": "child agents",
@@ -370,6 +374,7 @@ class TickContext:
     subagents: Optional[int] = None       # default: delegated work in flight (swarm.in_flight)
     workflows: int = 0                    # of which workflow runs (for the words)
     children: int = 0                     # its child agents still working (last tick's)
+    bg_shells: list = field(default_factory=list)  # classified background shells (#515)
     obligations: list = field(init=False)  # pending obligations that can still fire
     overdue: int = field(init=False)       # wakeups that never came
 
@@ -601,15 +606,21 @@ def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     """
     if not v.armable:
         return None
+    shells = armed_shells(ctx)
     if v.color == STATUS_COLOR_REST and not (
-            ctx.monitors or ctx.shells or ctx.subagents or ctx.children):
+            ctx.monitors or ctx.shells or shells or ctx.subagents or ctx.children):
         return None
     badges = _badges_from_obligations(ctx.obligations, ctx.now)
+    # Shells classified as batch, watcher or service (#515); the status
+    # bar's count beyond them stays a plain background shell
+    for kind, count in background_shells.badges(shells):
+        badges.append(StatusBadge(kind=kind, count=count))
+    unclassified = max(0, ctx.shells - len(shells))
     # Monitor streams and background shells seen in the status bar but not
     # registered as obligations (installed before overcode's hook, or the
     # PostToolUse already cleared it; a background Bash's PostToolUse lands
     # at launch and nothing fires when it exits).
-    for kind, seen in (("monitor", ctx.monitors), ("bg_task", ctx.shells)):
+    for kind, seen in (("monitor", ctx.monitors), ("bg_task", unclassified)):
         registered = sum(1 for o in ctx.obligations if isinstance(o, dict) and o.get("kind") == kind)
         extra = max(0, seen - registered)
         if not extra:
@@ -632,6 +643,8 @@ def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
         activity = f"Waiting on {ctx.children} child{'' if ctx.children == 1 else 'ren'}"
     elif ctx.subagents:
         activity = _waiting_on_delegated(ctx.subagents, ctx.workflows)
+    elif shells:
+        activity = _waiting_on_shells(shells, unclassified)
     elif ctx.shells:
         activity = f"Waiting on {_plural(ctx.shells, 'background shell')}"
     else:
@@ -642,6 +655,27 @@ def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     working = any(b.kind not in _SCHEDULED_KINDS for b in badges)
     return Verdict(STATUS_COLOR_YELLOW, badges, activity,
                    rests_as=None if working else v.legacy_status)
+
+
+def armed_shells(ctx: TickContext) -> list:
+    """The classified shells to count: every one whose process was found,
+    and the rest only up to the status bar's count. A shell listed at the
+    last Stop that ended unseen (no output file, no process) must not hold
+    the agent yellow on its own."""
+    live = [s for s in ctx.bg_shells if s.get("pid") is not None]
+    unproven = [s for s in ctx.bg_shells if s.get("pid") is None]
+    return live + unproven[:max(0, ctx.shells - len(live))]
+
+
+def _waiting_on_shells(shells: list, unclassified: int) -> str:
+    counts: Dict[str, int] = {}
+    for s in shells:
+        counts[s.get("kind")] = counts.get(s.get("kind"), 0) + 1
+    words = (("batch", "background shell"), ("watcher", "watcher"), ("service", "service"))
+    parts = [_plural(counts[k], w) for k, w in words if counts.get(k)]
+    if unclassified:
+        parts.append(_plural(unclassified, "other shell"))
+    return "Waiting on " + ", ".join(parts)
 
 
 def rule_overdue(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
@@ -916,6 +950,12 @@ class HookStatusDetector:
         # daemon fills it from its last published tick (the dispatcher
         # shares one dict across every backend's detector)
         self.children_working: Dict[str, int] = {}
+        # The daemon's process / target lookups for background shells (#515;
+        # None: no process table, as in tests), and each agent's classified
+        # shells and memory across ticks, by session name
+        self.shell_probe = None
+        self._bg_shells: Dict[str, list] = {}
+        self._shell_memory: Dict[str, "background_shells.ShellMemory"] = {}
         # Structured 2-column status detail, populated by detect_status and
         # consumed by the ⏰ column. Keyed by session name (#TBD).
         self._status_details: Dict[str, StatusDetail] = {}
@@ -1142,7 +1182,8 @@ class HookStatusDetector:
         self._last_hook_at.pop(session.name, None)
         self._swarm_rollups.pop(session.name, None)
         self._swarm_states.pop(session.name, None)
-        foreign = hook_state.get("foreign_sessions") if isinstance(hook_state, dict) else None
+        self._bg_shells.pop(session.name, None)
+        foreign =hook_state.get("foreign_sessions") if isinstance(hook_state, dict) else None
         if isinstance(foreign, dict) and foreign:
             self._foreign_sessions[session.name] = foreign
         else:
@@ -1182,8 +1223,10 @@ class HookStatusDetector:
             self._swarm_rollups[session.name] = rollup
             self._swarm_states[session.name] = hook_state
 
+        shells = self._survey_shells(session, hook_state, now)
         pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
         ctx = self._tick_context(session, hook_state, pane_content, now)
+        ctx.bg_shells = shells
         verdict, rule = decide(ctx)
         self._last_detect_phase[session.id] = phase_label(ctx.event, rule)
         detail = verdict.detail()
@@ -1195,12 +1238,47 @@ class HookStatusDetector:
             warning = conversation_warning.current(hook_state, now)
             if warning is not None:
                 extra.append(conversation_warning.badge(warning))
+            stuck = background_shells.stuck(armed_shells(ctx))
+            if stuck:
+                # A watcher polling a target that ended: a warning, not a
+                # colour (owner decision on #515)
+                extra.append(StatusBadge(kind=background_shells.STUCK_BADGE, count=len(stuck),
+                                         label=stuck[0].get("target")))
             if extra:
                 # Beside the light, never instead of it (hook_handler._place)
                 detail = StatusDetail(detail.color, list(detail.badges) + extra,
                                       detail.legacy_status)
             self._status_details[session.name] = detail
         return verdict.legacy_status, verdict.activity, pane_content
+
+    def _survey_shells(self, session: "Session", hook_state: dict, now: float) -> list:
+        """The agent's background shells, classified (background_shells.survey).
+
+        Costs nothing unless its last Stop listed running shells.
+        """
+        sw = hook_state.get("swarm")
+        listed = sw.get("bg_shells") if isinstance(sw, dict) else None
+        if not isinstance(listed, dict) or not listed:
+            self._bg_shells.pop(session.name, None)
+            self._shell_memory.pop(session.name, None)
+            return []
+        probe = self.shell_probe
+        memory = self._shell_memory.setdefault(session.name, background_shells.ShellMemory())
+        shells = background_shells.survey(
+            listed,
+            probe.processes(session) if probe is not None else None,
+            self.shell_ended,
+            probe.target_state if probe is not None else (
+                lambda kind, name: (background_shells.TARGET_ALIVE, None)),
+            memory, now,
+            listening=probe.listening if probe is not None else (lambda proc: False),
+        )
+        self._bg_shells[session.name] = shells
+        return shells
+
+    def get_background_shells(self, session_name: str) -> Optional[list]:
+        """The classified background shells from the last detect_status (None: none)."""
+        return self._bg_shells.get(session_name) or None
 
     def _tick_context(
         self, session: "Session", hook_state: dict, pane_content: str, now: float

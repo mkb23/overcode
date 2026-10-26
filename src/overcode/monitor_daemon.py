@@ -80,6 +80,7 @@ from . import daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
+from .daemon_shell_probe import ShellProbe
 from .daemon_stats_sync import StatsSync
 from .quota_engine import QuotaEngine, UsageStore
 from .idle_stages import format_after, should_auto_sleep, should_auto_wake
@@ -162,6 +163,13 @@ _QUIET_STATUSES = AT_REST_STATUSES | {STATUS_WAITING_USER, STATUS_UNKNOWN}
     get_monitor_daemon_pid,
     stop_monitor_daemon,
 ) = create_daemon_helpers(get_monitor_daemon_pid_path, "monitor")
+
+
+def _jobs_by_name() -> Dict[str, dict]:
+    """Every tracked job, by name, for the background-shell probe (#515)."""
+    from .job_manager import JobManager
+
+    return {j.name: j.to_dict() for j in JobManager().list_jobs(include_completed=True)}
 
 
 def _is_budget_exceeded(session, stats) -> bool:
@@ -551,6 +559,15 @@ class MonitorDaemon:
         self.quota = quota
         # The process table, once per tick, for CPU / RSS and the sandbox probe
         self.process_probe = ProcessProbe()
+        # Background shells (#515): the hook detectors ask it about an
+        # agent's shells, on the table the resource sampling took
+        self.shell_probe = ShellProbe(
+            table=self.process_probe.latest,
+            agent_pid=self._agent_pid_for_shells,
+            load_jobs=_jobs_by_name,
+        )
+        if hasattr(self.detector, "set_shell_probe"):
+            self.detector.set_shell_probe(self.shell_probe)
 
         # The periodic syncs, each due when its interval has passed since it
         # last ran (never run: due on the first tick)
@@ -766,6 +783,8 @@ class MonitorDaemon:
         result, reason = task_result(session, status)
         swarm_rollup = getattr(self.detector, "get_swarm_rollup", None)
         swarm_rollup = swarm_rollup(session.name) if callable(swarm_rollup) else None
+        bg_shells = getattr(self.detector, "get_background_shells", None)
+        bg_shells = bg_shells(session.name) if callable(bg_shells) else None
         try:
             cli_title_lag = self.namer.title_lag(session)
         except Exception:  # a cosmetic mark is never worth a failed tick
@@ -834,6 +853,7 @@ class MonitorDaemon:
             task_result=result,
             task_reason=reason,
             swarm_rollup=swarm_rollup if isinstance(swarm_rollup, dict) else None,
+            background_shells=bg_shells if isinstance(bg_shells, list) and bg_shells else None,
             subagent_cost_usd=swarm.subagent_cost(getattr(stats, "conversations", None)),
             # Last user command (from history sync)
             last_command=self.stats_sync.last_commands.get(session_id),
@@ -1649,6 +1669,13 @@ class MonitorDaemon:
                 self.session_attached = None
         return self._pane_table
 
+    def _agent_pid_for_shells(self, table, session) -> Optional[int]:
+        """The agent CLI's pid in ``table``, from the tick's pane listing (#515)."""
+        pane = pane_for_window(self._pane_table or {}, session.tmux_window)
+        if pane is None:
+            return None
+        return ProcessProbe._agent_pid(table, session, pane)
+
     def _sync_process_resources(self, sessions: list, now: datetime) -> None:
         """Sample CPU and RSS for each agent's claude process tree (every 5 s).
 
@@ -1774,6 +1801,8 @@ class MonitorDaemon:
             index = self._session_index()
         pending = self._pending
         self._count_children_working(index)
+        # Watchers' targets read last tick's published statuses (#515)
+        self.shell_probe.begin_tick({s.name: s.current_status for s in self.state.sessions})
         self._plan_captures(sessions, now)
         # session id -> (first failure, last error): see _detection_failed
         detect_failures = self._detect_failures

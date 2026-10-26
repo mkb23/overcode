@@ -680,6 +680,43 @@ for other tools (shirka).
 uses another archive directory: a trial sweep or import of the real
 `~/.claude` into a scratch archive leaves `~/.overcode/transcripts` alone.
 
+## Jobs and Background Shells
+
+### `overcode bash` / `overcode jobs`
+
+Run a long command as a tracked job in its own window of the `jobs` tmux
+session, linked to the agent that started it.
+
+```bash
+overcode bash "pytest tests/" -n full-tests
+overcode jobs list [--all]
+overcode jobs tail full-tests [-n 50]
+overcode jobs wait full-tests [--until REGEX] [--timeout 10m]
+overcode jobs kill full-tests
+```
+
+`jobs wait` returns when `--until` matches a line of the job's output (exit
+0), or when the job ends: 0 if it completed without `--until`, 1 if it
+failed, was killed or ended without a match. 2 means no such job and 124 a
+timeout. It never outlives its job, so use it instead of an
+`until … grep …; do sleep N; done` loop.
+
+### `overcode shells`
+
+Background shells of Claude agents, each classified as a **service** (a dev
+server, `tail -f`: never ends), **batch** work (builds, tests: ends and wakes
+the agent) or a **watcher** (waits for something, then wakes the agent). A
+watcher still polling an overcode agent or job that has ended is **stuck**:
+the agent's row shows 🧟, and overcode never stops it by itself.
+
+```bash
+overcode shells [agent] [--stuck]
+overcode shells --kill <pid-or-shell-id>
+```
+
+`--kill` stops the shell and everything under it, only if that pid is still
+the same shell.
+
 ## Daemon Commands
 
 ### Monitor Daemon

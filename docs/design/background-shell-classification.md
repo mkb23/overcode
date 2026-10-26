@@ -1,6 +1,6 @@
 # Background shells: services, batch work and watchers
 
-- **Status:** Proposal / Not implemented
+- **Status:** Implemented (October 2026), with the differences in *As built* at the end
 - **Date:** October 2026
 - **Issue:** [#515](https://github.com/mkb23/overcode/issues/515)
 - **Builds on:** #507 (the status model where yellow means "idle at the prompt, but work in flight elsewhere will wake it")
@@ -101,3 +101,44 @@ A job command containing a single quote (e.g. `…; echo 'done'`) breaks the quo
 3. Should overcode ever kill a stuck watcher itself? Proposed: **no**. Flag it, and let the person or the agent decide.
 4. Where should the process walk run: in the daemon's per-tick resource sampling (where the pid is already known) or in a slower housekeeping pass? Shells change rarely, so every 10–30 s is probably enough.
 5. Containers and remote sisters: the process walk only sees local processes. Fall back to the status-bar count there.
+
+## As built (October 2026)
+
+Owner answers (2026-10-06): a service alone **does** keep its agent yellow;
+a stuck watcher gets a warning badge, never a colour change; overcode never
+stops a shell by itself, but the CLI can.
+
+- **Which shells.** Not the process walk first: every parent `Stop` carries
+  `background_tasks`, whose `type: shell` entries (id, command, description)
+  are Claude's own list of the shells still running. The hook side keeps them
+  as `swarm.bg_shells` (`swarm.note_bg_shells`); a task notification drops
+  one. A shell's `tasks/<id>.output` exit mark (`swarm_files.ShellEnds`) ends
+  it early. The process table then gives each one's pid and runtime signals.
+- **Process walk.** Claude runs the shells under `claude bg-pty-host` /
+  `bg-spare` helpers, not as direct children; and a session hosted by
+  Claude's own daemon has them outside the agent's tree altogether. So the
+  probe (`daemon_shell_probe.ShellProbe`) takes the Bash-tool shells under
+  the agent's CLI first, then any elsewhere in the table whose command no
+  other shell shares. It reuses the table the 5 s resource sampling took: no
+  extra `ps`. `lsof` runs only for a shell the rules call batch, at most once
+  a minute per shell.
+- **Classification** (`background_shells.classify`): rules on the command,
+  then a `sleep` child (poll loop) or a listening socket, then Claude's
+  description. CPU and output growth are not used yet, nor the LLM
+  classifier: an unplaced shell is batch, which is what every shell was
+  before.
+- **Stuck.** A watcher wrapped in a loop whose target (`overcode follow X`,
+  `overcode jobs tail|wait X`) has ended, gone missing or never existed is
+  stuck 90 s later (`STUCK_GRACE_SECONDS`). `jobs wait`, `follow` and a
+  streaming `jobs tail` on their own end with their target, so they never
+  are. `gh run watch` and `kubectl wait` targets are not checked.
+- **What the person sees.** 🏭 batch, 🔭 watcher, 📻 service (all yellow) in
+  place of 🔌, which remains for shells the status bar counts beyond the
+  classified ones; 🧟 beside the light for a stuck watcher. A listed shell
+  whose process was never found counts only up to the status bar's count, so
+  a stale list can't hold an agent yellow. The status-detail hover lists each
+  shell. `SessionDaemonState.background_shells` publishes the list.
+- **CLI.** `overcode shells [agent] [--stuck]` lists them; `overcode shells
+  --kill <pid|id>` stops one and its children, after checking the pid is
+  still that shell. `overcode jobs wait` is the prevention half; the overcode
+  skill points agents at it.

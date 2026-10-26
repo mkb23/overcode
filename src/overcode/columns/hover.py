@@ -243,7 +243,42 @@ def hover_status_detail(ctx: ColumnContext):
         if b.eta_seconds is not None and b.eta_seconds > 0:
             meaning += f", in {format_duration(int(b.eta_seconds))}"
         rows.append((_badge_glyph(b.kind, ctx.emoji_free), meaning))
-    return _emoji_legend("Status detail", rows)
+    text = _emoji_legend("Status detail", rows)
+    if ctx.background_shells:
+        _append_shells(text, ctx)
+    return text
+
+
+_SHELL_BADGE = {"batch": "bg_batch", "watcher": "bg_watcher", "service": "bg_service"}
+
+
+def _append_shells(text: "Text", ctx: ColumnContext) -> None:  # noqa: F821
+    """One line per background shell (#515): kind, age, command, and for a
+    watcher what it watches."""
+    import time
+    now = time.time()
+    text.append("\nBackground shells", style="bold")
+    for shell in ctx.background_shells:
+        stuck = shell.get("stuck_since") is not None
+        glyph = _badge_glyph("bg_stuck" if stuck else _SHELL_BADGE.get(shell.get("kind"), "bg_task"),
+                             ctx.emoji_free)
+        since = shell.get("since")
+        age = f"{format_duration(int(now - since))} " if isinstance(since, (int, float)) else ""
+        command = " ".join(str(shell.get("command") or "").split())
+        if len(command) > 60:
+            command = command[:59] + "…"
+        text.append(f"\n{glyph}  {shell.get('kind')} {age}")
+        text.append(command, style="dim")
+        target = shell.get("target")
+        if target:
+            state = shell.get("target_state")
+            if stuck:
+                text.append(f"\n    stuck: {target} has {'ended' if state == 'ended' else 'gone'}",
+                            style="bold")
+                if shell.get("pid"):
+                    text.append(f" (overcode shells --kill {shell['pid']})", style="dim")
+            else:
+                text.append(f"\n    watching {target}" + (f" ({state})" if state else ""), style="dim")
 
 
 _NAME_SOURCE_TEXT = {

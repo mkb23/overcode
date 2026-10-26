@@ -52,8 +52,11 @@ WORKFLOW_TOOL = "Workflow"
 DONE_KEEP = 200
 WORKFLOWS_KEEP = 50
 ASYNC_KEEP = 100
-# Background shells one subagent started that its entry remembers
+# Background shells one subagent started that its entry remembers; also
+# the most running shells of the parent's own that bg_shells keeps (#515)
 SHELLS_KEEP = 20
+# A bg_shells command or description is cut to this
+BG_SHELL_CHARS = 500
 
 # A subagent unheard from for this long is assumed gone, for hook state
 # written before Claude sent ``background_tasks`` (#507). Once a Stop or
@@ -293,6 +296,29 @@ def _note_own_shell(entry: dict, tool_name, response) -> None:
         entry["shells"] = (shells + [task])[-SHELLS_KEEP:]
 
 
+def note_bg_shells(swarm: dict, tasks, now: float) -> None:
+    """The shells the parent's Stop lists as running (#515): id → command,
+    description and when first listed (background_shells.survey)."""
+    old = swarm.get("bg_shells") or {}
+    shells = {}
+    for t in tasks:
+        if not (isinstance(t, dict) and t.get("type") == "shell"
+                and t.get("status", "running") == "running" and isinstance(t.get("id"), str)):
+            continue
+        prev = old.get(t["id"]) if isinstance(old.get(t["id"]), dict) else {}
+        entry = {"since": prev.get("since", now)}
+        for key in ("command", "description"):
+            if isinstance(t.get(key), str) and t[key]:
+                entry[key] = t[key][:BG_SHELL_CHARS]
+        shells[t["id"]] = entry
+        if len(shells) >= SHELLS_KEEP:
+            break
+    if shells:
+        swarm["bg_shells"] = shells
+    else:
+        swarm.pop("bg_shells", None)
+
+
 def _note_async(swarm: dict, agent_id: str) -> None:
     ids = [a for a in (swarm.get("async") or []) if a != agent_id]
     ids.append(agent_id)
@@ -514,8 +540,11 @@ def apply_parent_event(subagents, swarm, event: str, tool_name: Optional[str],
                 _end_workflow(subagents, swarm, task_id, result, now)
             else:
                 _set_result(subagents, swarm, task_id, result, now)
+            if not interim and task_id in (swarm.get("bg_shells") or {}):
+                swarm["bg_shells"] = {k: v for k, v in swarm["bg_shells"].items() if k != task_id}
     if event == "Stop" and isinstance(data.get("background_tasks"), list):
         _reconcile(subagents, swarm, data["background_tasks"], now, turn_over=True)
+        note_bg_shells(swarm, data["background_tasks"], now)
     if subagents or swarm:
         _note_transcript(swarm, data)
     return subagents, swarm

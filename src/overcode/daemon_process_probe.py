@@ -50,6 +50,10 @@ class ProcessProbe:
                 )
         return self._table
 
+    def latest(self) -> Optional[ProcessTable]:
+        """The last table taken, without taking one (None: none yet, or ``ps`` failed)."""
+        return self._table
+
     @staticmethod
     def _agent_pid(table: ProcessTable, session, pane: PaneInfo) -> Optional[int]:
         from .doctor import (

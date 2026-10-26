@@ -133,6 +133,9 @@ class StatusDetectorDispatcher:
         # parent whose turn ended while they work waits on them)
         self.children_working: Dict[str, int] = (
             children_working if children_working is not None else {})
+        # The caller's background-shell probe (daemon_shell_probe.ShellProbe,
+        # #515), handed to every hook detector; None leaves shells unprobed
+        self.shell_probe = None
         # One pane_capture_gate.PaneCaptureGate for every detector this
         # dispatcher holds or creates, so the caller's per-loop capture plan
         # covers every backend's pair.
@@ -202,6 +205,8 @@ class StatusDetectorDispatcher:
         for detector in detectors:
             if hasattr(detector, "children_working"):
                 detector.children_working = self.children_working
+            if hasattr(detector, "shell_probe"):
+                detector.shell_probe = self.shell_probe
             if self._capture_gate is not None:
                 detector.capture_gate = self._capture_gate
 
@@ -241,6 +246,17 @@ class StatusDetectorDispatcher:
     def get_swarm_state(self, session_name: str) -> Optional[dict]:
         """The hook state behind that rollup, for its virtual rows (None: none)."""
         getter = getattr(self._last_detector.get(session_name), "get_swarm_state", None)
+        return getter(session_name) if getter is not None else None
+
+    def set_shell_probe(self, probe) -> None:
+        """Give every hook detector, now and later, the background-shell probe."""
+        self.shell_probe = probe
+        for pair in self._pairs.values():
+            self._install_gate(*pair)
+
+    def get_background_shells(self, session_name: str) -> Optional[list]:
+        """The session's classified background shells (#515; None: none, or not hooks)."""
+        getter = getattr(self._last_detector.get(session_name), "get_background_shells", None)
         return getter(session_name) if getter is not None else None
 
     def get_foreign_sessions(self, session_name: str) -> Optional[dict]:
