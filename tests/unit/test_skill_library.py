@@ -196,7 +196,10 @@ class TestBackends:
     def test_opencode_config_dir_and_deny_rules(self):
         env = self._env(skill_dir="/p/research", hidden_skills=["noisy"])
         assert env["OPENCODE_CONFIG_DIR"] == "/p/research"
-        assert json.loads(env["OPENCODE_PERMISSION"]) == {"skill": {"noisy": "deny"}}
+        perm = json.loads(env["OPENCODE_PERMISSION"])
+        assert perm["skill"] == {"noisy": "deny"}
+        # Same variable as overcode's own allowed commands (#531)
+        assert perm["bash*"]["overcode report *"] == "allow"
 
     def test_opencode_bypass_keeps_allow_everything_for_other_skills(self):
         env = self._env(permissiveness_mode="bypass", hidden_skills=["noisy"])
@@ -205,7 +208,7 @@ class TestBackends:
         assert perm["bash"] == "allow"
 
     def test_opencode_without_profile_is_unchanged(self):
-        assert "OPENCODE_PERMISSION" not in self._env()
+        assert "skill" not in json.loads(self._env()["OPENCODE_PERMISSION"])
         assert "OPENCODE_CONFIG_DIR" not in self._env()
 
 

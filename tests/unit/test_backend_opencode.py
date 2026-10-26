@@ -27,6 +27,7 @@ from overcode.backends import (
 )
 from overcode.backends.opencode import (
     OPENCODE_ALLOW_EVERYTHING_PERMISSION,
+    OPENCODE_OVERCODE_BASH_KEY,
     PLUGIN_FILENAME,
     PLUGIN_MARKER,
     OpencodeBackend,
@@ -190,6 +191,7 @@ class TestBuildCommand:
                 LaunchSpec(agent_teams=True, provider="bedrock")
             )
         result.pop("OVERCODE_HOOK_COMMAND")
+        result.pop("OPENCODE_PERMISSION")  # overcode's own commands (#531)
         assert result == {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
 
 
@@ -382,10 +384,13 @@ class TestEnvPrefix:
         with patch.dict(os.environ, env, clear=True), \
                 patch("overcode.backends.opencode.shutil.which",
                       return_value="/opt/bin/overcode"):
-            assert backend.env_prefix(LaunchSpec()) == {
-                "OPENCODE_DISABLE_AUTOUPDATE": "1",
-                "OVERCODE_HOOK_COMMAND": "/opt/bin/overcode",
-            }
+            result = backend.env_prefix(LaunchSpec())
+        permission = json.loads(shlex.split(result.pop("OPENCODE_PERMISSION"))[0])
+        assert list(permission) == [OPENCODE_OVERCODE_BASH_KEY]
+        assert result == {
+            "OPENCODE_DISABLE_AUTOUPDATE": "1",
+            "OVERCODE_HOOK_COMMAND": "/opt/bin/overcode",
+        }
 
     def test_hook_command_falls_back_to_this_python(self, backend):
         # The plugin's `hook-handler --prompt-context` must find overcode
@@ -399,23 +404,29 @@ class TestEnvPrefix:
         # the agent; its background update has broken launches
         assert backend.env_prefix(LaunchSpec())["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
 
-    # Ancillary — true bypass-permissions. bypass gets OPENCODE_PERMISSION;
-    # permissive and normal must not, since --auto (which both still get on
-    # the command line) already covers their honest, deny-rules-still-win
-    # behaviour — only bypass claims to actually override deny rules.
+    # Ancillary — true bypass-permissions. bypass gets the allow-everything
+    # blob in OPENCODE_PERMISSION; permissive and normal must not, since
+    # --auto (which both still get on the command line) already covers their
+    # honest, deny-rules-still-win behaviour — only bypass claims to actually
+    # override deny rules. Every mode gets overcode's own commands (#531).
+    @staticmethod
+    def _permission(backend, **spec_kwargs):
+        env = dict(os.environ)
+        env.pop("OVERCODE_STATE_DIR", None)
+        with patch.dict(os.environ, env, clear=True):
+            result = backend.env_prefix(LaunchSpec(**spec_kwargs))
+        return json.loads(shlex.split(result["OPENCODE_PERMISSION"])[0])
+
     @pytest.mark.parametrize("spec_kwargs", [
         {"permissiveness_mode": "bypass"},
         {"dangerously_skip_permissions": True},
     ])
     def test_bypass_mode_sets_opencode_permission(self, backend, spec_kwargs):
-        env = dict(os.environ)
-        env.pop("OVERCODE_STATE_DIR", None)
-        with patch.dict(os.environ, env, clear=True):
-            result = backend.env_prefix(LaunchSpec(**spec_kwargs))
-        assert "OPENCODE_PERMISSION" in result
-        decoded = json.loads(shlex.split(result["OPENCODE_PERMISSION"])[0])
+        decoded = self._permission(backend, **spec_kwargs)
+        overcode_rules = decoded.pop(OPENCODE_OVERCODE_BASH_KEY)
         assert decoded == OPENCODE_ALLOW_EVERYTHING_PERMISSION
         assert all(value == "allow" for value in decoded.values())
+        assert overcode_rules["overcode report *"] == "allow"
 
     @pytest.mark.parametrize("spec_kwargs", [
         {"permissiveness_mode": "permissive"},
@@ -423,12 +434,117 @@ class TestEnvPrefix:
         {"permissiveness_mode": "normal"},
         {},
     ])
-    def test_non_bypass_modes_do_not_set_opencode_permission(self, backend, spec_kwargs):
-        env = dict(os.environ)
-        env.pop("OVERCODE_STATE_DIR", None)
-        with patch.dict(os.environ, env, clear=True):
-            result = backend.env_prefix(LaunchSpec(**spec_kwargs))
-        assert "OPENCODE_PERMISSION" not in result
+    def test_non_bypass_modes_only_allow_overcode_commands(self, backend, spec_kwargs):
+        decoded = self._permission(backend, **spec_kwargs)
+        assert list(decoded) == [OPENCODE_OVERCODE_BASH_KEY]
+
+
+class TestOvercodeCommandsAllowed:
+    """#531: a child never asks before `overcode report`."""
+
+    @pytest.fixture
+    def backend(self):
+        return OpencodeBackend()
+
+    def _permission(self, backend, **spec_kwargs):
+        env = backend.env_prefix(LaunchSpec(**spec_kwargs))
+        return json.loads(shlex.split(env["OPENCODE_PERMISSION"])[0])
+
+    def test_rules_come_from_the_claude_allow_list(self, backend):
+        from overcode.cli.perms import OVERCODE_SAFE_PERMS
+
+        rules = self._permission(backend)[OPENCODE_OVERCODE_BASH_KEY]
+        assert rules == {
+            perm[len("Bash("):-1]: "allow" for perm in OVERCODE_SAFE_PERMS
+        }
+        assert rules["overcode report *"] == "allow"
+        assert rules["overcode show *"] == "allow"
+        assert "overcode launch *" not in rules
+
+    def test_punchy_commands_follow_the_spec(self, backend):
+        rules = self._permission(backend, include_punchy_perms=True)[
+            OPENCODE_OVERCODE_BASH_KEY
+        ]
+        assert rules["overcode launch *"] == "allow"
+        assert rules["overcode report *"] == "allow"
+
+    def test_never_touches_the_bash_key(self, backend):
+        # opencode deep-merges OPENCODE_PERMISSION over project config: an
+        # object under "bash" would replace a project's "bash": "ask" and
+        # let every command through. Normal mode leaves "bash" alone.
+        assert OPENCODE_OVERCODE_BASH_KEY != "bash"
+        assert "bash" not in self._permission(backend)
+        assert "bash" not in self._permission(
+            backend, permissiveness_mode="permissive",
+        )
+
+    @staticmethod
+    def _opencode_match(text, pattern):
+        # opencode 1.18.29's Wildcard.match, transcribed: `*` is `.*`, `?`
+        # is `.`, and a trailing " *" also matches the bare command.
+        import re
+
+        regex = re.sub(r"[.+^${}()|\[\]\\]", lambda m: "\\" + m.group(0), pattern)
+        regex = regex.replace("*", ".*").replace("?", ".")
+        if regex.endswith(" .*"):
+            regex = regex[:-3] + "( .*)?"
+        return re.fullmatch(regex, text, re.S) is not None
+
+    def _evaluate(self, project, overcode, command):
+        # opencode's Permission.evaluate: config keys become rules in key
+        # order (project first: OPENCODE_PERMISSION is merged in last), the
+        # last rule matching both the tool and the pattern wins, and
+        # opencode's own defaults start with "*": "allow".
+        merged = {"*": "allow", **project, **overcode}
+        rules = []
+        for perm, value in merged.items():
+            if isinstance(value, str):
+                rules.append((perm, "*", value))
+            else:
+                rules.extend((perm, pat, act) for pat, act in value.items())
+        hits = [
+            action for perm, pat, action in rules
+            if self._opencode_match("bash", perm)
+            and self._opencode_match(command, pat)
+        ]
+        return hits[-1] if hits else "ask"
+
+    @pytest.mark.parametrize("project", [
+        {"bash": "ask"},
+        {"bash": {"*": "ask", "ls *": "allow"}},
+    ])
+    def test_project_ask_stays_for_other_commands(self, backend, project):
+        overcode = self._permission(backend)
+        assert self._evaluate(project, overcode, "overcode report --status success done") == "allow"
+        assert self._evaluate(project, overcode, "overcode show parent") == "allow"
+        assert self._evaluate(project, overcode, "overcode report") == "allow"
+        assert self._evaluate(project, overcode, "rm -rf build") == "ask"
+        assert self._evaluate(project, overcode, "overcode launch -n x") == "ask"
+
+    def test_project_deny_stays_for_other_commands(self, backend):
+        overcode = self._permission(backend)
+        assert self._evaluate({"bash": "deny"}, overcode, "overcode report x") == "allow"
+        assert self._evaluate({"bash": "deny"}, overcode, "curl evil.example") == "deny"
+
+    def test_bypass_keeps_allow_everything(self, backend):
+        perm = self._permission(backend, permissiveness_mode="bypass")
+        assert perm["bash"] == "allow"
+        assert perm["skill"] == "allow"
+        assert perm[OPENCODE_OVERCODE_BASH_KEY]["overcode report *"] == "allow"
+
+    def test_with_skill_deny(self, backend):
+        perm = self._permission(backend, hidden_skills=["noisy"])
+        assert perm["skill"] == {"noisy": "deny"}
+        assert perm[OPENCODE_OVERCODE_BASH_KEY]["overcode report *"] == "allow"
+        assert "bash" not in perm
+
+    def test_bypass_with_skill_deny(self, backend):
+        perm = self._permission(
+            backend, permissiveness_mode="bypass", hidden_skills=["noisy"],
+        )
+        assert perm["skill"] == {"*": "allow", "noisy": "deny"}
+        assert perm["bash"] == "allow"
+        assert perm[OPENCODE_OVERCODE_BASH_KEY]["overcode report *"] == "allow"
 
     def test_bypass_mode_still_forwards_state_dir(self, backend):
         with patch.dict(os.environ, {"OVERCODE_STATE_DIR": "/tmp/state dir"}):

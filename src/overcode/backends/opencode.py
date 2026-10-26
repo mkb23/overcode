@@ -110,6 +110,34 @@ OPENCODE_ALLOW_EVERYTHING_PERMISSION: Dict[str, str] = {
 }
 
 
+# #531: overcode's own commands (`overcode report *`, `overcode show *`, ...:
+# the list Claude agents get as `Bash(...)` allow rules, `cli/perms.py`) are
+# allowed under this permission key, not under "bash". opencode merges
+# OPENCODE_PERMISSION into the resolved config with a deep merge, so an
+# object under "bash" *replaces* a project's string `"bash": "ask"` or
+# `"bash": "deny"`, and every other command then falls through to opencode's
+# built-in `"*": "allow"`. A key of its own merges alongside the project's
+# rules instead: each key becomes rules in order, the last matching rule wins
+# (`findLast`), and permission names are matched as wildcards, so "bash*"
+# applies to the bash tool. Verified on 1.18.29 with `opencode debug config`
+# and `opencode debug agent build`: project `"bash": "ask"` stays as
+# `bash * ask`, followed by `bash* overcode report * allow`. Side effect: in
+# a project that denies bash outright, the bash tool stays in the model's
+# catalog (its last rule is no longer a `*` deny) and only overcode's
+# commands run; everything else is still denied.
+OPENCODE_OVERCODE_BASH_KEY = "bash*"
+
+
+def overcode_bash_permission(include_punchy: bool = False) -> Dict[str, str]:
+    """The ``OPENCODE_PERMISSION`` rules that pre-allow overcode's commands."""
+    from ..cli.perms import overcode_bash_patterns
+
+    return {
+        pattern: "allow"
+        for pattern in overcode_bash_patterns(include_punchy=include_punchy)
+    }
+
+
 def parse_version(text: str) -> Optional[Tuple[int, int, int]]:
     """Extract a (major, minor, patch) tuple from `opencode --version` output.
 
@@ -517,6 +545,9 @@ class OpencodeBackend(AgentBackendBase):
         ``OVERCODE_SESSION_NAME`` and ``OVERCODE_TMUX_SESSION`` are already in
         the launcher's shared prefix.
 
+        Every launch sets ``OPENCODE_PERMISSION`` with allow rules for
+        overcode's own commands (``OPENCODE_OVERCODE_BASH_KEY``, #531).
+
         In **bypass** mode only (never permissive — see
         ``docs/backends.md``'s "Permission modes" section), also sets
         ``OPENCODE_PERMISSION`` to an allow-everything JSON blob. Both
@@ -547,6 +578,12 @@ class OpencodeBackend(AgentBackendBase):
         permission: Dict[str, Any] = {}
         if spec.dangerously_skip_permissions or spec.permissiveness_mode == "bypass":
             permission = dict(OPENCODE_ALLOW_EVERYTHING_PERMISSION)
+        # Every launch, like Claude's `Bash(overcode report *)` rules, so a
+        # child never asks before it reports back (#531). A key of its own,
+        # so the bypass blob's "bash": "allow" is untouched.
+        permission[OPENCODE_OVERCODE_BASH_KEY] = overcode_bash_permission(
+            include_punchy=spec.include_punchy_perms,
+        )
 
         # Skill profile (#499). OPENCODE_CONFIG_DIR adds the profile's skills
         # on top of ~/.config/opencode (it is an extra config dir, not a
@@ -562,8 +599,7 @@ class OpencodeBackend(AgentBackendBase):
             rules.update({name: "deny" for name in spec.hidden_skills})
             permission["skill"] = rules
 
-        if permission:
-            env["OPENCODE_PERMISSION"] = shlex.quote(json.dumps(permission))
+        env["OPENCODE_PERMISSION"] = shlex.quote(json.dumps(permission))
 
         return env
 
