@@ -27,6 +27,8 @@ from .backends import (
     BackendCapability,
     LaunchSpec,
     UnknownBackendError,
+    check_effort,
+    effort_applies,
     get_backend,
     supports,
 )
@@ -334,6 +336,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         backend: str = DEFAULT_BACKEND,
         skill_profile: Optional[str] = None,
         billing_code: Optional[str] = None,
+        effort: Optional[str] = None,
         name_source: str = "human",
         name_forced: bool = False,
         billing_code_id: Optional[str] = None,
@@ -356,6 +359,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             agent_teams=agent_teams,
             agent_persona=agent_persona,
             model=model,
+            effort=effort,
             provider=provider,
             session_id=session_id,
             wrapper=wrapper,
@@ -481,6 +485,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         billing_code: Optional[str] = None,
         name_source: str = "human",
         name_forced: bool = False,
+        effort: Optional[str] = None,
     ) -> Session:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -521,6 +526,9 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                 by default; the CLI passes parent from inside an agent, the
                 TUI modal default for an untouched directory name.
             name_forced: The name was let past the naming policy (--force-name).
+            effort: Reasoning effort (#537), checked against the backend's
+                levels (an unknown one raises LaunchError; one the backend
+                cannot apply is warned about on stderr and still recorded).
 
         Returns:
             The new Session, or the existing one if an agent called ``name``
@@ -611,9 +619,16 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             raise LaunchError(str(e)) from e
 
         try:
+            effort, effort_warnings = check_effort(agent_backend, effort, model)
+        except ValueError as e:
+            raise LaunchError(str(e)) from e
+
+        try:
             require_agent_cli(agent_backend)
         except (AgentCliNotFoundError, agent_backend.not_found_error) as e:
             raise LaunchError(str(e)) from e
+        for warning in effort_warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
 
         if provider not in ("web", "bedrock"):
             raise LaunchError(f"invalid provider '{provider}'. Use: web, bedrock")
@@ -683,7 +698,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             wrapper=resolved_wrapper, backend=agent_backend.name,
             skill_profile=skill_profile, billing_code=billing_code,
             billing_code_id=billing_code_id,
-            name_source=name_source, name_forced=name_forced,
+            name_source=name_source, name_forced=name_forced, effort=effort,
         )
 
         session = self.sessions.create_session(**metadata)
@@ -885,6 +900,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             extra_cli_args=source_session.extra_cli_args,
             agent_teams=source_session.agent_teams, agent_persona=source_session.agent_persona,
             model=source_session.model, provider=source_session.provider,
+            effort=source_session.effort,
             wrapper=source_session.wrapper, backend=agent_backend.name,
             skill_profile=getattr(source_session, "skill_profile", None),
             billing_code=parent_code[1], billing_code_id=parent_code[0],
@@ -974,6 +990,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                 # ordinary agent.
                 backend=None if backend == OVERAGENT_BACKEND else backend,
                 model=None if backend == OVERAGENT_BACKEND else source_session.model,
+                # An effort the launch flag takes (not one only read back)
+                effort=(source_session.effort if backend != OVERAGENT_BACKEND
+                        and effort_applies(self.backend_for(source_session),
+                                           source_session.effort) else None),
                 provider=source_session.provider,
                 wrapper=source_session.wrapper,
                 agent_teams=bool(source_session.agent_teams),
@@ -1094,6 +1114,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             prescribed_session_id=new_claude_sid,
             permissiveness_mode=session.permissiveness_mode,
             model=session.model,
+            effort=session.effort,
             agent=session.agent_persona,
             allowed_tools=session.allowed_tools,
             extra_args=(drop_model_flag(session.extra_cli_args) if session.model

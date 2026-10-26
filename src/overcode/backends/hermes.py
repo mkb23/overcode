@@ -31,6 +31,7 @@ from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     AgentBackendBase,
+    effort_applies,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -540,6 +541,11 @@ class HermesBackend(AgentBackendBase):
         # and a resume is the closest thing if it ever does.
         return ["--resume", session_id]
 
+    # `--reasoning <level>` (Hermes v0.21.3 `hermes --help`: "none, minimal,
+    # low, medium, high, xhigh, max, or ultra"; overrides
+    # agent.reasoning_effort for this run, and reaches the --cli chat).
+    effort_levels = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+
     def build_command(self, spec: LaunchSpec) -> List[str]:
         """Construct the hermes CLI argument list.
 
@@ -549,6 +555,7 @@ class HermesBackend(AgentBackendBase):
           model              -> ``-m <model>`` (Hermes's own id form: a bare
                                 ``gpt-5-mini`` for openai-api, or
                                 ``provider/model`` for routed providers)
+          effort             -> ``--reasoning <level>``
           bypass             -> ``--yolo`` (skips every dangerous-command
                                 approval prompt)
           permissive, normal -> no flag: Hermes has no per-launch approval
@@ -578,6 +585,9 @@ class HermesBackend(AgentBackendBase):
 
         if spec.model:
             cmd.extend(["-m", spec.model])
+
+        if effort_applies(self, spec.effort):
+            cmd.extend(["--reasoning", spec.effort])
 
         if spec.dangerously_skip_permissions or spec.permissiveness_mode == "bypass":
             cmd.append("--yolo")

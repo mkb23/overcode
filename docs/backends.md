@@ -430,6 +430,7 @@ overcode gates UI actions and telemetry off them.
 | Normal | (default) | opencode's own `permission` config | (default) | (default: `on-request` approval) | `--permission-mode default`, passed **explicitly on every launch** (see below) |
 | Allowed tools | `--allowedTools a,b` | ✗ no flag exists | ✗ no flag exists | ✗ no flag exists | `--allow <rule>` repeated once per tool |
 | Model | `--model sonnet` | `--model provider/model` | ✗ (not settable at launch — `OPENCODE_MODEL` is inert on this build, the global-config model wins; see below) | `-m <model>` (bare id, e.g. `gpt-5.6-sol`) | `-m <model>` (bare id, e.g. `grok-4.6`) |
+| Effort (`--effort`, #537) | `--effort <low\|medium\|high\|xhigh\|max>` | the agent's model variant via `OPENCODE_CONFIG_CONTENT` (`agent.<agent>.{model,variant}`; needs `--model`, the TUI has no `--variant`) | ✗ (warned: the launch-time model is ignored, so no variant either) | `-c model_reasoning_effort="<none\|minimal\|low\|medium\|high\|xhigh\|max>"` | `--reasoning-effort <level>` (canonical levels or a model's own menu id) |
 | Persona | `--agent name` | `--agent name` | ✗ (no launch-time knob at all) | ✗ (`-p/--profile` is a config-layer override, not a persona flag) | `--agent name` |
 | Prescribe session id | `--session-id <uuid>` | ✗ | ✗ (mints its own `ses_…` ids) | ✗ | `--session-id <uuid>` (new conversations only) |
 | Resume | `--resume <id>` | `--session <id>` | `--session <id>` (every launch also passes `--standalone`, see below) | `codex resume <id>` (subcommand, options after) | `--resume <id>` |

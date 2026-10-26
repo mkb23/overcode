@@ -30,6 +30,7 @@ from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     AgentBackendBase,
+    effort_applies,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -321,6 +322,11 @@ class CodexBackend(AgentBackendBase):
         # options rather than appending it.
         return [("fork" if fork else "resume"), session_id]
 
+    # `-c model_reasoning_effort=<level>` (#537). The levels are the ones the
+    # API names when it refuses another (codex-cli 0.164.0, `codex exec -c
+    # model_reasoning_effort=bogus`): a model takes a subset of them.
+    effort_levels = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
     def build_command(self, spec: LaunchSpec) -> List[str]:
         """Construct the codex CLI argument list.
 
@@ -329,6 +335,7 @@ class CodexBackend(AgentBackendBase):
           resume             -> ``codex resume <id> [opts]`` (subcommand first)
           fork               -> ``codex fork <id> [opts]`` (subcommand first)
           model              -> ``-m <model>`` (bare id, e.g. ``gpt-5.6-sol``)
+          effort             -> ``-c model_reasoning_effort="<level>"``
           bypass             -> ``--dangerously-bypass-approvals-and-sandbox``
           permissive         -> ``-a never --sandbox workspace-write``
           normal             -> no flags (default: on-request approval)
@@ -359,6 +366,9 @@ class CodexBackend(AgentBackendBase):
 
         if spec.model:
             cmd.extend(["-m", spec.model])
+
+        if effort_applies(self, spec.effort):
+            cmd.extend(["-c", f'model_reasoning_effort="{spec.effort}"'])
 
         if spec.dangerously_skip_permissions or spec.permissiveness_mode == "bypass":
             cmd.append("--dangerously-bypass-approvals-and-sandbox")

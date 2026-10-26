@@ -90,6 +90,12 @@ class Opencode2Backend(AgentBackendBase):
         # the FORK capability bit, which this backend does not set.
         return ["--session", session_id]
 
+    # Effort is a model variant in opencode, and opencode2 builds ignore the
+    # launch-time model (the global-config model wins), so no variant can
+    # be set per launch either (#537).
+    effort_unsupported_reason = ("opencode2 ignores the launch-time model, so no model "
+                                 "variant (effort) can be applied; set it in the TUI")
+
     def build_command(self, spec: LaunchSpec) -> List[str]:
         import shlex
         # --standalone: every overcode-launched agent runs its own private

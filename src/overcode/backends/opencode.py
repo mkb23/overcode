@@ -33,6 +33,7 @@ from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     AgentBackendBase,
+    effort_applies,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -431,6 +432,24 @@ class OpencodeBackend(AgentBackendBase):
         | BackendCapability.SKILL_PROFILES
     )
 
+    # Reasoning effort is a model variant (#497, #537). The TUI has no
+    # --variant flag (only `opencode run` does, 1.18.29), so the variant goes
+    # in as agent config: OPENCODE_CONFIG_CONTENT sets
+    # agent.<agent>.{model, variant}. opencode applies an agent's variant
+    # only while the agent's model is the one in use (read from the 1.18.29
+    # binary), hence the model alongside it, and no effort without --model.
+    # Variants are per model; these are the common ones, not a closed list.
+    effort_levels = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+    effort_levels_exhaustive = False
+    # The agent opencode starts on when none is named
+    default_agent = "build"
+
+    def effort_warnings(self, effort: str, model: Optional[str]) -> List[str]:
+        if not model:
+            return [f"opencode sets effort as a variant of a given model: --effort {effort} "
+                    f"is ignored without --model provider/model"]
+        return []
+
     def executable(self) -> str:
         """The binary to invoke, honouring the OPENCODE_COMMAND override.
 
@@ -450,6 +469,8 @@ class OpencodeBackend(AgentBackendBase):
 
         Flag mapping (Appendix A of the design doc, re-verified at v1.18.19):
           model              -> ``--model <provider/model>``
+          effort             -> the agent's model variant, in
+                                ``OPENCODE_CONFIG_CONTENT`` (``env_prefix``)
           bypass/permissive  -> ``--auto`` (deny rules still win; opencode
                                 has no separate "ask nothing but obey deny"
                                 mode, so both overcode modes collapse onto it)
@@ -564,6 +585,12 @@ class OpencodeBackend(AgentBackendBase):
 
         if permission:
             env["OPENCODE_PERMISSION"] = shlex.quote(json.dumps(permission))
+
+        # Reasoning effort as the agent's model variant (see effort_levels)
+        if spec.model and effort_applies(self, spec.effort):
+            agent = spec.agent or self.default_agent
+            content = {"agent": {agent: {"model": spec.model, "variant": spec.effort}}}
+            env["OPENCODE_CONFIG_CONTENT"] = shlex.quote(json.dumps(content))
 
         return env
 

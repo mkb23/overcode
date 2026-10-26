@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Dict, List, Set, Tuple
 from ..exceptions import AgentCliNotFoundError
 from .base import (
     AgentBackendBase,
+    effort_applies,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -141,6 +142,10 @@ class ClaudeCodeBackend(AgentBackendBase):
     # ...and a multi-line `overcode send` is typed, a backslash-Enter per line break
     type_multiline_text = True
 
+    # `claude --effort <level>` (verified on 2.1.310, `claude --help`):
+    # "Effort level for the current session (low, medium, high, xhigh, max)"
+    effort_levels = ("low", "medium", "high", "xhigh", "max")
+
     def build_command(self, spec: LaunchSpec) -> List[str]:
         """Construct the claude CLI argument list.
 
@@ -203,6 +208,8 @@ class ClaudeCodeBackend(AgentBackendBase):
             cmd.extend(self.display_name_args(spec.name))
         if spec.model:
             cmd.extend(["--model", spec.model])
+        if effort_applies(self, spec.effort):
+            cmd.extend(["--effort", spec.effort])
         if spec.agent:
             cmd.extend(["--agent", spec.agent])
         if spec.allowed_tools:

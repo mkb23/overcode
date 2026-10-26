@@ -373,6 +373,15 @@ def launch(
         Optional[str],
         typer.Option("--model", "-m", help="Model (e.g. sonnet, opus; openai/gpt-4o-mini for opencode; gpt-5.6-sol for codex; grok-4.6 for grok; gpt-5-mini or anthropic/claude-opus-4.6 for hermes)"),
     ] = None,
+    effort: Annotated[
+        Optional[str],
+        typer.Option(
+            "--effort",
+            help="Reasoning effort, mapped per backend: claude-code --effort (low, medium, "
+                 "high, xhigh, max); codex -c model_reasoning_effort; grok --reasoning-effort; "
+                 "hermes --reasoning; opencode a model variant (needs --model)",
+        ),
+    ] = None,
     backend_args: Annotated[
         Optional[List[str]],
         typer.Option(
@@ -480,6 +489,9 @@ def launch(
         remote_dir = directory if directory else "."
         if not directory:
             rprint("[yellow]Warning:[/yellow] No --directory given; remote agent will use '.'")
+        if effort:
+            rprint(f"[yellow]Warning:[/yellow] --effort is not yet supported for remote "
+                   f"launches; '{name}' starts at {sister}'s default effort")
         if billing_code:
             # The sister launch API takes no billing code (the TUI warns the same)
             rprint(f"[yellow]Warning:[/yellow] Billing codes are not yet supported for remote "
@@ -557,6 +569,7 @@ def launch(
             budget_usd=budget,
             agent_persona=agent,
             model=model,
+            effort=effort,
             provider=provider,
             backend=backend,
             wrapper=wrapper,
@@ -599,6 +612,8 @@ def launch(
             rprint(f"  Backend: {session_backend_name(result)}")
         if result.model and not model:
             rprint(f"  Model: {result.model} (inherited)")
+        if result.effort:
+            rprint(f"  Effort: {result.effort}")
         if normal_permissions:
             rprint("  Permissions: normal")
         if budget is not None and budget > 0:
@@ -1189,6 +1204,10 @@ def restart(
         Optional[str],
         typer.Option("--model", "-m", help="Relaunch on this model (kept for later restarts)"),
     ] = None,
+    effort: Annotated[
+        Optional[str],
+        typer.Option("--effort", help="Relaunch at this reasoning effort (kept for later restarts)"),
+    ] = None,
     session: SessionOption = "agents",
 ):
     """Restart a running agent with the same configuration.
@@ -1207,7 +1226,8 @@ def restart(
     every dead agent.
 
     The model is the one the agent last ran on (a /model switch is picked
-    up from its transcript); --model picks another.
+    up from its transcript); --model picks another. The same goes for the
+    reasoning effort and --effort.
     """
     launcher = AgentLauncher(session)
     sess = find_agent(launcher.sessions, name)
@@ -1217,13 +1237,28 @@ def restart(
     # Found fleet-wide: its window is in its own tmux session, not --session's
     launcher = launcher.for_agent(sess)
 
-    if model:
+    if effort:
+        from ..backends import check_effort
+        try:
+            effort, warnings = check_effort(launcher.backend_for(sess), effort,
+                                            model or sess.model)
+        except ValueError as e:
+            rprint(f"[red]Error: {e}[/red]")
+            raise typer.Exit(code=1)
+        for warning in warnings:
+            rprint(f"[yellow]Warning:[/yellow] {warning}")
+
+    if model or effort:
         # From now on the transcript's older model and effort no longer
         # apply; on another model the effort is unknown until it replies
-        # (Claude picks it per model) (#539)
-        changes = {"model": model, "model_chosen_at": time.time()}
-        if model != sess.model:
-            changes["effort"] = None
+        # (Claude picks it per model) (#539), unless --effort names it
+        changes = {"model_chosen_at": time.time()}
+        if model:
+            changes["model"] = model
+            if model != sess.model:
+                changes["effort"] = None
+        if effort:
+            changes["effort"] = effort
         launcher.sessions.update_session(sess.id, **changes)
         sess = launcher.sessions.get_session(sess.id)
 
