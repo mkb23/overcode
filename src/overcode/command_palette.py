@@ -348,6 +348,7 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("open_journey", "Your journey…", "Navigate",
        "learn learning progress tips skills achievements tutorial discover"),
     _C("new_agent", "New agent…", "Agent", "launch create start remote"),
+    _C("new_shell", "New shell", "Agent", "bash zsh terminal prompt command line"),
     _C("rename_focused", "Rename agent…", "Agent", "name", agent=True),
     # "Let overcode name this agent" is one cell too wide for the palette
     _C("name_by_overcode", "Let overcode name it", "Agent",

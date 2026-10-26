@@ -127,6 +127,7 @@ from .tui_actions.activity import ActivityMixin
 from .tui_actions.claude_bg import BackgroundSessionsMixin
 from .tui_actions.view_control import ViewControlMixin
 from .tui_actions.overagent import JourneyMixin, OveragentMixin
+from .tui_actions.new_shell import NewShellMixin
 from .tui_actions.mentor import MentorMixin
 from .tui_actions.jobs import JobsMixin
 from .tui_actions.sisters import SistersMixin
@@ -184,6 +185,7 @@ class SupervisorTUI(
     ActivityMixin,
     ViewControlMixin,
     OveragentMixin,
+    NewShellMixin,
     JourneyMixin,
     MentorMixin,
     NavigationActionsMixin,
@@ -249,6 +251,7 @@ class SupervisorTUI(
         ("R", "restart_focused", "Restart agent"),
         ("n", "new_agent", "New agent"),
         ("e", "open_overagent", "Overagent"),
+        ("exclamation_mark", "new_shell", "New shell"),
         ("u", "open_journey", "Journey"),
         ("ctrl+n", "rename_focused", "Rename agent"),
         # Send Enter to focused agent (for approvals)

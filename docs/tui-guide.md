@@ -281,6 +281,7 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 | `J` | Switch between the agents and jobs views |
 | `e` | Open the [overagent](#the-overagent): ask overcode for help, advice or changes |
 | `u` | [Your journey](#your-journey): what you've found in overcode, and what's next |
+| `!` | Open a new shell row in your home directory: `shell`, then `shell-2`, `shell-3`, … |
 
 ### View Controls
 
