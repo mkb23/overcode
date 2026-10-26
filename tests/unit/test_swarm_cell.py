@@ -102,7 +102,7 @@ class TestCell:
                          workflows_running=1)
         hover = COLUMNS_BY_ID["subagents"].hover
         text = hover(_ctx(swarm_rollup=rollup)).plain
-        for words in ("5 agents delegated", "1 working", "1 waiting for approval",
+        for words in ("5 delegated", "1 working", "1 waiting for approval",
                       "1 idle teammates", "1 finished", "1 failed", "1 workflow run, 1 running"):
             assert words in text
         assert "2 running" in hover(_ctx(live_subagent_count=2)).plain

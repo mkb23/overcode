@@ -610,15 +610,19 @@ def _count(values: Iterable, result: str) -> int:
     return sum(1 for v in values if isinstance(v, dict) and v.get("result") == result)
 
 
-def rollup(hook_state: Optional[dict], now: float) -> Optional[dict]:
+def rollup(hook_state: Optional[dict], now: float,
+           recent_seconds: Optional[float] = None) -> Optional[dict]:
     """The 👥 cell's counts, or None when the agent never delegated.
 
     ``total`` agents (live and finished; a workflow's agents included),
     ``running``, ``yellow`` (waiting on a background shell of its own: its
     row's 🟡), ``waiting`` (a permission prompt), ``idle`` (teammates
     listening), ``ok`` and ``failed``; ``workflows`` runs seen and
-    ``workflows_running``. Counts only: the value holds still until an
-    event changes it.
+    ``workflows_running``. With ``recent_seconds``, also ``ok_recent``:
+    the ``ok`` ones that ended within it (folded and legacy ones carry no
+    end time and are older anyway), and ``recent_hours``. Counts only: the
+    value holds still until an event changes it, or until a success ages
+    out of the window (the daemon recounts each tick).
     """
     if not isinstance(hook_state, dict):
         return None
@@ -644,12 +648,19 @@ def rollup(hook_state: Optional[dict], now: float) -> Optional[dict]:
     total = len(live) + ok + failed
     if not total and not workflows:
         return None
-    return {
+    counts = {
         "total": total, "running": running, "yellow": yellow, "waiting": waiting,
         "idle": idle,
         "ok": ok, "failed": failed, "workflows": workflows,
         "workflows_running": sum(1 for r in runs if r.get("status") == "running"),
     }
+    if recent_seconds is not None:
+        since = now - recent_seconds
+        counts["ok_recent"] = sum(
+            1 for v in done if isinstance(v, dict) and v.get("result") == RESULT_OK
+            and isinstance(v.get("ended_at"), (int, float)) and v["ended_at"] >= since)
+        counts["recent_hours"] = recent_seconds / 3600
+    return counts
 
 
 # ---------------------------------------------------------------------------

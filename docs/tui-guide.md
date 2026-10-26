@@ -154,9 +154,12 @@ takes no width at all:
 - `d` (or **Agent visibility…** in the `/` palette) opens one dialog
   for what the table shows. **Agents**: killed agents (ghost rows),
   sleeping agents, done child agents. **Subagents**:
-  the `f` rule; what finished subagents show as (**show**: their row for
-  a while and their ✅/❌ count; **failures only**: just the ❌ ones;
-  **hide**: live work only); how long a finished subagent keeps its row
+  the `f` rule; what finished subagents show as (**recent**, the default:
+  their row for a while, ✅ for those that finished in the last 6 hours
+  (`observability.recent_finished_hours` in config.yaml) and ❌ for every
+  failure; **all**: ✅ for every one since the agent started or last
+  `/clear`ed; **failures only**: just the ❌ ones; **hide**: live work
+  only); how long a finished subagent keeps its row
   (0s, 10s, 30s, 2m, saved in config.yaml). Changes apply as you make
   them; `Esc` closes it.
 - `X` opens every agent's delegated work and, in tree sort, every

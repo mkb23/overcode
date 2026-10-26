@@ -120,20 +120,28 @@ def rows_of(parent: str, virtual: Mapping[str, dict]) -> Dict[str, dict]:
 MEMBERS_SUFFIX = "/members"
 
 # What a finished member shows as (the person's choice, the visibility
-# dialog): its row for a while and its ✅/❌ count; only the ❌ ones; or
-# nothing (live work only)
+# dialog): its row for a while and its ✅/❌ count; the same with ✅ counting
+# only the last few hours (observability.recent_finished_hours, the
+# default); only the ❌ ones; or nothing (live work only)
 FINISHED_SHOW = "show"
+FINISHED_RECENT = "recent"
 FINISHED_FAILED = "failed"
 FINISHED_HIDE = "hide"
-FINISHED_MODES = (FINISHED_SHOW, FINISHED_FAILED, FINISHED_HIDE)
+FINISHED_MODES = (FINISHED_SHOW, FINISHED_RECENT, FINISHED_FAILED, FINISHED_HIDE)
 
 
 def shown_rollup(rollup: Optional[dict], finished: str) -> Optional[dict]:
     """The SubAgents counts as shown: ✅ dropped unless finished members
-    show, ❌ dropped too when they are hidden. The engine's rollup is kept
+    show, ❌ dropped too when they are hidden; under recent, ✅ is the
+    recent ones and ``ok_all`` the rest for the hover (an older daemon
+    without ``ok_recent`` shows them all). The engine's rollup is kept
     whole (the 👥 hover's total, the auto-open rule)."""
     if not rollup or finished == FINISHED_SHOW:
         return rollup
+    if finished == FINISHED_RECENT:
+        if "ok_recent" not in rollup:
+            return rollup
+        return {**rollup, "ok": rollup["ok_recent"], "ok_all": rollup.get("ok") or 0}
     drop = ("ok",) if finished == FINISHED_FAILED else ("ok", "failed")
     return {k: (0 if k in drop else v) for k, v in rollup.items()}
 
@@ -142,7 +150,7 @@ def finished_shown(row: dict, finished: str) -> bool:
     """Whether a finished member keeps its row under this setting."""
     if finished == FINISHED_HIDE:
         return False
-    return finished == FINISHED_SHOW or row.get("result") == "failed"
+    return finished in (FINISHED_SHOW, FINISHED_RECENT) or row.get("result") == "failed"
 
 
 def members_key(parent: str) -> str:

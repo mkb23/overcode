@@ -194,16 +194,17 @@ class SwarmRows(Static, can_focus=False):
         """Hovering a cell with a popup (NAME: the title, type and phase)
         shows it, as on an agent row."""
         offset = event.get_content_offset(self)
-        self.tooltip = None
-        if offset is None or self._paint_args is None:
-            return
-        if not 0 <= offset.y < len(self._ctxs) or self._ctxs[offset.y] is None:
-            return
-        from ..summary_columns import COLUMNS_BY_ID
-        col = COLUMNS_BY_ID.get(column_at(offset.x, [c.id for c in self._columns],
-                                          self._paint_args[0], self.content_size.width or None))
-        if col is not None and col.virtual_hover is not None:
-            self.tooltip = col.virtual_hover(self._ctxs[offset.y])
+        tip = None
+        if (offset is not None and self._paint_args is not None
+                and 0 <= offset.y < len(self._ctxs) and self._ctxs[offset.y] is not None):
+            from ..summary_columns import COLUMNS_BY_ID
+            col = COLUMNS_BY_ID.get(column_at(offset.x, [c.id for c in self._columns],
+                                              self._paint_args[0], self.content_size.width or None))
+            if col is not None and col.virtual_hover is not None:
+                tip = col.virtual_hover(self._ctxs[offset.y])
+        # Re-assigning an equal popup would re-show it: only a change goes in
+        if tip != self.tooltip:
+            self.tooltip = tip
 
     def on_leave(self, event: events.Leave) -> None:
         self.tooltip = None

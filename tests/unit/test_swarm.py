@@ -28,6 +28,13 @@ pytestmark = pytest.mark.unit
 OLDER_HOOKS = REGISTERED_EVENTS - {"SubagentStart", "SubagentStop", "TeammateIdle"}
 
 
+def _counts(rollup):
+    """A published rollup without the recent-window keys (ok_recent, recent_hours)."""
+    if rollup is None:
+        return None
+    return {k: v for k, v in rollup.items() if k not in ("ok_recent", "recent_hours")}
+
+
 def _rollup(**counts):
     base = {"total": 0, "running": 0, "yellow": 0, "waiting": 0, "idle": 0, "ok": 0, "failed": 0,
             "workflows": 0, "workflows_running": 0}
@@ -536,15 +543,15 @@ class TestCaptures:
         sc = _capture("01-default-agent-call", [(0.5, 5.5, GREEN), (5.75, 7.0, RED)], 7.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
-        assert _at(samples, 2.25).rollup == _rollup(total=1, running=1)
-        assert _at(samples, 5.5).rollup == _rollup(total=1, ok=1)
+        assert _counts(_at(samples, 2.25).rollup) == _rollup(total=1, running=1)
+        assert _counts(_at(samples, 5.5).rollup) == _rollup(total=1, ok=1)
 
     def test_a_foreground_agent_never_leaves_the_parent_waiting(self, tmp_path):
         sc = _capture("02-foreground-subagent", [(1.0, 5.75, GREEN), (6.0, 7.0, RED)], 7.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
         assert YELLOW not in {s.colour for s in samples}
-        assert _at(samples, 5.75).rollup == _rollup(total=1, ok=1)
+        assert _counts(_at(samples, 5.75).rollup) == _rollup(total=1, ok=1)
 
     def test_a_background_agent_holds_the_parent_yellow_until_it_ends(self, tmp_path):
         """Stop lists the agent: yellow. It ends, the notification turn
@@ -554,32 +561,32 @@ class TestCaptures:
         samples = replay(sc, tmp_path)
         _check(sc, samples)
         assert _at(samples, 8.0).badges == ("subagent",)
-        assert _at(samples, 8.0).rollup == _rollup(total=1, running=1)
-        assert _at(samples, 17.0).rollup == _rollup(total=1, ok=1)
+        assert _counts(_at(samples, 8.0).rollup) == _rollup(total=1, running=1)
+        assert _counts(_at(samples, 17.0).rollup) == _rollup(total=1, ok=1)
 
     def test_a_fork_is_a_background_agent(self, tmp_path):
         sc = _capture("04-fork", [(3.75, 4.75, YELLOW), (6.5, 11.0, RED)], 11.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
-        assert _at(samples, 6.25).rollup == _rollup(total=1, ok=1)
+        assert _counts(_at(samples, 6.25).rollup) == _rollup(total=1, ok=1)
 
     def test_a_workflow_holds_the_parent_yellow_between_its_agents(self, tmp_path):
         sc = _capture("05-workflow-small",
                       [(6.5, 8.75, YELLOW), (9.0, 10.0, GREEN)], 10.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
-        assert _at(samples, 7.0).rollup == _rollup(total=2, running=1, ok=1, workflows=1,
+        assert _counts(_at(samples, 7.0).rollup) == _rollup(total=2, running=1, ok=1, workflows=1,
                                                    workflows_running=1)
-        assert _at(samples, 10.0).rollup == _rollup(total=3, ok=3, workflows=1)
+        assert _counts(_at(samples, 10.0).rollup) == _rollup(total=3, ok=3, workflows=1)
 
     def test_a_slow_workflow_counts_every_agent(self, tmp_path):
         sc = _capture("06-workflow-slow-live-watch",
                       [(7.25, 25.0, YELLOW), (25.5, 26.25, GREEN), (26.75, 30.0, RED)], 30.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
-        assert _at(samples, 10.0).rollup == _rollup(total=3, running=3, workflows=1,
+        assert _counts(_at(samples, 10.0).rollup) == _rollup(total=3, running=3, workflows=1,
                                                     workflows_running=1)
-        assert _at(samples, 26.25).rollup == _rollup(total=4, ok=4, workflows=1)
+        assert _counts(_at(samples, 26.25).rollup) == _rollup(total=4, ok=4, workflows=1)
 
     def test_a_subagent_waiting_on_its_own_shell_is_still_running(self, tmp_path):
         """2.1.301: each subagent backgrounds its sleep and ends its turn.
@@ -591,9 +598,9 @@ class TestCaptures:
                       110.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
-        assert _at(samples, 40.0).rollup == _rollup(total=2, yellow=2)
-        assert _at(samples, 80.0).rollup == _rollup(total=2, yellow=1, ok=1)
-        assert _at(samples, 107.0).rollup == _rollup(total=2, ok=2)
+        assert _counts(_at(samples, 40.0).rollup) == _rollup(total=2, yellow=2)
+        assert _counts(_at(samples, 80.0).rollup) == _rollup(total=2, yellow=1, ok=1)
+        assert _counts(_at(samples, 107.0).rollup) == _rollup(total=2, ok=2)
 
     def test_a_busy_parent_s_subagents_waiting_on_their_shells_are_running(self, tmp_path):
         """2.1.302, through a real overcode launch: each subagent backgrounds
@@ -613,7 +620,7 @@ class TestCaptures:
                 assert sum(live.values()) == 2 and s.rollup["ok"] == 0, (s.t, timeline(samples))
         state = _at(samples, 30.0).swarm_state
         assert {e.get("own_work") for e in state["subagents"].values()} == {True}
-        assert _at(samples, 72.0).rollup == _rollup(total=2, ok=2)
+        assert _counts(_at(samples, 72.0).rollup) == _rollup(total=2, ok=2)
 
     def test_progress_summaries_of_a_long_running_agent_are_not_counted(self, tmp_path):
         """2.1.302: 30 s into each subagent's 60 s foreground command,
@@ -624,16 +631,16 @@ class TestCaptures:
         samples = replay(Scenario(name, steps=steps, expect=[(0.0, 144.0, GREEN)], end=144.0),
                          tmp_path)
         assert {s.rollup["total"] for s in samples if s.rollup} == {1, 2}
-        assert _at(samples, 50.0).rollup == _rollup(total=2, running=2)
-        assert _at(samples, 74.0).rollup == _rollup(total=2, ok=2)
+        assert _counts(_at(samples, 50.0).rollup) == _rollup(total=2, running=2)
+        assert _counts(_at(samples, 74.0).rollup) == _rollup(total=2, ok=2)
 
     def test_a_team_waits_on_working_teammates_not_idle_ones(self, tmp_path):
         sc = _capture("08-team-in-process",
                       [(91.25, 92.25, YELLOW), (98.75, 150.0, RED)], 150.0)
         samples = replay(sc, tmp_path)
         _check(sc, samples)
-        assert _at(samples, 95.0).rollup == _rollup(total=2, idle=2)
-        assert _at(samples, 101.0).rollup == _rollup(total=2, ok=2)
+        assert _counts(_at(samples, 95.0).rollup) == _rollup(total=2, idle=2)
+        assert _counts(_at(samples, 101.0).rollup) == _rollup(total=2, ok=2)
 
     @pytest.mark.parametrize("name", ["03-background-subagent-with-SendMessage",
                                       "06-workflow-slow-live-watch", "08-team-in-process",
@@ -688,7 +695,7 @@ class TestAnOlderLaunch:
         sc = Scenario(name, steps=steps, expect=[(0.0, 7.0, GREEN)], registered=OLDER_HOOKS)
         samples = replay(sc, tmp_path)
         assert first_call <= _first_running(samples) <= first_call + 0.25 < returned
-        assert _at(samples, 5.75).rollup == _rollup(total=1, ok=1)
+        assert _counts(_at(samples, 5.75).rollup) == _rollup(total=1, ok=1)
 
 
 # ---------------------------------------------------------------------------
@@ -764,9 +771,9 @@ class TestSyntheticTimelines:
 
     def test_the_swarm_rolls_up(self, tmp_path):
         samples = replay(BUSY_SWARM, tmp_path)
-        assert _at(samples, 45.0).rollup == _rollup(total=4, running=3, ok=1)
-        assert _at(samples, 52.0).rollup == _rollup(total=4, running=2, waiting=1, ok=1)
-        assert _at(samples, 130.0).rollup == _rollup(total=4, ok=4)
+        assert _counts(_at(samples, 45.0).rollup) == _rollup(total=4, running=3, ok=1)
+        assert _counts(_at(samples, 52.0).rollup) == _rollup(total=4, running=2, waiting=1, ok=1)
+        assert _counts(_at(samples, 130.0).rollup) == _rollup(total=4, ok=4)
 
     def test_subagents_never_ring_the_bell(self, tmp_path):
         """The swarm's comings and goings ring nothing; the only bell is the
@@ -805,10 +812,10 @@ class TestPublished:
         session = SimpleNamespace(id="pid", name="p", tmux_window="p",
                                   parent_session_id=None, backend="claude-code")
         detector.detect_status(session, now=10.0)
-        assert detector.get_swarm_rollup("p") == _rollup(total=1, running=1)
+        assert _counts(detector.get_swarm_rollup("p")) == _rollup(total=1, running=1)
         assert detector.get_status_detail("p").color == "color_yellow"
         detector.detect_status(session, now=9000.0)
-        assert detector.get_swarm_rollup("p") == _rollup(total=1, running=1)
+        assert _counts(detector.get_swarm_rollup("p")) == _rollup(total=1, running=1)
 
     def test_a_quiet_swarm_publishes_no_delta(self, tmp_path, monkeypatch):
         """Ticks with nothing new: the published rollup is the same value,
@@ -845,7 +852,7 @@ class TestPublished:
             run_ticks(daemon, detector, clock, 6)
             after = daemon.state.to_engine_snapshot(clock.now.timestamp())
             assert diff(before, after).empty
-            assert after.agents[sessions[0].id]["swarm_rollup"] == _rollup(total=2, running=2)
+            assert _counts(after.agents[sessions[0].id]["swarm_rollup"]) == _rollup(total=2, running=2)
             assert after.agents[sessions[1].id]["swarm_rollup"] is None
             # One agent finishes: one delta, of that field alone
             hook[sessions[0].name] = _state(*_sub(subs, sw, "SubagentStop", "a1", 3.0))

@@ -130,10 +130,14 @@ def hover_subagents(ctx: ColumnContext):
         return _emoji_legend("SubAgents", [(ctx.e("▶").rstrip(), f"{live} running")],
                              "Seen from its transcript files: no hook counts for this agent")
     total = rollup.get("total") or 0
-    rows = [(ctx.e("👥"), f"{total} agent{'' if total == 1 else 's'} delegated in this session "
-                          "(subagents, forks, workflow agents, teammates)")]
+    rows = [(ctx.e("👥"), f"{total} delegated this session")]
     for key, _ in SUBAGENT_SEGMENTS:
-        if rollup.get(key):
+        if key == "ok" and "ok_all" in rollup:
+            if rollup["ok"] or rollup["ok_all"]:
+                rows.append((count_glyph(key, ctx.emoji_free).rstrip(),
+                             f"{rollup['ok']} finished in the last "
+                             f"{rollup.get('recent_hours') or 0:g}h ({rollup['ok_all']} in all)"))
+        elif rollup.get(key):
             rows.append((count_glyph(key, ctx.emoji_free).rstrip(),
                          f"{rollup[key]} {_SUBAGENT_WORDS[key]}"))
     runs = rollup.get("workflows") or 0

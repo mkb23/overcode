@@ -178,7 +178,7 @@ class TestVisibilityDialog:
             await pilot.pause()
             assert get_observability_config()["finished_row_seconds"] == 10.0
 
-    async def test_an_odd_saved_value_shows_everything(self, make_tui):
+    async def test_an_odd_saved_value_shows_the_default(self, make_tui):
         prefs = TUIPreferences()
         prefs.swarm_finished = "sometimes"
         prefs.save("test")
@@ -186,7 +186,7 @@ class TestVisibilityDialog:
         app = make_tui(three_agents(), engine=engine, size=(200, 40))
         async with app.run_test() as pilot:
             await _start(pilot)
-            assert app.swarm_finished == "show"
+            assert app.swarm_finished == "recent"
 
 
 @pytest.mark.asyncio

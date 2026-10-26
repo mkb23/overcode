@@ -765,6 +765,7 @@ def get_session_archive_config() -> dict:
 
 
 FINISHED_ROW_SECONDS_DEFAULT = 30.0
+RECENT_FINISHED_HOURS_DEFAULT = 6.0
 
 
 def get_observability_config() -> dict:
@@ -783,11 +784,14 @@ def get_observability_config() -> dict:
     Config format in ~/.overcode/config.yaml:
         observability:
           finished_row_seconds: 30   # 0 folds a finished agent at once
+          recent_finished_hours: 6   # "recent" (visibility dialog): ✅ counts
+                                     # only what finished this long ago or less
           background_sessions: true  # false: no 🌙 rows
 
     Returns:
         Dict with ``finished_row_seconds`` (float, never negative; a
         missing or invalid entry falls back to 30),
+        ``recent_finished_hours`` (float, never negative, default 6)
         and ``background_sessions`` (bool, default True). An old
         ``done_rows`` entry (0.6.1 betas' done line) is ignored.
     """
@@ -799,6 +803,9 @@ def get_observability_config() -> dict:
         "finished_row_seconds": _non_negative(
             cfg.get("finished_row_seconds", FINISHED_ROW_SECONDS_DEFAULT),
             FINISHED_ROW_SECONDS_DEFAULT),
+        "recent_finished_hours": _non_negative(
+            cfg.get("recent_finished_hours", RECENT_FINISHED_HOURS_DEFAULT),
+            RECENT_FINISHED_HOURS_DEFAULT),
         "background_sessions": background if isinstance(background, bool) else True,
     }
 

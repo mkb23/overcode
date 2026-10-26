@@ -6,6 +6,14 @@ Screen {
     height: 100%;
 }
 
+/* Hover popups: compact, so a tall one still fits above or below the
+   pointer in the split's short top pane instead of landing on it (which
+   clears it at once) */
+Tooltip {
+    padding: 0 1;
+    max-width: 48;
+}
+
 Header {
     dock: top;
     height: 1;

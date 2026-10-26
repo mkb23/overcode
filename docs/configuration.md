@@ -138,6 +138,7 @@ monitor_daemon:
 # See "Delegated Work" below
 observability:
   finished_row_seconds: 30        # a finished agent's own row stays this long
+  recent_finished_hours: 6        # "recent": ✅ counts only the last 6 hours
 
 # Sister instances for cross-machine monitoring
 # See docs/advanced-features.md for setup guide
@@ -761,12 +762,17 @@ and the parent's own rules decide.
 ```yaml
 observability:
   finished_row_seconds: 30   # 0 folds a finished agent into the counts at once
+  recent_finished_hours: 6   # what "recent" (the default) counts as ✅
 ```
 
 `finished_row_seconds` is how long a finished agent keeps its own row
 under its parent; after that it is only a ✅/❌ count in the parent's
 SubAgents cell. The TUI's Agent visibility dialog (`d`) sets it too, and
-can hide finished agents altogether, or all but the failed ones.
+chooses what the counts cover: **recent** (the default) counts ✅ only for
+agents that finished within `recent_finished_hours` and ❌ for every
+failure; **all** counts every one since the agent started or last
+`/clear`ed; it can also show only the failed ones, or hide finished
+agents altogether.
 
 ## Children Presets
 

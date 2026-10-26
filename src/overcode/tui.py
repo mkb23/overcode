@@ -605,6 +605,11 @@ class SupervisorTUI(
         label = next((lbl for lbl, k in TOGGLE_KEY_CHOICES if k == key), key)
         return f"  ↓ TERMINAL ACTIVE — {label} to return ↓  "
 
+    def get_default_screen(self):
+        """Hover popups hold still while the mouse rests on a cell (tui_tooltip)."""
+        from .tui_tooltip import SteadyTooltipScreen
+        return SteadyTooltipScreen(id="_default")
+
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)

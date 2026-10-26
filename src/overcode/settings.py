@@ -745,8 +745,9 @@ class TUIPreferences:
     swarm_expanded: dict = field(default_factory=dict)
     swarm_opened: dict = field(default_factory=dict)
     # What finished delegated agents show as: "show" (a row for a while and
-    # ✅/❌ counts), "failed" (only the ❌ ones) or "hide" (visibility dialog)
-    swarm_finished: str = "show"
+    # ✅/❌ counts), "recent" (the same, ✅ only for the last few hours),
+    # "failed" (only the ❌ ones) or "hide" (visibility dialog)
+    swarm_finished: str = "recent"
     # The agent last highlighted by hand (its id): the next start highlights
     # it again, and the split's bottom pane opens on its window
     last_focused_agent: str = ""

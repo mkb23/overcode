@@ -1175,7 +1175,9 @@ class HookStatusDetector:
 
         self._last_hook_at[session.name] = float(hook_state["timestamp"])
         hook_state = swarm.settle_own_work(hook_state, self.shell_ended)
-        rollup = swarm.rollup(hook_state, now)
+        from .config import get_observability_config
+        recent = get_observability_config()["recent_finished_hours"] * 3600
+        rollup = swarm.rollup(hook_state, now, recent_seconds=recent)
         if rollup is not None:
             self._swarm_rollups[session.name] = rollup
             self._swarm_states[session.name] = hook_state

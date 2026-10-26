@@ -82,7 +82,7 @@ class SwarmMixin:
         # The standing rule: which parents open by themselves (SWARM_DETAIL_MODES)
         self.swarm_detail: str = "off"
         # What finished members show as (swarm_view.FINISHED_MODES)
-        self.swarm_finished: str = swarm_view.FINISHED_SHOW
+        self.swarm_finished: str = swarm_view.FINISHED_RECENT
         # Per-parent overrides of the rule: True expanded, False collapsed
         self.swarm_manual: Dict[str, bool] = {}
         # Parents whose delegated work shows as rows (the rule plus the
@@ -107,9 +107,9 @@ class SwarmMixin:
         prefs = self._prefs
         mode = getattr(prefs, "swarm_detail", "off")
         self.swarm_detail = mode if mode in SWARM_DETAIL_MODES else "off"
-        finished = getattr(prefs, "swarm_finished", swarm_view.FINISHED_SHOW)
+        finished = getattr(prefs, "swarm_finished", swarm_view.FINISHED_RECENT)
         self.swarm_finished = finished if finished in swarm_view.FINISHED_MODES \
-            else swarm_view.FINISHED_SHOW
+            else swarm_view.FINISHED_RECENT
         manual = getattr(prefs, "swarm_expanded", None)
         self.swarm_manual = {k: v for k, v in manual.items()
                              if isinstance(k, str) and isinstance(v, bool)} \
