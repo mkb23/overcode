@@ -218,7 +218,9 @@ def shell_procs(argv_by_pid: Mapping[int, str], children: Mapping[int, List[int]
         polls = any(re.match(r"(?:/bin/|/usr/bin/)?sleep\s", argv_by_pid.get(c, ""))
                     for c in children.get(pid, ()))
         found.append(ShellProc(pid, command, (pid, *under), polls))
-    return found
+    # A pipeline forks a subshell with the same argv: one shell, not two
+    nested = {p for shell in found for p in shell.pids[1:]}
+    return [shell for shell in found if shell.pid not in nested]
 
 
 # --- the survey ----------------------------------------------------------

@@ -180,6 +180,12 @@ class TestShellProcs:
         assert procs[3].polls and not procs[5].polls
         assert procs[5].pids == (5, 6)
 
+    def test_a_pipelines_subshell_is_the_same_shell(self):
+        cmd = "pytest | tail -3"
+        argv = {3: _wrapper(cmd), 4: "python -m pytest", 5: _wrapper(cmd), 6: "tail -3"}
+        procs = shell_procs(argv, {3: [4, 5], 5: [6]}, argv.keys())
+        assert [(p.pid, p.command) for p in procs] == [(3, cmd)]
+
 
 class TestHookSide:
     def _stop(self, sw, tasks, now):
