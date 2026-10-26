@@ -71,14 +71,16 @@ class JobLauncher:
         # Build wrapper script that runs the command and reports completion.
         # The exit code is written to a file as a fallback — if the _complete
         # call doesn't run, the process monitor can still read it.
+        # Every interpolated value is quoted: a ' in the command, name or
+        # directory used to break the whole line, so the job never ran (#515)
         escaped_cmd = command.replace("'", "'\\''")
         escaped_dir = shlex.quote(directory)
         exit_file = self._exit_code_path(job.id)
         wrapper = (
-            f"echo '╭─── Job: {job.name}' && "
-            f"echo '│ Command: {command}' && "
-            f"echo '│ Directory: {directory}' && "
-            f"echo '│ Started: {job.start_time}' && "
+            f"echo {shlex.quote('╭─── Job: ' + job.name)} && "
+            f"echo {shlex.quote('│ Command: ' + command)} && "
+            f"echo {shlex.quote('│ Directory: ' + directory)} && "
+            f"echo {shlex.quote('│ Started: ' + str(job.start_time))} && "
             f"echo '╰───────────────────────────────────' && "
             f"echo '' && "
             f"cd {escaped_dir} && "

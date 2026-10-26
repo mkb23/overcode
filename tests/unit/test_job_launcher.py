@@ -83,6 +83,31 @@ class TestJobLauncherLaunch:
         assert job.agent_session_id == "agent-123"
         assert job.agent_name == "my-agent"
 
+    def test_wrapper_survives_quotes_in_command_name_and_directory(self, tmp_path):
+        """A ' anywhere used to break the wrapper line: the job never ran (#515)."""
+        import subprocess
+        mock_tmux = MagicMock()
+        mock_tmux.create_window.return_value = "w"
+        manager = JobManager(state_dir=tmp_path)
+        launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
+        directory = tmp_path / "it's here"
+        directory.mkdir()
+        command = "echo 'done'; echo \"it's $((1+1))\"; touch ran; true || rm -rf x"
+
+        launcher.launch(command=command, name="o'clock", directory=str(directory))
+
+        wrapper = mock_tmux.send_keys.call_args[0][1]
+        # Stub what the wrapper calls after the command; run it for real
+        wrapper = wrapper.replace("exec bash", "true")
+        out = subprocess.run(["bash", "-c", "overcode() { :; }; " + wrapper],
+                             capture_output=True, text=True, timeout=10)
+        assert out.returncode == 0, out.stderr
+        assert (directory / "ran").exists()
+        assert f"│ Command: {command}" in out.stdout
+        assert "╭─── Job: o'clock" in out.stdout
+        assert f"│ Directory: {directory}" in out.stdout
+        assert "done\nit's 2\n" in out.stdout
+
 
 class TestJobLauncherListJobs:
     """Test job listing with killed detection."""
