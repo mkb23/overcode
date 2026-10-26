@@ -41,6 +41,16 @@ OPENCODE2_PREVIEW_RE = re.compile(r"v0\.0\.0-dev-(\d+)")
 # of the model's catalog entirely. None until a build proves one.
 _OPENCODE2_BYPASS_PERMISSION = None
 
+# For the same reason v2 agents get no pre-allowed overcode commands (#531;
+# v1 gets them through OPENCODE_PERMISSION, `opencode.OPENCODE_OVERCODE_BASH_KEY`).
+# With no env layer the rules would be inert, and v2 statements are
+# {action, resource, effect}, not v1's per-tool map, so a v1 blob is the
+# wrong shape for any layer a later build adds. A v2 child in a project
+# whose shell policy asks still asks before `overcode report`. Set this to
+# the v2 rules (built from `cli.perms.overcode_bash_patterns`) once a build
+# reads an env or launch-time policy.
+_OPENCODE2_OVERCODE_PERMISSION = None
+
 
 class Opencode2Backend(AgentBackendBase):
     """opencode2 CLI adapter (verified against v0.0.0-dev-19272).

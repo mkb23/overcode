@@ -105,6 +105,24 @@ def test_bypass_env_unset_no_override_verified():
     assert "OPENCODE_PERMISSION" not in env
 
 
+@pytest.mark.parametrize("spec_kwargs", [
+    {},
+    {"permissiveness_mode": "bypass"},
+    {"hidden_skills": ["noisy"]},
+    {"permissiveness_mode": "bypass", "hidden_skills": ["noisy"]},
+])
+def test_no_overcode_allow_rules_until_v2_reads_them(spec_kwargs):
+    # #531: v1 pre-allows overcode's commands through OPENCODE_PERMISSION.
+    # v2 has no env permission layer, and its statements are a different
+    # shape, so a v1 blob would be inert at best: nothing is set.
+    from overcode.backends import opencode2
+    from overcode.backends.base import LaunchSpec
+
+    assert opencode2._OPENCODE2_OVERCODE_PERMISSION is None
+    env = Opencode2Backend().env_prefix(LaunchSpec(**spec_kwargs))
+    assert "OPENCODE_PERMISSION" not in env
+
+
 def test_env_names_the_hook_command():
     # The server plugin runs `<this> hook-handler --prompt-context`.
     from unittest.mock import patch

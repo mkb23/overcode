@@ -25,6 +25,20 @@ OVERCODE_PUNCHY_PERMS = [
 ]
 
 
+def overcode_bash_patterns(include_punchy: bool = False) -> list[str]:
+    """The pre-allowed overcode commands as bare shell patterns.
+
+    ``"Bash(overcode report *)"`` becomes ``"overcode report *"``: the form
+    backends without Claude's ``Bash(...)`` grammar take (opencode's
+    ``permission.bash`` patterns). Same list, so a command added above
+    reaches every backend.
+    """
+    perms = list(OVERCODE_SAFE_PERMS)
+    if include_punchy:
+        perms.extend(OVERCODE_PUNCHY_PERMS)
+    return [p[len("Bash("):-1] for p in perms]
+
+
 DEPRECATION_NOTE = (
     "[yellow]Note:[/yellow] Manual permission installation is deprecated.\n"
     "  Permissions are now injected automatically when agents are launched via 'overcode launch'.\n"
