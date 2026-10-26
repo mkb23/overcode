@@ -33,6 +33,7 @@ from .. import hook_dialects
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     AgentBackendBase,
+    effort_applies,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -511,6 +512,12 @@ class GrokBackend(AgentBackendBase):
             args.append("--fork-session")
         return args
 
+    # `--reasoning-effort <level>` (alias --effort; grok 1.0.34 `grok --help`).
+    # Its docs name these canonical levels and say a model also takes its
+    # own menu ids (e.g. "deep"), so the list is not exhaustive.
+    effort_levels = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+    effort_levels_exhaustive = False
+
     def build_command(self, spec: LaunchSpec) -> List[str]:
         """Construct the grok CLI argument list.
 
@@ -523,6 +530,7 @@ class GrokBackend(AgentBackendBase):
                                  id is prescribed too (launcher.py mints one
                                  for any SESSION_ID_PRESCRIPTION backend)
           model              -> ``-m <id>`` (bare id, e.g. ``grok-4.6``)
+          effort             -> ``--reasoning-effort <level>``
           persona            -> ``--agent <name>``
           bypass             -> ``--permission-mode bypassPermissions``
           permissive         -> ``--permission-mode auto`` (Phase 0 correction
@@ -567,6 +575,9 @@ class GrokBackend(AgentBackendBase):
 
         if spec.model:
             cmd.extend(["-m", spec.model])
+
+        if effort_applies(self, spec.effort):
+            cmd.extend(["--reasoning-effort", spec.effort])
 
         if spec.agent:
             cmd.extend(["--agent", spec.agent])

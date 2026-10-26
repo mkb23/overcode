@@ -228,7 +228,10 @@ class Session:
     # transcript states a model after it: what the transcript said before
     # then (its model and effort) no longer applies (#539).
     model_chosen_at: Optional[float] = None
-    effort: Optional[str] = None  # Reasoning effort, detected from the backend's store (#497)
+    # Reasoning effort: chosen at launch (`--effort`, #537), then the one the
+    # backend's store shows in force (#497). Like `model`, every relaunch
+    # passes it back to the CLI.
+    effort: Optional[str] = None
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
     # A bedrock launch's routing (``pricing.bedrock_routing``): "global" is
     # billed at list price, any other profile at the model's regional premium
@@ -864,6 +867,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                       model: Optional[str] = None,
                       provider: str = "web",
                       backend: str = "claude-code",
+                      effort: Optional[str] = None,
                       session_id: Optional[str] = None,
                       wrapper: Optional[str] = None,
                       skill_profile: Optional[str] = None,
@@ -914,6 +918,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             agent_teams=agent_teams,
             agent_persona=agent_persona,
             model=model,
+            effort=effort,
             provider=provider,
             backend=backend,
             wrapper=wrapper,

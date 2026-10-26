@@ -103,6 +103,10 @@ class LaunchSpec:
 
     # Agent configuration
     model: Optional[str] = None
+    # Reasoning effort (#537), in the backend's own vocabulary ("high",
+    # "xhigh", an opencode variant, ...). Each backend maps it onto its own
+    # flag; see ``AgentBackendBase.effort_levels``.
+    effort: Optional[str] = None
     agent: Optional[str] = None
     allowed_tools: Optional[str] = None
     extra_args: List[str] = field(default_factory=list)
@@ -250,6 +254,21 @@ class AgentBackendBase:
     # import cost); hook_dialects.for_backend must agree with it.
     hook_dialect: hook_dialects.HookDialect = hook_dialects.CLAUDE
 
+    # Reasoning effort at launch (#537). The levels the CLI takes at launch;
+    # empty when it has no way to set effort per launch (a warning says so,
+    # see ``check_effort``). ``effort_levels_exhaustive`` False means the CLI
+    # also takes other values (opencode variants are per model, grok takes
+    # per-model menu ids): an unlisted value is passed with a warning rather
+    # than refused.
+    effort_levels: Tuple[str, ...] = ()
+    effort_levels_exhaustive: bool = True
+    # Why a backend with no ``effort_levels`` cannot set it, for the warning
+    effort_unsupported_reason: str = ""
+
+    def effort_warnings(self, effort: str, model: Optional[str]) -> List[str]:
+        """Backend-specific reasons a valid ``effort`` may still not apply."""
+        return []
+
     def normalize_hook_payload(self, data: dict) -> Optional[dict]:
         """A hook payload in Claude Code's vocabulary, or None to drop it."""
         return self.hook_dialect.normalize(data)
@@ -312,6 +331,51 @@ class AgentBackendBase:
         called when the fleet actually has an agent on this backend.
         """
         return []
+
+
+def effort_applies(backend, effort: Optional[str]) -> bool:
+    """Should ``build_command`` pass ``effort`` to the CLI?
+
+    A value the backend lists, or any value for a backend whose list is not
+    exhaustive. Anything else (an effort read back from a transcript that
+    the launch flag does not take) is left out, so a restart never fails on it.
+    """
+    levels = getattr(backend, "effort_levels", ())
+    if not effort or not levels:
+        return False
+    return effort in levels or not getattr(backend, "effort_levels_exhaustive", True)
+
+
+def check_effort(backend, effort: Optional[str],
+                 model: Optional[str] = None) -> Tuple[Optional[str], List[str]]:
+    """Validate a launch-time ``effort`` for ``backend`` (#537).
+
+    Returns ``(effort, warnings)``: the value normalized (trimmed, lower
+    case), and what to tell the person (the backend cannot set effort, the
+    value is not one it is known to take, it needs a model). Raises
+    ``ValueError`` with the accepted levels for a value the backend is known
+    to refuse.
+    """
+    if effort is None:
+        return None, []
+    value = effort.strip().lower()
+    if not value:
+        return None, []
+    name = getattr(backend, "name", "?")
+    levels = getattr(backend, "effort_levels", ())
+    if not levels:
+        reason = getattr(backend, "effort_unsupported_reason", "") or \
+            "it has no way to set reasoning effort at launch"
+        return value, [f"--effort {value} is ignored on backend '{name}': {reason}"]
+    if value not in levels:
+        if getattr(backend, "effort_levels_exhaustive", True):
+            raise ValueError(f"unknown effort '{value}' for backend '{name}'. "
+                             f"Use one of: {', '.join(levels)}")
+        warnings = [f"effort '{value}' is not one of the levels known for backend "
+                    f"'{name}' ({', '.join(levels)}); passing it as given"]
+    else:
+        warnings = []
+    return value, warnings + list(backend.effort_warnings(value, model))
 
 
 def supports(backend: AgentBackend, capability: BackendCapability) -> bool:

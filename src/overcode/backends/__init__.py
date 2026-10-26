@@ -13,6 +13,8 @@ from .base import (
     DialogRule,
     KeyPress,
     LaunchSpec,
+    check_effort,
+    effort_applies,
     supports,
 )
 from .claude_code import ClaudeCodeBackend
@@ -170,6 +172,8 @@ __all__ = [
     "KeyPress",
     "LaunchSpec",
     "UnknownBackendError",
+    "check_effort",
+    "effort_applies",
     "capabilities_from_names",
     "capability_names",
     "get_backend",

@@ -194,6 +194,8 @@ class ShellBackend(AgentBackendBase):
     def resume_args(self, session_id: str, fork: bool) -> List[str]:
         return []
 
+    effort_unsupported_reason = "a plain shell has no reasoning effort"
+
     def build_command(self, spec: LaunchSpec) -> List[str]:
         """``exec <shell> [extra args]`` — see the module docstring.
 
