@@ -51,6 +51,13 @@ CONFIG_TEMPLATE = """\
 # send:
 #   prefer_claude_messaging: false
 
+# Transcript archive (Transcript Archive in docs/configuration.md): keep a
+# byte-exact copy of Claude Code's transcripts under ~/.overcode/transcripts.
+# Off by default; `overcode archive` still reads what is already kept.
+# archive:
+#   transcripts:
+#     enabled: false
+
 # Auto-naming (Agent names in docs/configuration.md; "Auto-naming settings…"
 # in the TUI palette sets the switches and timings)
 # naming:
@@ -185,6 +192,10 @@ def _config_show():
     if "children" in config:
         from ..config import get_budget_reclaim_mode
         rprint(f"  children.budget_reclaim: {get_budget_reclaim_mode()}")
+
+    if "archive" in config:
+        from ..config import get_transcript_archive_config
+        rprint(f"  archive.transcripts.enabled: {get_transcript_archive_config()['enabled']}")
 
     if "send" in config:
         from ..config import get_prefer_claude_messaging

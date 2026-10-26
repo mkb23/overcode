@@ -589,13 +589,22 @@ class TestImport:
 
 # ── the hooks ────────────────────────────────────────────────────────────
 
+def _archive_on(oc_dir: Path, on: bool = True) -> None:
+    """archive.transcripts.enabled in the config.yaml under ``oc_dir`` (off by default)."""
+    from overcode import config
+    oc_dir.mkdir(parents=True, exist_ok=True)
+    (oc_dir / "config.yaml").write_text(f"archive:\n  transcripts:\n    enabled: {str(on).lower()}\n")
+    config._clear_config_cache()
+
+
 class TestHooks:
-    def _hook_env(self, monkeypatch, tmp_path):
+    def _hook_env(self, monkeypatch, tmp_path, on=True):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "shirka-ui")
         monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
         monkeypatch.setenv("OVERCODE_SESSION_ID", "agent-id-1")
         monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "oc" / "sessions"))
+        _archive_on(tmp_path / "oc", on)
 
     def _run(self, monkeypatch, payload):
         from overcode import hook_handler
@@ -618,6 +627,13 @@ class TestHooks:
         assert sorted(p.name for p in root.iterdir()) == ["queue.jsonl"]  # nothing copied
         assert stat.S_IMODE(os.stat(root).st_mode) == 0o700
 
+    @pytest.mark.parametrize("event", ["SessionEnd", "PreCompact"])
+    def test_off_the_event_queues_nothing(self, monkeypatch, tmp_path, event):
+        self._hook_env(monkeypatch, tmp_path, on=False)
+        self._run(monkeypatch, {"hook_event_name": event, "session_id": SID,
+                                "transcript_path": str(tmp_path / f"{SID}.jsonl")})
+        assert not (tmp_path / "oc" / "transcripts").exists()
+
     def test_precompact_is_registered_for_claude(self):
         from overcode.backends.claude_code import _build_launch_settings
         from overcode.hook_handler import OVERCODE_HOOKS
@@ -627,6 +643,7 @@ class TestHooks:
 
     def test_a_session_end_hook_process_is_fast(self, tmp_path):
         """The whole `overcode hook-handler` process for a SessionEnd, under 200 ms."""
+        _archive_on(tmp_path / "oc")
         env = dict(os.environ, OVERCODE_SESSION_NAME="shirka-ui", OVERCODE_TMUX_SESSION="agents",
                    OVERCODE_SESSION_ID="agent-id-1", OVERCODE_DIR=str(tmp_path / "oc"),
                    OVERCODE_STATE_DIR=str(tmp_path / "oc" / "sessions"),
@@ -648,6 +665,7 @@ class TestHooks:
     def test_a_session_end_hook_is_fast_with_a_long_queue_waiting(self, tmp_path):
         """The hook appends one line: a queue the daemon has not drained (it
         is down) does not slow it, and the transcript is never opened."""
+        _archive_on(tmp_path / "oc")
         root = tmp_path / "oc" / "transcripts"
         root.mkdir(parents=True, mode=0o700)
         line = json.dumps({"t": 1, "event": "SessionEnd", "path": "/x/" + "y" * 200}) + "\n"
@@ -919,10 +937,13 @@ class TestConfig:
         from overcode import config
 
         monkeypatch.setattr(config, "_cached_config", lambda: {})
-        assert config.get_transcript_archive_config() == {"sweep": True, "max_bytes": 0}
+        assert config.get_transcript_archive_config() == {
+            "enabled": False, "sweep": True, "max_bytes": 0}
         monkeypatch.setattr(config, "_cached_config", lambda: {
-            "archive": {"retention_months": 3, "transcripts": {"sweep": False, "max_bytes": "2GB"}}})
-        assert config.get_transcript_archive_config() == {"sweep": False, "max_bytes": 2 * 1024 ** 3}
+            "archive": {"retention_months": 3, "transcripts": {
+                "enabled": True, "sweep": False, "max_bytes": "2GB"}}})
+        assert config.get_transcript_archive_config() == {
+            "enabled": True, "sweep": False, "max_bytes": 2 * 1024 ** 3}
         assert config.get_archive_config() == {"retention_months": 3}
 
     def test_over_the_cap_nothing_new_is_taken(self, env):
@@ -942,6 +963,62 @@ class _Log:
 
     def warn(self, message):
         self.lines.append(("warn", message))
+
+
+class TestSwitch:
+    """archive.transcripts.enabled: off (the default) is off everywhere but by hand."""
+
+    @pytest.fixture(autouse=True)
+    def _config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / "oc"))
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "oc" / "sessions"))
+        from overcode import config
+        config._clear_config_cache()
+        yield
+        config._clear_config_cache()
+
+    def test_the_scheduler_runs_only_when_enabled_and_sweeping(self, tmp_path):
+        from overcode import config
+        assert ArchiveScheduler.enabled() is False
+        _archive_on(tmp_path / "oc")
+        assert ArchiveScheduler.enabled() is True
+        config.save_transcript_archive_enabled(False)
+        config._clear_config_cache()
+        assert ArchiveScheduler.enabled() is False
+
+    def test_save_keeps_the_rest_of_archive(self, tmp_path):
+        from overcode import config
+        oc = tmp_path / "oc"
+        oc.mkdir(parents=True)
+        (oc / "config.yaml").write_text(
+            "archive:\n  retention_months: 3\n  transcripts:\n    max_bytes: 5GB\n")
+        config._clear_config_cache()
+        config.save_transcript_archive_enabled(True)
+        config._clear_config_cache()
+        cfg = config.get_transcript_archive_config()
+        assert cfg["enabled"] and cfg["max_bytes"] == 5 * 1024 ** 3
+        assert config.get_archive_config() == {"retention_months": 3}
+
+    def test_a_manual_sweep_says_it_is_off_and_still_sweeps(self, tmp_path):
+        from typer.testing import CliRunner
+        from overcode.cli import app
+        result = CliRunner().invoke(app, ["archive", "--root", str(tmp_path / "t"), "sweep"])
+        assert "archive.transcripts.enabled is off" in result.output
+        assert "Sweep" in result.output
+
+    def test_the_palette_toggle(self, tmp_path):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from overcode import config
+        from overcode.command_palette import COMMANDS
+        from overcode.tui_actions.daemon import DaemonActionsMixin
+        cmd = next(c for c in COMMANDS if c.action == "toggle_transcript_archive")
+        assert cmd.category == "Settings" and cmd.state(SimpleNamespace()).current == 0
+        app = MagicMock()
+        DaemonActionsMixin.action_toggle_transcript_archive(app)
+        config._clear_config_cache()
+        assert config.get_transcript_archive_config()["enabled"] is True
+        assert cmd.state(SimpleNamespace()).current == 1
 
 
 class TestScheduler:

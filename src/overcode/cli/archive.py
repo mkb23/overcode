@@ -97,6 +97,10 @@ def archive_status(
         print(json.dumps(status))
         return
     rprint(f"[bold]Transcript archive[/bold] {status['root']}")
+    from ..config import get_transcript_archive_config
+    if not get_transcript_archive_config()["enabled"]:
+        rprint("  [yellow]Off (archive.transcripts.enabled): nothing new is captured "
+               "on its own; what is kept stays readable[/yellow]")
     rprint(f"  {status['sessions']} sessions, {status['files']} files "
            f"({status['manifest_rows']} manifest rows)")
     rprint(f"  {_size(status['bytes'])} of transcripts in {_size(status['zst_bytes'])}")
@@ -127,9 +131,15 @@ def archive_sweep(
 ):
     """Archive every transcript that changed since the last sweep, in the foreground.
 
-    The monitor daemon does this hourly (archive.transcripts.sweep), and
-    drains what the SessionEnd / PreCompact hooks queued within a minute.
+    With archive.transcripts.enabled on, the monitor daemon does this
+    hourly (archive.transcripts.sweep), and drains what the SessionEnd /
+    PreCompact hooks queued within a minute. Off (the default), it runs
+    only when you run it.
     """
+    from ..config import get_transcript_archive_config
+    if not get_transcript_archive_config()["enabled"]:
+        rprint("[yellow]archive.transcripts.enabled is off:[/yellow] sweeping once now; "
+               "nothing is archived on its own until it is on", file=sys.stderr)
     archive = _archive()
 
     def work():

@@ -1526,7 +1526,8 @@ class ArchiveScheduler:
     def enabled() -> bool:
         from .config import get_transcript_archive_config
 
-        return get_transcript_archive_config()["sweep"]
+        cfg = get_transcript_archive_config()
+        return cfg["enabled"] and cfg["sweep"]
 
     def tick(self) -> None:
         try:

@@ -1339,7 +1339,9 @@ def handle_hook_event(backend: str | None = None) -> None:
     if event in transcript_queue.CAPTURE_EVENTS:
         # The transcript archive (S001): one appended line naming the
         # transcript, nothing copied here (SessionEnd hooks share 1.5 s)
-        transcript_queue.enqueue(data)
+        from .config import get_transcript_archive_config
+        if get_transcript_archive_config()["enabled"]:
+            transcript_queue.enqueue(data)
         if event == "PreCompact":
             append_hook_event(event, tmux_session, session_name)
             return

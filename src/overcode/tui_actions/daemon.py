@@ -285,6 +285,21 @@ class DaemonActionsMixin:
             message = "overcode send between Claude Code agents goes through again"
         self.notify(message, severity="information")
 
+    def action_toggle_transcript_archive(self) -> None:
+        """archive.transcripts.enabled on <-> off in config.yaml (the daemon and hooks read it)."""
+        from ..config import get_transcript_archive_config, save_transcript_archive_enabled
+        on = not get_transcript_archive_config()["enabled"]
+        try:
+            save_transcript_archive_enabled(on)
+        except Exception as e:
+            self.notify(f"Transcript archive not changed: {e}", severity="error")
+            return
+        if on:
+            message = "Transcript archive on: Claude transcripts are copied to ~/.overcode/transcripts"
+        else:
+            message = "Transcript archive off: nothing new is captured; what is kept stays readable"
+        self.notify(message, severity="information")
+
     def action_toggle_auto_naming(self) -> None:
         """Turn auto-naming on or off (naming.enabled in config.yaml; the daemon reads it each tick)."""
         from ..config import describe_auto_naming, get_naming_config, save_naming_enabled

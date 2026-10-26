@@ -936,22 +936,39 @@ def get_transcript_archive_config() -> dict:
     Config format in ~/.overcode/config.yaml:
         archive:
           transcripts:
+            enabled: false        # off (default): nothing is captured on its own;
+                                  # `overcode archive` still reads what is kept
             sweep: true           # the daemon's hourly sweep and hook-queue drain
             max_bytes: 0          # 0 (default) no cap; e.g. 5GB warns at 80%
                                   # and stops taking new copies past it
                                   # (nothing is ever deleted)
 
     Returns:
-        Dict with ``sweep`` (bool) and ``max_bytes`` (int, 0 = no cap).
+        Dict with ``enabled`` (bool), ``sweep`` (bool; only with
+        ``enabled``) and ``max_bytes`` (int, 0 = no cap).
     """
     cfg = _get_config_value("archive", {})
     cfg = cfg.get("transcripts", {}) if isinstance(cfg, dict) else {}
     if not isinstance(cfg, dict):
         cfg = {}
     return {
+        "enabled": cfg.get("enabled") is True,
         "sweep": bool(cfg.get("sweep", True)),
         "max_bytes": parse_size(cfg.get("max_bytes", 0)),
     }
+
+
+def save_transcript_archive_enabled(on: bool) -> None:
+    """Set ``archive.transcripts.enabled``, keeping the rest of ``archive:``."""
+    config = load_config()
+    archive = config.get("archive")
+    archive = dict(archive) if isinstance(archive, dict) else {}
+    transcripts = archive.get("transcripts")
+    transcripts = dict(transcripts) if isinstance(transcripts, dict) else {}
+    transcripts["enabled"] = bool(on)
+    archive["transcripts"] = transcripts
+    config["archive"] = archive
+    save_config(config)
 
 
 def get_ledger_config() -> dict:

@@ -83,6 +83,7 @@ session_archive:
 archive:
   retention_months: 0             # 0 keeps every month (the default)
   transcripts:                    # See "Transcript Archive" below
+    enabled: false                # true: keep copies of Claude's transcripts (off by default)
     sweep: true                   # hourly sweep + hook-queue drain in the daemon
     max_bytes: 0                  # 0: no cap; warns at 80%, never deletes
 
@@ -677,9 +678,13 @@ relaunched (restart, revive), and they are left in place until then.
 ## Transcript Archive
 
 Claude Code deletes its transcripts after `cleanupPeriodDays` (30 by
-default). overcode keeps a byte-exact copy of every one, whether or not it
-launched the session, under `~/.overcode/transcripts/` (directory mode 700,
-files 600; never in git):
+default). With `archive.transcripts.enabled: true` (or "Transcript archive"
+in the TUI palette), overcode keeps a byte-exact copy of every one, whether
+or not it launched the session, under `~/.overcode/transcripts/` (directory
+mode 700, files 600; never in git). It is off by default: then the daemon
+neither sweeps nor drains, the hooks queue nothing, and `overcode archive`
+only does what you run by hand (`status`, `find`, `cat` and `import` work
+as usual; `sweep` says the setting is off, then sweeps once):
 
 ```
 ~/.overcode/transcripts/
@@ -713,7 +718,8 @@ files 600; never in git):
 ```yaml
 archive:
   transcripts:
-    sweep: true      # false: no sweep or queue drain (overcode archive sweep still works)
+    enabled: false   # true: archive; false: only what you run with `overcode archive`
+    sweep: true      # false (with enabled): no sweep or queue drain, hooks still queue
     max_bytes: 0     # e.g. 5GB
 ```
 
