@@ -8,8 +8,9 @@ parent's transcript (``<transcript>.jsonl`` → ``<transcript>/subagents/``):
   workflow agent): description, agentType, workflowPhase, model. Written by
   the agent's first tool call and never changed: read once per agent.
 * ``workflows/<run>/journal.jsonl``: ``started {agentId, label, phase}``
-  and ``result {agentId, result}`` as the run goes. Re-read when its
-  (mtime, size) moves: one stat per live run of an expanded parent.
+  and ``result {agentId, result}`` as the run goes. Read on from where the
+  last read stopped when its (mtime, size) moves: one stat per live run of
+  an expanded parent (and, for ``workflow_progress``, of every agent).
 
 Only the engine reads these, and only for parents a view has expanded
 (``swarm.virtual_rows`` takes one ``Details`` per parent).
@@ -51,7 +52,7 @@ class SwarmFiles:
         self.clock = clock
         self._meta: Dict[str, dict] = {}
         self._meta_missing: Dict[str, float] = {}
-        self._journals: Dict[str, Tuple[Optional[Tuple[int, int]], list]] = {}
+        self._journals: Dict[str, Tuple[Tuple[int, int], list, int]] = {}
         self.reads = 0  # files opened (tests and diagnostics)
 
     def details(self, transcript_path: Optional[str]) -> "Details":
@@ -83,33 +84,45 @@ class SwarmFiles:
         return data
 
     def journal(self, path: str) -> Optional[list]:
+        """A journal's events. Re-read only when its (mtime, size) moved, and
+        then from where the last read stopped (it is append-only): only
+        whole lines are taken, so a line still being written is read next
+        time. A file that shrank is read again from the start."""
         sig = _signature(path)
         if sig is None:
             return None
         hit = self._journals.get(path)
         if hit is not None and hit[0] == sig:
             return hit[1]
-        events = []
+        offset, events = (hit[2], list(hit[1])) if hit is not None and sig[1] >= hit[2] else (0, [])
         try:
-            with open(path) as f:
+            with open(path, "rb") as f:
                 self.reads += 1
-                for line in f:
-                    try:
-                        event = json.loads(line)
-                    except ValueError:
-                        continue  # a line still being written
-                    if isinstance(event, dict):
-                        events.append(event)
+                f.seek(offset)
+                data = f.read()
         except OSError:
             return None
-        if len(self._journals) >= JOURNAL_CACHE_MAX:
+        end = data.rfind(b"\n") + 1
+        for line in data[:end].splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        if hit is None and len(self._journals) >= JOURNAL_CACHE_MAX:
             self._journals.clear()
-        self._journals[path] = (sig, events)
+        self._journals[path] = (sig, events, offset + end)
         return events
+
+    def journal_signature(self, path: str) -> Optional[Tuple[int, int]]:
+        """The (mtime, size) a journal had when last read, None if never read."""
+        hit = self._journals.get(path)
+        return hit[0] if hit is not None else None
 
     def journals_changed(self) -> bool:
         """Whether a journal read before has moved since (one stat each)."""
-        return any(_signature(path) != sig for path, (sig, _) in self._journals.items())
+        return any(_signature(path) != hit[0] for path, hit in self._journals.items())
 
     def forget_journals(self, keep) -> None:
         """Stop watching journals not in ``keep`` (paths of runs still shown)."""

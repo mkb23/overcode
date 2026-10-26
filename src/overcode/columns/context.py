@@ -50,6 +50,7 @@ class FleetFlags:
     # Subagents seen running without a hook rollup (the SubAgents fallback)
     any_has_live_subagents: bool = False
     any_has_quota: bool = False  # a subscription agent with a quota estimate (Q%)
+    any_has_workflow: bool = False  # an agent with a Workflow run going (WF, #498)
     # The expanded delegated rows hold two or more agent types (TYPE): set
     # by the TUI from its swarm lines, never by compute_fleet_flags
     swarm_types_shown: bool = False
@@ -68,6 +69,7 @@ class FleetRow:
     has_swarm: bool = False  # a 👥 rollup published for it
     has_live_subagents: bool = False  # subagents running by the file / status-bar count
     has_quota: bool = False  # a quota estimate published for it
+    has_workflow: bool = False  # a Workflow run of its going (#498)
 
 
 def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
@@ -100,6 +102,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
         any_has_swarm=any(r.has_swarm for r in rows),
         any_has_live_subagents=any(r.has_live_subagents for r in rows),
         any_has_quota=any(r.has_quota for r in rows),
+        any_has_workflow=any(r.has_workflow for r in rows),
     )
 
 
@@ -175,6 +178,8 @@ class ColumnContext:
     background_shells: Optional[list] = None
     # The delegated work's share of its spend (engine: subagent_cost_usd)
     subagent_cost_usd: Optional[float] = None
+    # Its Workflow runs' progress (engine: workflow_progress, #498)
+    workflow_progress: Optional[list] = None
     # Its subscription quota estimate (engine: quota): pp7d, pp5h, w7, w5, conf
     quota: Optional[dict] = None
     # Its trip counter (engine: trip, trip.trip_view): spend since its trip
@@ -290,6 +295,7 @@ def build_cli_context(
     window_burn: Optional[object] = None,
     child_rollup: Optional[dict] = None,
     swarm_rollup: Optional[dict] = None,
+    workflow_progress: Optional[list] = None,
     quota: Optional[dict] = None,
     trip: Optional[dict] = None,
     subtree_trip_cost_usd: Optional[float] = None,
@@ -358,6 +364,7 @@ def build_cli_context(
         status=status,
         child_rollup=child_rollup,
         swarm_rollup=swarm_rollup,
+        workflow_progress=workflow_progress,
         quota=quota,
         trip=trip,
         subtree_trip_cost_usd=subtree_trip_cost_usd,

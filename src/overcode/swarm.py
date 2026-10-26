@@ -258,6 +258,27 @@ def _add_workflow(swarm: dict, task_id: str, name=None, run_id=None, now=None) -
         _fold(swarm, "workflows", runs.pop(oldest).get("status") or RESULT_OK)
 
 
+def _note_workflow_script(run: dict, tool_input, response: dict) -> None:
+    """A run's declared phases (and name) from its script's ``meta`` (#498).
+
+    Parsed from the call's ``script`` (a literal, never run). A run started
+    by ``name`` or ``scriptPath`` has its script saved at the response's
+    ``scriptPath``: the path is kept for the engine to read once.
+    """
+    from .workflow_progress import parse_meta
+
+    script = tool_input.get("script") if isinstance(tool_input, dict) else None
+    from_path = isinstance(tool_input, dict) and tool_input.get("scriptPath")
+    meta = None if from_path else parse_meta(script)
+    if meta is not None:
+        if meta.get("phases"):
+            run["phases"] = meta["phases"]
+        if meta.get("name") and not run.get("name"):
+            run["name"] = meta["name"]
+    if not run.get("phases") and isinstance(response.get("scriptPath"), str):
+        run["script_path"] = response["scriptPath"]
+
+
 def _running_ids(tasks, exclude: Optional[str] = None) -> set:
     """The ids ``background_tasks`` lists as running."""
     return {t["id"] for t in tasks if isinstance(t, dict) and t.get("id")
@@ -529,6 +550,7 @@ def apply_parent_event(subagents, swarm, event: str, tool_name: Optional[str],
         if isinstance(response, dict) and response.get("taskId"):
             _add_workflow(swarm, response["taskId"], name=response.get("workflowName"),
                           run_id=response.get("runId"), now=now)
+            _note_workflow_script(swarm["workflows"][response["taskId"]], tool_input, response)
     elif event == "UserPromptSubmit":
         for task_id, status, interim in task_notifications(data.get("prompt")):
             # A notification only comes once a task has ended, or paused

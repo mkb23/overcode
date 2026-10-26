@@ -19,6 +19,7 @@ from .hover import (
     hover_subtree_cost,
     hover_status_detail,
     hover_subagents,
+    hover_workflow,
     hover_wrapper,
 )
 from .render_context import (
@@ -68,6 +69,8 @@ from .render_performance import (
     render_subagents,
     render_subagents_plain,
     render_work_plain,
+    render_workflow,
+    render_workflow_plain,
 )
 from .render_supervision import (
     _skill_profile,
@@ -232,6 +235,15 @@ def _sort_subagents(ctx: ColumnContext) -> Optional[tuple]:
     return (live, live) if live > 0 else None
 
 
+def _sort_workflow(ctx: ColumnContext) -> Optional[tuple]:
+    """Furthest along first: the running run's phase, then agents finished."""
+    from ..workflow_progress import active_run
+    run = active_run(ctx.workflow_progress)
+    if run is None:
+        return None
+    return (run.get("phase_index") or 0, run.get("done") or 0)
+
+
 def _if_stats(fn: Callable[[ColumnContext], object]) -> Callable[[ColumnContext], object]:
     """Sort key that is None for backends reporting no stats (the column shows '-')."""
     return lambda ctx: fn(ctx) if ctx.claude_stats is not None else None
@@ -309,6 +321,20 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Machine the agent runs on (shown when sister hosts are configured)",
                   sort_key=lambda ctx: _lower(ctx.source_host or ctx.local_hostname),
                   hide_when_uniform=True),
+
+    # The running Workflow run's progress (#498). After the name, so a
+    # narrow terminal crops it before the agent's identity. No width while
+    # no agent has a run going.
+    SummaryColumn(id="workflow", group="identity", detail_levels=ALL, render=render_workflow,
+                  label="Workflows", render_plain=render_workflow_plain,
+                  visible=lambda ctx: ctx.fleet.any_has_workflow,
+                  header="WF", name="Workflow Progress",
+                  description="Its running Claude Code workflow: name, phase of those the "
+                              "script declares (2/3), agents finished of started so far "
+                              "(hover: every run, per phase)",
+                  sort_key=_sort_workflow,
+                  sort_desc=True,
+                  hover=hover_workflow),
 
     # Git group — repo, branch (high/full only), diff stats
     SummaryColumn(id="repo_name", group="git", detail_levels=HIGH_PLUS, render=render_repo_name,

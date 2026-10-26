@@ -206,6 +206,13 @@ class SessionDaemonState:
     # estimated_cost_usd (already inside it), for the $ hover's split.
     # None when nothing was delegated or it cost nothing yet.
     subagent_cost_usd: Optional[float] = None
+    # Its Claude Code Workflow runs' progress (#498, workflow_progress):
+    # every running run and the newest finished ones, oldest first, each
+    # {"name", "status", "started_at", "ended_at", "started", "done",
+    # "failed", "phase", "phase_index", "phase_count", "phases": [{"title",
+    # "started", "done", "failed"}], "source"}. Counts and absolute times
+    # only. None for an agent that never ran a workflow.
+    workflow_progress: Optional[list] = None
 
     # Skills (#252)
     available_skills: List[str] = field(default_factory=list)  # All skills in ~/.claude/skills

@@ -19,7 +19,7 @@ from ..name_source import name_marker, title_pending_mark
 from ..session_manager import Session
 from ..status_patterns import extract_from_pane, extract_sleep_duration
 from ..history_reader import AgentSessionStats, synthesize_remote_stats
-from .. import swarm_view, tui_engine
+from .. import swarm_view, tui_engine, workflow_progress
 from ..tui_helpers import (
     calculate_uptime,
     get_current_state_times,
@@ -519,6 +519,8 @@ class SessionSummary(Static, can_focus=True):
             has_swarm=self.swarm_rollup is not None,
             has_live_subagents=max(self.live_subagent_count, self.file_subagent_count) > 0,
             has_quota=isinstance(self.engine.get("quota"), dict),
+            has_workflow=workflow_progress.active_run(self.engine.get("workflow_progress"))
+            is not None,
         )
 
     def watch_summary_detail(self, summary_detail: str) -> None:
@@ -631,6 +633,7 @@ class SessionSummary(Static, can_focus=True):
             swarm_expanded=self.swarm_expanded,
             background_shells=self.engine.get("background_shells") if self.engine else None,
             subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
+            workflow_progress=self.engine.get("workflow_progress") if self.engine else None,
             quota=self.engine.get("quota") if self.engine else None,
             trip=self.engine.get("trip") if self.engine else None,
             cli_title_lag=self.engine.get("cli_title_lag") if self.engine else None,

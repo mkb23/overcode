@@ -1010,6 +1010,48 @@ Choices where the design left room:
 
 ---
 
+## Workflow progress (#498) as built
+
+Owner (2026-10-26): the "agent DAG" is a Claude Code Workflow run inside
+one Claude agent; first surface is the agent's row plus a hover with
+per-phase counts, e.g. `review-changes · 2/3 · 7/12✅`.
+
+- **Declared phases** (`workflow_progress.parse_meta`): the hook side
+  parses `export const meta = {name, phases: [{title}]}` from the Workflow
+  call's `tool_input.script` with a small JS-literal reader (strings of
+  three quote kinds, unquoted keys, comments, trailing commas; a call, a
+  spread or a `${}` makes it no meta). Kept on the run as `phases` (20
+  titles of 40 chars at most). A run started by `name` or `scriptPath`
+  keeps the response's `scriptPath`; the engine reads that file once.
+- **Counts, best source first** (`run_progress`): the final record
+  `workflows/<run>.json` once the run is over (each agent's `state` and
+  `phaseTitle`: exact, failures included); else the journal (`started` /
+  `result` per agent with its phase: exact started and finished per
+  phase, failures not told apart); else hooks alone (finished workflow
+  agents by the run their `SubagentStop` names, live ones to the newest
+  running run: counts, no phases). The phase a run is in is the phase of
+  its latest-started agent; `2/3` is its place among the declared ones.
+- **Engine** (`WorkflowFiles`): computed on every detection (full and
+  quick ticks) into `SessionDaemonState.workflow_progress`: running runs
+  and the newest three finished, counts and absolute times only. Journals
+  are read from where the last read stopped when their (mtime, size)
+  moved (`SwarmFiles.journal`, now incremental for the publisher too);
+  final records and scripts once. Between ticks the wake loop stats each
+  running run's journal (`changed()`, each move reported once) and
+  quick-ticks its agent: the journal's `result` line can land after the
+  `SubagentStop` that woke the last quick tick.
+- **Views**: the WF column (`workflow`, after the name; gated on
+  `FleetFlags.any_has_workflow`, a run going), the WF and SubAgents hovers
+  (each run, then a line per phase), `overcode show` (Workflows), and
+  `overcode list`. Low detail drops the run's name to fit at 120 columns.
+
+Not verified live: the final record's agent states other than `done`
+(failure words are guessed: `failed`, `error`, `killed`, `cancelled`, …);
+whether the journal says anything for a failed or retried agent; a
+`resumeFromRunId` run (its cached agents may not appear in the new journal).
+
+---
+
 ## Appendix: capture index
 
 `docs/design/spike-agent-types/captures/`, scrubbed (paths become `~`,

@@ -790,6 +790,7 @@ def list_agents(
         pad_and_join_cells, render_header_cells, render_summary_cells,
     )
     from ..tui_logic import compute_tree_metadata, sort_sessions
+    from ..workflow_progress import active_run
     from ..name_source import name_marker, title_pending_mark
     from rich.console import Console
 
@@ -990,6 +991,14 @@ def list_agents(
 
     quotas = {sess.id: _quota(sess) for sess, *_ in session_data}
 
+    # Each agent's Workflow runs (the WF column, #498): the daemon's
+    def _workflows(sess):
+        ds = daemon_state.get_session(sess.id) if use_daemon else None
+        runs = getattr(ds, "workflow_progress", None) if ds is not None else None
+        return runs if isinstance(runs, list) else None
+
+    workflows = {sess.id: _workflows(sess) for sess, *_ in session_data}
+
     # Each agent's trip counter (trip.py): the daemon's, else from its record
     def _trip(sess):
         from ..trip import trip_view
@@ -1009,6 +1018,7 @@ def list_agents(
             has_swarm=swarms[sess.id] is not None,
             has_live_subagents=live_subs[sess.id] > 0,
             has_quota=quotas[sess.id] is not None,
+            has_workflow=active_run(workflows[sess.id]) is not None,
         )
         for sess, status, *_ in session_data
     )
@@ -1071,6 +1081,7 @@ def list_agents(
             subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
             child_rollup=child_rollup(children.get(sess.id, ())),
             swarm_rollup=swarms[sess.id],
+            workflow_progress=workflows[sess.id],
             quota=quotas[sess.id],
             cli_title_lag=title_lag,
             trip=trips[sess.id][0],
@@ -1836,11 +1847,14 @@ def show(
             live_sub_count=live_sub_count,
             git_untracked_count=git_untracked,
             in_session_mode=in_session_mode,
+            workflow_progress=getattr(daemon_session, "workflow_progress", None),
         )
 
         print(f"=== {name} ===")
         label_width = max(len(label) for label, _ in render_cli_stats(ctx)) + 1
         for label, value in render_cli_stats(ctx):
+            # A value of several lines (Workflows) keeps its lines under the first
+            value = value.replace("\n", "\n" + " " * (label_width + 2))
             print(f"{label + ':':<{label_width + 1}} {value}")
 
         # AI summaries (not a column — comes from daemon state)

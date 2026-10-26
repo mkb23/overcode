@@ -358,3 +358,69 @@ async def test_layout_holds_with_a_lagging_cli_title(make_tui, width):
         await _settle(pilot)
         assert_layout_invariants(app)
         assert "charlie*" not in line("charlie") and "charlie" in line("charlie")
+
+
+
+class WorkflowEngine(GridEngine):
+    """GridEngine with Workflow runs (#498): bravo is in phase 2 of 3 of a
+    long-named run with a second going; charlie has only a finished run
+    (its WF cell is the placeholder)."""
+
+    def snapshot_now(self):
+        snap = super().snapshot_now()
+        running = {"name": "review-changes-across-the-whole-repo", "status": "running",
+                   "started": 128, "done": 97, "failed": 0, "phase": "Verify",
+                   "phase_index": 2, "phase_count": 3, "source": "journal",
+                   "phases": [{"title": "Find", "started": 30, "done": 30},
+                              {"title": "Verify", "started": 98, "done": 67},
+                              {"title": "Report", "started": 0, "done": 0}]}
+        snap.agents["id-bravo"]["workflow_progress"] = [
+            dict(running, name="second", phase="Undeclared-phase-title",
+                 phase_index=None, phase_count=None), running]
+        snap.agents["id-charlie"]["workflow_progress"] = [
+            {"name": "lint", "status": "ok", "started": 2, "done": 2, "failed": 0,
+             "source": "final"}]
+        return snap
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_layout_holds_with_workflow_progress(make_tui, width, expanded):
+    """The WF cell (#498) at every width, detail level, content mode, with
+    and without emoji: bravo's running run, charlie's placeholder. With
+    bravo collapsed it shows at every width; expanded, the TYPE column its
+    member rows bring takes the room at 120 columns, and the grid crops WF
+    (never the name)."""
+    engine = WorkflowEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        if expanded:
+            await _open(pilot, engine)
+        await _settle(pilot)
+        seen = set()
+        for emoji_free in (False, True):
+            if emoji_free:
+                app.action_toggle_emoji_free()
+            for level in app.SUMMARY_LEVELS:
+                app._set_summary_level(level)
+                await _settle(pilot)
+                for _ in app.SUMMARY_CONTENT_MODES:
+                    mode = app.summary_content_mode
+                    try:
+                        assert_layout_invariants(app)
+                    except AssertionError as e:
+                        raise AssertionError(f"{width} cols, {level}, {mode}, expanded "
+                                             f"{expanded}, emoji-free {emoji_free}: {e}") from e
+                    _shot(app, f"layout-workflow-{width}-{level}-{mode}-{expanded}-{emoji_free}")
+                    app.action_cycle_summary_content()
+                    await _settle(pilot)
+                bravo = _row_text(app, "bravo")
+                assert "bravo" in bravo, (level, bravo)
+                if not expanded or width >= 160:
+                    assert "2/3 · 97/128" in bravo and "+1" in bravo, (level, bravo)
+                seen |= {mark for mark in ("🧩 review-", "Wk review-", "🧩 2/3", "Wk 2/3")
+                         if mark in bravo}
+                assert "lint" not in _row_text(app, "charlie")
+        if not expanded or width >= 160:
+            assert seen == {"🧩 review-", "Wk review-", "🧩 2/3", "Wk 2/3"}
