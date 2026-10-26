@@ -344,10 +344,23 @@ overcode follow <agent-name> [--session <session>]
 ```
 
 Exit codes:
-- `0` — child reported success
+- `0` — child reported success, or was released from its parent (`overcode release`)
 - `1` — child reported failure or terminated
 - `2` — oversight timeout expired
 - `130` — interrupted (Ctrl-C)
+
+### `overcode release`
+
+Free a child from its parent: it becomes a top-level agent, leaves the
+parent's tree (tree view, cascade kill, SUB$ from now on), stops owing a
+report and has no oversight timeout or budget reclaim. What it spent until
+now stays in the parent's SUB$. Its billing code, budget and preset are
+unchanged. A running agent is told it no longer reports, unless
+`--no-notify`. See [Child Agents](children.md#releasing-a-child).
+
+```bash
+overcode release <agent-name> [--no-notify] [--session <session>]
+```
 
 ### `overcode budget`
 

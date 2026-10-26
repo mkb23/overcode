@@ -537,6 +537,51 @@ class SessionActionsMixin:
         )
         self._remote_notify(result, f"Restarted remote agent: {session.name}")
 
+    def action_release_focused(self) -> None:
+        """Free the focused child from its parent (#520); palette-only, run twice to confirm."""
+        focused = _get_focused_session(self)
+        if not focused:
+            self.notify("No agent focused", severity="warning")
+            return
+        session = focused.session
+        if not session.parent_session_id:
+            self._pending_confirmations.pop("release", None)
+            self.notify(f"'{session.name}' has no parent to be released from",
+                        severity="warning")
+            return
+        if self._is_remote(session) and self._guard_remote(session):
+            return
+        self._confirm_double_press(
+            "release",
+            f"Release '{session.name}' from its parent? It stops reporting and "
+            f"leaves the tree. Run 'Release from parent' again to confirm",
+            lambda: self._execute_release(session),
+            session_name=session.name,
+            timeout=10.0,
+        )
+
+    def _execute_release(self, session: "Session") -> None:
+        if self._is_remote(session):
+            result = self._sister_controller.release_agent(
+                session.source_url, session.source_api_key, session.name,
+            )
+            self._remote_notify(result, f"Released remote agent: {session.name}")
+            return
+        from ..launcher import AgentLauncher
+        from ..lifecycle import release_agent
+
+        launcher = AgentLauncher(tmux_session=self.tmux_session,
+                                 session_manager=self.session_manager)
+        result = release_agent(launcher.for_agent(session), session)
+        if not result.ok:
+            self.notify(f"Not released: {result.note}", severity="error")
+            return
+        parent = f" from '{result.parent_name}'" if result.parent_name else ""
+        told = "; told it no longer reports" if result.notified else (
+            f"; {result.note}" if result.note else "")
+        self.notify(f"Released '{session.name}'{parent}{told}", severity="information")
+        self.refresh_sessions()
+
     def action_sync_to_main_and_clear(self) -> None:
         """Switch to main branch, pull, and clear agent context (requires confirmation).
 

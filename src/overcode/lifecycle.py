@@ -71,6 +71,61 @@ class LifecycleReconcile:
     refunds: List[Tuple[str, float]] = field(default_factory=list)
 
 
+@dataclass
+class ReleaseResult:
+    """What ``release_agent`` did: freed or not, and whether the agent was told."""
+
+    ok: bool
+    parent_name: Optional[str] = None
+    cost_usd: float = 0.0
+    notified: bool = False
+    # Why it was not freed, or why it was not told
+    note: str = ""
+
+
+RELEASE_NOTICE = (
+    "[overcode] You have been released from your parent agent{parent}. You are "
+    "now an independent agent: nobody is waiting on you, and you no longer need "
+    "to run `overcode report`. Carry on with your current work."
+)
+
+
+def release_agent(launcher, session: "Session", notify: bool = True) -> ReleaseResult:
+    """Free a child from its parent (#520, ``SessionManager.release_child``).
+
+    With ``notify``, a running agent is then told, typed into its pane as
+    ``overcode send`` would: its launch prompt asked it to report back,
+    and now nobody waits for that. An agent asleep, finished or with its
+    window gone is not told (it would be woken or the text lost).
+    """
+    if getattr(session, "is_remote", False):
+        return ReleaseResult(False, note="a remote agent is released on its own host")
+    if not session.parent_session_id:
+        return ReleaseResult(False, note=f"'{session.name}' has no parent")
+    released = launcher.sessions.release_child(session.id)
+    if released is None:
+        return ReleaseResult(False, note=f"'{session.name}' has no parent")
+    result = ReleaseResult(True, parent_name=released["parent_name"],
+                           cost_usd=released["cost_usd"])
+    if not notify:
+        result.note = "not told (--no-notify)"
+    elif session.is_asleep:
+        result.note = "not told: it is asleep"
+    elif session.status in ("terminated", "done"):
+        result.note = f"not told: it is {session.status}"
+    else:
+        parent = f" '{result.parent_name}'" if result.parent_name else ""
+        try:
+            result.notified = bool(launcher.send_to_session_by_id(
+                session.id, RELEASE_NOTICE.format(parent=parent)))
+        except Exception as e:  # the release stands; say it was not told
+            result.note = f"not told: {e}"
+        else:
+            if not result.notified:
+                result.note = "not told: its window did not take the message"
+    return result
+
+
 class AgentLifecycleMixin:
     """Kill agents and settle their lifecycle (see module docstring).
 

@@ -107,6 +107,14 @@ class SisterController:
             f"/api/agents/{agent_name}/restart",
         )
 
+    def release_agent(
+        self, sister_url: str, api_key: str, agent_name: str,
+    ) -> ControlResult:
+        return self._request(
+            "POST", sister_url, api_key,
+            f"/api/agents/{agent_name}/release",
+        )
+
     def launch_agent(
         self, sister_url: str, api_key: str,
         directory: str, name: str,

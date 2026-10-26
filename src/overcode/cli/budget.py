@@ -128,7 +128,9 @@ def budget_reclaim(
         raise typer.Exit(code=1)
 
     if not agent.parent_session_id:
-        rprint(f"[red]Error: '{name}' has no parent — nothing to reclaim to[/red]")
+        released = getattr(agent, "released_from_name", None)
+        why = f" (released from '{released}')" if isinstance(released, str) and released else ""
+        rprint(f"[red]Error: '{name}' has no parent{why} — nothing to reclaim to[/red]")
         raise typer.Exit(code=1)
 
     refunded = manager.reclaim_budget(agent.id)
@@ -142,6 +144,12 @@ def budget_reclaim(
     parent = manager.get_session(agent.parent_session_id)
     parent_name = parent.name if parent else "(parent)"
     rprint(f"[green]✓ Refunded ${refunded:.4f} from {name} to {parent_name}[/green]")
+
+
+def _released_cost(agent) -> float:
+    """What the children ``agent`` released had spent until then (#520)."""
+    value = getattr(agent, "released_children_cost_usd", 0.0)
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 @budget_app.command("show")
@@ -192,12 +200,14 @@ def budget_show(
 
         # Check for children's spend
         children = manager.get_descendants(agent.id)
-        subtree_spend = spent + sum(c.stats.estimated_cost_usd for c in children)
+        # Released children's spend until their release stays here (#520)
+        carried = sum(_released_cost(a) for a in [agent, *children])
+        subtree_spend = spent + sum(c.stats.estimated_cost_usd for c in children) + carried
 
         depth = manager.compute_depth(agent)
         indent = "  " * depth
         line = f"  {indent}{agent.name:<16} budget={budget_str:<10} spent={spent_str:<10} {status}"
-        if children:
+        if children or carried > 0:
             line += f"  (subtree: ${subtree_spend:.4f})"
         print(line)
 

@@ -41,7 +41,7 @@ HEALTH = {"status": "ok", "timestamp": "2026-10-07T10:00:00", "version": "9.9.9"
 
 # Every control function a route can dispatch to.
 CONTROL_FNS = [
-    "send_to_agent", "send_key_to_agent", "kill_agent", "restart_agent",
+    "send_to_agent", "send_key_to_agent", "kill_agent", "restart_agent", "release_agent",
     "launch_agent", "fork_agent", "resize_agent_window", "set_sleep",
     "pause_heartbeat", "resume_heartbeat", "set_standing_orders",
     "clear_standing_orders", "set_budget", "set_value", "set_annotation",
@@ -142,6 +142,7 @@ CONTROLLER_CALLS = [
     ("send_key", ("a1", "Enter"), "send_key_to_agent", {"key": "Enter"}),
     ("kill_agent", ("a1",), "kill_agent", {"cascade": True}),
     ("restart_agent", ("a1",), "restart_agent", {}),
+    ("release_agent", ("a1",), "release_agent", {"notify": True}),
     ("launch_agent", ("/tmp/x", "newbie"), "launch_agent", {"directory": "/tmp/x", "name": "newbie"}),
     ("fork_agent", ("a1", "a1-fork"), "fork_agent", {"fork_name": "a1-fork"}),
     ("resize_agent", ("a1", 120, 40), "resize_agent_window", {"width": 120, "height": 40}),

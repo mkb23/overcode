@@ -64,6 +64,31 @@ def _check_session_terminated(
     return session.status == "terminated"
 
 
+def _released_from(
+    sessions: SessionManager, session_id: Optional[str],
+) -> Optional[str]:
+    """The parent's name (or id) once the followed child has been released
+    from it (``overcode release``, #520); None while it is still a child.
+
+    Released, it owes nobody a report: the follow ends cleanly.
+    """
+    if session_id is None:
+        return None
+    session = sessions.get_session(session_id)
+    if session is None or getattr(session, "parent_session_id", None) is not None:
+        return None
+    released = getattr(session, "released_from_session_id", None)
+    if not released:
+        return None
+    return getattr(session, "released_from_name", None) or released
+
+
+def _end_released(name: str, parent: str) -> int:
+    print(f"\n[follow] Agent '{name}' was released from '{parent}': it no longer "
+          f"reports, stopped following (agent still running)", file=sys.stderr)
+    return 0
+
+
 def _lookup(
     sessions: SessionManager, name: str, session_id: Optional[str],
 ) -> Optional[Session]:
@@ -185,7 +210,8 @@ def follow_agent(
         poll_interval: Seconds between polls
 
     Returns:
-        Exit code: 0 on success report, 1 on failure/terminated, 2 on timeout, 130 on Ctrl-C
+        Exit code: 0 on success report or when the child is released from
+        its parent (#520), 1 on failure/terminated, 2 on timeout, 130 on Ctrl-C
     """
     sessions = SessionManager()
     session = sessions.resolve_session_name(name)
@@ -202,6 +228,9 @@ def follow_agent(
     session_id = session.id
     name = session.name
     window_name = session.tmux_window
+    # A child released mid-follow ends the follow; an agent that was never
+    # a child (or was released already) is followed as before
+    watch_release = getattr(session, "parent_session_id", None) is not None
 
     # Read oversight policy from session
     oversight_policy = getattr(session, 'oversight_policy', 'wait') or 'wait'
@@ -220,6 +249,9 @@ def follow_agent(
     try:
         while not interrupted:
             name, window_name = _current_identity(sessions, session_id, name, window_name)
+            released = _released_from(sessions, session_id) if watch_release else None
+            if released:
+                return _end_released(name, released)
             # Capture pane content
             raw = _capture_pane(tmux_session, window_name)
             if raw is None:
@@ -276,6 +308,7 @@ def follow_agent(
                     oversight_policy, oversight_timeout_seconds,
                     poll_interval, recent_lines,
                     session_id=session_id,
+                    watch_release=watch_release,
                 )
 
             # Check if agent terminated (window gone)
@@ -306,6 +339,7 @@ def _poll_for_report(
     poll_interval: float,
     recent_lines: deque,
     session_id: Optional[str] = None,
+    watch_release: bool = False,
 ) -> int:
     """Poll for a report file after Stop event detected.
 
@@ -314,7 +348,8 @@ def _poll_for_report(
     and its report is found under the new name.
 
     Returns:
-        0 on success report, 1 on failure report or terminated, 2 on timeout
+        0 on success report or release from the parent (#520), 1 on failure
+        report or terminated, 2 on timeout
     """
     # Epoch seconds: the stored deadline is a naive local stamp, which a
     # naive now misreads in the repeated autumn hour (a deadline in the
@@ -337,6 +372,9 @@ def _poll_for_report(
 
     while True:
         name, window_name = _current_identity(sessions, session_id, name, window_name)
+        released = _released_from(sessions, session_id) if watch_release else None
+        if released:
+            return _end_released(name, released)
         # Check for report
         report = _check_report(tmux_session, name, session_id)
         if report:

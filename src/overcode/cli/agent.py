@@ -1277,6 +1277,51 @@ def follow(
 
 
 @app.command()
+def release(
+    name: Annotated[str, typer.Argument(help="Name of the child agent to free from its parent")],
+    no_notify: Annotated[
+        bool, typer.Option("--no-notify", help="Don't tell the agent it no longer reports")
+    ] = False,
+    session: SessionOption = "agents",
+):
+    """Free a child agent from its parent: it becomes a top-level agent (#520).
+
+    It leaves the parent's tree: tree view, the parent's subtree cost from
+    now on, and `kill` cascades. Its oversight ends: no on-stuck timeout,
+    no report expected, and a parent's `overcode follow` on it ends with
+    exit code 0. With no parent, budget reclaim has nowhere to go.
+
+    Unchanged: its billing code, budget and preset. What it had spent until
+    now still counts in the parent's subtree total.
+
+    A running agent is told it is independent now (typed into its pane, as
+    `overcode send` does) unless --no-notify.
+
+    Examples:
+        overcode release fix-jwt-refresh
+    """
+    from ..lifecycle import release_agent
+
+    launcher = AgentLauncher(session)
+    sess = find_agent(launcher.sessions, name)
+    if not sess:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+    name = sess.name
+    result = release_agent(launcher.for_agent(sess), sess, notify=not no_notify)
+    if not result.ok:
+        rprint(f"[red]Error: {result.note}[/red]")
+        raise typer.Exit(code=1)
+    parent = f" from '{result.parent_name}'" if result.parent_name else ""
+    rprint(f"[green]✓[/green] Released '[bold]{name}[/bold]'{parent}: a top-level agent now "
+           f"(${result.cost_usd:.4f} spent so far stays with the parent's subtree)")
+    if result.notified:
+        rprint(f"[dim]Told '{name}' it no longer reports[/dim]")
+    elif result.note:
+        rprint(f"[dim]{result.note}[/dim]")
+
+
+@app.command()
 def rename(
     name: Annotated[str, typer.Argument(help="Current name of agent")],
     new_name: Annotated[
@@ -1691,6 +1736,23 @@ def send(
         raise typer.Exit(1)
 
 
+def _release_lines(sess) -> list:
+    """``overcode show``'s trace of a release (#520): (label, value) pairs."""
+    lines = []
+    parent_id = getattr(sess, "released_from_session_id", None)
+    if isinstance(parent_id, str) and parent_id:
+        parent = getattr(sess, "released_from_name", None) or parent_id
+        when = getattr(sess, "released_at", None)
+        when = when.replace("T", " ")[:19] if isinstance(when, str) else "?"
+        cost = getattr(sess, "cost_at_release_usd", None)
+        spent = f", ${cost:.4f} spent under it" if isinstance(cost, (int, float)) else ""
+        lines.append(("Released", f"from {parent} at {when}{spent}"))
+    carried = getattr(sess, "released_children_cost_usd", 0.0)
+    if isinstance(carried, (int, float)) and carried > 0:
+        lines.append(("Released children", f"${carried:.4f} spent before release (in SUB$)"))
+    return lines
+
+
 @app.command()
 def show(
     name: Annotated[str, typer.Argument(help="Name of agent")],
@@ -1838,6 +1900,8 @@ def show(
         print(f"{'Backend:':<{label_width + 1}} {backend_label} ({backend_name})")
         if sess.launcher_version:
             print(f"{'Launcher:':<{label_width + 1}} {sess.launcher_version}")
+        for label, value in _release_lines(sess):
+            print(f"{label + ':':<{label_width + 1}} {value}")
 
         print()
 

@@ -140,6 +140,23 @@ def kill_agent(tmux_session: str, name: str, cascade: bool = True) -> dict:
     raise ControlError("Failed to kill agent", status=500)
 
 
+def release_agent(tmux_session: str, name: str, notify: bool = True) -> dict:
+    """Free a child from its parent (#520), as ``overcode release`` does."""
+    from .launcher import AgentLauncher
+    from .lifecycle import release_agent as _release
+    from .session_manager import SessionManager
+
+    sm = SessionManager()
+    session = _get_session_or_error(sm, name)
+
+    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
+    result = _release(launcher, session, notify=notify)
+    if not result.ok:
+        raise ControlError(result.note or "Not released")
+    return {"ok": True, "parent": result.parent_name, "cost_usd": result.cost_usd,
+            "notified": result.notified}
+
+
 def restart_agent(tmux_session: str, name: str) -> dict:
     """Restart an agent, resuming its conversation (a sister's R from the TUI).
 

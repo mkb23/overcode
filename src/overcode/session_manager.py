@@ -245,6 +245,16 @@ class Session:
 
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
+    # Released from its parent (#520, ``SessionManager.release_child``): a
+    # root agent now, with this trace of where it came from and what it
+    # (and its subtree) had spent under the parent by then.
+    released_from_session_id: Optional[str] = None
+    released_from_name: Optional[str] = None
+    released_at: Optional[str] = None
+    cost_at_release_usd: Optional[float] = None
+    # On a parent: what the children it released had spent (each one's
+    # subtree, at its release). Its subtree total keeps counting it.
+    released_children_cost_usd: float = 0.0
 
     # User-applied tags for grouping/filtering (#356).
     # Lower-cased on write so lookups can be case-insensitive without storing
@@ -1318,7 +1328,12 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 if not isinstance(record, dict) or sid in done:
                     continue
                 quota, week = quotas.get(sid, (None, None))
-                record["trip_base"] = base_of(record.get("stats") or {}, quota, week)
+                base = base_of(record.get("stats") or {}, quota, week)
+                carried = float(record.get("released_children_cost_usd") or 0.0)
+                if carried:
+                    # SUB$ on trips counts released children's spend from here on
+                    base["released_children_cost_usd"] = carried
+                record["trip_base"] = base
                 record["trip_reset_at"] = reset_at
                 done.append(sid)
         return done
@@ -1390,6 +1405,84 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             current = [t for t in (state[session_id].get('tags') or []) if t not in drop]
             state[session_id]['tags'] = current
             return list(current)
+
+    @staticmethod
+    def _subtree_spend(session_id: str, state: dict) -> float:
+        """``session_id``'s spend with its live descendants' (and what each
+        carries from children it released), as SUB$ counts it."""
+        children: Dict[str, List[str]] = {}
+        for sid, record in state.items():
+            parent = record.get("parent_session_id") if isinstance(record, dict) else None
+            if parent:
+                children.setdefault(parent, []).append(sid)
+        total, seen, todo = 0.0, set(), [session_id]
+        while todo:
+            sid = todo.pop()
+            if sid in seen or not isinstance(state.get(sid), dict):
+                continue
+            seen.add(sid)
+            record = state[sid]
+            stats = record.get("stats") or {}
+            total += float(stats.get("estimated_cost_usd", 0.0) or 0.0)
+            total += float(record.get("released_children_cost_usd", 0.0) or 0.0)
+            todo.extend(children.get(sid, ()))
+        return total
+
+    def release_child(self, child_id: str, now: Optional[datetime] = None) -> Optional[dict]:
+        """Free a child from its parent (#520): it becomes a root agent.
+
+        One locked write. The child leaves the parent's tree (tree view,
+        SUB$, cascade kill), its oversight ends (no timeout, nothing waits
+        for a report) and, with no parent, budget reclaim has nowhere to
+        send money. What it and its subtree had spent stays on the parent's
+        books: the parent's ``released_children_cost_usd`` grows by it, and
+        the parent's subtree total keeps counting it. Its billing code is
+        unchanged: a child an older overcode launched with no code of its
+        own keeps the one it inherited, now written on it.
+
+        Returns ``{"parent_id", "parent_name", "cost_usd", "released_at"}``,
+        or None when ``child_id`` is unknown or has no parent.
+        """
+        from .status_constants import STATUS_WAITING_OVERSIGHT
+
+        released_at = (now or datetime.now()).isoformat()
+        with self._state_transaction() as txn:
+            state = txn.state
+            child = state.get(child_id)
+            if not isinstance(child, dict) or not child.get("parent_session_id"):
+                return None
+            parent_id = child["parent_session_id"]
+            parent = state.get(parent_id)
+            parent = parent if isinstance(parent, dict) else None
+            cost = round(self._subtree_spend(child_id, state), 6)
+            if not child.get("billing_code_id") and not child.get("billing_code"):
+                try:
+                    code_id, code_name = self._inherited_codes([child_id], state)[child_id]
+                    child.update(billing_code_id=code_id, billing_code=code_name)
+                except Exception as e:  # the archive works it out as before
+                    logger.warning("inherited billing code not pinned on %s: %s", child_id, e)
+            parent_name = parent.get("name") if parent else None
+            if parent is not None:
+                parent["released_children_cost_usd"] = round(
+                    float(parent.get("released_children_cost_usd", 0.0) or 0.0) + cost, 6)
+            child.update(
+                parent_session_id=None,
+                released_from_session_id=parent_id,
+                released_from_name=parent_name,
+                released_at=released_at,
+                cost_at_release_usd=cost,
+                oversight_policy="wait",
+                oversight_timeout_seconds=0.0,
+                oversight_deadline=None,
+                oversight_deadline_at=None,
+            )
+            # Parked for a report nobody waits for now: the daemon reads its
+            # status afresh (terminated if its window has gone)
+            if child.get("status") == STATUS_WAITING_OVERSIGHT:
+                child["status"] = "running"
+            txn.dirty = True
+        return {"parent_id": parent_id, "parent_name": parent_name,
+                "cost_usd": cost, "released_at": released_at}
 
     def reclaim_budget(self, child_id: str) -> Optional[float]:
         """Refund a child's unused budget back to its parent (#432).
