@@ -146,7 +146,37 @@ def hover_subagents(ctx: ColumnContext):
         rows.append((swarm_workflow_glyph(ctx),
                      f"{runs} workflow run{'' if runs == 1 else 's'}"
                      + (f", {running} running" if running else "")))
+    # Each run's progress, as the WF cell's popup has it (#498)
+    rows += workflow_rows(ctx)
     return _emoji_legend("SubAgents", rows)
+
+
+def workflow_rows(ctx: ColumnContext) -> List[Tuple[str, str]]:
+    """Each published Workflow run (#498), newest first: its summary line
+    by a glyph for how it stands, then a line per phase."""
+    from ..swarm_view import count_glyph
+    from ..workflow_progress import describe_run
+    from .render_performance import swarm_workflow_glyph
+    rows: List[Tuple[str, str]] = []
+    ok = count_glyph("ok", ctx.emoji_free).rstrip()
+    failed = count_glyph("failed", ctx.emoji_free).rstrip()
+    for run in reversed([r for r in ctx.workflow_progress or () if isinstance(r, dict)]):
+        status = run.get("status") or "running"
+        glyph = {"ok": ok, "failed": failed}.get(status, swarm_workflow_glyph(ctx))
+        lines = describe_run(run, ok, failed)
+        rows.append((glyph, lines[0]))
+        rows += [(" ", line.strip()) for line in lines[1:]]
+    return rows
+
+
+def hover_workflow(ctx: ColumnContext):
+    """The WF cell's popup: every run it published, per phase."""
+    rows = workflow_rows(ctx)
+    if not rows:
+        return None
+    return _emoji_legend("Workflows", rows,
+                         "Agents finished of those started so far: a script decides "
+                         "how many it starts.")
 
 
 TRIP_FOOTER = "Budgets count the total: a trip reset never adds budget."

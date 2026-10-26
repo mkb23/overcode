@@ -141,6 +141,55 @@ def render_subagents(ctx: ColumnContext) -> ColumnOutput:
     return [(text, f"bold magenta{ctx.bg}" if active else f"magenta{ctx.bg}")]
 
 
+# The run's name in the WF cell, by detail level (the hover has it whole);
+# none at low, where the cell has to fit beside TOK at 120 columns
+WORKFLOW_NAME_CHARS = {"low": 0, "med": 12, "high": 14, "full": 18}
+WORKFLOW_PHASE_CHARS = 10
+
+
+def _clip(text: str, chars: int) -> str:
+    return text if len(text) <= chars else text[:chars - 1] + "…"
+
+
+def render_workflow(ctx: ColumnContext) -> ColumnOutput:
+    """The agent's running Workflow run (#498): its name, the phase it is
+    in of those its script declares, and its agents finished of started so
+    far: " 🧩 review-changes · 2/3 · 7/12✅" (" 🧩 2/3 · 7/12✅" at low
+    detail; the name is cut by level). A second run going adds
+    " +1". Without a declared phase list, the phase's title stands in for
+    "2/3"; before any phase is known, it is left out. No run going:
+    " 🧩  -", the same shape. The engine publishes it (workflow_progress)."""
+    from ..workflow_progress import active_run, phase_fraction
+    runs = ctx.workflow_progress
+    glyph = swarm_workflow_glyph(ctx)
+    run = active_run(runs)
+    if run is None:
+        return [(f" {glyph} {'-':>2}", f"dim{ctx.bg}")]
+    chars = WORKFLOW_NAME_CHARS.get(ctx.summary_detail, 12)
+    parts = [_clip(run.get("name") or "workflow", chars)] if chars else []
+    fraction = phase_fraction(run)
+    if fraction:
+        parts.append(_clip(fraction, WORKFLOW_PHASE_CHARS))
+    parts.append(f"{run.get('done') or 0}/{run.get('started') or 0}"
+                 f"{count_glyph('ok', ctx.emoji_free).rstrip()}")
+    more = sum(1 for r in runs if isinstance(r, dict) and r.get("status") == "running") - 1
+    text = f" {glyph} " + " · ".join(parts) + (f" +{more}" if more > 0 else "")
+    return [(text, f"bold magenta{ctx.bg}")]
+
+
+def render_workflow_plain(ctx: ColumnContext) -> Optional[str]:
+    """Every published run, for ``overcode show``'s Workflows line: each
+    run's summary, then its phases on lines of their own."""
+    from ..workflow_progress import describe_run
+    runs = [r for r in ctx.workflow_progress or () if isinstance(r, dict)]
+    if not runs:
+        return None
+    lines = []
+    for run in reversed(runs):  # newest first
+        lines += describe_run(run)
+    return "\n".join(lines)
+
+
 def render_subagents_plain(ctx: ColumnContext) -> Optional[str]:
     """The cell plus the total, for the CLI's Agents line (``overcode show``)."""
     rollup = ctx.swarm_rollup

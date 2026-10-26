@@ -91,6 +91,7 @@ from .engine_wake import WakeLoop
 from .namer import Namer
 from .transcript_archive import ArchiveScheduler
 from .swarm_publisher import SwarmPublisher
+from .workflow_progress import WorkflowFiles
 from . import swarm
 from .claude_bg import ClaudeBgSource, fleet_agents
 from .claude_bg_ledger import BgLedger
@@ -471,6 +472,9 @@ class MonitorDaemon:
         self.swarm_publisher = SwarmPublisher(
             self._swarm_state, self._conversations, clock=self.clock.time,
             quota_of=self._member_quota)
+        # Each agent's workflow runs' progress (#498): journals read on
+        # change only, watched between ticks (WakeLoop.publish_workflows_if_due)
+        self.workflow_files = WorkflowFiles()
         # Claude background sessions under the fleet's directories (phase 3):
         # adopted rows, published as agent views to the views only
         self.claude_bg = ClaudeBgSource(claude_jobs_dir)
@@ -767,6 +771,11 @@ class MonitorDaemon:
         swarm_rollup = getattr(self.detector, "get_swarm_rollup", None)
         swarm_rollup = swarm_rollup(session.name) if callable(swarm_rollup) else None
         try:
+            workflow_progress = self.workflow_files.of(session_id, self._swarm_state(session.name))
+        except Exception as e:  # progress is never worth a failed tick
+            self.log.warn(f"[{session.name}] workflow progress not read: {e}")
+            workflow_progress = None
+        try:
             cli_title_lag = self.namer.title_lag(session)
         except Exception:  # a cosmetic mark is never worth a failed tick
             cli_title_lag = None
@@ -835,6 +844,7 @@ class MonitorDaemon:
             task_reason=reason,
             swarm_rollup=swarm_rollup if isinstance(swarm_rollup, dict) else None,
             subagent_cost_usd=swarm.subagent_cost(getattr(stats, "conversations", None)),
+            workflow_progress=workflow_progress,
             # Last user command (from history sync)
             last_command=self.stats_sync.last_commands.get(session_id),
             pr_number=session.pr_number,
@@ -2251,6 +2261,7 @@ class MonitorDaemon:
             for stale_id in set(per_session) - current_session_ids:
                 del per_session[stale_id]
         self._pane_tracker.forget(current_session_ids)
+        self.workflow_files.forget(current_session_ids)
         self._capture_gate.forget({s.tmux_window for s in sessions})
 
     def _publish_and_enforce(

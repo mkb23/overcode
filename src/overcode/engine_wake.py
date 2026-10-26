@@ -184,6 +184,9 @@ class WakeLoop:
             # An expanded parent's rows: a new subscription, a finished row's
             # time up, a workflow journal moved (agent-observability §6.2)
             self.publish_swarm_if_due()
+            # A running workflow's journal moved (an agent started or
+            # finished): its agent's progress now, not at the next tick (#498)
+            self.publish_workflows_if_due()
             # Claude background sessions: the jobs directory at its own
             # cadence, a finished row's time up (agent-observability §6.3)
             self.publish_claude_bg_if_due()
@@ -209,6 +212,22 @@ class WakeLoop:
             daemon._publish_state(daemon.state.sessions, save=False)
         except Exception as e:  # the full tick will retry
             daemon.log.warn(f"virtual rows not published: {e}")
+            return False
+        return True
+
+    def publish_workflows_if_due(self) -> bool:
+        """Re-detect the agents whose running workflow journals moved; True if any did."""
+        daemon = self.daemon
+        files = getattr(daemon, "workflow_files", None)
+        if files is None:
+            return False
+        try:
+            moved = files.changed()
+            if not moved:
+                return False
+            self.quick_tick(moved, daemon.clock.wall())
+        except Exception as e:  # the full tick will retry
+            daemon.log.warn(f"workflow progress not published: {e}")
             return False
         return True
 

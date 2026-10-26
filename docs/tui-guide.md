@@ -69,6 +69,17 @@ running, e.g. ` 👥 ▶2`, without the fold marker. The column appears once any
 agent delegates, and replaces 0.6.0's DLG and SUB columns: saved column
 settings naming `swarm` or `subagent_count` carry over to it.
 
+While an agent runs a Claude Code workflow (the Workflow tool), the WF
+column, after the name, shows how far it is: `🧩 review-changes · 2/3 ·
+7/12✅` is phase 2 of the 3 its script declares, and 7 of the 12 agents it
+has started so far finished (a script decides as it goes how many it
+starts, so there is no "of N in all"). Low detail leaves the name out
+(`🧩 2/3 · 7/12✅`); a second run going adds `+1`. A script that declares
+no phases shows the phase's title instead of `2/3`. Hover the cell, or the
+SubAgents cell, for every run (running and the last three finished) with
+each phase's counts; `overcode show <agent>` prints the same under
+Workflows. The column appears only while some agent has a run going.
+
 Press `→` on that row to expand it: its delegated agents appear as
 read-only rows right under it, and the fold marker turns to `▾`. The rows
 sit on the same column grid as the agent rows, cell for cell (trimmed
