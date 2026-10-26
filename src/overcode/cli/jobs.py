@@ -254,6 +254,90 @@ def tail_job(
         raise typer.Exit(130)
 
 
+@jobs_app.command("wait")
+def wait_job(
+    name: Annotated[str, typer.Argument(help="Job name to wait for")],
+    until: Annotated[Optional[str], typer.Option("--until", "-u", help="Regex: return as soon as a line of the job's output matches")] = None,
+    timeout: Annotated[Optional[str], typer.Option("--timeout", "-t", help="Give up after this long (e.g. 90s, 10m, 1h)")] = None,
+    poll_interval: Annotated[float, typer.Option("--poll", hidden=True)] = 1.0,
+):
+    """Wait for a job: until its output matches --until, or until it ends.
+
+    It never outlives its job, so a watcher written with it can't get stuck
+    polling a job that already ended or never started (#515). Use it rather
+    than a hand-rolled `until … grep …; do sleep N; done` loop.
+
+    Exit codes: 0 when --until matched (or, without --until, the job
+    completed with exit 0); 1 when the job failed, was killed or ended
+    without a match; 2 when there is no such job; 124 on --timeout.
+
+    Examples:
+        overcode jobs wait build
+        overcode jobs wait server --until 'Listening on' --timeout 2m
+    """
+    import re
+    import sys
+    import time
+    from ..follow_mode import _capture_pane
+    from ..job_launcher import JobLauncher
+    from ..status_patterns import strip_ansi
+    from ._shared import _parse_duration
+
+    try:
+        pattern = re.compile(until) if until else None
+    except re.error as e:
+        rprint(f"[red]Error: --until is not a valid regex: {e}[/red]")
+        raise typer.Exit(2)
+    try:
+        deadline = time.monotonic() + _parse_duration(timeout) if timeout else None
+    except ValueError:
+        rprint(f"[red]Error: --timeout '{timeout}' is not a duration (e.g. 90s, 10m, 1h)[/red]")
+        raise typer.Exit(2)
+
+    launcher = JobLauncher()
+
+    def current():
+        return next((j for j in launcher.list_jobs(include_completed=True) if j.name == name), None)
+
+    def matched_line(job) -> Optional[str]:
+        raw = _capture_pane(job.tmux_session, job.tmux_window, lines=500)
+        for line in (raw or "").splitlines():
+            cleaned = strip_ansi(line).strip()
+            # The job header echoes the command, which may hold the pattern
+            if cleaned.startswith("│ Command: "):
+                continue
+            if pattern.search(cleaned):
+                return cleaned
+        return None
+
+    job = current()
+    if job is None:
+        rprint(f"[red]Error: Job '{name}' not found[/red]")
+        raise typer.Exit(2)
+
+    while True:
+        ended = job.status != "running"
+        if pattern is not None:
+            # Checked once more after the end: the last lines may hold it
+            line = matched_line(job)
+            if line is not None:
+                print(line)
+                raise typer.Exit(0)
+        if ended:
+            exit_str = f" (exit {job.exit_code})" if job.exit_code is not None else ""
+            print(f"[wait] Job '{name}' {job.status}{exit_str}"
+                  + (" without a match" if pattern is not None else ""), file=sys.stderr)
+            raise typer.Exit(0 if pattern is None and job.status == "completed" else 1)
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f"[wait] Timed out after {timeout}; job '{name}' still running", file=sys.stderr)
+            raise typer.Exit(124)
+        time.sleep(poll_interval)
+        job = current()
+        if job is None:
+            print(f"[wait] Job '{name}' is gone", file=sys.stderr)
+            raise typer.Exit(1)
+
+
 @jobs_app.command("_complete", hidden=True)
 def mark_complete(
     job_id: Annotated[str, typer.Argument(help="Job ID")],

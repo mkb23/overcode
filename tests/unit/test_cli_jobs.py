@@ -129,3 +129,63 @@ class TestJobsCompleteCommand:
 
         assert result.exit_code == 0
         mock_mark.assert_called_once_with("job-id-123", 0)
+
+
+class TestWaitCommand:
+    """'overcode jobs wait': a watcher that never outlives its job (#515)."""
+
+    def _run(self, states, panes, args):
+        """Run ``jobs wait`` as each poll sees the next job state and pane."""
+        states, panes = list(states), list(panes)
+
+        def list_jobs(self, include_completed=False):
+            job = states.pop(0) if len(states) > 1 else states[0]
+            return [job] if job is not None else []
+
+        def capture(session, window, lines=0):
+            return panes.pop(0) if len(panes) > 1 else panes[0]
+
+        with patch("overcode.job_launcher.JobLauncher.__init__", return_value=None), \
+             patch("overcode.job_launcher.JobLauncher.list_jobs", list_jobs), \
+             patch("overcode.follow_mode._capture_pane", capture), \
+             patch("time.sleep"):
+            return runner.invoke(app, ["jobs", "wait", "test-job", *args])
+
+    def test_returns_when_the_pattern_appears(self):
+        result = self._run([_mock_job()], ["booting", "booting\nListening on :8080"],
+                           ["--until", "Listening on"])
+        assert result.exit_code == 0
+        assert "Listening on :8080" in result.output
+
+    def test_the_echoed_command_is_not_a_match(self):
+        pane = "│ Command: serve && echo Listening on\nstarting"
+        result = self._run([_mock_job(), _mock_job(status="failed", exit_code=2)], [pane],
+                           ["--until", "Listening on"])
+        assert result.exit_code == 1
+
+    def test_a_job_that_ends_without_a_match_fails(self):
+        result = self._run([_mock_job(), _mock_job(status="completed", exit_code=0)],
+                           ["bash: syntax error"], ["--until", "PASSED"])
+        assert result.exit_code == 1
+        assert "without a match" in result.output
+
+    def test_a_match_in_the_last_output_still_counts(self):
+        result = self._run([_mock_job(status="completed", exit_code=0)],
+                           ["... 3 PASSED"], ["--until", "PASSED"])
+        assert result.exit_code == 0
+
+    def test_without_until_waits_for_the_end(self):
+        ok = self._run([_mock_job(), _mock_job(status="completed", exit_code=0)], [""], [])
+        failed = self._run([_mock_job(), _mock_job(status="killed")], [""], [])
+        assert (ok.exit_code, failed.exit_code) == (0, 1)
+
+    def test_missing_job(self):
+        assert self._run([None], [""], []).exit_code == 2
+
+    def test_timeout(self):
+        with patch("time.monotonic", side_effect=[0.0, 0.0, 100.0, 200.0]):
+            result = self._run([_mock_job()], [""], ["--until", "x", "--timeout", "30s"])
+        assert result.exit_code == 124
+
+    def test_bad_regex(self):
+        assert self._run([_mock_job()], [""], ["--until", "("]).exit_code == 2

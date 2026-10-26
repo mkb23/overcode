@@ -114,9 +114,16 @@ tracked job in their own window, linked to you:
 ```bash
 overcode bash "pytest tests/" -n full-tests
 overcode jobs tail full-tests -n 50      # last lines; without -n it streams to the end
+overcode jobs wait full-tests            # until it ends: exit 0 if it passed
+overcode jobs wait server --until 'Listening on' --timeout 2m
 overcode jobs list
 overcode jobs kill full-tests
 ```
+
+To wait on a job, use `overcode jobs wait` (with `--until REGEX` for a line of
+output), not a hand-rolled `until … grep …; do sleep N; done` loop: `wait`
+returns when the job ends, so it can't poll forever on a job that failed or
+never started.
 
 ## If you are a child
 

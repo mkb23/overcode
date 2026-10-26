@@ -257,6 +257,9 @@ class TestLauncher:
         parent = launcher.launch(name="parent", start_directory=str(tmp_path),
                                  skill_profile="research")
         monkeypatch.setenv("OVERCODE_SESSION_NAME", parent.name)
+        # Now "inside an agent", the real-state guard refuses $HOME/.overcode,
+        # and HOME is this test's temp dir: the tree is not the real one
+        monkeypatch.setenv("OVERCODE_ALLOW_REAL_STATE", "1")
         child = launcher.launch(name="child", start_directory=str(tmp_path))
         assert child.skill_profile == "research"
         none = launcher.launch(name="bare", start_directory=str(tmp_path),
