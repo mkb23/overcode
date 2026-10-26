@@ -61,6 +61,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import threading
@@ -677,6 +678,7 @@ class Result:
     skipped: int = 0
     failed: int = 0
     over_cap: int = 0
+    modes_fixed: int = 0
     rows: int = 0
     bytes: int = 0
     zst_bytes: int = 0
@@ -726,6 +728,7 @@ class TranscriptArchive:
         self.ensure_root()
         fd = os.open(self.root / LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
         try:
+            os.fchmod(fd, 0o600)
             if HAS_FCNTL:
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
@@ -735,6 +738,25 @@ class TranscriptArchive:
             yield self
         finally:
             os.close(fd)
+
+    def fix_modes(self) -> int:
+        """Make every directory under the root 700 and every file 600; how many changed.
+
+        New paths are made private as they are written; this catches what
+        was put here another way (a restore, a copy) or loosened since.
+        """
+        fixed = 0
+        for directory, dirs, files in os.walk(self.root):
+            for name, mode in [(d, 0o700) for d in dirs] + [(f, 0o600) for f in files]:
+                path = os.path.join(directory, name)
+                try:
+                    st = os.lstat(path)
+                    if not stat.S_ISLNK(st.st_mode) and stat.S_IMODE(st.st_mode) != mode:
+                        os.chmod(path, mode)
+                        fixed += 1
+                except OSError:
+                    continue
+        return fixed
 
     def identities(self) -> Identities:
         if self._identities is None:
@@ -803,6 +825,7 @@ class TranscriptArchive:
                         for r in rows)
         fd = os.open(self.manifest_path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
         try:
+            os.fchmod(fd, 0o600)
             size = os.fstat(fd).st_size
             if size:
                 os.lseek(fd, size - 1, os.SEEK_SET)
@@ -1023,6 +1046,7 @@ class TranscriptArchive:
         """
         started = time.monotonic()
         result = result or Result()
+        result.modes_fixed += self.fix_modes()
         stats = self.state["stat"]
         wall = self.clock()
         seen = set()
@@ -1448,6 +1472,14 @@ def _checkout_root(cwd: str) -> str:
     return os.path.realpath(top) if top else _real(cwd)
 
 
+def _describe(error: BaseException) -> str:
+    """An exception for the daemon's log: its type, and its text only when that
+    is ours or the OS's (paths and codes). Other text could quote what was read."""
+    if isinstance(error, (ArchiveError, OSError)):
+        return f"{type(error).__name__}: {error}"
+    return type(error).__name__
+
+
 # ── the daemon's part ────────────────────────────────────────────────────
 
 class ArchiveScheduler:
@@ -1486,7 +1518,7 @@ class ArchiveScheduler:
         try:
             self._tick()
         except Exception as e:  # never fail the daemon's loop
-            self._warn(f"transcript archive: {type(e).__name__}: {e}")
+            self._warn(f"transcript archive: {_describe(e)}")
 
     def _tick(self) -> None:
         if self.thread is not None and self.thread.is_alive():
@@ -1534,7 +1566,7 @@ class ArchiveScheduler:
         except ArchiveBusy:
             pass
         except Exception as e:
-            self._warn(f"transcript archive: {type(e).__name__}: {e}")
+            self._warn(f"transcript archive: {_describe(e)}")
 
     def _check_cap(self, archive: TranscriptArchive) -> None:
         if not archive.max_bytes:

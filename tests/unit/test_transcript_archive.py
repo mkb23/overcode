@@ -309,6 +309,44 @@ class TestPermissions:
         assert stat.S_IMODE(os.stat(archive.root).st_mode) == 0o700
 
 
+    def test_a_loosened_tree_is_made_private_again(self, env):
+        archive = env["archive"]
+        _sweep(archive)
+        session = archive.root / "2026-10" / SID
+        loose = [session, session / "subagents", session / "main.v1.jsonl.zst",
+                 archive.manifest_path, session / "meta.json", archive.root / "state.json"]
+        for path in loose:
+            os.chmod(path, 0o755 if path.is_dir() else 0o644)
+        result = _sweep(archive)
+        assert result.modes_fixed == len(loose) and result.captured == 0
+        _assert_private(archive.root)
+        assert _sweep(archive).modes_fixed == 0
+
+    def test_private_whatever_the_umask(self, env):
+        old = os.umask(0)
+        try:
+            archive = env["archive"]
+            _sweep(archive)
+            with archive.locked():
+                archive.import_snapshot(_snapshot(env["tmp"], env["claude"]))
+            transcript_queue.enqueue({"transcript_path": str(env["main"]),
+                                      "hook_event_name": "SessionEnd"}, archive.root)
+            with archive.locked():
+                archive.drain_queue()
+            transcript_queue.enqueue({"transcript_path": str(env["main"]),
+                                      "hook_event_name": "PreCompact"}, archive.root)
+        finally:
+            os.umask(old)
+        _assert_private(archive.root)
+
+
+def _assert_private(root: Path) -> None:
+    for directory, dirs, files in os.walk(root):
+        assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700, directory
+        for name in files:
+            assert stat.S_IMODE(os.stat(os.path.join(directory, name)).st_mode) == 0o600, name
+
+
 class TestNoContentOutsideTheCopies:
     def test_secrets_are_counted_never_written(self, env, caplog):
         caplog.set_level("DEBUG")
@@ -331,6 +369,41 @@ class TestNoContentOutsideTheCopies:
                 assert MARKER.encode() not in text, path
                 assert fake_aws.encode() not in text, path
         assert MARKER not in caplog.text and fake_aws not in caplog.text
+
+    def test_failures_log_no_content(self, env, monkeypatch, caplog):
+        """What a failure logs (the module logger, the daemon's log) names the
+        file and the error's type, never text the error may have quoted."""
+        caplog.set_level("DEBUG")
+        archive = env["archive"]
+        real_scan = ta.scan_file
+
+        def scan(path, *a, **kw):
+            if path.endswith(".txt"):
+                raise ValueError(f"cannot parse {MARKER}")
+            return real_scan(path, *a, **kw)
+
+        monkeypatch.setattr(ta, "scan_file", scan)
+        result = _sweep(archive)
+        assert result.failed == 1 and result.captured == 3
+        transcript_queue.enqueue({"transcript_path": str(env["sub"])}, archive.root)
+        with archive.locked():
+            archive.drain_queue()
+        monkeypatch.setattr(ArchiveScheduler, "enabled", staticmethod(lambda: True))
+        monkeypatch.setattr(ta, "transcripts_dir", lambda: archive.root)
+        log = _Log()
+
+        def broken():
+            raise RuntimeError(f"unexpected {MARKER}")
+
+        ArchiveScheduler(log, archive_factory=broken)._run(sweep=True, drain=True)
+        assert log.lines == [("warn", "transcript archive: RuntimeError")]
+        ArchiveScheduler(log, archive_factory=lambda: archive)._run(sweep=True, drain=False)
+        everything = caplog.text + json.dumps(log.lines)
+        assert "not captured: ValueError" in caplog.text
+        assert MARKER not in everything
+        for path in archive.root.rglob("*"):
+            if path.is_file() and not path.name.endswith(".zst"):
+                assert MARKER.encode() not in path.read_bytes(), path
 
     def test_keys_after_a_json_escape_are_counted(self):
         line = json.dumps({"out": "x\n" + "AKIA" + "Q" * 16 + "\nkey=" + "AIza" + "b" * 35}).encode()
