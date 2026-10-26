@@ -147,6 +147,10 @@ _FIELD_RES = {
     "cc_version": re.compile(rb'"version" ?: ?"([0-9][^"]{0,40})"'),
     "git_branch": re.compile(rb'"gitBranch" ?: ?"((?:[^"\\]|\\.){0,512})"'),
 }
+# What an interrupted write leaves: _write_private's and _Compressor's
+# temporary files, import_snapshot's scratch directory
+_TMP_RE = re.compile(r"^\..+\.tmp-\d+-\d+$")
+_IMPORT_SCRATCH_RE = re.compile(r"^\.import-\d+$")
 # AppleDouble files macOS tar adds for extended attributes ("._name")
 _APPLEDOUBLE_MAGIC = b"\x00\x05\x16\x07"
 
@@ -679,6 +683,7 @@ class Result:
     failed: int = 0
     over_cap: int = 0
     modes_fixed: int = 0
+    tidied: int = 0
     rows: int = 0
     bytes: int = 0
     zst_bytes: int = 0
@@ -739,24 +744,33 @@ class TranscriptArchive:
         finally:
             os.close(fd)
 
-    def fix_modes(self) -> int:
-        """Make every directory under the root 700 and every file 600; how many changed.
+    def tidy(self, result: Result) -> None:
+        """Make every directory under the root 700 and every file 600, and remove
+        what an interrupted write left (caller holds the lock, so nothing else
+        is writing).
 
         New paths are made private as they are written; this catches what
-        was put here another way (a restore, a copy) or loosened since.
+        was put here another way (a restore, a copy) or loosened since, and
+        the temporary file of a copy the daemon was killed in the middle of.
         """
-        fixed = 0
         for directory, dirs, files in os.walk(self.root):
+            for name in [d for d in dirs if _IMPORT_SCRATCH_RE.match(d)]:
+                dirs.remove(name)
+                shutil.rmtree(os.path.join(directory, name), ignore_errors=True)
+                result.tidied += 1
             for name, mode in [(d, 0o700) for d in dirs] + [(f, 0o600) for f in files]:
                 path = os.path.join(directory, name)
                 try:
+                    if mode == 0o600 and _TMP_RE.match(name):
+                        os.unlink(path)
+                        result.tidied += 1
+                        continue
                     st = os.lstat(path)
                     if not stat.S_ISLNK(st.st_mode) and stat.S_IMODE(st.st_mode) != mode:
                         os.chmod(path, mode)
-                        fixed += 1
+                        result.modes_fixed += 1
                 except OSError:
                     continue
-        return fixed
 
     def identities(self) -> Identities:
         if self._identities is None:
@@ -1046,7 +1060,7 @@ class TranscriptArchive:
         """
         started = time.monotonic()
         result = result or Result()
-        result.modes_fixed += self.fix_modes()
+        self.tidy(result)
         stats = self.state["stat"]
         wall = self.clock()
         seen = set()

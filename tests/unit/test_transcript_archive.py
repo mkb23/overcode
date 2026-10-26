@@ -368,6 +368,20 @@ class TestPermissions:
         _assert_private(archive.root)
         assert _sweep(archive).modes_fixed == 0
 
+    def test_what_an_interrupted_write_left_is_removed(self, env):
+        archive = env["archive"]
+        _sweep(archive)
+        session = archive.root / "2026-10" / SID
+        (session / ".main.v1.jsonl.zst.tmp-4242-1234567").write_bytes(b"half a copy")
+        (archive.root / ".state.json.tmp-4242-99").write_bytes(b"{")
+        (archive.root / ".import-4242").mkdir()
+        (archive.root / ".import-4242" / "member").write_bytes(b"x")
+        result = _sweep(archive)
+        assert result.tidied == 3
+        assert sorted(p.name for p in session.iterdir()) == [
+            "main.v1.jsonl.zst", "meta.json", "subagents", "tool-results"]
+        assert not (archive.root / ".import-4242").exists()
+
     def test_private_whatever_the_umask(self, env):
         old = os.umask(0)
         try:
