@@ -289,6 +289,52 @@ class TestSweep:
         assert main["git_branch"] == "main"  # the transcript's own
 
 
+class TestAcceptanceSweep:
+    """S001: a sweep over a fixture captures new, appended and rewritten files
+    with the right versions; running it again is a no-op."""
+
+    def _tree(self, archive):
+        return {str(p.relative_to(archive.root)): (p.stat().st_size, p.stat().st_mtime_ns)
+                for p in archive.root.rglob("*") if p.is_file() and p.name != "state.json"}
+
+    def test_new_appended_rewritten_and_set_aside_then_a_no_op(self, env):
+        archive = env["archive"]
+        repo = str(env["repo"])
+        _sweep(archive)
+        # new: a second conversation; appended: the main transcript;
+        # rewritten: the subagent; set aside: a superseded copy of new content
+        second = _second_conversation(env, repo)
+        with open(env["main"], "a") as f:
+            f.write(_record(3, repo, ts="2026-10-21T09:00:00.000Z"))
+        env["sub"].write_text(_record(9, repo, text="rewritten"))
+        aside = env["project"] / f"{SID}.jsonl.superseded-2026-10-21T10:00:00Z"
+        aside.write_text(_record(0, repo, text="an older start"))
+        for path in (env["main"], env["sub"], aside):
+            _age(path)
+        result = _sweep(archive)
+        assert (result.captured, result.appended, result.versioned, result.failed) == (4, 1, 2, 0)
+        current = {(r["key"], r["version"]): r for r in archive.current_rows()}
+        assert current[(f"{SID}/main.jsonl", 1)]["bytes"] == env["main"].stat().st_size
+        assert current[(f"{SID}/main.jsonl", 2)]["source_path"].endswith(aside.name)
+        assert {v for k, v in current if k == f"{SID}/subagents/agent-a1b2.jsonl"} == {1, 2}
+        assert (f"{SID2}/main.jsonl", 1) in current
+        for (key, version), row in current.items():
+            source = Path(expand(row["source_path"]))
+            if source.exists() and not (key.endswith("agent-a1b2.jsonl") and version == 1):
+                assert _content(archive, row) == source.read_bytes(), key
+        manifest, tree = archive.manifest_path.read_bytes(), self._tree(archive)
+        for now in (False, True, False):
+            again = _sweep(archive, now=now)
+            assert (again.captured, again.failed, again.unchanged) == (0, 0, again.seen)
+            assert archive.manifest_path.read_bytes() == manifest
+            assert self._tree(archive) == tree
+        assert second.exists()
+
+
+def expand(path: str) -> str:
+    return ta.expand_path(path)
+
+
 class TestPermissions:
     def test_directories_700_files_600(self, env):
         archive = env["archive"]
@@ -474,6 +520,37 @@ class TestImport:
             again = archive.import_snapshot(snapshot)
         assert again.rows == 0 and len(_rows(archive)) == files
 
+    def test_row_count_equals_the_fixture_snapshots_file_count(self, env):
+        """S001: importing the snapshot gives one manifest row per file in it
+        (the real bootstrap: 3,037 files, 3,037 rows). This fixture has the
+        real one's shapes: workflow subagents, tool results, set-aside copies,
+        memory, file history with hard links, history, AppleDouble entries."""
+        claude, repo = env["claude"], str(env["repo"])
+        project = env["project"]
+        (project / SID / "subagents" / "workflows" / "wf_1").mkdir(parents=True)
+        (project / SID / "subagents" / "workflows" / "wf_1" / "agent-w.jsonl").write_text(
+            _record(20, repo))
+        (project / SID / "tool-results" / "toolu_02.json").write_text('{"n": 2}')
+        (project / f"{SID}.jsonl.superseded-2026-10-20T11:00:00Z").write_text(
+            _record(30, repo, text="before the rewind"))
+        (project / f"{SID}.orphaned-1730000000.jsonl").write_text(_record(31, repo, text="orphan"))
+        (project / "memory").mkdir()
+        (project / "memory" / "MEMORY.md").write_text("- synthetic memory\n")
+        _second_conversation(env, repo)
+        snapshot = _snapshot(env["tmp"], claude)
+        files = _file_count(snapshot)
+        assert files == 13
+        archive = env["archive"]
+        with archive.locked():
+            result = archive.import_snapshot(snapshot)
+        assert (result.failed, result.skipped, result.rows, result.seen) == (0, 0, files, files)
+        rows = _rows(archive)
+        assert len(rows) == files and len({r["stored"] for r in rows}) == files
+        assert sorted(r["version"] for r in rows if r["key"] == f"{SID}/main.jsonl") == [1, 2, 3]
+        with archive.locked():
+            assert archive.import_snapshot(snapshot).rows == 0
+        assert _sweep(archive).captured == 0  # the live tree is what was imported
+
     def test_a_sweep_after_the_import_adds_only_what_changed(self, env):
         snapshot = _snapshot(env["tmp"], env["claude"])
         archive = env["archive"]
@@ -553,6 +630,37 @@ class TestHooks:
             best = elapsed if best is None else min(best, elapsed)
         assert best < 0.2, f"SessionEnd hook took {best * 1000:.0f} ms"
         assert transcript_queue.pending(tmp_path / "oc" / "transcripts") == 3
+
+    def test_a_session_end_hook_is_fast_with_a_long_queue_waiting(self, tmp_path):
+        """The hook appends one line: a queue the daemon has not drained (it
+        is down) does not slow it, and the transcript is never opened."""
+        root = tmp_path / "oc" / "transcripts"
+        root.mkdir(parents=True, mode=0o700)
+        line = json.dumps({"t": 1, "event": "SessionEnd", "path": "/x/" + "y" * 200}) + "\n"
+        (root / "queue.jsonl").write_text(line * 50_000)
+        transcript = tmp_path / "huge.jsonl"
+        transcript.write_bytes(b"x")
+        os.chmod(transcript, 0)  # unreadable: the hook must not read it
+        env = dict(os.environ, OVERCODE_SESSION_NAME="shirka-ui", OVERCODE_TMUX_SESSION="agents",
+                   OVERCODE_SESSION_ID="agent-id-1", OVERCODE_DIR=str(tmp_path / "oc"),
+                   OVERCODE_STATE_DIR=str(tmp_path / "oc" / "sessions"),
+                   PYTHONPATH=str(Path(ta.__file__).parents[1]))
+        payload = json.dumps({"hook_event_name": "SessionEnd", "session_id": SID,
+                              "transcript_path": str(transcript)})
+        command = [sys.executable, "-c",
+                   "import sys; sys.argv = ['overcode', 'hook-handler'];"
+                   "from overcode.entrypoint import main; main()"]
+        best = None
+        try:
+            for _ in range(3):
+                started = time.perf_counter()
+                subprocess.run(command, input=payload, text=True, env=env, check=True, timeout=10)
+                elapsed = time.perf_counter() - started
+                best = elapsed if best is None else min(best, elapsed)
+        finally:
+            os.chmod(transcript, 0o600)
+        assert best < 0.2, f"SessionEnd hook took {best * 1000:.0f} ms"
+        assert transcript_queue.pending(root) == 50_003
 
     def test_enqueue_never_raises(self, tmp_path):
         blocker = tmp_path / "file"
@@ -688,6 +796,52 @@ class TestFindAndCat:
         assert missing.exit_code == 1
         bad = runner.invoke(app, ["archive", "find", "--since", "soon"])
         assert bad.exit_code == 2
+
+
+class TestShirkaInterface:
+    """find and cat are what shirka reads (S002): pin their shape."""
+
+    # The S001 manifest row; more fields may be added, none taken away
+    S001_FIELDS = {"v", "captured_at", "backend", "cc_session", "kind", "rel", "source_path",
+                   "sha256", "bytes", "zst_bytes", "first_ts", "last_ts", "cc_version", "cwd",
+                   "git_remote", "git_branch", "agent", "agent_id", "billing_code",
+                   "parent_agent", "secrets_flagged"}
+
+    def test_find_from_a_worktree_path_covers_the_checkout(self, env, monkeypatch):
+        _cli_env(env, monkeypatch)
+        from overcode.cli._shared import app
+
+        worktree = env["repo"] / ".claude" / "worktrees" / "feature"
+        subprocess.run(["git", "-C", str(env["repo"]), "worktree", "add", "-q", "-b", "feature",
+                        str(worktree)], check=True, capture_output=True)
+        _second_conversation(env, str(worktree))
+        runner = CliRunner()
+        assert runner.invoke(app, ["archive", "sweep"]).exit_code == 0
+        for query in (str(worktree), str(env["repo"]), "https://github.com/Example-Org/shirka"):
+            out = runner.invoke(app, ["archive", "find", "--repo", query, "--kind", "main"])
+            assert out.exit_code == 0
+            assert {json.loads(line)["cc_session"] for line in out.output.splitlines()} == {
+                SID, SID2}, query
+
+    def test_rows_keep_the_s001_fields_and_their_values_types(self, env, monkeypatch):
+        _cli_env(env, monkeypatch)
+        from overcode.cli._shared import app
+
+        runner = CliRunner()
+        runner.invoke(app, ["archive", "sweep"])
+        lines = runner.invoke(app, ["archive", "find"]).output.splitlines()
+        assert lines
+        for line in lines:
+            row = json.loads(line)
+            assert self.S001_FIELDS <= set(row), self.S001_FIELDS - set(row)
+            assert row["v"] == 1 and row["backend"] == "claude-code"
+            assert row["kind"] in {"main", "subagent", "tool-result", "session-file"}
+            assert len(row["sha256"]) == 64 and isinstance(row["bytes"], int)
+            assert row["captured_at"].endswith("Z") and row["source_path"].startswith(("~", "/"))
+            assert line == json.dumps(row, separators=(",", ":"))  # compact, one line
+        main = next(json.loads(x) for x in lines if json.loads(x)["kind"] == "main")
+        assert main["rel"] == "main.v1.jsonl.zst"
+        assert main["stored"] == f"2026-10/{SID}/{main['rel']}"
 
 
 def _cli_env(env, monkeypatch):
