@@ -1072,6 +1072,24 @@ def save_budget_reclaim_mode(mode: str) -> None:
     save_config(config)
 
 
+def get_prefer_claude_messaging() -> bool:
+    """``send.prefer_claude_messaging`` (#553, default off): ``overcode send``
+    from a Claude Code agent to a Claude Code agent refuses a message, without
+    ``--force``, and points the sender at Claude's own SendMessage tool."""
+    section = _get_config_value("send", {})
+    return isinstance(section, dict) and section.get("prefer_claude_messaging") is True
+
+
+def save_prefer_claude_messaging(on: bool) -> None:
+    """Set ``send.prefer_claude_messaging`` in config.yaml, keeping the rest of ``send:``."""
+    config = load_config()
+    section = config.get("send")
+    section = dict(section) if isinstance(section, dict) else {}
+    section["prefer_claude_messaging"] = bool(on)
+    config["send"] = section
+    save_config(config)
+
+
 NAMING_MAX_LENGTH_DEFAULT = 18
 NAMING_COST_CAP_DEFAULT = 10.0  # USD a day for the namer's model calls
 _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "rename_every",

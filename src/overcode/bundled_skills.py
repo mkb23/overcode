@@ -99,6 +99,10 @@ overcode send <name> approve             # or reject: a permission prompt, any b
 overcode kill <name>                     # also kills its children (--no-cascade keeps them)
 ```
 
+If `overcode send` answers "Not sent" and points you at SendMessage, you and
+the agent are both Claude Code: message it with your SendMessage tool under
+the name it gives, and use `overcode send --force` only if that can't reach it.
+
 Read a child's output before you trust its report, and check the claims that
 matter yourself, for example by running the tests.
 

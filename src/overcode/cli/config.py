@@ -44,6 +44,13 @@ CONFIG_TEMPLATE = """\
 #       archive_after: never   # DURATION or never
 #       budget: 5.00           # USD
 
+# overcode send between Claude Code agents (#553): with this on, a Claude
+# Code agent's `overcode send` to another Claude Code agent is refused (unless
+# --force) and points it at Claude's own SendMessage tool. Gestures (approve,
+# reject, enter, escape) and --no-enter keys still go through.
+# send:
+#   prefer_claude_messaging: false
+
 # Auto-naming (Agent names in docs/configuration.md; "Auto-naming settings…"
 # in the TUI palette sets the switches and timings)
 # naming:
@@ -178,6 +185,10 @@ def _config_show():
     if "children" in config:
         from ..config import get_budget_reclaim_mode
         rprint(f"  children.budget_reclaim: {get_budget_reclaim_mode()}")
+
+    if "send" in config:
+        from ..config import get_prefer_claude_messaging
+        rprint(f"  send.prefer_claude_messaging: {get_prefer_claude_messaging()}")
 
     if "naming" in config:
         from ..config import describe_auto_naming, get_naming_config

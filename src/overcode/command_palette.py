@@ -144,6 +144,14 @@ def _budget_reclaim_state(app: Any) -> StateView:
         return StateView(("auto", "manual"), None)
 
 
+def _prefer_claude_messaging_state(app: Any) -> StateView:
+    try:
+        from .config import get_prefer_claude_messaging
+        return _toggle(get_prefer_claude_messaging())
+    except Exception:
+        return _toggle(None)
+
+
 def _auto_naming_state(app: Any) -> StateView:
     try:
         from .config import get_naming_config
@@ -419,6 +427,9 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("toggle_budget_reclaim", "Budget reclaim", "Settings",
        "refund child budget finished done return parent manual auto spend money",
        state=_budget_reclaim_state),
+    _C("toggle_prefer_claude_messaging", "Prefer SendMessage", "Settings",
+       "overcode send refuse force claude to claude message passing teammate agents",
+       state=_prefer_claude_messaging_state),
     _C("open_auto_naming_settings", "Auto-naming settings…", "Settings",
        "names namer rename auto-name first name re-check every minutes cap cost title"),
     _C("open_agent_visibility", "Agent visibility…", "Settings",

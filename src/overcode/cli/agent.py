@@ -1594,6 +1594,36 @@ def annotate(
         rprint(f"[green]✓ Annotation cleared for {name}[/green]")
 
 
+_SEND_GESTURES = ("enter", "escape", "esc", "approve", "reject")
+
+
+def _refuse_claude_to_claude(sm, target, text: str) -> None:
+    """Exit with a pointer to SendMessage when send.prefer_claude_messaging
+    is on and this is a Claude Code agent messaging a Claude Code agent (#553).
+
+    Gestures go through: they answer a prompt, which SendMessage cannot.
+    """
+    from ..agent_identity import current_agent
+    from ..backends import session_backend_name
+    from ..config import get_prefer_claude_messaging
+
+    if not text.strip() or text.strip().lower() in _SEND_GESTURES:
+        return
+    if not get_prefer_claude_messaging():
+        return
+    sender = current_agent(sm)
+    if sender is None or sender.id == target.id:
+        return
+    if session_backend_name(sender) != "claude-code" or session_backend_name(target) != "claude-code":
+        return
+    rprint(f"[yellow]Not sent:[/yellow] '[bold]{target.name}[/bold]' is a Claude Code agent, "
+           f"like you. Message it with your SendMessage tool instead "
+           f"(to: \"{target.name}\"; ListAgents shows its exact name).\n"
+           f"Only if SendMessage can't reach it: overcode send --force {target.name} \"...\"\n"
+           f"[dim](send.prefer_claude_messaging is on in overcode's config.yaml)[/dim]")
+    raise typer.Exit(1)
+
+
 @app.command()
 def send(
     name: Annotated[str, typer.Argument(help="Name of agent")],
@@ -1604,10 +1634,18 @@ def send(
     no_enter: Annotated[
         bool, typer.Option("--no-enter", help="Don't press Enter after text")
     ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Send even if send.prefer_claude_messaging "
+                           "would point you at SendMessage")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """
     Send input to an agent.
+
+    With send.prefer_claude_messaging on (#553), a message from one Claude
+    Code agent to another is refused unless --force: Claude's own
+    SendMessage tool reaches it without typing into its pane.
 
     Gestures: approve, reject -- resolved via the agent's backend, so the
     right keys go to a Claude Code prompt or an opencode one.
@@ -1628,14 +1666,15 @@ def send(
     agent_session = find_agent(sm, name)
     if agent_session:
         name = agent_session.name  # an old name resolved; say the current one
+    text_str = " ".join(text) if text else ""
+    if agent_session and not force and not no_enter:
+        _refuse_claude_to_claude(sm, agent_session, text_str)
     if agent_session and agent_session.is_asleep:
         sm.update_session(agent_session.id, is_asleep=False, asleep_auto=False)
         rprint(f"[dim]Woke agent '{name}' to send command[/dim]")
 
     launcher = AgentLauncher(session)
 
-    # Join all text parts if multiple were given
-    text_str = " ".join(text) if text else ""
     enter = not no_enter
 
     if launcher.send_to_session(name, text_str, enter=enter):

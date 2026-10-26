@@ -113,6 +113,10 @@ children:
   budget_reclaim: auto            # auto: a finished child's unused budget goes back to its
                                   # parent; manual: only `overcode budget reclaim <child>`
 
+# overcode send between two Claude Code agents (#553)
+send:
+  prefer_claude_messaging: false  # true: refused without --force; use Claude's SendMessage
+
 # Claude subscription quota: the Q% column's estimate
 # See "Subscription Quota" below
 quota:

@@ -269,6 +269,22 @@ class DaemonActionsMixin:
                        "runs overcode budget reclaim <child>")
         self.notify(message, severity="information")
 
+    def action_toggle_prefer_claude_messaging(self) -> None:
+        """send.prefer_claude_messaging on <-> off in config.yaml (#553)."""
+        from ..config import get_prefer_claude_messaging, save_prefer_claude_messaging
+        on = not get_prefer_claude_messaging()
+        try:
+            save_prefer_claude_messaging(on)
+        except Exception as e:
+            self.notify(f"Claude messaging setting not changed: {e}", severity="error")
+            return
+        if on:
+            message = ("Claude agents use SendMessage: overcode send between two Claude Code "
+                       "agents is refused unless --force")
+        else:
+            message = "overcode send between Claude Code agents goes through again"
+        self.notify(message, severity="information")
+
     def action_toggle_auto_naming(self) -> None:
         """Turn auto-naming on or off (naming.enabled in config.yaml; the daemon reads it each tick)."""
         from ..config import describe_auto_naming, get_naming_config, save_naming_enabled
