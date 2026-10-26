@@ -697,7 +697,8 @@ files 600; never in git):
   only queue the transcript's path; the daemon copies it within a minute.
 - **Rows.** Each manifest row carries the session id, kind, sizes and
   sha256, first/last record times, Claude's version, the `cwd`, its
-  normalised git remote and branch, and the overcode agent, agent id,
+  normalised git remote (a clone of a local clone takes that one's
+  remote), branch and root commit, and the overcode agent, agent id,
   billing code and parent when overcode ran the session (null otherwise).
   The copies are never redacted; a row only counts the key-like strings in
   its file (`secrets_flagged`).

@@ -532,6 +532,49 @@ class TestFindAndCat:
         assert wt["git_remote"] == "github.com/Example-Org/shirka" and wt["git_branch"] == "main"
         assert wt["stored"].startswith("2026-09/")  # the month of its first record
 
+    def test_find_by_remote_spans_copies_clones_and_not_neighbours(self, env):
+        """C001: worktrees, ``*-easy`` copies and scratch clones file under the
+        project; a nested repository or a non-git directory beside it does not."""
+        code = env["tmp"] / "code"
+        git = lambda *a: subprocess.run(["git", *a], check=True, capture_output=True)
+        git("clone", "-q", str(env["repo"]), str(code / "shirka-easy"))  # origin: a local path
+        git("clone", "-q", str(env["repo"]), str(env["tmp"] / "scratch" / "mirror"))
+        git("-C", str(env["tmp"] / "scratch" / "mirror"), "remote", "remove", "origin")
+        nested = env["repo"] / "vendor" / "lib"
+        nested.mkdir(parents=True)
+        git("-C", str(nested), "init", "-q")
+        git("-C", str(nested), "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+            "commit", "-q", "--allow-empty", "-m", "another root")
+        (code / "shirka-notes").mkdir()
+        sessions = {
+            "easy": (str(code / "shirka-easy"), "a0000000-0000-4000-8000-000000000001"),
+            "gone-easy": (str(code / "shirka-easy2" / "sub"), "a0000000-0000-4000-8000-000000000002"),
+            "mirror": (str(env["tmp"] / "scratch" / "mirror"), "a0000000-0000-4000-8000-000000000003"),
+            "nested": (str(nested), "a0000000-0000-4000-8000-000000000004"),
+            "notes": (str(code / "shirka-notes"), "a0000000-0000-4000-8000-000000000005"),
+            "gone-elsewhere": (str(env["tmp"] / "gone" / "shirka-x"), "a0000000-0000-4000-8000-000000000006"),
+        }
+        for cwd, sid in sessions.values():
+            _second_conversation(env, cwd, sid)
+        archive = env["archive"]
+        _sweep(archive)
+        rows = {r["cc_session"]: r for r in archive.find(kinds=["main"])}
+        assert rows[sessions["easy"][1]]["git_remote"] == "github.com/Example-Org/shirka"
+        root_commit = rows[SID]["git_root"]
+        assert len(root_commit) == 40 and rows[sessions["mirror"][1]]["git_root"] == root_commit
+        assert rows[sessions["nested"][1]]["git_root"] not in (None, root_commit)
+        want = {SID, *(sessions[k][1] for k in ("easy", "gone-easy", "mirror"))}
+        for query in ("github.com/Example-Org/shirka", str(env["repo"])):
+            assert {r["cc_session"] for r in archive.find(repo=query, kinds=["main"])} == want, query
+
+    def test_a_local_path_remote_with_no_upstream_is_kept(self, tmp_path):
+        upstream = _git_repo(tmp_path / "up", "unused")
+        subprocess.run(["git", "-C", str(upstream), "remote", "remove", "origin"], check=True)
+        subprocess.run(["git", "clone", "-q", str(upstream), str(tmp_path / "copy")], check=True,
+                       capture_output=True)
+        info = ta.git_info(str(tmp_path / "copy"), root=True)
+        assert info.remote == normalize_remote(str(upstream)) and info.root
+
     def test_filters(self, env):
         archive = env["archive"]
         _second_conversation(env, str(env["repo"]))

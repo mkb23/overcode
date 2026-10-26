@@ -43,9 +43,11 @@ foreground. One process at a time holds the archive's lock.
 
 Identity. A conversation is mapped to the overcode agent that owned it
 (``agent_session_ids`` of the live records, ``stats.conversations`` of the
-archived ones), its billing code and its parent; the git remote and branch
-come from the transcript's ``cwd`` at capture time (null when it no longer
-exists; the transcript's own ``gitBranch`` wins for the branch).
+archived ones; see :class:`Identities`), its billing code and its parent;
+the git remote, branch and root commit come from the transcript's ``cwd``
+at capture time (null when it no longer exists; the transcript's own
+``gitBranch`` wins for the branch). :func:`match_repo` files worktrees,
+clones and ``*-easy`` copies under their project.
 
 ``find`` and ``cat`` are what shirka reads (S002): keep their output stable.
 """
@@ -67,7 +69,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import (BinaryIO, Callable, Dict, Iterable, Iterator, List, NamedTuple, Optional,
+                    Tuple)
 
 from . import transcript_queue
 from .paths import transcripts_dir
@@ -273,20 +276,58 @@ def _git(args: List[str], cwd: str) -> Optional[str]:
     return done.stdout.strip() or None
 
 
-def git_info(cwd: Optional[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """``(normalised remote, branch, worktree root)`` of ``cwd``; Nones when it is gone."""
-    if not cwd or not os.path.isdir(cwd):
-        return None, None, None
-    top = _git(["rev-parse", "--show-toplevel"], cwd)
-    if not top:
-        return None, None, None
+class GitInfo(NamedTuple):
+    """What git says about a directory: all None when it is gone or not in a repo."""
+    remote: Optional[str] = None   # normalised (normalize_remote)
+    branch: Optional[str] = None
+    top: Optional[str] = None      # the worktree's root
+    root: Optional[str] = None     # the repository's root commit, when asked for
+
+
+def _first_remote(cwd: str) -> Optional[str]:
     remote = _git(["remote", "get-url", "origin"], cwd)
     if not remote:
         names = _git(["remote"], cwd)
         first = names.split()[0] if names else None
         remote = _git(["remote", "get-url", first], cwd) if first else None
+    return remote
+
+
+def _upstream_remote(remote: Optional[str], top: str, depth: int = 0) -> Optional[str]:
+    """``remote``, or when it is a local path (a clone of a clone), that repository's own."""
+    if not remote:
+        return None
+    if remote.startswith("file://"):
+        local = remote[len("file://"):]
+    elif remote.startswith(("/", "~", ".")):
+        local = os.path.join(top, os.path.expanduser(remote))
+    else:
+        return remote
+    if depth < 3 and os.path.isdir(local):
+        upstream = _first_remote(local)
+        if upstream:
+            return _upstream_remote(upstream, local, depth + 1)
+    return remote
+
+
+def git_info(cwd: Optional[str], *, root: bool = False) -> GitInfo:
+    """What git says about ``cwd`` (``root``: also the root commit); Nones when it is gone.
+
+    A remote that is a local path (``git clone ~/Code/x x-easy``) stands for
+    that repository's own remote, so a copy is filed under the project.
+    """
+    if not cwd or not os.path.isdir(cwd):
+        return GitInfo()
+    top = _git(["rev-parse", "--show-toplevel"], cwd)
+    if not top:
+        return GitInfo()
+    remote = _upstream_remote(_first_remote(cwd), top)
     branch = _git(["branch", "--show-current"], cwd)
-    return normalize_remote(remote), branch, top
+    first = None
+    if root:
+        roots = _git(["rev-list", "--max-parents=0", "HEAD"], cwd)
+        first = min(roots.split()) if roots else None
+    return GitInfo(normalize_remote(remote), branch, top, first)
 
 
 # ── what a file is ───────────────────────────────────────────────────────
@@ -658,7 +699,7 @@ class TranscriptArchive:
         self.max_bytes = max_bytes
         self.gentle = gentle
         self.clock = clock
-        self._git_cache: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
+        self._git_cache: Dict[str, GitInfo] = {}
         # Built from the manifest by load()
         self.latest_by_source: Dict[str, dict] = {}
         self.versions: Dict[str, Dict[int, dict]] = {}
@@ -808,11 +849,11 @@ class TranscriptArchive:
             self.months[ref.cc_session] = month
         return month
 
-    def _git(self, cwd: Optional[str]):
+    def _git(self, cwd: Optional[str]) -> GitInfo:
         if not cwd:
-            return None, None, None
+            return GitInfo()
         if cwd not in self._git_cache:
-            self._git_cache[cwd] = git_info(cwd)
+            self._git_cache[cwd] = git_info(cwd, root=True)
         return self._git_cache[cwd]
 
     def _row(self, ref: FileRef, version: int, stored: str, source_path: str, scan: Scan,
@@ -821,9 +862,10 @@ class TranscriptArchive:
         session_context = self.context.get(ref.cc_session or "", {})
         if not cwd:
             cwd = session_context.get("cwd")
-        remote, branch, _ = self._git(cwd)
-        if cwd == session_context.get("cwd") and not remote and session_context.get("git_remote"):
+        remote, branch, _, git_root = self._git(cwd)
+        if cwd == session_context.get("cwd") and not (remote or git_root):
             remote = session_context.get("git_remote")
+            git_root = session_context.get("git_root")
         identity = self._identity(ref.cc_session, hint)
         row = {
             "v": ROW_VERSION,
@@ -846,6 +888,7 @@ class TranscriptArchive:
             "cwd": cwd,
             "git_remote": remote,
             "git_branch": scan.fields.get("git_branch") or branch,
+            "git_root": git_root,
             "agent": identity.get("agent"),
             "agent_id": identity.get("agent_id"),
             "billing_code": identity.get("billing_code"),
@@ -1288,7 +1331,7 @@ class TranscriptArchive:
 
 
 def _context_of(row: dict) -> dict:
-    return {k: row.get(k) for k in ("cwd", "git_remote", "git_branch", "cc_version")}
+    return {k: row.get(k) for k in ("cwd", "git_remote", "git_branch", "git_root", "cc_version")}
 
 
 def _epoch(when: Optional[str]) -> float:
@@ -1328,31 +1371,42 @@ def read_manifest(path: Path) -> Iterator[dict]:
 def match_repo(rows: List[dict], repo: str) -> List[dict]:
     """The rows of repository ``repo``: a remote (any spelling) or a local path.
 
-    A path stands for its own remote when it has one, and for every row
-    whose ``cwd`` is inside it. A row whose ``cwd`` is gone (a removed
-    worktree) has no remote of its own; it counts when its ``cwd`` is
-    inside a checkout that other rows of the repository were captured in.
+    A row with a remote counts when it is that remote. A row without one
+    (no remote, or its ``cwd`` was gone when it was captured) counts when
+    its root commit is the repository's (a clone with no remote; another
+    repository nested in a checkout has its own), else when its ``cwd`` is
+    inside a checkout of the repository (the path given, or one other rows
+    were captured in: a removed worktree), or is gone and was a
+    ``<checkout>-<anything>`` copy beside one (``~/Code/shirka-easy`` for
+    ``~/Code/shirka``). That last is a guess from the name: a removed
+    ``~/Code/shirka-notes`` that was never shirka counts too.
     """
     roots: List[str] = []
+    commits = set()
     wanted: Optional[str] = None
     candidate = os.path.expanduser(repo)
     if os.path.isdir(candidate):
         real = os.path.realpath(candidate)
         roots.append(real)
-        wanted, _, top = git_info(real)
-        if top:
-            roots.append(os.path.realpath(top))
+        info = git_info(real, root=True)
+        wanted = info.remote
+        if info.top:
+            roots.append(os.path.realpath(info.top))
+        if info.root:
+            commits.add(info.root)
     else:
         wanted = normalize_remote(repo)
     if wanted:
         for row in rows:
-            if same_remote(row.get("git_remote"), wanted) and row.get("cwd"):
-                roots.append(_checkout_root(row["cwd"]))
+            if same_remote(row.get("git_remote"), wanted):
+                if row.get("cwd"):
+                    roots.append(_checkout_root(row["cwd"]))
+                if row.get("git_root"):
+                    commits.add(row["git_root"])
     roots = sorted(set(r for r in roots if r and r != os.sep))
+    siblings = [r + "-" for r in roots]
 
-    def inside(cwd: Optional[str]) -> bool:
-        if not cwd:
-            return False
+    def inside(cwd: str) -> bool:
         return any(cwd == r or cwd.startswith(r + os.sep) for r in roots)
 
     out = []
@@ -1360,16 +1414,38 @@ def match_repo(rows: List[dict], repo: str) -> List[dict]:
         remote = row.get("git_remote")
         if wanted and same_remote(remote, wanted):
             out.append(row)
-        elif not remote and inside(row.get("cwd")):
+            continue
+        if remote or not row.get("cwd"):
+            continue
+        cwd, git_root = _real(row["cwd"]), row.get("git_root")
+        if git_root and commits:
+            found = git_root in commits  # another repository nested in a checkout is not it
+        else:
+            found = inside(cwd) or (not git_root and _gone_copy_beside(cwd, siblings))
+        if found:
             out.append(row)
     return out
+
+
+def _real(path: str) -> str:
+    """``path`` with symlinks resolved as far as it still exists (``/tmp`` is ``/private/tmp``)."""
+    return os.path.realpath(path)
+
+
+def _gone_copy_beside(cwd: str, siblings: List[str]) -> bool:
+    """Whether ``cwd`` was in a removed ``<checkout>-<suffix>`` directory beside a checkout."""
+    for prefix in siblings:
+        if cwd.startswith(prefix) and len(cwd) > len(prefix):
+            copy = prefix + cwd[len(prefix):].split(os.sep, 1)[0]
+            return not os.path.exists(copy)
+    return False
 
 
 @functools.lru_cache(maxsize=4096)
 def _checkout_root(cwd: str) -> str:
     """The worktree root holding ``cwd`` (``cwd`` itself when git cannot say)."""
-    top = git_info(cwd)[2]
-    return os.path.realpath(top) if top else cwd
+    top = git_info(cwd).top
+    return os.path.realpath(top) if top else _real(cwd)
 
 
 # ── the daemon's part ────────────────────────────────────────────────────

@@ -672,7 +672,8 @@ overcode archive cat <session-id> [--subagents]   # decompressed to stdout
 
 `find` prints manifest rows as JSON lines (the current version of each
 archived file); `--repo` takes any spelling of a remote or a local
-checkout, and covers its worktrees. `find` and `cat` are a stable interface
+checkout, and covers its worktrees (removed ones too), clones without a
+remote (same root commit) and removed `<checkout>-*` copies beside it. `find` and `cat` are a stable interface
 for other tools (shirka).
 
 `overcode archive --root <dir> <command>` (or `$OVERCODE_TRANSCRIPTS_DIR`)
