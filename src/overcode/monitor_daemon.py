@@ -2216,9 +2216,25 @@ class MonitorDaemon:
             if parent_id and parent_id in by_id:
                 children_map.setdefault(parent_id, []).append(sid)
 
+        # What children an agent released had spent until then (#520): its
+        # subtree keeps counting it. On a trip, only what was released
+        # since the reset (the base holds the carry at the reset).
+        carried: Dict[str, float] = {}
+        trip_carried: Dict[str, float] = {}
+        if index is not None:
+            for sid in by_id:
+                record = index.by_id.get(sid)
+                carry = float(getattr(record, "released_children_cost_usd", 0.0) or 0.0)
+                if carry > 0:
+                    carried[sid] = carry
+                    base = getattr(record, "trip_base", None)
+                    at_reset = (float(base.get("released_children_cost_usd", 0.0) or 0.0)
+                                if isinstance(base, dict) else 0.0)
+                    trip_carried[sid] = max(0.0, carry - at_reset)
+
         def _sum(sid, visited):
             visited.add(sid)
-            total = by_id[sid].estimated_cost_usd
+            total = by_id[sid].estimated_cost_usd + carried.get(sid, 0.0)
             for child in children_map.get(sid, []):
                 if child not in visited:
                     total += _sum(child, visited)
@@ -2231,10 +2247,19 @@ class MonitorDaemon:
                 if child not in visited:
                     yield from _members(child, visited)
 
+        def _trip_carry(members):
+            return sum(trip_carried[m.session_id] if isinstance(getattr(m, "trip", None), dict)
+                       else carried[m.session_id]
+                       for m in members if m.session_id in carried)
+
         for s in session_states:
-            if children_map.get(s.session_id):
+            if children_map.get(s.session_id) or s.session_id in carried:
                 s.subtree_cost_usd = _sum(s.session_id, set())
-                s.subtree_trip_cost_usd = subtree_trip_cost(_members(s.session_id, set()))
+                members = list(_members(s.session_id, set()))
+                trip_cost = subtree_trip_cost(members)
+                if trip_cost is not None:
+                    trip_cost = round(trip_cost + _trip_carry(members), 4)
+                s.subtree_trip_cost_usd = trip_cost
 
     def _count_children_working(self, index: SessionIndex) -> None:
         """Refill the children-working counts from the last published tick.

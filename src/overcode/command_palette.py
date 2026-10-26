@@ -369,6 +369,10 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("revive_dead_agents", "Revive all dead agents", "Agent",
        "restart resume reboot terminated killed dead crashed bulk restore recover bring back"),
     _C("kill_focused", "Kill / clean up agent", "Agent", "stop delete remove", agent=True),
+    # Palette-only, confirmed by running it twice (#520)
+    _C("release_focused", "Release from parent", "Agent",
+       "child free emancipate detach orphan independent root coming of age report "
+       "oversight unparent", agent=True),
     # 🌙 Claude background sessions (0.6.1 phase 3): Enter and x on the row
     # attach and stop; removing is here only
     _C("attach_background_session", "Attach background session", "Agent",

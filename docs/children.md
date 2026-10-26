@@ -229,6 +229,27 @@ children:
   running keep their code; children it launches afterwards take the new
   one. See [Billing Codes](configuration.md#billing-codes).
 
+## Releasing a child
+
+`overcode release <child>` (or "Release from parent" in the TUI palette,
+run twice to confirm) frees a child from its parent. It becomes a
+top-level agent:
+
+- It leaves the parent's tree: the tree view, `kill`'s cascade, and the
+  parent's SUB$ from now on. Its own children go with it.
+- Its oversight ends: no on-stuck timeout, no report expected, and a
+  parent's `overcode follow` on it stops with exit code `0`.
+- No budget reclaim: it has no parent to send money to.
+- A running agent is told it is independent and no longer has to run
+  `overcode report` (typed into its pane, as `overcode send` does);
+  `--no-notify` skips that.
+
+What it (and its children) had spent until then stays with the parent:
+the parent's SUB$ keeps counting it, and only spend after the release is
+the child's own. Its billing code, budget and preset are unchanged.
+`overcode show` says whom it was released from, when, and what it had
+spent by then.
+
 ## What a child inherits
 
 Unless you pass a flag for a setting, a child takes these from its parent:
