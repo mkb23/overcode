@@ -823,7 +823,7 @@ class TestStatusHistoryCarry:
         path = tmp_path / "history.csv"
         _write_rows(path, [(now - timedelta(minutes=61), "a1", "running", "act", "sid", "host")])
         (row,) = StatusHistoryFile(path).read(hours=1.0, carry=True)
-        assert row == (now - timedelta(hours=1), "a1", "running", "act", "sid", "host")
+        assert row == (now - timedelta(hours=1), "a1", "running", "act", "sid", "host", None)
 
     def test_carry_honours_the_agent_filter(self, tmp_path, monkeypatch):
         now = datetime(2026, 9, 23, 12, 0, 0)
@@ -933,3 +933,39 @@ class TestRotationShortCircuit:
         ])
         archive = rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now)
         assert archive is not None
+
+
+class TestSpinUnits:
+    """#555: what an agent has spinning, and how the history records it."""
+
+    def test_counts_green_subagents_and_batch_shells(self):
+        from overcode.status_history import spin_units
+        shells = [
+            {"kind": "batch"},
+            {"kind": "batch", "stuck_since": 1.0},  # stuck: not working
+            {"kind": "watcher"},
+            {"kind": "service"},
+        ]
+        assert spin_units("running") == 1
+        assert spin_units("waiting_user") == 0
+        assert spin_units("waiting_user", {"running": 3, "idle": 2}) == 3
+        assert spin_units("running", {"running": 2}, shells) == 4
+        assert spin_units("waiting_user", None, shells) == 1
+
+    def test_spin_round_trips_and_old_rows_have_none(self, tmp_path):
+        from overcode.status_history import row_spin
+        path = tmp_path / "history.csv"
+        _write_rows(path, [(datetime.now() - timedelta(minutes=2), "old", "running", "", "s0", "h")])
+        log_agent_status("new", "waiting_user", "", path, session_id="s1", spin=3)
+        log_agent_status("idle", "waiting_user", "", path, session_id="s2", spin=0)
+        rows = {r[1]: r for r in read_agent_status_history(hours=1.0, history_file=path)}
+        assert rows["new"][6] == 3 and row_spin(rows["new"]) == 3
+        assert rows["idle"][6] == 0 and row_spin(rows["idle"]) == 0
+        assert rows["old"][6] is None and row_spin(rows["old"]) == 1
+
+    def test_a_spin_change_makes_a_row_due(self):
+        from overcode.status_history import logged_key, status_row_due
+        now = datetime(2026, 10, 27, 12, 0, 0)
+        last = logged_key("running", "x", 1)
+        assert not status_row_due(last, now, "running", "x", now, 60, spin=1)
+        assert status_row_due(last, now, "running", "x", now, 60, spin=2)

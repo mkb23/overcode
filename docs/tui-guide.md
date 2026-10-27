@@ -768,6 +768,13 @@ the status history.
 
 ### Baseline Adjustment
 
+The status bar's `Spin: N/M` counts what is spinning out of M agents: each
+green agent, plus every subagent, fork or teammate it has running and every
+batch background shell that is not stuck (watchers and services wait by
+design and do not count). N can be more than M. The mean (`μ`) averages the
+same count over the baseline window; history written before 0.6.3 counts
+only green agents.
+
 The timeline can show a "mean spin" efficiency metric. Adjust the baseline with:
 - `,` - Move baseline back 15 minutes
 - `.` - Move baseline forward 15 minutes

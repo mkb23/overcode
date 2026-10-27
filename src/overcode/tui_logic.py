@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Set, Optional, TypeVar, Protocol, Tuple
 from dataclasses import dataclass
 
 from .settings import DAEMON
-from .status_constants import is_green_status
+from .status_history import row_spin
 
 
 class SessionLike(Protocol):
@@ -487,12 +487,14 @@ def calculate_mean_spin_from_history(
 ) -> Tuple[float, int]:
     """Calculate mean spin rate from CSV history within a time window.
 
-    A time-windowed average of how many agents were running.
+    A time-windowed average of how many things were spinning: each agent
+    while green, plus its running subagents and batch background shells
+    (``status_history.spin_units``, #555; a row from before has 1 if green).
 
     Time-weighted: each row stands for its agent from its timestamp until
     the agent's next row (or SPIN_ROW_VALIDITY_SECONDS, or ``now``), clipped
-    to the window, and the mean is the green share of that covered time
-    scaled to the agent count. With a row per agent per tick this is the
+    to the window, and the mean is the spin units per second of that
+    covered time scaled to the agent count. With a row per agent per tick this is the
     old "fraction of samples that were running" to within one tick; with
     change-only logging it is the same number from far fewer rows. Rows
     before the cutoff set each agent's state at the window's left edge.
@@ -506,7 +508,7 @@ def calculate_mean_spin_from_history(
 
     Returns:
         Tuple of (mean_spin, sample_count) where:
-        - mean_spin: Average number of agents in "running" state during window
+        - mean_spin: Average spin units during the window
         - sample_count: Rows inside the window for the named agents (0 if no
           data; the status bar's has-data gate)
     """
@@ -520,42 +522,43 @@ def calculate_mean_spin_from_history(
     names = set(agent_names)
     validity = timedelta(seconds=SPIN_ROW_VALIDITY_SECONDS)
 
-    green_seconds = 0.0
+    spin_seconds = 0.0
     covered_seconds = 0.0
     sample_count = 0
-    # Per agent: (timestamp, is_green) of its latest row seen so far
+    # Per agent: (timestamp, spin units) of its latest row seen so far
     open_rows: dict = {}
 
     def close(agent: str, until: datetime) -> None:
-        nonlocal green_seconds, covered_seconds
-        ts, is_green = open_rows[agent]
+        nonlocal spin_seconds, covered_seconds
+        ts, units = open_rows[agent]
         end = min(until, ts + validity)
         start = max(ts, cutoff)
         if end > start:
             seconds = (end - start).total_seconds()
             covered_seconds += seconds
-            if is_green:
-                green_seconds += seconds
+            spin_seconds += seconds * units
 
-    for ts, agent, status, *_ in history:
+    for row in history:
+        ts, agent = row[0], row[1]
         if agent not in names or ts > now:
             continue
         if ts >= cutoff:
             sample_count += 1
         if agent in open_rows:
             close(agent, ts)
-        open_rows[agent] = (ts, is_green_status(status))
+        open_rows[agent] = (ts, row_spin(row))
     for agent in open_rows:
         close(agent, now)
 
     if sample_count == 0 or covered_seconds <= 0:
         return (0.0, sample_count)
 
-    # mean_spin = (green share of the covered agent-time) * num_agents
-    # This gives "average number of agents running at any point in time"
-    # Example: 2 agents, running half the time each -> mean_spin = 1.0
+    # mean_spin = (spin units per covered agent-second) * num_agents
+    # This gives "average number of things spinning at any point in time"
+    # Example: 2 agents, running half the time each -> mean_spin = 1.0;
+    # one of them with 2 subagents running all along -> 1.0 + 2.0 = 3.0
     num_agents = len(agent_names)
-    mean_spin = (green_seconds / covered_seconds) * num_agents
+    mean_spin = (spin_seconds / covered_seconds) * num_agents
 
     return (mean_spin, sample_count)
 

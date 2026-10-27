@@ -30,7 +30,6 @@ from ..tui_helpers import (
     get_daemon_status_style,
     calculate_safe_break_duration,
 )
-from ..status_constants import is_green_status
 
 
 @dataclass(frozen=True)
@@ -362,11 +361,13 @@ class DaemonStatusBar(Static):
             # Local: filter out sleeping agents
             active_sessions = [s for s in local_sessions if s.session_id not in self._asleep_session_ids]
             sleeping_count = len(local_sessions) - len(active_sessions)
-            local_green = sum(1 for s in active_sessions if is_green_status(s.current_status))
+            # What is spinning (#555): each green agent and each of its
+            # running subagents and batch background shells
+            local_green = sum(s.spin_of() for s in active_sessions)
             local_total = len(active_sessions)
 
-            # Sister: use pre-computed green/total from API (already excludes sleeping)
-            sister_green = sum(s.green_agents for s in reachable_sisters)
+            # Sister: use pre-computed units/total from API (already excludes sleeping)
+            sister_green = sum(s.spin_units for s in reachable_sisters)
             sister_total = sum(s.total_agents for s in reachable_sisters)
 
             green_now = local_green + sister_green

@@ -492,6 +492,25 @@ class TestCalculateMeanSpinFromHistory:
         assert mean_spin == 0.0
         assert sample_count == 0
 
+    def test_spin_units_weight_the_mean(self):
+        """#555: a row's spin units count, so delegated work adds to the mean."""
+        def row(minutes_ago, agent, status, spin):
+            return (self.NOW - timedelta(minutes=minutes_ago), agent, status, "", "", "", spin)
+        history = sorted(
+            [row(m, "a1", "waiting_user", 2) for m in range(30, 0, -1)]   # 2 subagents
+            + [row(m, "a2", "running", 1) for m in range(30, 0, -1)],
+            key=lambda r: r[0])
+        mean_spin, _ = calculate_mean_spin_from_history(
+            history, ["a1", "a2"], baseline_minutes=30, now=self.NOW)
+        assert mean_spin == pytest.approx(3.0)
+
+    def test_rows_without_spin_count_green_as_one(self):
+        """A row written before #555 (no spin column) is 1 if green, else 0."""
+        history = self._rows(("a1", 30, 0, "running"), ("a2", 30, 0, "waiting_user"))
+        mean_spin, _ = calculate_mean_spin_from_history(
+            history, ["a1", "a2"], baseline_minutes=30, now=self.NOW)
+        assert mean_spin == pytest.approx(1.0)
+
     def test_empty_agent_names_returns_zero(self):
         """Empty agent_names list should return 0."""
         mean_spin, sample_count = calculate_mean_spin_from_history(

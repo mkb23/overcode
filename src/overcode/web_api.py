@@ -238,6 +238,7 @@ def _build_summary(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
         return {
             "total_agents": 0,
             "green_agents": 0,
+            "spin_units": 0,
             "total_green_time": 0,
             "total_non_green_time": 0,
         }
@@ -245,6 +246,7 @@ def _build_summary(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
     return {
         "total_agents": len(state.sessions),
         "green_agents": state.green_sessions,
+        "spin_units": sum(s.spin_of() for s in state.sessions),  # #555
         "total_green_time": state.total_green_time,
         "total_non_green_time": state.total_non_green_time,
     }

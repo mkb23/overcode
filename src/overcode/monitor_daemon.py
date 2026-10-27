@@ -75,7 +75,13 @@ from .status_constants import (
 from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
+from .status_history import (
+    STATUS_HISTORY_KEEPALIVE_SECONDS,
+    log_agent_status,
+    logged_key,
+    spin_units,
+    status_row_due,
+)
 from .swarm_history import SWARM_HISTORY_FILE, SwarmHistoryWriter
 from . import budget_gate, daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
@@ -867,6 +873,8 @@ class MonitorDaemon:
             task_reason=reason,
             swarm_rollup=swarm_rollup if isinstance(swarm_rollup, dict) else None,
             background_shells=bg_shells if isinstance(bg_shells, list) and bg_shells else None,
+            spin_units=spin_units(status, swarm_rollup,
+                                  bg_shells if isinstance(bg_shells, list) else None),
             subagent_cost_usd=swarm.subagent_cost(getattr(stats, "conversations", None)),
             workflow_progress=workflow_progress,
             # Last user command (from history sync)
@@ -2013,6 +2021,7 @@ class MonitorDaemon:
             # A finished agent gets its one row and no keepalives: it does
             # not change, and records kept past their end would otherwise
             # write a row each a minute for ever.
+            spin = session_state.spin_units
             if status_row_due(
                 self._last_logged.get(session.id),
                 self._last_keepalive.get(session.id),
@@ -2021,6 +2030,7 @@ class MonitorDaemon:
                 now,
                 (float("inf") if effective_status in (STATUS_TERMINATED, STATUS_DONE)
                  else STATUS_HISTORY_KEEPALIVE_SECONDS),
+                spin=spin,
             ):
                 try:
                     log_agent_status(
@@ -2029,14 +2039,13 @@ class MonitorDaemon:
                         session_id=session.id,
                         hostname=self._hostname,
                         now=now,
+                        spin=spin,
                     )
                 except OSError as e:
                     # History is a record, not the status: a full disk must
                     # not fail the tick that publishes every agent's status
                     self.log.warn(f"[{session.name}] status history not written: {e}")
-                self._last_logged[session.id] = (
-                    effective_status, activity[:100] if activity else ""
-                )
+                self._last_logged[session.id] = logged_key(effective_status, activity, spin)
                 self._last_keepalive[session.id] = now
             self._record_swarm_history(session, now)
 
