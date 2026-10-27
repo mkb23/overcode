@@ -14,6 +14,7 @@ Either way the child is *at rest* (⚪): the light says it stopped, and
 """
 
 import json
+import os
 from typing import Iterable, Optional, Tuple
 
 from .paths import agent_path
@@ -36,6 +37,13 @@ from .status_constants import (
 # (a killed or archived record) is not an agent the rule should touch.
 SETTLEABLE_STATUSES = frozenset({"running", "starting", "terminated", STATUS_WAITING_OVERSIGHT})
 
+# Hook events that mean a done child is at work again (#556): a new prompt,
+# a tool call, a permission request. Not SessionStart: a /clear is not work.
+RESUME_EVENTS = frozenset({
+    "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+    "PermissionRequest",
+})
+
 # A child in one of these is not working: a parent whose turn ended rests
 # (red) rather than waiting on it (yellow, the children badge)
 CHILD_NOT_WORKING = AT_REST_STATUSES | {STATUS_TERMINATED, STATUS_ASLEEP, STATUS_UNKNOWN}
@@ -51,16 +59,21 @@ def hook_stopped(tmux_session: str, agent_name: str, session_id: Optional[str] =
     ``session_id`` finds the agent's own file (``paths.agent_path``); a
     file another agent of the same name left is never read.
     """
+    data = read_hook_state(tmux_session, agent_name, session_id)
+    return data is not None and data.get("event") == "Stop"
+
+
+def read_hook_state(tmux_session: str, agent_name: str,
+                    session_id: Optional[str] = None) -> Optional[dict]:
+    """The agent's last hook event ({'event', 'timestamp', ...}), or None."""
     hook_state_file = agent_path(tmux_session, session_id, agent_name, "hook_state",
                                  base=get_session_dir(tmux_session))
-    if not hook_state_file.exists():
-        return False
     try:
         with open(hook_state_file) as f:
             data = json.load(f)
-        return isinstance(data, dict) and data.get("event") == "Stop"
     except (json.JSONDecodeError, OSError):
-        return False
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def read_report(tmux_session: str, agent_name: str,
@@ -107,6 +120,44 @@ def settled_child_status(session, stopped: Optional[bool] = None) -> Optional[st
     else:
         status = STATUS_WAITING_OVERSIGHT
     return status if status != session.status else None
+
+
+def done_since(session) -> Optional[float]:
+    """When a done child finished (epoch seconds), or None if unknown.
+
+    Its report's mtime, or the oversight deadline that expired; the later
+    of the two when both exist.
+    """
+    times = []
+    report_file = agent_path(session.tmux_session, session.id, session.name, "report",
+                             base=get_session_dir(session.tmux_session))
+    try:
+        times.append(os.stat(report_file).st_mtime)
+    except OSError:
+        pass
+    deadline_at = getattr(session, "oversight_deadline_at", None)
+    if deadline_at:
+        times.append(float(deadline_at))
+    return max(times) if times else None
+
+
+def resumed_after_done(session, hook_state: Optional[dict]) -> bool:
+    """True if a done child is at work again (#556).
+
+    ``hook_state`` is the child's last hook event. A done child settled on a
+    Stop, so a prompt or tool event newer than the moment it finished means
+    it was given more work (``overcode send``, or typed into its pane).
+    """
+    if session.parent_session_id is None or session.status != "done":
+        return False
+    if not isinstance(hook_state, dict) or hook_state.get("event") not in RESUME_EVENTS:
+        return False
+    try:
+        at = float(hook_state["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    since = done_since(session)
+    return since is not None and at > since
 
 
 def task_result(session, status: Optional[str] = None) -> Tuple[Optional[str], str]:

@@ -120,7 +120,9 @@ class Housekeeping:
 
         now = self.clock.wall() if now is None else now
 
-        for session in sessions:
+        for snapshot in sessions:
+            # This tick may have put a done child back to work (#556)
+            session = pending.view(snapshot)
             if not should_auto_archive(
                 session.status,
                 session.stats.state_since,

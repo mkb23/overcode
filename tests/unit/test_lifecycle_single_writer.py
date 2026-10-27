@@ -233,6 +233,87 @@ class TestDaemonSettlesLifecycleOnce:
 # ── one-shot reconcile for a CLI run with no daemon ──────────────────────
 
 
+def _hook_event(name, event, at):
+    path = get_session_dir("agents") / f"hook_state_{name}.json"
+    path.write_text(json.dumps({"event": event, "timestamp": at}))
+
+
+class TestDoneChildBackAtWork:
+    """#556: a done child given more work goes back to running."""
+
+    def _done_child(self, root):
+        daemon, sm, sessions = _daemon(root)
+        child = sessions[11]
+        _hook_stop(child.name)
+        _report(child.name)
+        _ticks(daemon, 2)
+        assert sm.get_session(child.id).status == "done"
+        assert sm.get_session(child.id).report_status == "success"
+        return daemon, sm, child
+
+    def test_new_tool_event_resumes_and_settles_afresh(self, root):
+        import time
+        daemon, sm, child = self._done_child(root)
+        _hook_event(child.name, "PreToolUse", time.time() + 5)
+        with _StatusWrites() as writes:
+            _ticks(daemon, 2, start=START + timedelta(seconds=10))
+        record = sm.get_session(child.id)
+        assert record.status == "running"
+        assert writes.of(child.id) == ["running"]
+        assert record.report_status is None and record.report_reason == ""
+        # The old report is kept aside, not settled from again
+        session_dir = get_session_dir("agents")
+        assert not (session_dir / f"report_{child.name}.json").exists()
+        assert (session_dir / f"report_{child.name}.previous.json").exists()
+
+        # Stopping without a new report waits for oversight; a new report is done
+        _hook_stop(child.name)
+        _ticks(daemon, 2, start=START + timedelta(seconds=20))
+        assert sm.get_session(child.id).status == "waiting_oversight"
+        _report(child.name, status="failure")
+        _ticks(daemon, 2, start=START + timedelta(seconds=30))
+        assert sm.get_session(child.id).status == "done"
+        assert sm.get_session(child.id).report_status == "failure"
+
+    def test_stale_or_non_work_events_leave_it_done(self, root):
+        import time
+        daemon, sm, child = self._done_child(root)
+        _hook_event(child.name, "PostToolUse", 1.0)  # before the report
+        _ticks(daemon, 2, start=START + timedelta(seconds=10))
+        assert sm.get_session(child.id).status == "done"
+        _hook_event(child.name, "SessionStart", time.time() + 5)  # a /clear
+        _ticks(daemon, 2, start=START + timedelta(seconds=20))
+        assert sm.get_session(child.id).status == "done"
+        assert sm.get_session(child.id).report_status == "success"
+
+    def test_timed_out_child_resumes_only_after_its_deadline(self, root):
+        from overcode.child_lifecycle import OVERSIGHT_TIMEOUT_REASON
+        daemon, sm, sessions = _daemon(root)
+        child = sessions[11]
+        sm.update_session(child.id, report_status="failure",
+                          report_reason=OVERSIGHT_TIMEOUT_REASON,
+                          oversight_deadline_at=1000.0)
+        sm.update_session_status(child.id, "done")
+        _hook_event(child.name, "PreToolUse", 999.0)
+        _ticks(daemon, 2)
+        assert sm.get_session(child.id).status == "done"
+        _hook_event(child.name, "UserPromptSubmit", 1001.0)
+        _ticks(daemon, 2, start=START + timedelta(seconds=10))
+        record = sm.get_session(child.id)
+        assert record.status == "running"
+        assert record.oversight_deadline_at is None
+
+    def test_resumed_child_is_not_auto_archived_that_tick(self, root):
+        daemon, sm, child = self._done_child(root)
+        snapshot = sm.get_session(child.id)
+        snapshot.stats.state_since = (START - timedelta(days=1)).isoformat()
+        daemon._pending.update_session_status(child.id, "running")
+        with patch("overcode.implementations.RealTmux") as tmux:
+            daemon.housekeeping.auto_archive_done_agents(
+                [snapshot], daemon._pending, START)
+        tmux.return_value.kill_window.assert_not_called()
+
+
 class TestReconcileLifecycle:
     def test_settles_once_and_reports(self, root):
         from overcode.launcher import AgentLauncher

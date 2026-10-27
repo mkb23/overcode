@@ -14,8 +14,9 @@ relaunched.
 
 import os
 import shutil
+from typing import Optional
 
-from .paths import agent_dir, agent_file
+from .paths import agent_dir, agent_file, agent_path
 
 # Where a relaunch moves the report the previous run filed, so the new run
 # does not settle from it (kept for whoever wants to read it).
@@ -41,9 +42,23 @@ def prepare_agent_dir(tmux_session: str, session_id: str, *, reset: bool = False
         agent_file(tmux_session, session_id, "hook_state").unlink(missing_ok=True)
     except OSError:
         pass
-    report = agent_file(tmux_session, session_id, "report")
+    retire_report(tmux_session, session_id)
+
+
+def retire_report(tmux_session: str, session_id: str, name: Optional[str] = None) -> None:
+    """Move the agent's filed report aside so nothing settles from it again; never raises.
+
+    A relaunch does this, and so does the daemon when a done child goes
+    back to work (#556). The report stays readable as ``PREVIOUS_REPORT``
+    (``report_<name>.previous.json`` for an agent with no directory).
+    """
+    report = agent_path(tmux_session, session_id, name, "report")
+    if report.parent.name == session_id:
+        previous = report.parent / PREVIOUS_REPORT
+    else:
+        previous = report.with_name(report.stem + ".previous.json")
     try:
-        os.replace(report, directory / PREVIOUS_REPORT)
+        os.replace(report, previous)
     except OSError:
         pass  # none filed
 

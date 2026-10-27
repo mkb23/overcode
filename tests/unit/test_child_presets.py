@@ -243,6 +243,7 @@ def test_housekeeping_closes_a_done_child_after_its_own_delay(tmp_path):
                       log=MagicMock(), housekeeping=Cadence(120),
                       rotation=Cadence(3600), model_metadata=Cadence(3600))
     pending = MagicMock()
+    pending.view.side_effect = lambda s: s  # nothing staged this tick
     with patch("overcode.implementations.RealTmux") as real_tmux:
         hk.auto_archive_done_agents(sessions, pending, now)
     pending.update_session_status.assert_called_once_with("quick", "terminated")

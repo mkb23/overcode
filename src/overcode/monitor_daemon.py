@@ -1775,13 +1775,17 @@ class MonitorDaemon:
         shows it. A stopped child's oversight deadline is staged in
         ``_detect_and_enrich``, on that tick's status.
         """
-        from .child_lifecycle import read_report, settled_child_status
+        from .child_lifecycle import read_report, resumed_after_done, settled_child_status
 
         newly_done = []
         for snapshot in sessions:
             if snapshot.parent_session_id is None:
                 continue  # no file reads for a top-level agent
             session = self._pending.view(snapshot)
+            if session.status == "done":
+                if resumed_after_done(session, self._hook_state(session)):
+                    self._resume_done_child(session)
+                continue
             stopped = self._hook_stopped(session)
             new_status = settled_child_status(session, stopped=stopped)
             if new_status is not None:
@@ -1796,6 +1800,22 @@ class MonitorDaemon:
                                 session.id, report_status=report["status"],
                                 report_reason=report.get("reason") or "")
         return newly_done
+
+    def _resume_done_child(self, session) -> None:
+        """Put a done child that went back to work into running again (#556).
+
+        Its report is moved aside and its result and oversight deadline
+        cleared, so that when it stops it settles afresh: done on a new
+        report, waiting_oversight (with a new deadline) without one. Its
+        refunded budget is not given back (#432).
+        """
+        from .agent_files import retire_report
+        retire_report(session.tmux_session, session.id, session.name)
+        self._pending.update_session(
+            session.id, report_status=None, report_reason="",
+            oversight_deadline=None, oversight_deadline_at=None)
+        self._pending.update_session_status(session.id, "running")
+        self.log.info(f"[{session.name}] at work again after its report: running")
 
     def _stage_oversight_deadline(self, session) -> None:
         """Start a stopped child's oversight timeout, once (policy timeout only).
@@ -2148,8 +2168,8 @@ class MonitorDaemon:
         tracker = self._pane_tracker
         clock = self.clock.monotonic()
         for session in sessions:
-            if session.status == "done":
-                continue
+            if self._pending.view(session).status == "done":
+                continue  # a child resumed this tick (#556) is captured
             pane = pane_for_window(panes, session.tmux_window)
             signature = pane.signature if pane is not None else None
             capture = tracker.due(
@@ -2209,16 +2229,20 @@ class MonitorDaemon:
 
     def _hook_stopped(self, session) -> bool:
         """Whether ``session``'s last hook event is Stop, read as detection reads it."""
+        hook_state = self._hook_state(session)
+        return isinstance(hook_state, dict) and hook_state.get("event") == "Stop"
+
+    def _hook_state(self, session) -> Optional[dict]:
+        """``session``'s last hook event as detection reads it; None without one."""
         read = getattr(getattr(self.detector, "hooks", None), "_read_hook_state", None)
         if read is None:
-            from .child_lifecycle import hook_stopped
-            return hook_stopped(session.tmux_session, session.name, session.id)
+            from .child_lifecycle import read_hook_state
+            return read_hook_state(session.tmux_session, session.name, session.id)
         self._note_agent(session)
         try:
-            hook_state = read(session.name)
+            return read(session.name)
         except Exception:
-            return False
-        return isinstance(hook_state, dict) and hook_state.get("event") == "Stop"
+            return None
 
     def _note_agent(self, session) -> None:
         """Tell the hook detector whose files ``session``'s are (agents/<id>/, item 35)."""
