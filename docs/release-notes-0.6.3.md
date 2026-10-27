@@ -20,6 +20,19 @@
   back the lifetime count.
 - **Hover popups hold still.** A resting mouse no longer flickers them, and
   a tall one no longer vanishes in the short top pane.
+- **Background shells told apart (#515).** 🏭 batch, 🔭 watcher and 📻 service
+  replace 🔌; a watcher still polling an agent or job that ended shows 🧟.
+  `overcode shells [--kill]` lists or stops them; `overcode jobs wait` waits
+  on a job without ever outliving it. A `'` in a job's command no longer
+  stops it running.
+- **`overcode release <child>` (#520)** frees a child from its parent: it
+  becomes a top-level agent with no report due, and what it spent so far
+  stays on the parent's SUB$.
+- **Workflow progress (#498).** A WF cell shows a running Claude Workflow's
+  phase and agents done, e.g. `🧩 review · 2/3 · 7/12✅`; the hover splits it
+  by phase.
+- **`--effort` on launch and restart (#537)**, mapped to each backend's flag.
+  opencode children no longer ask before `overcode report` (#531).
 
 **Upgrading:** nothing to convert. The two new settings (transcript archive,
 prefer SendMessage) are off by default; to keep Claude's transcripts, set
