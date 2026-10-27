@@ -175,7 +175,7 @@ def tail_job(
     import sys
     import time
     from collections import deque
-    from ..follow_mode import _capture_pane, _find_dedup_start
+    from ..follow_mode import UNCHANGED, ChangeGatedCapture, _capture_pane, _find_dedup_start
     from ..job_manager import JobManager
     from ..status_patterns import strip_ansi
 
@@ -208,11 +208,12 @@ def tail_job(
     old_handler = signal.signal(signal.SIGINT, _sigint)
 
     recent_lines: deque = deque(maxlen=50)
+    pane = ChangeGatedCapture()
 
     try:
         while not interrupted:
-            raw = _capture_pane(tmux_session, window_name)
-            if raw:
+            raw = pane.capture(tmux_session, window_name)
+            if raw and raw is not UNCHANGED:
                 new_lines = []
                 for line in raw.rstrip().split('\n'):
                     cleaned = strip_ansi(line).strip()

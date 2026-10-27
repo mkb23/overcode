@@ -113,6 +113,7 @@ from .monitor_daemon_core import (
     is_heartbeat_due,
     should_enforce_oversight_timeout,
 )
+from .heartbeat_sender import HEARTBEAT_WAIT_SECONDS, HeartbeatSender
 from .tmux_utils import (
     AGENT_ID_OPTION,
     PaneInfo,
@@ -638,6 +639,11 @@ class MonitorDaemon:
         self._heartbeat_triggered_sessions: set = set()  # Session IDs that received heartbeat this loop
         self._sessions_running_from_heartbeat: set = set()  # Persistent: sessions currently running due to heartbeat
         self._heartbeat_start_pending: set = set()  # One-shot: sessions awaiting first "running" observation after heartbeat
+        # Sends run on workers so a burst of due heartbeats never holds the tick (#528)
+        self._heartbeats = HeartbeatSender()
+        # When each session's last heartbeat went out, as this daemon knows
+        # it: ahead of the session it reads until the staged stamp is written
+        self._heartbeat_delivered: Dict[str, datetime] = {}
 
         # Legacy migration flag — runs once on first tick
         self._legacy_windows_migrated = False
@@ -889,13 +895,25 @@ class MonitorDaemon:
             sessions: List of Session objects to check
             now: The tick's time (default: the daemon's clock)
 
+        Each send starts on a worker the moment it is found due (#528);
+        the tick waits ``HEARTBEAT_WAIT_SECONDS`` for them, so a burst of
+        due heartbeats costs about one send's time instead of the sum. A
+        send that outlasts the wait is collected by a later tick. The stamp
+        is staged when a send succeeds, and a session whose send is in
+        flight (or whose stamp is staged but not yet on the session this
+        tick read) is not sent again: each heartbeat goes exactly once.
+
         Returns:
-            Set of session IDs that received heartbeats this loop
+            Set of session IDs whose heartbeat was delivered since last loop
         """
         now = self.clock.wall() if now is None else aware(now)
         triggered = set()
+        # Sends a previous tick left running
+        self._record_heartbeats(self._heartbeats.collect(), triggered)
 
         for session in sessions:
+            if self._heartbeats.in_flight(session.id):
+                continue
             prev_status = self.previous_states.get(session.id)
             if not is_heartbeat_eligible(
                 heartbeat_enabled=session.heartbeat_enabled,
@@ -908,7 +926,7 @@ class MonitorDaemon:
                 continue
 
             if not is_heartbeat_due(
-                last_heartbeat_time=session.last_heartbeat_time,
+                last_heartbeat_time=self._last_heartbeat(session, now),
                 session_start_time=session.start_time,
                 frequency_seconds=session.heartbeat_frequency_seconds,
                 now=now,
@@ -928,21 +946,45 @@ class MonitorDaemon:
                         self.log.info(f"[{session.name}] Heartbeat skipped (hook says {event})")
                         continue
 
-            # Send the heartbeat instruction
-            if send_text_to_tmux_window(
-                session.tmux_session,
-                session.tmux_window,
-                session.heartbeat_instruction,
-                send_enter=True,
-            ):
-                self._pending.update_session(
-                    session.id,
-                    last_heartbeat_time=stamp(now)
-                )
-                triggered.add(session.id)
-                self.log.info(f"[{session.name}] Heartbeat sent")
+            # Send the heartbeat instruction, now, on a worker
+            send = send_text_to_tmux_window
+            self._heartbeats.submit(
+                session.id, session.name, now,
+                lambda send=send, s=session: send(
+                    s.tmux_session, s.tmux_window, s.heartbeat_instruction,
+                    send_enter=True,
+                ),
+            )
 
+        self._record_heartbeats(self._heartbeats.collect(HEARTBEAT_WAIT_SECONDS), triggered)
         return triggered
+
+    def _record_heartbeats(self, results, triggered: set) -> None:
+        """Stage the stamp of each delivered heartbeat."""
+        for result in results:
+            if not result.ok:  # not stamped: the next tick tries again
+                continue
+            self._pending.update_session(result.session_id, last_heartbeat_time=stamp(result.at))
+            self._heartbeat_delivered[result.session_id] = result.at
+            triggered.add(result.session_id)
+            self.log.info(f"[{result.name}] Heartbeat sent")
+
+    def _last_heartbeat(self, session, now: datetime) -> Optional[str]:
+        """The session's last heartbeat stamp, or a later one this daemon sent.
+
+        A send collected after the tick read its sessions is only staged, so
+        the session in hand still carries the previous stamp; the later one
+        keeps it from being sent twice.
+        """
+        stored = session.last_heartbeat_time
+        sent = self._heartbeat_delivered.get(session.id)
+        if sent is None:
+            return stored
+        parsed = parse_datetime_safe(stored, near=now)
+        if parsed is not None and parsed >= sent:
+            del self._heartbeat_delivered[session.id]  # the session caught up
+            return stored
+        return stamp(sent)
 
     def _unobserved_gap_seconds(self) -> float:
         """An agent unseen this long was not watched (freeze, downtime, sleep).
@@ -2467,6 +2509,7 @@ class MonitorDaemon:
             raise
         finally:
             self.log.info("Monitor daemon shutting down")
+            self._heartbeats.shutdown()
             # What quick ticks staged since the last full tick
             try:
                 self._flush_pending_writes()
