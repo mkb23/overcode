@@ -36,6 +36,7 @@ class SisterState:
     version: str = ""  # Remote overcode version
     sessions: List[Session] = field(default_factory=list)
     green_agents: int = 0
+    spin_units: int = 0  # green agents plus their delegated work (#555)
     total_agents: int = 0
     total_cost: float = 0.0
 
@@ -48,6 +49,7 @@ def _reset_sister_state(sister: SisterState, error: str) -> List[Session]:
     # Keep last-known sessions so agents remain visible (stale)
     # but zero out live counters since we can't verify them.
     sister.green_agents = 0
+    sister.spin_units = 0
     sister.total_agents = len(sister.sessions)
     return list(sister.sessions)
 
@@ -195,6 +197,8 @@ class SisterPoller:
         summary = data.get("summary", {})
 
         sister.green_agents = summary.get("green_agents", 0)
+        # A sister older than #555 sends no units: its green agents
+        sister.spin_units = summary.get("spin_units", sister.green_agents)
         sister.total_agents = summary.get("total_agents", 0)
 
         sessions: List[Session] = []

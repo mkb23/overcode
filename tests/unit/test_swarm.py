@@ -854,13 +854,14 @@ class TestPublished:
             assert diff(before, after).empty
             assert _counts(after.agents[sessions[0].id]["swarm_rollup"]) == _rollup(total=2, running=2)
             assert after.agents[sessions[1].id]["swarm_rollup"] is None
-            # One agent finishes: one delta, of that field alone
+            # One agent finishes: one delta, of the rollup and the spin it
+            # makes (#555) alone
             hook[sessions[0].name] = _state(*_sub(subs, sw, "SubagentStop", "a1", 3.0))
             run_ticks(daemon, detector, clock, 1)
             later = daemon.state.to_engine_snapshot(clock.now.timestamp())
         delta = diff(after, later)
         assert delta.set == {sessions[0].id: {
-            "swarm_rollup": _rollup(total=2, running=1, ok=1)}}
+            "swarm_rollup": _rollup(total=2, running=1, ok=1), "spin_units": 1}}
 
 
 def test_finished_rows_keep_thirty_seconds_unless_configured(monkeypatch):

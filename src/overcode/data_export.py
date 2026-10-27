@@ -232,7 +232,7 @@ def _build_timeline_records():
     records = []
     history = read_agent_status_history(hours=24.0)
 
-    for ts, agent_name, status, activity, session_id, hostname in history:
+    for ts, agent_name, status, activity, session_id, hostname, *_ in history:
         records.append({
             "timestamp": ts.isoformat() if isinstance(ts, datetime) else str(ts),
             "agent": agent_name,

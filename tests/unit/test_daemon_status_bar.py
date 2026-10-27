@@ -111,11 +111,13 @@ def _make_session_state(**overrides):
         estimated_cost_usd=0.05,
         median_work_time=600.0,
         is_asleep=False,
+        spin_units=None,
     )
     defaults.update(overrides)
     mock = MagicMock(spec=SessionDaemonState)
     for k, v in defaults.items():
         setattr(mock, k, v)
+    mock.spin_of.side_effect = lambda: SessionDaemonState.spin_of(mock)
     return mock
 
 
@@ -654,6 +656,7 @@ class TestDaemonStatusBarRenderSisters:
         sister.name = "remote-1"
         sister.reachable = True
         sister.green_agents = 3
+        sister.spin_units = 3
         sister.total_agents = 5
         widget = _make_bare_status_bar(_sister_states=[sister])
         result = widget.render()
@@ -692,8 +695,8 @@ class TestDaemonStatusBarRenderSisters:
         assert "Sisters:" not in plain
 
     def test_multiple_sisters(self):
-        s1 = MagicMock(name="s1", reachable=True, green_agents=1, total_agents=2)
-        s2 = MagicMock(name="s2", reachable=True, green_agents=0, total_agents=1)
+        s1 = MagicMock(name="s1", reachable=True, green_agents=1, spin_units=1, total_agents=2)
+        s2 = MagicMock(name="s2", reachable=True, green_agents=0, spin_units=0, total_agents=1)
         # MagicMock overrides name, need to set it explicitly
         s1.name = "sister-a"
         s2.name = "sister-b"
@@ -709,12 +712,14 @@ class TestDaemonStatusBarRenderSisters:
 # ===========================================================================
 
 
-def _make_sister_state(name="remote-1", reachable=True, green_agents=0, total_agents=0, total_cost=0.0, sessions=None):
+def _make_sister_state(name="remote-1", reachable=True, green_agents=0, total_agents=0, total_cost=0.0,
+                       sessions=None, spin_units=None):
     """Create a mock SisterState for testing."""
     sister = MagicMock()
     sister.name = name
     sister.reachable = reachable
     sister.green_agents = green_agents
+    sister.spin_units = green_agents if spin_units is None else spin_units
     sister.total_agents = total_agents
     sister.total_cost = total_cost
     sister.sessions = sessions or []
@@ -734,6 +739,17 @@ def _make_sister_session(is_asleep=False, green_time=100.0, non_green_time=100.0
 
 class TestDaemonStatusBarSpinWithSisters:
     """Tests that spin metrics aggregate local + sister agents."""
+
+    def test_spin_counts_delegated_work(self):
+        """#555: running subagents and batch shells spin too; Spin can pass total."""
+        resting = _make_session_state(session_id="s1", name="a1",
+                                      current_status="waiting_user", spin_units=2)
+        busy = _make_session_state(session_id="s2", name="a2",
+                                   current_status="running", spin_units=4)
+        state = _make_monitor_state(sessions=[resting, busy])
+        sister = _make_sister_state(green_agents=1, total_agents=1, spin_units=3)
+        plain = _make_bare_status_bar(monitor_state=state, _sister_states=[sister]).render().plain
+        assert "Spin: 9/3" in plain
 
     def test_spin_counts_include_sister_agents(self):
         """Spin green/total should sum local and sister counts."""

@@ -115,6 +115,22 @@ class TestChangeOnlyRows:
         assert len(rows) == 4
         assert rows[-1] == ("agent-02", "running", "Bash: pytest")
 
+    def test_delegated_work_is_published_and_logged_as_spin(self, root):
+        """#555: subagents starting change the agent's spin units: a row records them."""
+        fleet = _Fleet(root, _steady)
+        fleet.detector.get_swarm_rollup = lambda name: (
+            {"running": 2} if fleet.detector.tick >= 2 and name == "agent-01" else None)
+        with FrozenClock(START).installed() as clock:
+            fleet.run(4, clock)
+        with open(fleet.history, newline="") as f:
+            rows = list(csv.reader(f))
+        assert rows[0][-1] == "spin"
+        assert [r[6] for r in rows[1:4]] == ["1", "1", "1"]
+        assert rows[-1][1] == "agent-01" and rows[-1][6] == "3"
+        assert len(rows) == 5
+        published = {s.name: s.spin_units for s in fleet.daemon.state.sessions}
+        assert published == {"agent-00": 1, "agent-01": 3, "agent-02": 1}
+
     def test_keepalive_row_after_the_interval(self, root):
         fleet = _Fleet(root, _steady)
         ticks_to_keepalive = STATUS_HISTORY_KEEPALIVE_SECONDS // 2

@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from .status_constants import is_green_status
+
 from .settings import (
     DAEMON,
     get_monitor_daemon_state_path,
@@ -204,6 +206,11 @@ class SessionDaemonState:
     # "pid"?, "target"?, "target_state"?, "stuck_since"?}], oldest first.
     # None when it has none. Holds still between ticks.
     background_shells: Optional[list] = None
+    # What it has spinning (#555, status_history.spin_units): itself when
+    # green, plus its running subagents and batch background shells. The
+    # status bar's Spin sums it; the history row records it for the mean.
+    # None from an engine older than #555 (spin_of falls back to green).
+    spin_units: Optional[int] = None
     # What that delegated work cost: the subagents' share of
     # estimated_cost_usd (already inside it), for the $ hover's split.
     # None when nothing was delegated or it cost nothing yet.
@@ -299,6 +306,12 @@ class SessionDaemonState:
     # (green_time_seconds etc. grow every tick and are not published).
     time_base: Optional[list] = None
     time_base_at: Optional[float] = None
+
+    def spin_of(self) -> int:
+        """Its spin units; 1 if green when the engine published none."""
+        if self.spin_units is not None:
+            return self.spin_units
+        return 1 if is_green_status(self.current_status) else 0
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""

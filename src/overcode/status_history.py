@@ -27,8 +27,36 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
+from .background_shells import KIND_BATCH
 from .clock import from_iso, local_naive, stamp, to_epoch
 from .settings import DAEMON, get_agent_history_path
+from .status_constants import is_green_status
+
+
+def spin_units(status: str, swarm_rollup: Optional[dict] = None,
+               background_shells: Optional[list] = None) -> int:
+    """How many things an agent has spinning (#555): the spin rate's unit.
+
+    The agent itself when green, plus each delegated agent running (the 👥
+    rollup's ``running``: subagents, forks, teammates) and each batch
+    background shell not stuck. Watchers and services wait by design and
+    do not count.
+    """
+    units = 1 if is_green_status(status) else 0
+    if isinstance(swarm_rollup, dict):
+        running = swarm_rollup.get("running")
+        units += running if isinstance(running, int) and running > 0 else 0
+    for shell in background_shells or ():
+        if (isinstance(shell, dict) and shell.get("kind") == KIND_BATCH
+                and not shell.get("stuck_since")):
+            units += 1
+    return units
+
+
+def row_spin(row) -> int:
+    """A history row's spin units; a row written before #555 has none: 1 if green."""
+    spin = row[6] if len(row) > 6 else None
+    return spin if spin is not None else (1 if is_green_status(row[2]) else 0)
 
 
 def log_agent_status(
@@ -39,6 +67,7 @@ def log_agent_status(
     session_id: str = "",
     hostname: str = "",
     now: Optional[datetime] = None,
+    spin: Optional[int] = None,
 ) -> None:
     """Log agent status to history CSV file.
 
@@ -55,6 +84,7 @@ def log_agent_status(
         hostname: Machine hostname for multi-host disambiguation
         now: When (the daemon's tick); default the wall clock. Written
             as naive local time (``clock.stamp``).
+        spin: The agent's ``spin_units`` (#555); left empty when None
     """
     when = stamp(now if now is not None else datetime.now())
     path = history_file or get_agent_history_path(DAEMON.default_tmux_session)
@@ -66,7 +96,7 @@ def log_agent_status(
     with open(path, 'a', newline='') as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(['timestamp', 'agent', 'status', 'activity', 'session_id', 'hostname'])
+            writer.writerow(_HISTORY_HEADER)
         writer.writerow([
             when,
             agent_name,
@@ -74,6 +104,7 @@ def log_agent_status(
             activity[:100] if activity else "",
             session_id,
             hostname,
+            "" if spin is None else spin,
         ])
 
 
@@ -98,32 +129,42 @@ STATUS_HISTORY_KEEPALIVE_SECONDS = DAEMON.status_history_keepalive_seconds
 CARRY_LOOKBACK_SECONDS = 5 * STATUS_HISTORY_KEEPALIVE_SECONDS
 
 
+def logged_key(status: str, activity: str, spin: Optional[int] = None) -> tuple:
+    """What a written row is compared by: (status, activity as stored[, spin])."""
+    key = (status, activity[:100] if activity else "")
+    return key if spin is None else key + (spin,)
+
+
 def status_row_due(
-    last_pair: Optional[Tuple[str, str]],
+    last_pair: Optional[tuple],
     last_written: Optional[datetime],
     status: str,
     activity: str,
     now: datetime,
     keepalive_seconds: float = STATUS_HISTORY_KEEPALIVE_SECONDS,
+    spin: Optional[int] = None,
 ) -> bool:
     """Whether the daemon should append a history row for an agent this tick.
 
     ``last_pair`` / ``last_written`` are what was last logged for the agent
-    (None when it has not been logged in this daemon's lifetime, which
-    always writes). A row is due when the (status, activity) pair differs
-    from the last one written — ``activity`` compared as the writer stores
-    it, truncated — or when the last row is a keepalive or more old.
+    (``logged_key``; None when it has not been logged in this daemon's
+    lifetime, which always writes). A row is due when the (status,
+    activity[, spin]) key differs from the last one written — ``activity``
+    compared as the writer stores it, truncated — or when the last row is a
+    keepalive or more old.
     """
     if last_pair is None or last_written is None:
         return True
-    if last_pair != (status, activity[:100] if activity else ""):
+    if last_pair != logged_key(status, activity, spin):
         return True
     # Epoch seconds: either side may be naive (local) or aware
     now_at = to_epoch(now)
     return now_at - to_epoch(last_written, near=now_at) >= keepalive_seconds
 
 
-Row = Tuple[datetime, str, str, str, str, str]
+# (timestamp, agent, status, activity, session_id, hostname, spin); spin is
+# None for a row written before #555 (``row_spin``)
+Row = Tuple[datetime, str, str, str, str, str, Optional[int]]
 
 
 def _intern_row(row: Row) -> Row:
@@ -141,7 +182,16 @@ def _intern_row(row: Row) -> Row:
         row[3],
         sys.intern(row[4]),
         sys.intern(row[5]),
+        row[6],
     )
+
+
+def _spin_cell(cell: str) -> Optional[int]:
+    """The spin column as written; None when empty or not a count."""
+    try:
+        return int(cell) if cell else None
+    except ValueError:
+        return None
 
 
 class StatusHistoryFile:
@@ -370,6 +420,7 @@ class StatusHistoryFile:
                     row[3] if len(row) > 3 else '',     # activity
                     row[4] if len(row) > 4 else '',     # session_id
                     row[5] if len(row) > 5 else '',     # hostname
+                    _spin_cell(row[6]) if len(row) > 6 else None,
                 )))
             except (ValueError, IndexError):
                 continue
@@ -479,7 +530,7 @@ DEFAULT_ROTATE_MAX_AGE_DAYS = 7.0
 DEFAULT_RETENTION_DAYS = 540.0  # ~18 months: archives are compact, keep the full analytics horizon
 ROTATION_KEEP_HOURS = 30.0  # margin above the 24h widest windowed reader
 
-_HISTORY_HEADER = ['timestamp', 'agent', 'status', 'activity', 'session_id', 'hostname']
+_HISTORY_HEADER = ['timestamp', 'agent', 'status', 'activity', 'session_id', 'hostname', 'spin']
 
 
 def _archive_glob(history_file: Path) -> List[Path]:
