@@ -821,6 +821,7 @@ class MonitorDaemon:
             median_work_time=self._calculate_median_work_time(stats.operation_times),
             repo_name=session.repo_name,
             branch=session.branch,
+            worktree=getattr(session, "worktree", None),
             standing_instructions=session.standing_instructions or "",
             standing_orders_complete=session.standing_orders_complete,
             steers_count=stats.steers_count,
@@ -2127,9 +2128,11 @@ class MonitorDaemon:
         """
         if not session.start_directory:
             return False
-        repo_name, branch = self.session_manager.read_git_context(session)
-        if repo_name != session.repo_name or branch != session.branch:
-            self._pending.update_session(session.id, repo_name=repo_name, branch=branch)
+        repo_name, branch, worktree = self.session_manager.read_git_layout(session)
+        if (repo_name != session.repo_name or branch != session.branch
+                or worktree != getattr(session, "worktree", None)):
+            self._pending.update_session(session.id, repo_name=repo_name, branch=branch,
+                                         worktree=worktree)
             return True
         return False
 

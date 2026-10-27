@@ -105,6 +105,8 @@ class SessionDaemonState:
     # Session metadata
     repo_name: Optional[str] = None
     branch: Optional[str] = None
+    # Linked git worktree (#544; git_context.WORKTREE_KEYS), None in a main checkout
+    worktree: Optional[dict] = None
     standing_instructions: str = ""
     standing_orders_complete: bool = False
     steers_count: int = 0

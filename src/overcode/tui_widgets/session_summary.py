@@ -29,6 +29,7 @@ from ..tui_helpers import (
 from ..summary_columns import (
     COLUMNS_BY_ID, ColumnContext, FleetFlags, FleetRow, SummaryColumn, SUMMARY_COLUMNS, column_at,
     cell_segments, cell_text, grid_room, render_cell, resolve_column_visible, pad_and_join_cells,
+    repo_cell_parts,
 )
 
 
@@ -612,7 +613,8 @@ class SessionSummary(Static, can_focus=True):
             non_green_time=non_green_time,
             sleep_time=sleep_time,
             median_work=median_work,
-            repo_name=s.repo_name or "n/a",
+            repo_name=repo_cell_parts(s, "n/a")[0],
+            worktree_label=repo_cell_parts(s, "n/a")[1],
             branch=s.branch or "n/a",
             display_name=display_name,
             perm_emoji=perm_emoji,

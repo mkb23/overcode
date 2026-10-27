@@ -102,6 +102,9 @@ class Session:
     # Git context
     repo_name: Optional[str] = None
     branch: Optional[str] = None
+    # The linked git worktree it works in (#544; git_context.WORKTREE_KEYS),
+    # None in a main checkout. repo_name is then the worktree's directory.
+    worktree: Optional[dict] = None
     pr_number: Optional[int] = None
     pr_branch: Optional[str] = None
 
@@ -907,9 +910,9 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             name_forced: Launched with --force-name past the naming policy
         """
         if self._skip_git_detection:
-            repo_name, branch = None, None
+            repo_name, branch, worktree = None, None, None
         else:
-            repo_name, branch = self._detect_git_context(start_directory)
+            repo_name, branch, worktree = self._detect_git_layout(start_directory)
 
         session = Session(
             id=session_id or str(uuid.uuid4()),
@@ -921,6 +924,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             start_time=datetime.now().isoformat(),
             repo_name=repo_name,
             branch=branch,
+            worktree=worktree,
             standing_instructions=standing_instructions,
             permissiveness_mode=permissiveness_mode,
             allowed_tools=allowed_tools,

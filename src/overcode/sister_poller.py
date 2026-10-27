@@ -267,6 +267,7 @@ def _agent_to_session(
         start_time=start_time,
         repo_name=agent.get("repo", "") or None,
         branch=agent.get("branch", "") or None,
+        worktree=agent.get("worktree") if isinstance(agent.get("worktree"), dict) else None,
         status=status,
         permissiveness_mode=agent.get("permissiveness_mode", "normal"),
         standing_instructions="(remote)" if agent.get("standing_orders") else "",

@@ -787,7 +787,8 @@ def list_agents(
     from ..monitor_daemon_state import get_monitor_daemon_state
     from ..summary_columns import (
         FleetRow, build_cli_context, compute_column_widths, compute_fleet_flags,
-        pad_and_join_cells, render_header_cells, render_summary_cells,
+        names_match_repos, pad_and_join_cells, render_header_cells, render_summary_cells,
+        repo_cell_width,
     )
     from ..tui_logic import compute_tree_metadata, sort_sessions
     from ..workflow_progress import active_run
@@ -859,11 +860,9 @@ def list_agents(
     # Column alignment widths
     max_name_len = max((len(s.name) for s in sessions), default=10)
     name_width = min(max(max_name_len, 10), 20)
-    max_repo_width = max((len(s.repo_name or "n/a") for s in sessions), default=5)
+    max_repo_width = max((repo_cell_width(s, "n/a") for s in sessions), default=5)
     max_branch_width = max((len(s.branch or "n/a") for s in sessions), default=5)
-    all_names_match_repos = all(
-        s.name == s.repo_name for s in sessions if s.repo_name
-    )
+    all_names_match_repos = names_match_repos(sessions)
 
     # Prefer daemon state for status/activity (single source of truth)
     daemon_state = get_monitor_daemon_state(session)

@@ -226,6 +226,10 @@ class ColumnContext:
     # Untracked file count (#455). None when unknown (e.g. not a git repo).
     git_untracked_count: Optional[int] = None
 
+    # The repo cell's linked-worktree suffix (#544, repo_cell_parts): ""
+    # in a main checkout; repo_name is then the main repository's name.
+    worktree_label: str = ""
+
     # The in-session mode the status bar shows: "accept_edits", "auto",
     # "plan" or "" (#444). Overlays the launch mode through
     # status_constants.effective_permission_mode.
@@ -276,6 +280,55 @@ class ColumnContext:
             return EMOJI_ASCII.get(char, char)
         from ..status_constants import _safe_emoji
         return _safe_emoji(char)
+
+
+# Marks a linked worktree in the repo cell (#544): ``overcode⎇agent-x``.
+# One cell wide, and not an emoji (no width disagreement between terminals).
+WORKTREE_MARK = "⎇"
+# Longest worktree name the cell shows whole (the hover has all of it):
+# the repo column is as wide as its widest cell, on every row.
+WORKTREE_NAME_CAP = 16
+
+
+def repo_cell_parts(session, missing: str = "-") -> Tuple[str, str]:
+    """``(repo, worktree suffix)`` of ``session``'s repo cell.
+
+    In a main checkout the suffix is empty and the repo is ``repo_name``.
+    In a linked worktree (``session.worktree``, published by the daemon)
+    the repo is the main repository's name and the suffix is the mark and
+    the worktree's directory name (cut to ``WORKTREE_NAME_CAP`` with "…"),
+    or the mark alone when the branch
+    already says it: the branch is the name, or ends in it after a ``-``,
+    ``/`` or ``_`` (``overcode`` launches worktrees named after their
+    branch; Claude Code's ``agent-x`` is on ``worktree-agent-x``).
+    """
+    worktree = getattr(session, "worktree", None)
+    if not isinstance(worktree, dict) or not worktree.get("name"):
+        return session.repo_name or missing, ""
+    name = worktree["name"]
+    branch = getattr(session, "branch", None) or ""
+    repo = worktree.get("repo") or session.repo_name or missing
+    said = branch == name or branch.endswith((f"-{name}", f"/{name}", f"_{name}"))
+    if said:
+        return repo, WORKTREE_MARK
+    if len(name) > WORKTREE_NAME_CAP:
+        name = name[:WORKTREE_NAME_CAP - 1] + "…"
+    return repo, f"{WORKTREE_MARK}{name}"
+
+
+def repo_cell_width(session, missing: str = "-") -> int:
+    """The repo cell's text width for ``session`` (column alignment)."""
+    return sum(len(part) for part in repo_cell_parts(session, missing))
+
+
+def names_match_repos(sessions) -> bool:
+    """Every agent is named after its repo: the repo cell says nothing.
+
+    An agent in a linked worktree never matches: its cell names the
+    worktree as well.
+    """
+    return all(s.name == s.repo_name and not isinstance(getattr(s, "worktree", None), dict)
+               for s in sessions if s.repo_name)
 
 
 def build_cli_context(
@@ -353,7 +406,8 @@ def build_cli_context(
         non_green_time=non_green_time,
         sleep_time=sleep_time,
         median_work=median_work,
-        repo_name=session.repo_name or "-",
+        repo_name=repo_cell_parts(session, "-")[0],
+        worktree_label=repo_cell_parts(session, "-")[1],
         branch=session.branch or "-",
         display_name=session.name,
         perm_emoji=perm_emoji,

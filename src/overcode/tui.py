@@ -74,7 +74,7 @@ from .summarizer_component import (
 from .sister_poller import SisterPoller
 from .usage_monitor import UsageMonitor
 from .worker_guard import single_flight, worker_cancelled
-from .summary_columns import FleetFlags, compute_fleet_flags
+from .summary_columns import FleetFlags, compute_fleet_flags, names_match_repos, repo_cell_width
 from .tui_logic import (
     sort_sessions,
     filter_visible_sessions,
@@ -1560,14 +1560,12 @@ class SupervisorTUI(
             self.max_name_width = max(self._session_name_width,
                                       getattr(self, "_swarm_name_width", 0))
             self.max_repo_width = max(
-                (len(s.repo_name or "n/a") for s in sessions), default=5
+                (repo_cell_width(s, "n/a") for s in sessions), default=5
             )
             self.max_branch_width = max(
                 (len(s.branch or "n/a") for s in sessions), default=5
             )
-            self.all_names_match_repos = all(
-                s.name == s.repo_name for s in sessions if s.repo_name
-            )
+            self.all_names_match_repos = names_match_repos(sessions)
         else:
             self._session_name_width = 10
             self.max_name_width = 10
