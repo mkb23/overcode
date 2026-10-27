@@ -9,18 +9,52 @@ This ensures zero API costs when the TUI is closed (no one would see the summari
 """
 
 import logging
+import re
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Dict, Optional, TYPE_CHECKING
+from typing import Callable, Dict, Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import DEFAULT_CAPTURE_LINES
+from .status_patterns import is_status_bar_line, strip_ansi
 from .summarizer_client import SummarizerClient
+from .tmux_utils import PaneInfo, pane_for_window
 
 if TYPE_CHECKING:
     from .protocols import TmuxInterface
 
 logger = logging.getLogger(__name__)
+
+# A line that ticks while nothing else moves: the agent's busy line
+# ("✶ Pondering… (34s · ↑ 1.2k tokens · esc to interrupt)"). Its digits and
+# the spinner glyph change every frame; they say nothing a summary needs.
+_TICKING_LINE = re.compile(
+    r"esc to interrupt|\(\s*\d+(?:m\s*\d+)?s\b|\d+(?:\.\d+)?k?\s+tokens", re.IGNORECASE)
+_DIGITS = re.compile(r"\d+")
+_LEADING_GLYPHS = re.compile(r"^[^\w\s(]+\s*")
+
+# A pane whose listing has not moved is captured again after this long
+# anyway (a wall-clock step backstop); inside it the last text is reused.
+CAPTURE_KEEPALIVE_SECONDS = 60.0
+
+
+def normalise_for_change(content: str, lines: int = DEFAULT_CAPTURE_LINES) -> str:
+    """The pane as far as "has anything worth summarising changed?" goes.
+
+    ANSI codes, status-bar chrome and the busy line's ticking counters and
+    spinner glyph are dropped, and only the last ``lines`` lines count, so a
+    pane whose only motion is a spinner frame or an elapsed-seconds counter
+    hashes the same and costs no API call (#528, audit R16).
+    """
+    out = []
+    for line in strip_ansi(content).rstrip().split("\n")[-lines:]:
+        if is_status_bar_line(line):
+            continue
+        if _TICKING_LINE.search(line):
+            line = _LEADING_GLYPHS.sub("", _DIGITS.sub("#", line.strip()))
+        out.append(line.rstrip())
+    return "\n".join(out)
 
 
 @dataclass
@@ -91,8 +125,18 @@ class SummarizerComponent:
         self._last_update: Dict[str, datetime] = {}
         self._last_context_update: Dict[str, datetime] = {}
 
-        # Content hashes for change detection (avoid API calls when nothing changed)
-        self._last_content_hash: Dict[str, int] = {}
+        # Normalised-content hashes each summary kind was last made from:
+        # a summary is only asked for again once its pane has changed
+        self._last_content_hash: Dict[str, int] = {}  # short summary
+        self._last_context_hash: Dict[str, int] = {}
+
+        # The pass's one ``list-panes`` (window -> PaneInfo), and per session
+        # the last capture: (signature, listed at, monotonic, text). A pane
+        # whose signature has not moved is not captured again (#528).
+        self._panes: Optional[Dict[str, PaneInfo]] = None
+        self._listed_at: float = 0.0
+        self._captured: Dict[str, Tuple[tuple, float, float, str]] = {}
+        self.captures = 0
 
         # Where the next update() pass starts. A pass cut short by
         # should_stop resumes here, so a fleet too large to cover in one
@@ -134,6 +178,7 @@ class SummarizerComponent:
         if not self.enabled:
             return self.summaries
 
+        self._list_panes()
         count = len(sessions)
         start = self._next_index % count if count else 0
         for offset in range(count):
@@ -182,24 +227,19 @@ class SummarizerComponent:
             if status == 'terminated':
                 return
 
-        # Capture pane content
-        content = self._capture_pane(session.tmux_window)
+        # Pane content: captured only if the pane may have changed
+        content = self._content_for(session)
         if not content:
             return
 
-        # Check if content has actually changed (avoid unnecessary API calls)
-        content_hash = hash(content)
-        content_changed = True
-        if session_id in self._last_content_hash:
-            if self._last_content_hash[session_id] == content_hash:
-                content_changed = False
-
-        # If content hasn't changed, skip short summary but still allow context
-        # (context changes less often so we're more lenient)
-        if not content_changed and not need_context:
+        # Each kind of summary is asked for only when the pane has changed
+        # since that kind was last made: spinner frames and ticking counters
+        # are not changes (normalise_for_change)
+        content_hash = hash(normalise_for_change(content, self.config.lines))
+        need_short = need_short and self._last_content_hash.get(session_id) != content_hash
+        need_context = need_context and self._last_context_hash.get(session_id) != content_hash
+        if not need_short and not need_context:
             return
-
-        self._last_content_hash[session_id] = content_hash
 
         # Get or create summary object
         prev_summary = self.summaries.get(session_id)
@@ -212,31 +252,29 @@ class SummarizerComponent:
         if current_status:
             status = getattr(current_status, 'current_state', 'unknown')
 
-        # Update short summary if needed and content changed
-        if need_short and content_changed:
-            self._update_short_summary(session, prev_summary, content, status, now)
+        if need_short and self._update_short_summary(session, prev_summary, content, status, now):
+            self._last_content_hash[session_id] = content_hash
 
-        # Update context summary if needed (less frequent, runs even if content same)
-        if need_context:
-            self._update_context_summary(session, prev_summary, content, status, now)
+        if need_context and self._update_context_summary(session, prev_summary, content, status, now):
+            self._last_context_hash[session_id] = content_hash
 
     def _update_short_summary(
         self, session, summary: AgentSummary, content: str, status: str, now: datetime
-    ) -> None:
+    ) -> bool:
         """Update the short (current activity) summary."""
-        self._update_summary(session, summary, content, status, now, mode="short")
+        return self._update_summary(session, summary, content, status, now, mode="short")
 
     def _update_context_summary(
         self, session, summary: AgentSummary, content: str, status: str, now: datetime
-    ) -> None:
+    ) -> bool:
         """Update the context (wider context) summary."""
-        self._update_summary(session, summary, content, status, now, mode="context")
+        return self._update_summary(session, summary, content, status, now, mode="context")
 
     def _update_summary(
         self, session, summary: AgentSummary, content: str, status: str, now: datetime,
         mode: str = "short",
-    ) -> None:
-        """Update a summary field (short or context) via the AI client."""
+    ) -> bool:
+        """Update a summary field (short or context) via the AI client; True if the call succeeded."""
         is_short = mode == "short"
         previous = summary.text if is_short else summary.context
         max_tokens = 50 if is_short else 75
@@ -268,9 +306,11 @@ class SummarizerComponent:
                 self._last_update[session.id] = now
             else:
                 self._last_context_update[session.id] = now
+            return True
 
         except Exception as e:
             logger.warning(f"{mode.capitalize()} summary error for {session.name}: {e}")
+            return False
 
     def _accumulate_cost(self) -> None:
         """Accumulate cost from the most recent API call."""
@@ -282,6 +322,40 @@ class SummarizerComponent:
         if (input_tokens or output_tokens) and isinstance(model, str):
             from .pricing import estimate_cost
             self.total_cost_usd += estimate_cost(model, input_tokens, output_tokens)
+
+    def _list_panes(self) -> None:
+        """One ``list-panes`` for the pass: every window's change signature."""
+        self._listed_at = time.time()
+        try:
+            panes = self.tmux.list_panes(self.tmux_session)
+        except Exception:
+            panes = None
+        self._panes = panes if isinstance(panes, dict) else None
+
+    def _content_for(self, session) -> Optional[str]:
+        """The session's pane text: the last capture while the pane is unchanged.
+
+        Unchanged means the listing's signature equals the one listed
+        before the last capture and its activity second is strictly before
+        the second that listing was taken in: output after that listing
+        would carry a later second. Without a listing every call captures.
+        """
+        window = session.tmux_window
+        pane = pane_for_window(self._panes, str(window)) if self._panes else None
+        record = self._captured.get(session.id)
+        mono = time.monotonic()
+        if (pane is not None and record is not None
+                and pane.signature == record[0]
+                and pane.activity < int(record[1])
+                and mono - record[2] < CAPTURE_KEEPALIVE_SECONDS):
+            return record[3]
+        content = self._capture_pane(window)
+        self.captures += 1
+        if pane is not None and content:
+            self._captured[session.id] = (pane.signature, self._listed_at, mono, content)
+        else:
+            self._captured.pop(session.id, None)
+        return content
 
     def _capture_pane(self, window: str) -> Optional[str]:
         """Capture pane content for summarization.
