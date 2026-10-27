@@ -184,6 +184,9 @@ class DialogsMixin:
                 if message.billing_code:
                     parts.append(f"billed to: {message.billing_code}")
                 self.notify(" ".join(parts), severity="information")
+                # What the backend will not apply, e.g. a persona (#529)
+                for warning in launcher.last_launch_warnings:
+                    self.notify(warning, severity="warning")
                 self.refresh_sessions()
             except LaunchError as e:
                 self.notify(str(e), severity="error")

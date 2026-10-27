@@ -275,8 +275,9 @@ class StatsSync:
             # The stats object's fallback recovers the persona the agent is
             # actually running. For backends that honor launch-time --agent,
             # only fill an empty persona — never clobber the launcher's
-            # choice. For backends without AGENT_INJECTION (opencode2, codex),
-            # a stored persona was never applied to the CLI, so the detected
+            # choice. For backends without AGENT_INJECTION (codex), a stored
+            # persona was never applied to the CLI, and opencode2 applies it
+            # only as the starting agent (Tab switches it), so the detected
             # persona is the truth and replaces it.
             detected_agent = getattr(stats, "agent", None)
             if detected_agent:

@@ -4,10 +4,9 @@ Sibling of ``backends/opencode.py`` (v1). The two CLIs differ enough that
 they are separate backends rather than one version-gated one: v2 renamed
 its plugin API (TUI plugins only), moved session storage to the
 ``session_v2``/``session_message`` tables, and dropped ``--model``/``--agent``
-/``--fork`` from the bare TUI. Launch-time model selection is currently
-unsupported: ``OPENCODE_MODEL`` is set in ``env_prefix`` as forward-compat
-but verified inert on v0.0.0-dev-19272 (the global-config model wins), so
-``--model`` is ignored by opencode2 agents until a build honors it.
+/``--fork`` from the bare TUI. The model, effort and agent persona go in
+through ``OPENCODE_CONFIG_CONTENT`` instead (see ``launch_config``), which v2
+honours on a new session; a resumed one keeps its own model (#529).
 Everything below was verified against
 ``opencode2 v0.0.0-dev-19272`` (live, Sep 15 2026); the verified
 behaviours are documented by the per-method comments.
@@ -19,7 +18,7 @@ from typing import List, Optional, Tuple
 
 from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import StatusPatterns
-from .base import AgentBackendBase, BackendCapability, KeyPress, LaunchSpec
+from .base import AgentBackendBase, BackendCapability, KeyPress, LaunchSpec, effort_applies
 from .opencode import _resolve_overcode_bin, parse_version
 
 class Opencode2NotFoundError(AgentCliNotFoundError):
@@ -56,10 +55,8 @@ class Opencode2Backend(AgentBackendBase):
     """opencode2 CLI adapter (verified against v0.0.0-dev-19272).
 
     Deliberately absent vs the v1 backend: ``--model``/``--agent`` flags
-    (rejected by the bare TUI — model selection is currently unsupported:
-    ``OPENCODE_MODEL`` is set in ``env_prefix`` as forward-compat but
-    inert on dev-19272, so the global-config model wins; agent has no
-    launch-time knob at all), ``--fork``
+    (rejected by the bare TUI; the choice goes in through
+    ``OPENCODE_CONFIG_CONTENT``, see ``launch_config``), ``--fork``
     (exists only on ``mini``/``run``), and the ``OPENCODE_PERMISSION``
     per-tool env grammar (v2 permissions are ``{action, resource, effect}``
     arrays, and no env blob overrides a project ``deny`` — see
@@ -100,11 +97,47 @@ class Opencode2Backend(AgentBackendBase):
         # the FORK capability bit, which this backend does not set.
         return ["--session", session_id]
 
-    # Effort is a model variant in opencode, and opencode2 builds ignore the
-    # launch-time model (the global-config model wins), so no variant can
-    # be set per launch either (#537).
-    effort_unsupported_reason = ("opencode2 ignores the launch-time model, so no model "
-                                 "variant (effort) can be applied; set it in the TUI")
+    # Reasoning effort is a model variant (#497, #537), written as
+    # ``provider/model#variant`` in the config overlay (see launch_config).
+    # Variants are per model; these are the common ones, not a closed list.
+    effort_levels = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+    effort_levels_exhaustive = False
+    # A resumed v2 session keeps the model (and variant) it was created on;
+    # only the agent persona of the overlay applies to it (#529).
+    model_applies_on_resume = False
+
+    def effort_warnings(self, effort: str, model: Optional[str]) -> List[str]:
+        if not model:
+            return [f"opencode2 sets effort as a variant of a given model: --effort {effort} "
+                    f"is ignored without --model provider/model"]
+        return []
+
+    def applies_launch_agent(self) -> bool:
+        # Through ``default_agent`` in the overlay, not a flag. The backend
+        # still leaves out AGENT_INJECTION: the daemon then takes the persona
+        # the store shows (a Tab switch in the TUI) as the truth.
+        return True
+
+    def launch_config(self, spec: LaunchSpec) -> "dict":
+        """The ``OPENCODE_CONFIG_CONTENT`` overlay for this launch (#529).
+
+        Verified against v0.0.0-dev-19272 (Oct 27 2026) with an isolated
+        HOME: the overlay is a config source of its own, listed after the
+        global and project files, and wins over both. A new TUI session
+        starts on its ``model`` (``provider/model#variant`` sets the
+        variant, i.e. effort) and its ``default_agent``. A resumed session
+        (``--session``) keeps its own model and variant; its agent does
+        follow ``default_agent``. ``OPENCODE_MODEL``, by contrast, is inert.
+        """
+        content: dict = {}
+        if spec.model:
+            model = spec.model
+            if effort_applies(self, spec.effort) and "#" not in model:
+                model = f"{model}#{spec.effort}"
+            content["model"] = model
+        if spec.agent:
+            content["default_agent"] = spec.agent
+        return content
 
     def build_command(self, spec: LaunchSpec) -> List[str]:
         import shlex
@@ -121,8 +154,7 @@ class Opencode2Backend(AgentBackendBase):
         if spec.resume_session_id:
             cmd.extend(self.resume_args(spec.resume_session_id, spec.fork))
         # No --model/--agent here: the bare v2 TUI rejects them (verified).
-        # model is exported via OPENCODE_MODEL in env_prefix — forward-compat
-        # only, inert on dev-19272 (see env_prefix).
+        # They go in OPENCODE_CONFIG_CONTENT (env_prefix, launch_config).
         if (
             spec.dangerously_skip_permissions
             or spec.skip_permissions
@@ -151,14 +183,9 @@ class Opencode2Backend(AgentBackendBase):
         state_dir = os.environ.get("OVERCODE_STATE_DIR")
         if state_dir:
             env["OVERCODE_STATE_DIR"] = shlex.quote(state_dir)
-        if spec.model:
-            # Forward-compat only, verified inert on v0.0.0-dev-19272: with
-            # OPENCODE_MODEL=… in the environment the TUI still launches the
-            # global-config model (live test, Sep 16 2026), so --model is
-            # ignored by opencode2 agents until a build honors this var.
-            # Kept so such a build needs no change here; the --model flag
-            # does not exist on the bare TUI.
-            env["OPENCODE_MODEL"] = shlex.quote(spec.model)
+        content = self.launch_config(spec)
+        if content:
+            env["OPENCODE_CONFIG_CONTENT"] = shlex.quote(json.dumps(content))
         if spec.dangerously_skip_permissions or spec.permissiveness_mode == "bypass":
             # No verified v2 env override exists (see
             # _OPENCODE2_BYPASS_PERMISSION); --auto in build_command is the

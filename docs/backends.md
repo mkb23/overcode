@@ -54,7 +54,7 @@ unavailable (see the pricing section below). grok also requires a SuperGrok
 resume, and token/cost/context columns.** opencode2 is the rolling 2.0
 *preview* CLI (`v0.0.0-dev-<build>`, no stable tags), verified live against
 `v0.0.0-dev-19272` and `v0.0.0-dev-19742`. The bare v2 TUI has no `--model`/`--agent`/`--fork`
-flags, no environment override beats a project permission deny (bypass is
+flags (model, effort and agent go in through `OPENCODE_CONFIG_CONTENT`), no environment override beats a project permission deny (bypass is
 `--auto`-only), and every launch passes `--standalone` so each agent gets a
 private server — see the opencode2 section below for the full verified-quirk
 list.
@@ -199,13 +199,18 @@ Two things to know about what each route leaves behind:
   live), and the telemetry reducer adopts the first session id it sees —
   agent B would mirror agent A's turns. A private server restores the
   process scoping the v1 plugin has by construction.
-- **No launch-time model or agent selection.** The bare v2 TUI rejects
-  `--model` and `--agent` (`--fork` too — see below), so `--model` is
-  ignored for opencode2 agents. `OPENCODE_MODEL` is still exported via the
-  backend's env prefix as forward-compat, but it is verified *inert* on
-  dev-19272 — the global-config model wins. Configure the model in
-  `~/.config/opencode/opencode.json` instead; agent selection has no
-  launch-time knob at all.
+- **Model, effort and agent go in through `OPENCODE_CONFIG_CONTENT`** (#529).
+  The bare v2 TUI rejects `--model` and `--agent` (`--fork` too — see
+  below), and `OPENCODE_MODEL` is inert. overcode instead passes
+  `{"model": "provider/model#effort", "default_agent": "<persona>"}` as
+  `OPENCODE_CONFIG_CONTENT`, a config source v2 reads after the global and
+  project files, so it wins over both (verified on dev-19272, Oct 2026, with
+  an isolated HOME: the TUI footer showed the overlay's agent, model and
+  variant). A new session starts on them. A *resumed* session keeps the
+  model and variant it was created on (only the agent follows), so
+  `overcode restart --model/--effort` on an opencode2 agent warns, records
+  nothing, and leaves the switch to `restart --fresh` or `/model` in the TUI.
+  `--effort` needs `--model`, as on v1.
 - **No fork.** `--fork` exists only on v2's `mini`/`run` subcommands, not
   the bare TUI, so the `F` key is capability-gated off for opencode2
   agents.
@@ -429,9 +434,9 @@ overcode gates UI actions and telemetry off them.
 | Permissive | `--permission-mode dontAsk` | `--auto` alone (approximate — deny rules still win, see below) | `--auto` too (same single knob — deny rules always win, see below) | `-a never --sandbox workspace-write` | `--permission-mode auto` (**not** `dontAsk` — see below) |
 | Normal | (default) | opencode's own `permission` config | (default) | (default: `on-request` approval) | `--permission-mode default`, passed **explicitly on every launch** (see below) |
 | Allowed tools | `--allowedTools a,b` | ✗ no flag exists | ✗ no flag exists | ✗ no flag exists | `--allow <rule>` repeated once per tool |
-| Model | `--model sonnet` | `--model provider/model` | ✗ (not settable at launch — `OPENCODE_MODEL` is inert on this build, the global-config model wins; see below) | `-m <model>` (bare id, e.g. `gpt-5.6-sol`) | `-m <model>` (bare id, e.g. `grok-4.6`) |
-| Effort (`--effort`, #537) | `--effort <low\|medium\|high\|xhigh\|max>` | the agent's model variant via `OPENCODE_CONFIG_CONTENT` (`agent.<agent>.{model,variant}`; needs `--model`, the TUI has no `--variant`) | ✗ (warned: the launch-time model is ignored, so no variant either) | `-c model_reasoning_effort="<none\|minimal\|low\|medium\|high\|xhigh\|max>"` | `--reasoning-effort <level>` (canonical levels or a model's own menu id) |
-| Persona | `--agent name` | `--agent name` | ✗ (no launch-time knob at all) | ✗ (`-p/--profile` is a config-layer override, not a persona flag) | `--agent name` |
+| Model | `--model sonnet` | `--model provider/model` | `{"model": "provider/model"}` in `OPENCODE_CONFIG_CONTENT` (a new session only: a resumed one keeps its model; see below) | `-m <model>` (bare id, e.g. `gpt-5.6-sol`) | `-m <model>` (bare id, e.g. `grok-4.6`) |
+| Effort (`--effort`, #537) | `--effort <low\|medium\|high\|xhigh\|max>` | the agent's model variant via `OPENCODE_CONFIG_CONTENT` (`agent.<agent>.{model,variant}`; needs `--model`, the TUI has no `--variant`) | `provider/model#<variant>` in the `OPENCODE_CONFIG_CONTENT` model (needs `--model`; a new session only) | `-c model_reasoning_effort="<none\|minimal\|low\|medium\|high\|xhigh\|max>"` | `--reasoning-effort <level>` (canonical levels or a model's own menu id) |
+| Persona | `--agent name` | `--agent name` | `{"default_agent": name}` in `OPENCODE_CONFIG_CONTENT` (the starting agent) | ✗ (`-p/--profile` is a config-layer override, not a persona flag) | `--agent name` |
 | Prescribe session id | `--session-id <uuid>` | ✗ | ✗ (mints its own `ses_…` ids) | ✗ | `--session-id <uuid>` (new conversations only) |
 | Resume | `--resume <id>` | `--session <id>` | `--session <id>` (every launch also passes `--standalone`, see below) | `codex resume <id>` (subcommand, options after) | `--resume <id>` |
 | Fork | `--resume <id> --fork-session` | `--session <id> --fork` | ✗ (no `--fork` on the bare v2 TUI — the flag exists only on `mini`/`run`) | `codex fork <id>` (subcommand, options after) | `--resume <id> --fork-session --session-id <new-uuid>` |

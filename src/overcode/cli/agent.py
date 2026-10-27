@@ -1247,16 +1247,25 @@ def restart(
     # Found fleet-wide: its window is in its own tmux session, not --session's
     launcher = launcher.for_agent(sess)
 
+    from ..lifecycle import resume_mode
+    backend = launcher.backend_for(sess)
     if effort:
         from ..backends import check_effort
         try:
-            effort, warnings = check_effort(launcher.backend_for(sess), effort,
-                                            model or sess.model)
+            effort, warnings = check_effort(backend, effort, model or sess.model)
         except ValueError as e:
             rprint(f"[red]Error: {e}[/red]")
             raise typer.Exit(code=1)
         for warning in warnings:
-            rprint(f"[yellow]Warning:[/yellow] {warning}")
+            typer.echo(f"Warning: {warning}", err=True)
+
+    # A resumed conversation that keeps its own model (opencode2, #529):
+    # say so, and record nothing that will not be in force
+    resuming = resume_mode(sess, fresh)[0] == "resume"
+    for warning in backend.launch_warnings(model=model, effort=effort, resuming=resuming):
+        typer.echo(f"Warning: {warning}", err=True)
+    if resuming and not backend.model_applies_on_resume:
+        model = effort = None
 
     if model or effort:
         # From now on the transcript's older model and effort no longer
@@ -1282,8 +1291,6 @@ def restart(
                f"try again in a moment[/red]")
         raise typer.Exit(code=1)
     if not window_exists:
-        from ..lifecycle import resume_mode
-
         mode, reason = resume_mode(sess, fresh)
         rprint(f"[dim]'{name}' has no tmux window; reviving...[/dim]")
         if launcher.revive(sess, fresh=fresh):

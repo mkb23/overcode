@@ -207,6 +207,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         self.tmux = tmux_manager if tmux_manager else TmuxManager(tmux_session)
         self.sessions = session_manager if session_manager else SessionManager()
         self.tmux_session = tmux_session
+        # What the last launch() warned about (also printed to stderr), for
+        # callers with no stderr to show: the TUI notifies, the web API
+        # returns them (#529).
+        self.last_launch_warnings: List[str] = []
 
     def _resolve(self, name: str) -> Optional[Session]:
         """The agent ``name`` addresses, following renames (#478).
@@ -537,6 +541,7 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
         Raises:
             LaunchError: the agent could not be launched; ``reason`` says why.
         """
+        self.last_launch_warnings = []
         # Validate session name
         try:
             validate_session_name(name)
@@ -627,6 +632,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             require_agent_cli(agent_backend)
         except (AgentCliNotFoundError, agent_backend.not_found_error) as e:
             raise LaunchError(str(e)) from e
+        # What the backend will not apply (#529): an --agent it cannot pick
+        effort_warnings = effort_warnings + agent_backend.launch_warnings(
+            model=model, agent=agent_persona, effort=effort)
+        self.last_launch_warnings = list(effort_warnings)
         for warning in effort_warnings:
             print(f"Warning: {warning}", file=sys.stderr)
 
