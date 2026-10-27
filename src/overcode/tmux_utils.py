@@ -10,6 +10,7 @@ import os
 import subprocess
 import tempfile
 import time
+import uuid
 from typing import Any, Collection, Dict, Iterable, List, Mapping, NamedTuple, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -508,6 +509,10 @@ def send_text_to_tmux_window(
     lines = text.split('\n')
     batch_size = 10
     target = tmux_window_target(tmux_session, window)
+    # A buffer of its own: tmux's default buffer is shared by every client,
+    # so two sends at once (the daemon's heartbeat workers, a launch from
+    # the CLI) could paste each other's text. -d on the paste deletes it.
+    buffer_name = f"overcode-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
     for i in range(0, len(lines), batch_size):
         batch = lines[i:i + batch_size]
@@ -522,14 +527,15 @@ def send_text_to_tmux_window(
                 temp_path = f.name
                 f.write(batch_text)
 
-            subprocess.run(tmux_cmd + ['load-buffer', temp_path], timeout=5, check=True)
+            subprocess.run(tmux_cmd + ['load-buffer', '-b', buffer_name, temp_path],
+                           timeout=5, check=True)
             # -p: bracketed paste (when the app asked for it), so the app
             # knows exactly where the paste ends. Without it, tmux turns
             # each newline into a carriage return and Claude Code guesses
             # "fast input = paste", swallowing the Enter sent just after:
             # a multi-line prompt sat unsubmitted (tmux 3.7c, 2026-09-28).
             subprocess.run(tmux_cmd + [
-                'paste-buffer', '-p', '-t', target
+                'paste-buffer', '-p', '-d', '-b', buffer_name, '-t', target
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
             logger.warning("Failed to send text batch to tmux: %s", e)
