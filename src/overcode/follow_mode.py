@@ -45,6 +45,115 @@ def _capture_pane(tmux_session: str, window_name: str, lines: int = DEFAULT_CAPT
         return None
 
 
+# What the change probe reads: the identity of the pane the target resolved
+# to (tmux 3.7 resolves a missing ``session:=name`` to another window rather
+# than failing), then everything that moves when the pane's content does.
+_PROBE_FORMAT = "\t".join((
+    "#{session_name}",
+    "#{window_name}",
+    "#{window_index}",
+    "#{window_activity}",
+    "#{history_size}",
+    "#{cursor_x}",
+    "#{cursor_y}",
+    "#{pane_width}",
+    "#{pane_height}",
+))
+
+# A pane whose probe has not moved is captured again after this long anyway:
+# a backstop for a wall-clock step, not part of the change rule.
+PROBE_KEEPALIVE_SECONDS = 5.0
+
+# The follow loops' own wall clock: tests freeze ``time.time`` to drive
+# deadlines, and the gate must not consume their values.
+_wall_clock = time.time
+_monotonic = time.monotonic
+
+
+def _probe_pane(tmux_session: str, window_name) -> Optional[tuple]:
+    """``(activity, signature)`` of the window's pane from ONE ``display-message``.
+
+    ``activity`` is ``window_activity``: tmux stamps it (whole seconds of
+    wall time) every time it parses output for a pane of the window, in-place
+    redraws (spinners, ``\\r`` progress) included. The signature adds the
+    history size, cursor and pane size, and the resolved window's name and
+    index, so a rename or a resize also reads as a change. None when tmux
+    cannot answer or the target resolved to another window.
+    """
+    try:
+        result = subprocess.run(
+            [*_build_tmux_cmd(), "display-message", "-p",
+             "-t", tmux_window_target(tmux_session, window_name), _PROBE_FORMAT],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.rstrip("\n").split("\t")
+    if len(parts) < 9:
+        return None
+    session, name, index = "\t".join(parts[:-8]), parts[-8], parts[-7]
+    window = str(window_name)
+    if session != tmux_session or (name != window and not (window.isdigit() and index == window)):
+        return None
+    try:
+        activity = int(parts[-6])
+    except ValueError:
+        return None
+    return activity, tuple(parts)
+
+
+# What ChangeGatedCapture.capture returns when the pane cannot have changed
+# since the last capture: the caller prints nothing new, as it would have.
+UNCHANGED = object()
+
+
+class ChangeGatedCapture:
+    """A follower's pane capture, skipped while the pane cannot have changed.
+
+    Every poll costs one ``display-message`` (:func:`_probe_pane`) at the
+    same rate as before; the 500-line ``capture-pane`` and its parse run only
+    when the probe says the pane may have changed since the last capture. The
+    rule has no same-second blind spot: a capture is skipped only when the
+    probe equals the one taken just before the last capture AND that
+    activity second is strictly before the second the last capture started
+    in. Output arriving after that capture started would be stamped with a
+    later second, so it moves the probe; output in the same second as the
+    capture keeps the gate open until a quiet second has passed. Without a
+    probe answer (window gone, tmux down) it captures, as before, so the
+    caller sees ``None`` exactly when it did.
+    """
+
+    def __init__(self, keepalive_seconds: float = PROBE_KEEPALIVE_SECONDS):
+        self.keepalive_seconds = keepalive_seconds
+        self._last: Optional[tuple] = None
+        self._last_started: float = 0.0
+        self._last_mono: float = 0.0
+        self.captures = 0
+        self.skipped = 0
+
+    def capture(self, tmux_session: str, window_name):
+        started = _wall_clock()
+        mono = _monotonic()
+        probe = _probe_pane(tmux_session, window_name)
+        if (probe is not None and self._last is not None
+                and probe[1] == self._last
+                and probe[0] < int(self._last_started)
+                and mono - self._last_mono < self.keepalive_seconds):
+            self.skipped += 1
+            return UNCHANGED
+        raw = _capture_pane(tmux_session, window_name)
+        self.captures += 1
+        if probe is None or raw is None:
+            self._last = None
+        else:
+            self._last, self._last_started, self._last_mono = probe[1], started, mono
+        return raw
+
+
 # The read side lives with the lifecycle rule; follow uses it under these names.
 _check_hook_stop = hook_stopped
 _check_report = read_report
@@ -245,6 +354,7 @@ def follow_agent(
         interrupted = True
 
     old_handler = signal.signal(signal.SIGINT, handle_sigint)
+    pane = ChangeGatedCapture()
 
     try:
         while not interrupted:
@@ -252,8 +362,8 @@ def follow_agent(
             released = _released_from(sessions, session_id) if watch_release else None
             if released:
                 return _end_released(name, released)
-            # Capture pane content
-            raw = _capture_pane(tmux_session, window_name)
+            # Capture pane content (skipped while the pane cannot have changed)
+            raw = pane.capture(tmux_session, window_name)
             if raw is None:
                 if _check_session_terminated(sessions, name, session_id):
                     print(f"\n[follow] Agent '{name}' terminated", file=sys.stderr)
@@ -261,7 +371,8 @@ def follow_agent(
                 time.sleep(poll_interval)
                 continue
 
-            _emit_new_lines(raw, recent_lines)
+            if raw is not UNCHANGED:
+                _emit_new_lines(raw, recent_lines)
 
             # Check for Stop event via hook state
             if _check_hook_stop(tmux_session, name, session_id):
@@ -309,6 +420,7 @@ def follow_agent(
                     poll_interval, recent_lines,
                     session_id=session_id,
                     watch_release=watch_release,
+                    pane=pane,
                 )
 
             # Check if agent terminated (window gone)
@@ -340,6 +452,7 @@ def _poll_for_report(
     recent_lines: deque,
     session_id: Optional[str] = None,
     watch_release: bool = False,
+    pane: Optional[ChangeGatedCapture] = None,
 ) -> int:
     """Poll for a report file after Stop event detected.
 
@@ -354,6 +467,8 @@ def _poll_for_report(
     # Epoch seconds: the stored deadline is a naive local stamp, which a
     # naive now misreads in the repeated autumn hour (a deadline in the
     # second pass read as already past in the first)
+    if pane is None:
+        pane = ChangeGatedCapture()
     deadline: Optional[float] = None
     if oversight_policy == "timeout" and oversight_timeout_seconds > 0:
         now_at = time.time()
@@ -399,8 +514,8 @@ def _poll_for_report(
             return 1
 
         # Continue streaming pane output while waiting
-        raw = _capture_pane(tmux_session, window_name)
-        if raw:
+        raw = pane.capture(tmux_session, window_name)
+        if raw and raw is not UNCHANGED:
             _emit_new_lines(raw, recent_lines)
 
         time.sleep(poll_interval)
