@@ -33,6 +33,8 @@
   by phase.
 - **`--effort` on launch and restart (#537)**, mapped to each backend's flag.
   opencode children no longer ask before `overcode report` (#531).
+- **Tags from the TUI (#538).** `#` adds a tag to the highlighted agent,
+  "Remove tag…" in the palette takes one off, and `S` sorts by tag.
 
 **Upgrading:** nothing to convert. The two new settings (transcript archive,
 prefer SendMessage) are off by default; to keep Claude's transcripts, set
