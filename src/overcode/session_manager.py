@@ -177,6 +177,9 @@ class Session:
 
     # Cost budget (#173) - 0.0 means no budget/unlimited
     cost_budget_usd: float = 0.0
+    # When overcode last refused a prompt for the budget (#530, budget_gate);
+    # the daemon shows "rejected" while it stays exceeded, then clears it
+    budget_rejected_at: Optional[str] = None
 
     # Billing code: what the ledger files this agent's spend under. Sticky:
     # its launch name unless `launch --billing-code` set one, and always its

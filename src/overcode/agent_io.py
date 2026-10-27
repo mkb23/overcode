@@ -11,6 +11,7 @@ import subprocess
 import time
 from typing import Optional
 
+from . import budget_gate
 from .backends import AgentBackend, get_backend
 from .session_manager import Session
 from .tmux_utils import (
@@ -238,13 +239,20 @@ class AgentIOMixin:
         # Fallback: prompt not detected, use original delay
         return send(startup_delay)
 
-    def send_to_session(self, name: str, text: str, enter: bool = True) -> bool:
+    # Why the last send was refused (budget_gate), else None
+    send_refusal: Optional[str] = None
+
+    def send_to_session(self, name: str, text: str, enter: bool = True,
+                        over_budget: bool = False) -> bool:
         """Send text/keys to a session by name.
 
         Args:
             name: Name of the session
             text: Text to send (or special key like "Enter", "Escape")
             enter: Whether to press Enter after the text (default: True)
+            over_budget: Send a prompt to an agent over its cost budget
+                anyway (budget_gate); without it the send is refused and
+                ``send_refusal`` says why
 
         Returns:
             True if successful, False otherwise
@@ -254,9 +262,10 @@ class AgentIOMixin:
             print(f"Session '{name}' not found")
             return False
 
-        return self._send_to_resolved_session(session, text, enter)
+        return self._send_to_resolved_session(session, text, enter, over_budget=over_budget)
 
-    def send_to_session_by_id(self, session_id: str, text: str, enter: bool = True) -> bool:
+    def send_to_session_by_id(self, session_id: str, text: str, enter: bool = True,
+                              over_budget: bool = False, keypress: bool = False) -> bool:
         """Send text/keys to a session by ID.
 
         Preferred over send_to_session() when the session ID is known,
@@ -266,6 +275,9 @@ class AgentIOMixin:
             session_id: Unique session ID
             text: Text to send (or special key like "Enter", "Escape")
             enter: Whether to press Enter after the text (default: True)
+            over_budget: As for send_to_session
+            keypress: ``text`` is a key the person pressed (a menu number),
+                not a prompt: never refused for the budget
 
         Returns:
             True if successful, False otherwise
@@ -274,18 +286,60 @@ class AgentIOMixin:
         if session is None:
             return False
 
-        return self._send_to_resolved_session(session, text, enter)
+        return self._send_to_resolved_session(session, text, enter,
+                                              over_budget=over_budget, keypress=keypress)
 
-    def _send_to_resolved_session(self, session: Session, text: str, enter: bool = True) -> bool:
+    # Named keys and gestures: never refused (budget_gate)
+    SEND_KEYS = ("enter", "escape", "esc", "tab", "up", "down", "left", "right",
+                 "approve", "reject")
+
+    def _budget_gate(self, session: Session, text: str, enter: bool,
+                     over_budget: bool, keypress: bool) -> bool:
+        """Refuse a prompt to an agent over its cost budget (#530, budget_gate).
+
+        True to send. A refusal is kept in ``send_refusal`` and stamped on
+        the agent (the daemon shows it "rejected"). With ``over_budget`` it
+        is sent, and the agent's own budget check (Claude's hook) is given
+        a permit for it.
+        """
+        self.send_refusal = None
+        if keypress or not budget_gate.is_prompt(text, enter, self.SEND_KEYS):
+            return True
+        reason = budget_gate.refusal(session, self.sessions)
+        if reason is None:
+            return True
+        if over_budget:
+            try:
+                budget_gate.write_permit(self.tmux.session_name, session.id)
+            except OSError:
+                pass  # the overcode side is open; the hook may still refuse
+            return True
+        self.send_refusal = reason
+        try:
+            self.sessions.update_session(session.id, budget_rejected_at=budget_gate.now_iso())
+        except Exception:
+            pass  # the refusal stands without its badge
+        return False
+
+    def _send_to_resolved_session(self, session: Session, text: str, enter: bool = True,
+                                  over_budget: bool = False, keypress: bool = False) -> bool:
         """Send text/keys to an already-resolved session.
 
         Internal helper shared by send_to_session() and send_to_session_by_id().
         Sent in the agent's own tmux session: agents are found fleet-wide,
         and this launcher's may not be theirs (the CLI's --session default).
+        A prompt to an agent over its cost budget is refused unless
+        ``over_budget`` (``_budget_gate``); keys and gestures always go.
         """
         owner = self.for_agent(session)
         if owner is not self:
-            return owner._send_to_resolved_session(session, text, enter)
+            sent = owner._send_to_resolved_session(session, text, enter,
+                                                   over_budget=over_budget, keypress=keypress)
+            self.send_refusal = owner.send_refusal
+            return sent
+
+        if not self._budget_gate(session, text, enter, over_budget, keypress):
+            return False
 
         # Handle special keys
         special_keys = {
@@ -359,6 +413,9 @@ class AgentIOMixin:
                 session.id,
                 last_activity=time.strftime("%Y-%m-%dT%H:%M:%S")
             )
+            if over_budget and budget_gate.refused_at(session):
+                # Sent on purpose: the agent is no longer refused
+                self.sessions.update_session(session.id, budget_rejected_at=None)
 
         return success
 

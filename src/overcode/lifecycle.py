@@ -122,7 +122,9 @@ def release_agent(launcher, session: "Session", notify: bool = True) -> ReleaseR
             result.note = f"not told: {e}"
         else:
             if not result.notified:
-                result.note = "not told: its window did not take the message"
+                from .budget_gate import refusal_of
+                result.note = ("not told: over its cost budget" if refusal_of(launcher)
+                               else "not told: its window did not take the message")
     return result
 
 

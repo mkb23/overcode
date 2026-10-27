@@ -73,16 +73,22 @@ class RecorderStore:
             self.observing_since = ts
 
     def record(self, session, state: SessionDaemonState, effective_status: str,
-               now: datetime, *, detector, engine=None) -> None:
-        """Feed this tick's colour to the agent's recorder; publish, log, ring (#507)."""
+               now: datetime, *, detector, engine=None,
+               detail: Optional[StatusDetail] = None) -> None:
+        """Feed this tick's colour to the agent's recorder; publish, log, ring (#507).
+
+        ``detail`` stands in for the detector's (a prompt overcode refused
+        for the budget, #530).
+        """
         from .hook_status_detector import augment_with_legacy_heartbeat
         from .idle_stages import idle_since
 
-        try:
-            detail = detector.get_status_detail(session.name)
-        except Exception:
-            detail = None
-        detail = augment_with_legacy_heartbeat(detail, effective_status)
+        if detail is None:
+            try:
+                detail = detector.get_status_detail(session.name)
+            except Exception:
+                detail = None
+            detail = augment_with_legacy_heartbeat(detail, effective_status)
         if effective_status in AT_REST_STATUSES:
             # A child at rest, reported or not. A done child is not
             # detected at all, so whatever detail is cached is stale.

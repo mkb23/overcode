@@ -78,6 +78,7 @@ AGENT_DIR_FILES = {
     "recent_prompts": "recent_prompts.jsonl",  # last 3 user prompts, 1 KB each (#547)
     "namer": "namer.json",                  # the daemon namer's per-agent state
     "child_notice": "child_notice.txt",     # one-shot "your child X is now Y"
+    "budget_permit": "budget_permit.txt",   # one-shot `send --over-budget` pass (#530)
 }
 
 # Before 0.6.0 the same files sat directly in the session directory, keyed

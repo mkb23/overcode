@@ -14,6 +14,8 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
+from ..budget_gate import refusal_of
+
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
@@ -879,7 +881,8 @@ class DialogsMixin:
             self._record_instruction(message.text, session.name)
             self.notify(f"Reinjected to {session.name}")
         else:
-            self.notify(f"Failed to send to {session.name}", severity="error")
+            self.notify(refusal_of(launcher) or f"Failed to send to {session.name}",
+                        severity="error")
         self._dialog_did_close()
 
     def on_instruction_history_modal_cancelled(

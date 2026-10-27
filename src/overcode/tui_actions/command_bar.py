@@ -11,6 +11,7 @@ from __future__ import annotations
 from textual.css.query import NoMatches
 from textual.widgets import Input, TextArea
 
+from ..budget_gate import refusal_of
 from ..launcher import AgentLauncher
 from ..settings import signal_activity
 from ..tui_helpers import format_duration
@@ -94,7 +95,8 @@ class CommandBarMixin:
             self._record_instruction(message.text, message.session_name)
             self.notify(f"Sent to {message.session_name}")
         else:
-            self.notify(f"Failed to send to {message.session_name}", severity="error")
+            self.notify(refusal_of(launcher) or f"Failed to send to {message.session_name}",
+                        severity="error")
 
     def on_command_bar_standing_order_requested(self, message: CommandBar.StandingOrderRequested) -> None:
         """Handle standing order request from command bar."""

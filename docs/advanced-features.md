@@ -120,19 +120,27 @@ Budget enforcement is **soft** — the agent is not killed or put to sleep. Inst
 
 1. **Heartbeats are skipped** — the agent won't receive periodic instructions, so it naturally stops when it finishes its current work or hits a permission prompt
 2. **Supervision is skipped** — the supervisor daemon won't launch a daemon Claude to approve prompts or steer the agent
+3. **Prompts are refused** — for every backend, overcode refuses to type a prompt into the agent: `overcode send` (so a parent's messages and the supervisor's too), the TUI's command bar, reinjected instructions and the web API. The sender is told the budget and how to raise it, and the agent shows red with a "rejected" badge. Keys and gestures (Enter, Escape, approve, reject, menu numbers) always go through. Claude Code agents also refuse a prompt typed straight into their pane (their `UserPromptSubmit` hook).
 
-The agent can still finish whatever it's currently doing. It just won't receive any more automated nudges.
+The agent can still finish whatever it's currently doing. It just won't receive any more prompts or automated nudges.
+
+To talk to it anyway, send on purpose:
+
+```bash
+overcode send --over-budget my-agent "wrap up and report"
+```
 
 ### Resuming After Budget
 
 To continue past a budget, either raise it or clear it:
 
 ```bash
-overcode set-budget my-agent 10.00   # Raise to $10
-overcode set-budget my-agent 0       # Remove limit entirely
+overcode budget set my-agent 10.00   # Raise to $10
+overcode budget set my-agent 0       # Remove limit entirely
+overcode budget transfer parent my-agent 5.00   # A child whose parent has a budget
 ```
 
-Heartbeats and supervision resume automatically on the next daemon loop (~10s).
+Heartbeats, supervision and prompts resume automatically (the "rejected" badge clears on the next daemon loop).
 
 ### No Global Default
 

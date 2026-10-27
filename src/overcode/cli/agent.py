@@ -1729,6 +1729,10 @@ def send(
         bool, typer.Option("--force", help="Send even if send.prefer_claude_messaging "
                            "would point you at SendMessage")
     ] = False,
+    over_budget: Annotated[
+        bool, typer.Option("--over-budget", help="Send a prompt to an agent that is over "
+                           "its cost budget anyway")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """
@@ -1737,6 +1741,11 @@ def send(
     With send.prefer_claude_messaging on (#553), a message from one Claude
     Code agent to another is refused unless --force: Claude's own
     SendMessage tool reaches it without typing into its pane.
+
+    A prompt to an agent over its cost budget is refused (#530) unless
+    --over-budget; raise the budget with `overcode budget set` (or
+    `overcode budget transfer` from its parent) to let it work on. Keys and
+    gestures always go through.
 
     Gestures: approve, reject -- resolved via the agent's backend, so the
     right keys go to a Claude Code prompt or an opencode one.
@@ -1760,6 +1769,8 @@ def send(
     text_str = " ".join(text) if text else ""
     if agent_session and not force and not no_enter:
         _refuse_claude_to_claude(sm, agent_session, text_str)
+    if agent_session and not over_budget:
+        _refuse_over_budget(sm, agent_session, text_str, enter=not no_enter)
     if agent_session and agent_session.is_asleep:
         sm.update_session(agent_session.id, is_asleep=False, asleep_auto=False)
         rprint(f"[dim]Woke agent '{name}' to send command[/dim]")
@@ -1768,7 +1779,7 @@ def send(
 
     enter = not no_enter
 
-    if launcher.send_to_session(name, text_str, enter=enter):
+    if launcher.send_to_session(name, text_str, enter=enter, over_budget=over_budget):
         if text_str.lower() in ("enter", "escape", "esc", "approve", "reject"):
             rprint(f"[green]✓[/green] Sent {text_str.upper()} to '[bold]{name}[/bold]'")
         elif enter:
@@ -1777,9 +1788,45 @@ def send(
         else:
             display = text_str[:50] + "..." if len(text_str) > 50 else text_str
             rprint(f"[green]✓[/green] Sent (no enter) to '[bold]{name}[/bold]': {display}")
+    elif budget_refusal_of(launcher):
+        _print_budget_refusal(budget_refusal_of(launcher), name)
+        raise typer.Exit(1)
     else:
         rprint(f"[red]✗[/red] Failed to send to '[bold]{name}[/bold]'")
         raise typer.Exit(1)
+
+
+def budget_refusal_of(launcher):
+    from ..budget_gate import refusal_of
+
+    return refusal_of(launcher)
+
+
+def _print_budget_refusal(reason: str, name: str) -> None:
+    from rich.markup import escape
+
+    rprint(f"[red]Not sent:[/red] {escape(reason)}\n"
+           f"To send anyway: overcode send --over-budget {escape(name)} \"...\"")
+
+
+def _refuse_over_budget(sm, target, text: str, enter: bool) -> None:
+    """Exit before waking or typing anything when ``target`` is over its
+    cost budget and ``text`` is a prompt (#530, budget_gate).
+
+    The launcher refuses too (every path that types into an agent goes
+    through it); this one answers before the agent is woken.
+    """
+    from .. import budget_gate
+    from ..agent_io import AgentIOMixin
+
+    if not budget_gate.is_prompt(text, enter, AgentIOMixin.SEND_KEYS):
+        return
+    reason = budget_gate.refusal(target, sm)
+    if reason is None:
+        return
+    sm.update_session(target.id, budget_rejected_at=budget_gate.now_iso())
+    _print_budget_refusal(reason, target.name)
+    raise typer.Exit(1)
 
 
 def _release_lines(sess) -> list:

@@ -1060,7 +1060,8 @@ class TestDispatchControl:
                 {"text": "do stuff", "enter": True}
             )
 
-        mock_fn.assert_called_once_with("test-session", "agent1", text="do stuff", enter=True)
+        mock_fn.assert_called_once_with("test-session", "agent1", text="do stuff", enter=True,
+                                        over_budget=False)
         assert result == {"ok": True}
 
     def test_post_send_keys_to_agent(self):

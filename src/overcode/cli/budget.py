@@ -19,7 +19,8 @@ def budget_set(
     """Set cost budget for an agent.
 
     When an agent's estimated cost reaches the budget, heartbeats are
-    disabled and supervision is skipped.
+    disabled, supervision is skipped and prompts sent to it are refused
+    (`overcode send --over-budget` sends one anyway).
 
     Examples:
         overcode budget set my-agent 5.00    # $5 budget
