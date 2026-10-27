@@ -36,9 +36,14 @@ def _get_session_or_error(session_manager, name: str):
 
 
 def send_to_agent(
-    tmux_session: str, name: str, text: str, enter: bool = True
+    tmux_session: str, name: str, text: str, enter: bool = True,
+    over_budget: bool = False,
 ) -> dict:
-    """Send instruction or text to an agent. Auto-wakes sleeping agents."""
+    """Send instruction or text to an agent. Auto-wakes sleeping agents.
+
+    A prompt to an agent over its cost budget is refused (409) unless
+    ``over_budget`` (#530, budget_gate).
+    """
     from .launcher import AgentLauncher
     from .session_manager import SessionManager
 
@@ -50,8 +55,11 @@ def send_to_agent(
         sm.update_session(session.id, is_asleep=False, asleep_auto=False)
 
     launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
-    if launcher.send_to_session(name, text, enter=enter):
+    if launcher.send_to_session(name, text, enter=enter, over_budget=over_budget):
         return {"ok": True}
+    from .budget_gate import refusal_of
+    if refusal_of(launcher):
+        raise ControlError(refusal_of(launcher), status=409)
     raise ControlError("Failed to send to agent", status=500)
 
 

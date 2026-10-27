@@ -76,7 +76,7 @@ class TestSendToAgent:
         result = send_to_agent("agents", "test-agent", "hello", enter=True)
 
         assert result == {"ok": True}
-        launcher.send_to_session.assert_called_once_with("test-agent", "hello", enter=True)
+        launcher.send_to_session.assert_called_once_with("test-agent", "hello", enter=True, over_budget=False)
 
     @patch(LAUNCHER_PATH)
     @patch(SM_PATH)

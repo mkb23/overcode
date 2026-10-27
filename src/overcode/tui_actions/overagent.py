@@ -9,6 +9,7 @@ once. With none running, launches one named "overagent" in ~/.overcode.
 from __future__ import annotations
 
 
+from ..budget_gate import refusal_of
 from ..keymap import keymap_of
 
 
@@ -139,7 +140,8 @@ class JourneyMixin:
             if self.launcher.send_to_session_by_id(session.id, message.question):
                 self._focus_overagent(session.id)
             else:
-                self.notify("Could not reach the overagent", severity="error")
+                self.notify(refusal_of(self.launcher)
+                            or "Could not reach the overagent", severity="error")
             return
         self._overagent_question = message.question
         self.action_open_overagent()

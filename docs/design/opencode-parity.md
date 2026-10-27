@@ -45,6 +45,7 @@ because it's described in its own section. Updated on 2026-10-20 for gap 6
 3. **Cost budgets don't block prompts (opencode, opencode2).**
    - Claude's `UserPromptSubmit` hook refuses the prompt and shows red "rejected" (`hook_handler.py:1203-1230`).
    - The opencode plugins have no way to refuse a prompt, so only heartbeats and the supervisor stop (`monitor_daemon.py:669`, `supervisor_daemon_core.py:117`). A person or the parent can still drive a child past its budget.
+   - **Fixed (#530):** overcode refuses a prompt to an over-budget agent of any backend on every path that types into it (`budget_gate.py`, `AgentIOMixin._budget_gate`), and the daemon shows red "rejected". `overcode send --over-budget` sends anyway.
 4. **A child reporting back can hit a permission prompt (opencode in normal permission mode, when the project asks for bash).**
    - Claude children get `Bash(overcode report *)` pre-allowed (`cli/perms.py:13`).
    - opencode has no per-launch allowlist (`PERMISSION_INJECTION` is unset, `backends/opencode.py:423-429`). In a project whose config sets `permission.bash: ask` (as the live capture harness does, `tests/e2e/test_live_opencode_states.py:84`), a normal-mode child asks before it runs `overcode report`, so the parent sees orange "permission" instead of the report. opencode's default bash permission was not checked here: **unverified** whether this bites in an unconfigured project.

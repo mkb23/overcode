@@ -53,7 +53,8 @@ def _send_keys_to_focused(tui, keys: str, *, enter: bool = False, label: str | N
         session_manager=tui.session_manager
     )
 
-    send_kwargs = {"enter": True} if enter else {}
+    # A key pressed, not a prompt: never refused for the budget (#530)
+    send_kwargs = {"enter": True, "keypress": True} if enter else {"keypress": True}
 
     # Fire-and-forget via a background thread so the TUI main loop stays
     # responsive — send_keys_to_pane sleeps up to 500ms per call for Claude

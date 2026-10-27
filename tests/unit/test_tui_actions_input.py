@@ -397,7 +397,7 @@ class TestSendEscapeToFocused:
             MockThread.side_effect = lambda target, daemon: _RunInline(target)
             InputActionsMixin.action_send_escape_to_focused(mock_tui)
 
-        mock_launcher_instance.send_to_session_by_id.assert_called_once_with(mock_session.id, "escape")
+        mock_launcher_instance.send_to_session_by_id.assert_called_once_with(mock_session.id, "escape", keypress=True)
         # Notify is posted onto the main loop via call_from_thread
         mock_tui.call_from_thread.assert_called_once()
         args = mock_tui.call_from_thread.call_args

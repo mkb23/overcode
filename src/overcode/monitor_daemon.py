@@ -61,6 +61,7 @@ from .status_constants import (
     AT_REST_STATUSES,
     STATUS_ASLEEP,
     STATUS_DONE,
+    STATUS_ERROR,
     STATUS_HEARTBEAT_START,
     STATUS_RUNNING,
     STATUS_RUNNING_HEARTBEAT,
@@ -76,7 +77,7 @@ from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
 from .swarm_history import SWARM_HISTORY_FILE, SwarmHistoryWriter
-from . import daemon_presence
+from . import budget_gate, daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
@@ -175,11 +176,7 @@ def _jobs_by_name() -> Dict[str, dict]:
 
 def _is_budget_exceeded(session, stats) -> bool:
     """Check if session has exceeded its cost budget (#173)."""
-    try:
-        budget = session.cost_budget_usd
-        return isinstance(budget, (int, float)) and budget > 0 and stats.estimated_cost_usd >= budget
-    except (AttributeError, TypeError):
-        return False
+    return budget_gate.is_budget_exceeded(session, stats)
 
 
 def _create_monitor_logger(session: str = "agents", log_file: Optional[Path] = None) -> BaseDaemonLogger:
@@ -1826,6 +1823,7 @@ class MonitorDaemon:
             # them, as the per-write path re-read the file after each.
             session = pending.view(snapshot)
             pane_content = ""
+            rejected = False
             if session.status == "done":
                 status, activity = STATUS_DONE, "Completed"
             else:
@@ -1842,6 +1840,16 @@ class MonitorDaemon:
                     continue
                 if detect_failures.pop(session.id, None) is not None:
                     self.log.info(f"[{session.name}] status detected again")
+
+                # A prompt overcode refused for the budget (#530): red
+                # "rejected", as Claude's hook shows it, for every backend
+                rejected = budget_gate.rejection_applies(session, status)
+                if rejected:
+                    status, activity = STATUS_ERROR, budget_gate.REJECTED_ACTIVITY
+                elif (budget_gate.refused_at(session)
+                      and not budget_gate.is_budget_exceeded(session)):
+                    # Budget raised or cleared: the refusal is over
+                    pending.update_session(session.id, budget_rejected_at=None)
 
                 # Log hook events when they change (diagnostic visibility)
                 self._log_hook_event(session, status, activity)
@@ -1897,6 +1905,8 @@ class MonitorDaemon:
                 effective_status = STATUS_TERMINATED
             elif session.is_asleep:
                 effective_status = STATUS_ASLEEP
+            elif rejected:
+                effective_status = STATUS_ERROR  # no heartbeat waits over budget
             elif status == STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
                 if session.id in self._heartbeat_start_pending:
                     effective_status = STATUS_HEARTBEAT_START
@@ -1948,8 +1958,11 @@ class MonitorDaemon:
             for name, value in self._pane_view(session, pane_content).items():
                 setattr(session_state, name, value)
             self._attach_git_and_burn(session, session_state)
-            self.recorder_store.record(session, session_state, effective_status, now,
-                                       detector=self.detector, engine=self._engine)
+            self.recorder_store.record(
+                session, session_state, effective_status, now,
+                detector=self.detector, engine=self._engine,
+                detail=budget_gate.rejected_detail() if effective_status == STATUS_ERROR and rejected
+                else None)
             self._auto_sleep(session, session_state, now, idle_cfg)
             session_states.append(session_state)
 

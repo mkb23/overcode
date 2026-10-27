@@ -685,6 +685,16 @@ def get_rename_notice_path(tmux_session: str, session_name: str,
     return agent_file_for_write(tmux_session, session_name, "rename_notice", session_id)
 
 
+def _take_budget_permit(tmux_session: str) -> bool:
+    """Consume this agent's `send --over-budget` permit (budget_gate)."""
+    from .budget_gate import take_permit
+
+    try:
+        return take_permit(tmux_session, _agent_session_id())
+    except Exception:  # never fail a hook over it
+        return False
+
+
 def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
     """Print, then consume, the agent's pending rename note if there is one."""
     path = get_rename_notice_path(tmux_session, session_name)
@@ -1569,11 +1579,13 @@ def handle_hook_event(backend: str | None = None) -> None:
     if event == "UserPromptSubmit":
         from .time_context import _load_daemon_state, _find_session_in_state
 
-        # Block prompt if agent has exceeded its cost budget (#246)
+        # Block prompt if agent has exceeded its cost budget (#246), unless
+        # `overcode send --over-budget` sent it (a one-shot permit, #530)
         state = _load_daemon_state(tmux_session)
         if state:
             session_data = _find_session_in_state(state, session_name, _agent_session_id())
-            if session_data and session_data.get("budget_exceeded", False):
+            if (session_data and session_data.get("budget_exceeded", False)
+                    and not _take_budget_permit(tmux_session)):
                 budget = session_data.get("cost_budget_usd", 0)
                 cost = session_data.get("estimated_cost_usd", 0)
                 # Overwrite hook state so status detector shows error, not stuck green (#428).

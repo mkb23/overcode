@@ -115,6 +115,7 @@ _AGENT_CONTROL_ROUTES = {
     # POST agent routes
     ("POST", "send"): lambda api, ts, name, body: api.send_to_agent(
         ts, name, text=body.get("text", ""), enter=body.get("enter", True),
+        over_budget=bool(body.get("over_budget", False)),
     ),
     ("POST", "keys"): lambda api, ts, name, body: api.send_key_to_agent(
         ts, name, key=body.get("key", ""),
