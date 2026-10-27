@@ -279,6 +279,85 @@ class TestAdopted:
         assert agent.record().active_agent_session_id == OTHER
 
 
+class TestWorkerWithoutTheAgentsEnvironment:
+    """#559, Claude Code 2.1.311/312 (live, 2026-10-27): the conversation was
+    parked in a ``bg-spare`` that ``claude daemon`` had started before, with
+    the agent's ``--settings`` hooks but none of its OVERCODE_* environment
+    and no tmux pane. The pane's CLI records ``parkedJobId`` in Claude's
+    registry (``sessions/<pid>.json``), its ``sessionId`` still the old one."""
+
+    def park(self, agent, worker) -> Path:
+        moved = agent.move_to_worker()
+        registry = agent.claude / "sessions"
+        registry.mkdir(parents=True, exist_ok=True)
+        (registry / f"{os.getpid()}.json").write_text(json.dumps({
+            "pid": os.getpid(), "sessionId": MINE, "kind": "interactive",
+            "parkedJobId": MOVED[:8]}))
+        (registry / f"{worker}.json").write_text(json.dumps({
+            "pid": worker, "sessionId": MOVED, "kind": "bg", "jobId": MOVED[:8]}))
+        for name in ("OVERCODE_SESSION_NAME", "OVERCODE_TMUX_SESSION",
+                     "OVERCODE_SESSION_ID", "TMUX_PANE"):
+            # Set first so monkeypatch restores it: the handler sets
+            # OVERCODE_SESSION_ID itself, as a hook process may
+            agent.monkeypatch.setenv(name, "")
+            agent.monkeypatch.delenv(name)
+        return moved
+
+    def test_its_turns_are_still_the_agent_s(self, agent, worker):
+        agent.working(os.getpid())
+        moved = self.park(agent, worker)
+        agent.send({"hook_event_name": "UserPromptSubmit", "session_id": MOVED,
+                    "transcript_path": str(moved)}, pid=worker)
+        state = agent.state()
+        assert state["event"] == "UserPromptSubmit"
+        assert state["agent_session_id"] == MOVED
+        assert state["bg_worker"]["session_id"] == MOVED
+        assert agent.record().active_agent_session_id == MOVED
+        # Later events find the agent by its adopted conversation
+        agent.monkeypatch.delenv("OVERCODE_SESSION_ID", raising=False)
+        agent.send({"hook_event_name": "PreToolUse", "session_id": MOVED,
+                    "transcript_path": str(moved), "tool_name": "Read",
+                    "tool_use_id": "w1"}, pid=worker)
+        assert agent.state()["event"] == "PreToolUse"
+
+    def test_subagents_it_left_running_end_on_its_stop(self, agent, worker):
+        agent.working(os.getpid())
+        for sub in ("a1", "a2"):
+            agent.send({"hook_event_name": "SubagentStart", "session_id": MINE,
+                        "agent_id": sub, "agent_type": "general-purpose"}, pid=os.getpid())
+        assert set(agent.state()["subagents"]) == {"a1", "a2"}
+        moved = self.park(agent, worker)
+        agent.send({"hook_event_name": "Stop", "session_id": MOVED,
+                    "transcript_path": str(moved), "background_tasks": []}, pid=worker)
+        state = agent.state()
+        assert state["event"] == "Stop"
+        assert not state.get("subagents")
+
+    def test_a_conversation_no_agent_parked_is_left_alone(self, agent, worker):
+        agent.working(os.getpid())
+        path = hook_handler._get_hook_state_path("agents", "test-agent")
+        before = path.read_text()
+        moved = self.park(agent, worker)
+        (agent.claude / "sessions" / f"{os.getpid()}.json").unlink()
+        agent.send({"hook_event_name": "UserPromptSubmit", "session_id": MOVED,
+                    "transcript_path": str(moved)}, pid=worker)
+        assert path.read_text() == before
+
+    def test_parked_from_reads_claude_s_registry(self, tmp_path):
+        moved = transcript(tmp_path, "fork", MOVED)
+        register(tmp_path, job(MOVED, moved))
+        registry = tmp_path / "sessions"
+        registry.mkdir()
+        assert claude_bg.parked_from(MOVED, tmp_path / "jobs", registry) is None
+        (registry / "41.json").write_text(json.dumps(
+            {"sessionId": MINE, "kind": "interactive", "parkedJobId": MOVED[:8]}))
+        assert claude_bg.parked_from(MOVED, tmp_path / "jobs", registry) == MINE
+        data = job(MOVED, moved)
+        del data["interactiveLineage"]  # work the agent started, not its conversation
+        register(tmp_path, data)
+        assert claude_bg.parked_from(MOVED, tmp_path / "jobs", registry) is None
+
+
 class TestStillBackgroundWork:
     """#500 and phase 3: what the agent started keeps its 🌙 row and stays off its light."""
 

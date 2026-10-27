@@ -612,6 +612,44 @@ def _detect_from_tmux_pane() -> tuple[str | None, str | None, str | None]:
     return session_name, tmux_session, session_id.strip() or None
 
 
+def _detect_from_claude_job(session_id: str | None) -> tuple[str | None, str | None, str | None]:
+    """The agent whose conversation an event from Claude's background worker is (#559).
+
+    Fallback for a hook with no overcode environment and no tmux pane: a
+    conversation Claude parked in its background worker runs in a spare
+    ``claude daemon`` started, which inherited neither, though it keeps the
+    agent's ``--settings`` hooks. The agent is the live one whose record
+    lists ``session_id`` (once adopted), else the one whose record lists
+    the conversation the job was parked from (``claude_bg.parked_from``).
+
+    Returns (session_name, tmux_session, session_id); all None if no agent's.
+    """
+    if not session_id:
+        return None, None, None
+    try:
+        from .claude_bg import parked_from
+        from .session_manager import SessionManager
+
+        sessions = SessionManager(skip_git_detection=True).list_sessions()
+
+        def owner(conversation: str):
+            for session in sessions:
+                if (conversation == session.active_agent_session_id
+                        or conversation in (session.agent_session_ids or ())):
+                    return session
+            return None
+
+        agent = owner(session_id)
+        if agent is None:
+            left = parked_from(session_id)
+            agent = owner(left) if left else None
+    except Exception:  # never fail a hook over the lookup
+        return None, None, None
+    if agent is None:
+        return None, None, None
+    return agent.name, agent.tmux_session, agent.id
+
+
 def _own_session(sm, session_name: str):
     """This agent's record in ``sm``: by its id, else (pre-0.6) by ``session_name``.
 
@@ -1314,14 +1352,14 @@ def handle_hook_event(backend: str | None = None) -> None:
         # Fallback: detect from tmux pane when env vars are missing
         # (e.g. after manual session restart with --session-id)
         session_name, tmux_session, window_sid = _detect_from_tmux_pane()
-        if not session_name or not tmux_session:
-            return
-        if not _agent_session_id():
+        if session_name and tmux_session and not _agent_session_id():
             # The files are keyed by session id: the window's, else the
             # record's (a window launched before @overcode_id)
             sid = window_sid or _session_id_for_name(tmux_session, session_name)
             if sid:
                 os.environ["OVERCODE_SESSION_ID"] = sid
+        # No pane either: Claude's background worker, told once the
+        # payload's session id is read (_detect_from_claude_job)
 
     # Read stdin JSON
     try:
@@ -1341,6 +1379,12 @@ def handle_hook_event(backend: str | None = None) -> None:
         # The dialect dropped it (grok: a subagent's own event, the
         # session-teardown Stop, an unregistered Notification type).
         return
+
+    if not session_name or not tmux_session:
+        session_name, tmux_session, agent_sid = _detect_from_claude_job(data.get("session_id"))
+        if not session_name or not tmux_session:
+            return
+        os.environ["OVERCODE_SESSION_ID"] = agent_sid
 
     event = data.get("hook_event_name")
     if not event:

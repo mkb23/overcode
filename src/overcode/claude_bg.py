@@ -85,6 +85,42 @@ def jobs_dir() -> Path:
     return claude_config_dir() / "jobs"
 
 
+def sessions_dir() -> Path:
+    """Claude's registry of running CLIs: ``<pid>.json`` each (kind, sessionId, parkedJobId)."""
+    return claude_config_dir() / "sessions"
+
+
+def parked_from(session_id: str, jobs: Optional[Path] = None,
+                registry: Optional[Path] = None) -> Optional[str]:
+    """The conversation whose CLI moved into job ``session_id`` (#559), or None.
+
+    When Claude parks an interactive conversation in its background worker,
+    the job (``interactiveLineage``) gets a new session id and the pane's
+    CLI records the job's short id as ``parkedJobId`` in its registry entry,
+    whose ``sessionId`` is still the conversation it left. None for a job
+    with no interactive lineage, or no CLI that parked it.
+    """
+    job = find_job(session_id, jobs, scan_all=False)
+    if job is None or job.get("interactiveLineage") is not True:
+        return None
+    short = job.get("daemonShort") or session_id[:8]
+    base = registry if registry is not None else sessions_dir()
+    try:
+        entries = os.listdir(base)
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.endswith(".json"):
+            continue
+        cli = _read_json(base / entry)
+        if cli is None or cli.get("parkedJobId") != short:
+            continue
+        left = cli.get("sessionId")
+        if isinstance(left, str) and left and left != session_id:
+            return left
+    return None
+
+
 def row_id(session_id: str) -> str:
     return f"{ID_PREFIX}{session_id}"
 
