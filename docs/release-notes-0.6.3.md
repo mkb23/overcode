@@ -35,6 +35,15 @@
   opencode children no longer ask before `overcode report` (#531).
 - **Tags from the TUI (#538).** `#` adds a tag to the highlighted agent,
   "Remove tag…" in the palette takes one off, and `S` sorts by tag.
+- **Worktrees show in the repo cell (#544):** `repo⎇name`, with the main
+  repo's name rather than the worktree directory's.
+- **Budgets hold on every backend (#530).** Text sent to an over-budget agent
+  is refused, whatever its CLI; keys still pass, and `overcode send
+  --over-budget` overrides. opencode2 agents now really start on `--model`,
+  `--effort` and `--agent` (#529).
+- **Cheaper at scale (#528):** follow mode captures only when the pane
+  changed, heartbeats no longer stall the daemon tick, and the summarizer
+  skips panes whose only change is a spinner.
 
 **Upgrading:** nothing to convert. The two new settings (transcript archive,
 prefer SendMessage) are off by default; to keep Claude's transcripts, set
