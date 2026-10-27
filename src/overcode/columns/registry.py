@@ -14,6 +14,7 @@ from .hover import (
     hover_loaded_skills,
     hover_permission_mode,
     hover_quota,
+    hover_repo_name,
     hover_skill_profile,
     hover_spend,
     hover_subtree_cost,
@@ -339,8 +340,12 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Git group — repo, branch (high/full only), diff stats
     SummaryColumn(id="repo_name", group="git", detail_levels=HIGH_PLUS, render=render_repo_name,
                   label="Repo", render_plain=render_repo_name_plain, header="RPO", name="Repo Name",
-                  description="Git repository the agent is working in",
-                  sort_key=lambda ctx: _lower(ctx.repo_name),
+                  description="Git repository the agent is working in; repo⎇name in a "
+                              "linked worktree (just ⎇ when the branch is named after it; "
+                              "hover: its paths)",
+                  sort_key=lambda ctx: _lower(f"{ctx.repo_name}{ctx.worktree_label}"
+                                              if ctx.worktree_label else ctx.repo_name),
+                  hover=hover_repo_name,
                   hide_when_uniform=True),
     SummaryColumn(id="branch", group="git", detail_levels=HIGH_PLUS, render=render_branch,
                   label="Branch", render_plain=render_branch_plain, header="BR", name="Branch",

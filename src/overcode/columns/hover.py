@@ -338,3 +338,23 @@ def hover_agent_name(ctx: ColumnContext):
         text.append(f"\n* Claude still shows '{lag}': overcode types /rename "
                     "when the agent is idle with an empty input line", style="yellow")
     return text
+
+
+def hover_repo_name(ctx: ColumnContext):
+    """RPO in a linked worktree (#544): which worktree, and of which checkout."""
+    from rich.text import Text
+    worktree = getattr(ctx.session, "worktree", None)
+    if not isinstance(worktree, dict) or not worktree.get("name"):
+        return None
+    text = Text(f"Worktree {worktree['name']}", style="bold")
+    text.append(f"\nof {worktree.get('repo') or ctx.repo_name}")
+    if worktree.get("path"):
+        text.append(f"\nworktree:      {worktree['path']}")
+    if worktree.get("main"):
+        text.append(f"\nmain checkout: {worktree['main']}")
+    branch = getattr(ctx.session, "branch", None)
+    if branch:
+        text.append(f"\nbranch:        {branch}")
+    text.append("\n⎇ marks a linked worktree; its name is left out when the branch says it",
+                style="dim italic")
+    return text

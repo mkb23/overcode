@@ -270,6 +270,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "activity": s.current_activity[:100] if s.current_activity else "",
         "repo": s.repo_name or "",
         "branch": s.branch or "",
+        "worktree": getattr(s, "worktree", None),
         "permissiveness_mode": s.permissiveness_mode,
         "perm_emoji": perm_emoji,
         "standing_orders": bool(s.standing_instructions),

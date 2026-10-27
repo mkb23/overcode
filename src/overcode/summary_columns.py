@@ -26,6 +26,7 @@ between deltas (test_row_cache checks every column an hour apart).
 
 from .columns.context import (
     ColumnOutput, FleetFlags, FleetRow, compute_fleet_flags, ColumnContext, build_cli_context,
+    WORKTREE_MARK, names_match_repos, repo_cell_parts, repo_cell_width,
 )
 from .columns.column import (
     ALL, MED_PLUS, HIGH_PLUS, plain_from_render, SummaryColumn,
@@ -87,7 +88,8 @@ from .columns.layout import (
 
 __all__ = [
     "ColumnOutput", "FleetFlags", "FleetRow", "compute_fleet_flags", "ColumnContext",
-    "build_cli_context", "ALL", "MED_PLUS", "HIGH_PLUS", "plain_from_render", "SummaryColumn",
+    "build_cli_context", "WORKTREE_MARK", "names_match_repos", "repo_cell_parts",
+    "repo_cell_width", "ALL", "MED_PLUS", "HIGH_PLUS", "plain_from_render", "SummaryColumn",
     "TOOL_EMOJI", "TOOL_EMOJI_DEFAULT", "MAX_TOOL_EMOJI", "SKILL_EMOJI_DEFAULT",
     "WRAPPER_EMOJI_DEFAULT", "SANDBOX_EMOJI", "get_skill_emoji", "get_wrapper_emoji",
     "_tool_emojis", "render_status_symbol", "render_unvisited_alert", "render_time_in_state",

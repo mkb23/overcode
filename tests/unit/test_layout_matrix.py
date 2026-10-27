@@ -36,11 +36,19 @@ async def _settle(pilot) -> None:
     await pilot.pause()
 
 
+def _worktree(name: str, repo: str) -> dict:
+    return {"name": name, "path": f"/src/{repo}-wt/{name}", "main": f"/src/{repo}", "repo": repo}
+
+
 def _named_agents():
-    """three_agents with every kind of name: dim default, "~" auto, plain human (#542)."""
+    """three_agents with every kind of name: dim default, "~" auto, plain human (#542),
+    and every repo cell (#544): a main checkout, a worktree named after its
+    branch (repo⎇) and one that is not (repo⎇name)."""
     agents = three_agents()
     for session, source in zip(agents, ("default", "auto", "human")):
         session.name_source = source
+    agents[1].worktree = _worktree("main", "repo-b")
+    agents[2].worktree = _worktree("wt-544", "repo-c")
     return agents
 
 

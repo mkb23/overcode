@@ -1,7 +1,7 @@
 """
 Git context of an agent: repo name and branch, and the focal repo (#170).
 
-An agent's ``repo_name`` / ``branch`` come from its start directory, or
+An agent's ``repo_name`` / ``branch`` / ``worktree`` (#544) come from its start directory, or
 from the focal repo, one of the git repos directly under the start
 directory of a multi-repo workspace. The module functions read the disk
 (and fall back to ``git``); ``GitContextMixin`` is the part of
@@ -24,13 +24,43 @@ logger = logging.getLogger(__name__)
 
 _HEADS_PREFIX = "ref: refs/heads/"
 
+# A linked worktree (#544): git gives it no name of its own, so it is named
+# by its directory. ``worktree`` on a session / its published view is None
+# in a main checkout (or outside git), else a dict of these keys:
+#   name: the worktree root's directory name (what --show-toplevel ends in)
+#   path: the worktree root
+#   main: the main checkout (or the bare repository) it belongs to
+#   repo: the main repository's name, as ``repo_name()`` gives it
+WORKTREE_KEYS = ("name", "path", "main", "repo")
+
+
+def _main_repo_name(common: Path) -> str:
+    """The repository's name from its common git dir (``.../x/.git`` or ``x.git``)."""
+    if common.name == ".git":
+        return common.parent.name
+    return common.name[:-len(".git")] if common.name.endswith(".git") else common.name
+
+
+def _worktree_info(root: Path, common: Path) -> dict:
+    main = common.parent if common.name == ".git" else common
+    return {"name": root.name, "path": str(root), "main": str(main),
+            "repo": _main_repo_name(common)}
+
 
 def _looks_like_object_id(text: str) -> bool:
     return len(text) in (40, 64) and all(c in "0123456789abcdef" for c in text)
 
 
 def read_git_context_from_disk(directory: str) -> Optional[tuple[Optional[str], Optional[str]]]:
-    """Return ``(repo_name, branch)`` for ``directory`` by reading ``.git`` files.
+    """``(repo_name, branch)`` of ``read_git_layout_from_disk``."""
+    layout = read_git_layout_from_disk(directory)
+    return None if layout is None else layout[:2]
+
+
+def read_git_layout_from_disk(
+    directory: str,
+) -> Optional[tuple[Optional[str], Optional[str], Optional[dict]]]:
+    """Return ``(repo_name, branch, worktree)`` for ``directory`` by reading ``.git`` files.
 
     A subprocess-free equivalent of ``git rev-parse --show-toplevel`` plus
     ``git branch --show-current``, for the monitor daemon's per-agent
@@ -41,10 +71,14 @@ def read_git_context_from_disk(directory: str) -> Optional[tuple[Optional[str], 
     - ``repo_name`` is the name of the directory holding that ``.git``
       (the worktree root, exactly what ``--show-toplevel`` reports);
     - ``branch`` is the name behind ``ref: refs/heads/``, or ``""`` for a
-      detached HEAD / non-branch ref (``--show-current`` prints nothing).
+      detached HEAD / non-branch ref (``--show-current`` prints nothing);
+    - ``worktree`` is None in a main checkout, else the linked worktree's
+      dict (``WORKTREE_KEYS``): its gitdir holds a ``commondir`` file
+      (``--git-dir`` differs from ``--git-common-dir``). A submodule's
+      gitdir has none: it is a repository of its own.
 
-    Returns ``(None, None)`` when no repository encloses ``directory`` and
-    ``None`` when the layout is unrecognised or unreadable — the caller
+    Returns ``(None, None, None)`` when no repository encloses ``directory``
+    and ``None`` when the layout is unrecognised or unreadable — the caller
     then falls back to asking git itself.
     """
     try:
@@ -54,6 +88,7 @@ def read_git_context_from_disk(directory: str) -> Optional[tuple[Optional[str], 
 
     for candidate in (path, *path.parents):
         dot_git = candidate / ".git"
+        worktree = None
         try:
             if dot_git.is_dir():
                 git_dir = dot_git
@@ -66,6 +101,10 @@ def read_git_context_from_disk(directory: str) -> Optional[tuple[Optional[str], 
                     git_dir = (candidate / git_dir).resolve()
                 if not git_dir.is_dir():
                     return None
+                common_file = git_dir / "commondir"
+                if common_file.is_file():
+                    common = (git_dir / common_file.read_text().strip()).resolve()
+                    worktree = _worktree_info(candidate, common)
             else:
                 continue
             content = (git_dir / "HEAD").read_text().strip()
@@ -78,9 +117,9 @@ def read_git_context_from_disk(directory: str) -> Optional[tuple[Optional[str], 
             branch = ""
         else:
             return None
-        return candidate.name, branch
+        return candidate.name, branch, worktree
 
-    return None, None
+    return None, None, None
 
 
 def repo_name(directory: str) -> str:
@@ -114,9 +153,7 @@ def repo_name(directory: str) -> str:
             common = (git_dir / common_file.read_text().strip()).resolve()
         except OSError:
             return candidate.name
-        if common.name == ".git":
-            return common.parent.name
-        return common.name[:-len(".git")] if common.name.endswith(".git") else common.name
+        return _main_repo_name(common)
     return path.name
 
 
@@ -176,34 +213,46 @@ def resolve_focal_directory(
 
 
 def detect_git_context(directory: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """Detect git repo and branch from directory.
+    """``(repo_name, branch)`` of ``detect_git_layout``."""
+    return detect_git_layout(directory)[:2]
 
-    Reads ``.git/HEAD`` directly when it can (no subprocess — the monitor
-    daemon calls this for every agent every 2s) and only shells out to
+
+def detect_git_layout(
+    directory: Optional[str],
+) -> tuple[Optional[str], Optional[str], Optional[dict]]:
+    """Detect git repo, branch and linked worktree (#544) from directory.
+
+    Reads ``.git`` directly when it can (no subprocess — the monitor
+    daemon calls this for every agent every tick) and only shells out to
     git when the on-disk layout is something it doesn't understand.
     """
     if not directory:
-        return None, None
+        return None, None, None
 
     # Check directory exists
     if not os.path.isdir(directory):
-        return None, None
+        return None, None, None
 
-    fast = read_git_context_from_disk(directory)
+    fast = read_git_layout_from_disk(directory)
     if fast is not None:
         return fast
 
     try:
-        # Get repo name
+        # Repo root, and the two git dirs that tell a linked worktree
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--path-format=absolute",
+             "--show-toplevel", "--git-dir", "--git-common-dir"],
             cwd=directory,
             capture_output=True,
             text=True,
             timeout=2
         )
-        repo_path = result.stdout.strip() if result.returncode == 0 else None
+        lines = result.stdout.strip().splitlines() if result.returncode == 0 else []
+        repo_path = lines[0] if lines else None
         repo_name = Path(repo_path).name if repo_path else None
+        worktree = None
+        if len(lines) == 3 and Path(lines[1]).resolve() != Path(lines[2]).resolve():
+            worktree = _worktree_info(Path(repo_path), Path(lines[2]).resolve())
 
         # Get branch
         result = subprocess.run(
@@ -215,16 +264,16 @@ def detect_git_context(directory: Optional[str]) -> tuple[Optional[str], Optiona
         )
         branch = result.stdout.strip() if result.returncode == 0 else None
 
-        return repo_name, branch
+        return repo_name, branch, worktree
     except subprocess.TimeoutExpired:
         logger.warning("git command timed out in %s", directory)
-        return None, None
+        return None, None, None
     except subprocess.CalledProcessError as e:
         logger.warning("git command failed: %s", e)
-        return None, None
+        return None, None, None
     except (OSError, IOError) as e:
         logger.warning("could not detect git context: %s", e)
-        return None, None
+        return None, None, None
 
 
 class GitContextMixin:
@@ -236,20 +285,32 @@ class GitContextMixin:
     detect_focal_repo_candidates = staticmethod(detect_focal_repo_candidates)
     resolve_focal_directory = staticmethod(resolve_focal_directory)
 
-    def _detect_git_context(self, directory: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-        """``detect_git_context``; a method so a test can stub one manager's."""
-        return detect_git_context(directory)
+    def _detect_git_layout(
+        self, directory: Optional[str],
+    ) -> tuple[Optional[str], Optional[str], Optional[dict]]:
+        """``detect_git_layout``; a method so a test can stub one manager's."""
+        return detect_git_layout(directory)
 
-    def read_git_context(self, session: Session) -> tuple[Optional[str], Optional[str]]:
-        """``(repo_name, branch)`` of ``session``'s focal repo, else its start directory, right now.
+    def _detect_git_context(self, directory: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        """``(repo_name, branch)`` of ``_detect_git_layout``."""
+        return self._detect_git_layout(directory)[:2]
+
+    def read_git_layout(
+        self, session: Session,
+    ) -> tuple[Optional[str], Optional[str], Optional[dict]]:
+        """``(repo_name, branch, worktree)`` of ``session``'s focal repo, else its start directory, right now.
 
         The detection half of ``refresh_git_context`` with no write: the
         daemon compares the answer with the session it holds and stages
         the change for its per-tick commit. It must follow the focal repo,
         or every tick undoes ``set_focal_repo`` (#494).
         """
-        return self._detect_git_context(self.resolve_focal_directory(
+        return self._detect_git_layout(self.resolve_focal_directory(
             session.start_directory, getattr(session, "focal_repo_subdir", None)))
+
+    def read_git_context(self, session: Session) -> tuple[Optional[str], Optional[str]]:
+        """``(repo_name, branch)`` of ``read_git_layout``."""
+        return self.read_git_layout(session)[:2]
 
     def refresh_git_context(self, session_id: str) -> bool:
         """Refresh git repo/branch info for a session.
@@ -264,14 +325,16 @@ class GitContextMixin:
         if not session or not session.start_directory:
             return False
 
-        repo_name, branch = self.read_git_context(session)
+        repo_name, branch, worktree = self.read_git_layout(session)
 
         # Only update if something changed
-        if repo_name != session.repo_name or branch != session.branch:
+        if (repo_name != session.repo_name or branch != session.branch
+                or worktree != getattr(session, "worktree", None)):
             self.update_session(
                 session_id,
                 repo_name=repo_name,
-                branch=branch
+                branch=branch,
+                worktree=worktree,
             )
             return True
         return False
@@ -306,12 +369,13 @@ class GitContextMixin:
                     f"{', '.join(candidates)}"
                 )
         new_dir = self.resolve_focal_directory(session.start_directory, focal_subdir)
-        new_repo, new_branch = self._detect_git_context(new_dir)
+        new_repo, new_branch, new_worktree = self._detect_git_layout(new_dir)
         self.update_session(
             session_id,
             focal_repo_subdir=focal_subdir,
             repo_name=new_repo,
             branch=new_branch,
+            worktree=new_worktree,
         )
         return focal_subdir
 

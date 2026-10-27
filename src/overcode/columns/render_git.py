@@ -4,14 +4,22 @@ from typing import Optional
 
 from ..tui_helpers import format_line_count
 from .column import _make_simple_render_plain
-from .context import ColumnContext, ColumnOutput
+from .context import (  # noqa: F401  (the repo cell's helpers, re-exported)
+    WORKTREE_MARK, ColumnContext, ColumnOutput, names_match_repos,
+    repo_cell_parts, repo_cell_width,
+)
 
 
 def render_repo_name(ctx: ColumnContext) -> ColumnOutput:
     if ctx.all_names_match_repos:
         return None
     w = ctx.max_repo_width
-    return [(f" {ctx.repo_name:<{w}}", f"bold dim{ctx.bg}")]
+    worktree = ctx.worktree_label
+    if not worktree:
+        return [(f" {ctx.repo_name:<{w}}", f"bold dim{ctx.bg}")]
+    pad = max(0, w - len(ctx.repo_name) - len(worktree))
+    return [(f" {ctx.repo_name}", f"bold dim{ctx.bg}"),
+            (f"{worktree}{' ' * pad}", f"cyan{ctx.bg}")]
 
 
 def render_branch(ctx: ColumnContext) -> ColumnOutput:
@@ -74,7 +82,7 @@ def render_git_diff_plain(ctx: ColumnContext) -> Optional[str]:
 def render_repo_name_plain(ctx: ColumnContext) -> Optional[str]:
     if ctx.all_names_match_repos:
         return None
-    return ctx.repo_name
+    return f"{ctx.repo_name}{ctx.worktree_label}"
 
 
 render_branch_plain = _make_simple_render_plain("branch")

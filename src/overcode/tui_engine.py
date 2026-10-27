@@ -38,7 +38,7 @@ _LIFECYCLE = frozenset({STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE, STATUS_UN
 # Session fields the engine keeps current (sessions.json carries the same
 # values, written by the same daemon, a little later).
 _SESSION_FIELDS = ("model", "effort", "cpu_percent", "rss_bytes", "repo_name", "branch",
-                   "pr_number", "billing_code")
+                   "worktree", "pr_number", "billing_code")
 
 # SessionStats fields the engine publishes under the same name
 _STATS_FIELDS = (
