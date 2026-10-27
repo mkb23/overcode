@@ -195,6 +195,13 @@ class AgentBackend(Protocol):
 
     def make_polling_detector(self, tmux_session: str, tmux=None, patterns=None): ...
 
+    model_applies_on_resume: bool
+
+    def applies_launch_agent(self) -> bool: ...
+
+    def launch_warnings(self, *, model: Optional[str] = None, agent: Optional[str] = None,
+                        effort: Optional[str] = None, resuming: bool = False) -> List[str]: ...
+
     def normalize_hook_payload(self, data: dict) -> Optional[dict]: ...
 
     def display_name_args(self, name: str) -> List[str]: ...
@@ -268,6 +275,37 @@ class AgentBackendBase:
     def effort_warnings(self, effort: str, model: Optional[str]) -> List[str]:
         """Backend-specific reasons a valid ``effort`` may still not apply."""
         return []
+
+    # Does a model (and effort) chosen at launch apply when the CLI resumes
+    # a conversation? False where the resumed conversation keeps its own
+    # (opencode2, #529): ``launch_warnings`` says so, and ``restart`` does
+    # not record a choice that will not be in force.
+    model_applies_on_resume: bool = True
+
+    def applies_launch_agent(self) -> bool:
+        """Is a launch-time agent persona (``--agent``) put into effect?"""
+        return bool(self.capabilities & BackendCapability.AGENT_INJECTION)
+
+    def launch_warnings(self, *, model: Optional[str] = None, agent: Optional[str] = None,
+                        effort: Optional[str] = None, resuming: bool = False) -> List[str]:
+        """What a launch or restart with these choices will not apply (#529).
+
+        Printed as warnings, the way ``check_effort``'s are; effort itself
+        is ``check_effort``'s business, except on a resume the model
+        choice does not reach.
+        """
+        warnings = []
+        if agent and not self.applies_launch_agent():
+            warnings.append(f"--agent {agent} is ignored on backend '{self.name}': "
+                            f"it has no way to pick an agent persona at launch")
+        if resuming and not self.model_applies_on_resume:
+            for flag, value in (("--model", model), ("--effort", effort)):
+                if value:
+                    warnings.append(
+                        f"{flag} {value} is not applied: a resumed {self.name} session keeps "
+                        f"the model and effort it started on (restart --fresh for a new "
+                        f"session, or switch with /model in the agent's TUI)")
+        return warnings
 
     def normalize_hook_payload(self, data: dict) -> Optional[dict]:
         """A hook payload in Claude Code's vocabulary, or None to drop it."""

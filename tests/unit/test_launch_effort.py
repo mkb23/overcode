@@ -88,7 +88,16 @@ class TestBackendMapping:
         env = get_backend("opencode").env_prefix(LaunchSpec(effort="high"))
         assert "OPENCODE_CONFIG_CONTENT" not in env
 
-    @pytest.mark.parametrize("name", ["opencode2", "shell"])
+    def test_opencode2_sets_the_variant_on_the_overlay_model(self):
+        env = get_backend("opencode2").env_prefix(LaunchSpec(effort="high", model="a/b"))
+        content = json.loads(shlex.split(env["OPENCODE_CONFIG_CONTENT"])[0])
+        assert content["model"] == "a/b#high"
+
+    def test_opencode2_without_a_model_sets_no_variant(self):
+        env = get_backend("opencode2").env_prefix(LaunchSpec(effort="high"))
+        assert "OPENCODE_CONFIG_CONTENT" not in env
+
+    @pytest.mark.parametrize("name", ["shell"])
     def test_backends_without_effort_render_nothing(self, name):
         backend = get_backend(name)
         spec = LaunchSpec(effort="high", model="a/b")
@@ -126,12 +135,10 @@ class TestCheckEffort:
         assert any("--model" in w for w in warnings)
         assert check_effort(get_backend("opencode"), "high", "openai/gpt-5") == ("high", [])
 
-    def test_opencode2_says_effort_cannot_be_applied(self):
-        effort, warnings = check_effort(get_backend("opencode2"), "high", "a/b")
-        assert effort == "high"
-        assert len(warnings) == 1
-        assert "ignored on backend 'opencode2'" in warnings[0]
-        assert "launch-time model" in warnings[0]
+    def test_opencode2_warns_without_a_model(self):
+        _, warnings = check_effort(get_backend("opencode2"), "high")
+        assert any("--model" in w for w in warnings)
+        assert check_effort(get_backend("opencode2"), "high", "a/b") == ("high", [])
 
     def test_shell_warns(self):
         _, warnings = check_effort(get_backend("shell"), "high")
@@ -184,9 +191,9 @@ class TestLaunchFlag:
         assert 'model_reasoning_effort="minimal"' in fleet.get("agent").command
 
     def test_launch_warns_when_the_backend_cannot_apply_it(self, fleet, capsys):
-        result = _launch("--backend", "opencode2", "--effort", "high")
+        result = _launch("--backend", "shell", "--effort", "high")
         assert result.exit_code == 0, result.output
-        assert "ignored on backend 'opencode2'" in result.output + capsys.readouterr().err
+        assert "ignored on backend 'shell'" in result.output + capsys.readouterr().err
 
     def test_help_lists_the_flag(self):
         assert "--effort" in runner.invoke(app, ["launch", "--help"]).output
