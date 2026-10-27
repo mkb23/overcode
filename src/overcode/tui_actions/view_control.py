@@ -138,6 +138,8 @@ class ViewControlMixin:
         from ..tui_logic import sort_descending, sort_mode_for_column
         if column.lower() in ("tree", "by_tree"):
             mode = "by_tree"
+        elif column.lower() in ("tag", "tags", "by_tag"):
+            mode = "by_tag"
         else:
             col = self._resolve_column(column)
             if col.sort_key is None:

@@ -711,7 +711,7 @@ class TUIPreferences:
     # Show "done" child agents (#244; the Agent visibility dialog). A new
     # key, so a stale "show_done": true saved before #319 stays ignored
     show_done_children: bool = False
-    sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value, by_tree (#61), col:<id> (#487)
+    sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value, by_tree (#61), col:<id> (#487), by_tag (#538)
     sort_reversed: bool = False  # flip the sort column's natural direction (#487)
     summary_content_mode: str = "ai_short"  # SupervisorTUI.SUMMARY_CONTENT_MODES (#98, #171)
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin

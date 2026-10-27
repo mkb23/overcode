@@ -8,7 +8,7 @@ own keys and dialogs, and acknowledged; the result or the error is printed.
     overcode view state
     overcode view columns list [--level med]
     overcode view columns show|hide|reset <column>... [--level med]
-    overcode view sort <column|tree> [--desc|--asc]
+    overcode view sort <column|tree|tag> [--desc|--asc]
     overcode view detail low|med|high|full
     overcode view filter <tag> | --clear
     overcode view focus <agent>
@@ -113,12 +113,12 @@ def _columns_list(session: str, level: Optional[str], as_json: bool) -> None:
 
 @view_app.command("sort")
 def view_sort(
-    column: Annotated[str, typer.Argument(help="Column id/name, or 'tree'")],
+    column: Annotated[str, typer.Argument(help="Column id/name, 'tree' or 'tag'")],
     desc: Annotated[Optional[bool], typer.Option("--desc/--asc", help="Direction (default: the column's own)")] = None,
     session: SessionOpt = "agents",
     as_json: JsonOpt = False,
 ):
-    """Sort the agent list by a column, or tree order."""
+    """Sort the agent list by a column, tree order, or first tag."""
     r = _send(session, "sort", {"column": column, "descending": desc}, as_json)
     if not as_json:
         typer.echo(f"✓ sort {r.get('mode')} {'▼' if r.get('descending') else '▲'}")

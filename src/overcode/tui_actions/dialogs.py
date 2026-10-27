@@ -917,17 +917,91 @@ class DialogsMixin:
             return
         self._open_palette("tags")
 
+    def action_add_tag(self) -> None:
+        """Tag the highlighted agent (#538): the palette on the tags in use
+        across the fleet, or type a new one. Same path as `overcode tag`."""
+        if self._tag_target() is not None:
+            self._open_palette("tag_add")
+
+    def action_remove_tag(self) -> None:
+        """Untag the highlighted agent (#538): the palette on its tags.
+        Same path as `overcode untag`."""
+        session = self._tag_target()
+        if session is None:
+            return
+        if not (getattr(session, "tags", None) or []):
+            self.notify(f"'{session.name}' has no tags", severity="information")
+            return
+        self._open_palette("tag_remove")
+
+    def _tag_target(self, quiet: bool = False):
+        """The highlighted agent if its tags can be edited here, else None
+        (after saying why, unless `quiet`)."""
+        if self.tui_mode == "jobs":
+            return None
+        widget = self._get_focused_widget()
+        if widget is None:
+            if not quiet:
+                self.notify("No agent focused", severity="warning")
+            return None
+        session = widget.session
+        if getattr(session, "is_remote", False) is True:
+            if not quiet:
+                self.notify(f"Tag remote agent '{session.name}' on its own machine "
+                            f"(overcode tag {session.name} <tag>)", severity="warning")
+            return None
+        return session
+
+    def _palette_tag_lists(self) -> tuple:
+        """(agent, tags to add, tags to remove) for the highlighted agent:
+        add offers the fleet's tags it does not have yet, remove its own."""
+        session = self._tag_target(quiet=True)
+        if session is None:
+            return None, [], []
+        own = list(getattr(session, "tags", None) or [])
+        counts: dict[str, int] = {}
+        for s in self.sessions:
+            for t in (getattr(s, "tags", None) or []):
+                counts[t] = counts.get(t, 0) + 1
+        add = [JumpCandidate(session_id=t, name=t, repo=f"{n} agent{'s' if n != 1 else ''}")
+               for t, n in sorted(counts.items()) if t not in own]
+        remove = [JumpCandidate(session_id=t, name=t) for t in own]
+        return JumpCandidate(session_id=session.id, name=session.name), add, remove
+
+    def on_command_palette_tag_edited(self, message: CommandPalette.TagEdited) -> None:
+        """Apply an add / remove tag from the palette (#538) through the
+        CLI's path: SessionManager.add_tags / remove_tags, lower-cased."""
+        self._dialog_did_close()
+        session = self.session_manager.get_session(message.session_id)
+        if session is None:
+            self.notify("That agent no longer exists", severity="error")
+            return
+        if message.add:
+            tags = self.session_manager.add_tags(message.session_id, message.tags)
+            self.notify(f"{session.name} tags: {', '.join(tags)}")
+        else:
+            if not message.tags:
+                return  # an empty list would clear them all
+            tags = self.session_manager.remove_tags(message.session_id, message.tags)
+            self.notify(f"{session.name} tags: {', '.join(tags)}" if tags
+                        else f"{session.name} has no tags")
+        self.refresh_sessions()
+
     def _open_palette(self, mode: str) -> None:
         try:
             palette = self.query_one("#command-palette", CommandPalette)
         except NoMatches:
             return
         self._dialog_will_open()
+        tag_agent, tag_add, tag_remove = self._palette_tag_lists()
         palette.open(
             mode,
             agents=self._palette_agents(),
             tags=self._palette_tags(),
             sorts=self._palette_sorts(),
+            tag_agent=tag_agent,
+            tag_add=tag_add,
+            tag_remove=tag_remove,
             keymap=self._effective_keymap().keys_by_action(),
             recent=self._prefs.recent_commands,
             app_ref=self,

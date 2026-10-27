@@ -762,7 +762,7 @@ def list_agents(
         bool, typer.Option("--full", help="Full detail (default)")
     ] = False,
     sort: Annotated[
-        str, typer.Option("--sort", "-s", help="Sort mode: alphabetical, by_status, by_value, by_tree")
+        str, typer.Option("--sort", "-s", help="Sort mode: alphabetical, by_status, by_value, by_tree, by_tag")
     ] = "by_tree",
     as_json: Annotated[
         bool, typer.Option("--json", help="One JSON object per agent: identity, name source, status")

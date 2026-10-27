@@ -6,7 +6,9 @@ on commands, and `>` typed into an empty agent query switches to commands
 the way VSCode's quick-open does; backspace past the `>` switches back.
 `T` opens it on tags (#357), and `S` on sort choices (#487): every
 sortable column plus tree order, where choosing the current sort again
-reverses it.
+reverses it. `#` opens it on the fleet's tags to add one to the
+highlighted agent, or type a new one; "Remove tag…" lists that agent's
+tags (#538).
 
 Command rows show the command, the states it cycles between with the
 current one lit, and its key, so the palette doubles as a way to learn
@@ -44,9 +46,22 @@ PLACEHOLDERS = {
     "agents": "filter agents by name, repo or branch",
     "tags": "filter tags",
     "sort": "filter columns by name, header or meaning",
+    "tag_add": "pick a tag, or type a new one",
+    "tag_remove": "filter its tags",
 }
 TITLES = {"commands": "Commands", "agents": "Jump to agent", "tags": "Filter by tag",
-          "sort": "Sort agents by"}
+          "sort": "Sort agents by", "tag_add": "Add tag", "tag_remove": "Remove tag"}
+_TAG_EDIT_MODES = ("tag_add", "tag_remove")
+
+
+def typed_tags(text: str) -> List[str]:
+    """The tags a query names, as add_tags stores them: lower-cased,
+    split on spaces (`overcode tag a x y` adds two), de-duplicated."""
+    out: List[str] = []
+    for t in text.lower().split():
+        if t not in out:
+            out.append(t)
+    return out
 MAX_ROWS = 16      # tallest the list gets; shorter terminals get fewer
 MAX_WIDTH = 88
 # Keys shown on a row (`j ↓`); the tip line under the list shows them all.
@@ -59,7 +74,7 @@ class _Row:
     """One line of the list: a section header, or a selectable item."""
     header: str = ""
     match: Optional[Match] = None              # commands mode
-    cand: Optional[JumpCandidate] = None       # agents / tags mode
+    cand: Optional[JumpCandidate] = None       # agents / tag modes
     sort: Optional[SortChoice] = None          # sort mode
     positions: Tuple[int, ...] = ()            # highlighted chars of cand.name / sort.name
 
@@ -113,6 +128,15 @@ class CommandPalette(ModalBase):
             super().__init__()
             self.tag = tag
 
+    class TagEdited(Message):
+        """Add (`add`) or remove tags on the agent the palette opened for
+        (#538)."""
+        def __init__(self, session_id: str, tags: List[str], add: bool) -> None:
+            super().__init__()
+            self.session_id = session_id
+            self.tags = tags
+            self.add = add
+
     class SortChosen(Message):
         """A sort was picked (#487); the app reverses it if already current."""
         def __init__(self, mode: str, keep_open: bool) -> None:
@@ -130,6 +154,10 @@ class CommandPalette(ModalBase):
         self._agents: List[JumpCandidate] = []
         self._tags: List[JumpCandidate] = []
         self._sorts: List[SortChoice] = []
+        # The agent "Add / Remove tag" act on, and the tags each offers
+        self._tag_agent: Optional[JumpCandidate] = None
+        self._tag_add: List[JumpCandidate] = []
+        self._tag_remove: List[JumpCandidate] = []
         self._keymap: Dict[str, List[str]] = {}
         self._recent: List[str] = []
         self._rows: List[_Row] = []
@@ -150,6 +178,9 @@ class CommandPalette(ModalBase):
         agents: Sequence[JumpCandidate] = (),
         tags: Sequence[JumpCandidate] = (),
         sorts: Sequence[SortChoice] = (),
+        tag_agent: Optional[JumpCandidate] = None,
+        tag_add: Sequence[JumpCandidate] = (),
+        tag_remove: Sequence[JumpCandidate] = (),
         keymap: Optional[Dict[str, List[str]]] = None,
         recent: Sequence[str] = (),
         app_ref: Optional[Any] = None,
@@ -157,6 +188,9 @@ class CommandPalette(ModalBase):
         self._agents = list(agents)
         self._tags = list(tags)
         self._sorts = list(sorts)
+        self._tag_agent = tag_agent
+        self._tag_add = list(tag_add)
+        self._tag_remove = list(tag_remove)
         self._keymap = dict(keymap or {})
         self._recent = list(recent)
         self._title_width = max(cell_len(c.title) for c in COMMANDS)
@@ -210,8 +244,10 @@ class CommandPalette(ModalBase):
             need = self._max_list_height
         elif self.mode == "sort":
             need = len(self._sorts)
+        elif self.mode == "tag_add":
+            need = len(self._tag_add) + 1  # room for the typed new tag
         else:
-            need = len(self._agents if self.mode == "agents" else self._tags)
+            need = len(self._candidates)
         self._list_height = max(3, min(self._max_list_height, need))
         self.styles.height = self._list_height + self._chrome
         self._ensure_visible()
@@ -228,7 +264,11 @@ class CommandPalette(ModalBase):
             "agents": "↵ jump · > commands · esc close",
             "tags": "↵ filter · > commands · esc close",
             "sort": "> commands · esc close",
+            "tag_add": "↵ add · > commands · esc close",
+            "tag_remove": "↵ remove · > commands · esc close",
         }[mode]
+        if mode in _TAG_EDIT_MODES and self._tag_agent is not None:
+            self.border_title = f"{TITLES[mode]} · {self._tag_agent.name}"
         self._recompute()
         self.relayout()
 
@@ -243,9 +283,15 @@ class CommandPalette(ModalBase):
         elif self.mode == "sort":
             rows = [_Row(sort=c, positions=pos) for c, pos in filter_sort_choices(self._sorts, self.text)]
         else:
-            cands = self._agents if self.mode == "agents" else self._tags
+            cands = self._candidates
             q = self.text.lower()
-            for c in filter_candidates(cands, self.text):
+            new = self._new_tag_row()
+            if new is not None:
+                rows.append(new)
+            found = filter_candidates(cands, self.text)
+            if self.mode in _TAG_EDIT_MODES:  # the tag typed in full leads
+                found.sort(key=lambda c: c.name.lower() != q.strip())
+            for c in found:
                 start = c.name.lower().find(q) if q else -1
                 pos = tuple(range(start, start + len(q))) if start >= 0 else ()
                 rows.append(_Row(cand=c, positions=pos))
@@ -257,6 +303,28 @@ class CommandPalette(ModalBase):
                 record("palette_query", q=self.text, mode=self.mode, n=len(self._items))
         self._scroll = 0
         self._select(self._default_index())
+
+    @property
+    def _candidates(self) -> List[JumpCandidate]:
+        return {"agents": self._agents, "tags": self._tags, "tag_add": self._tag_add,
+                "tag_remove": self._tag_remove}.get(self.mode, [])
+
+    def _new_tag_row(self) -> Optional[_Row]:
+        """In add mode, a row for the typed tag(s) unless the query is
+        exactly a listed tag or the agent has them all already."""
+        if self.mode != "tag_add":
+            return None
+        tags = typed_tags(self.text)
+        listed = {c.session_id for c in self._tag_add}
+        if not tags or (len(tags) == 1 and tags[0] in listed):
+            return None
+        has = {c.session_id for c in self._tag_remove}  # the agent's own tags
+        tags = [t for t in tags if t not in has]
+        if not tags:
+            return None
+        label = "new tag" if len(tags) == 1 else "new tags"
+        return _Row(cand=JumpCandidate(session_id=" ".join(tags), name="+ " + " ".join(tags),
+                                       repo=label))
 
     def _default_index(self) -> int:
         """Where the selection starts: the current sort in the unfiltered
@@ -366,6 +434,11 @@ class CommandPalette(ModalBase):
             if self.mode == "agents":
                 self._hide()
                 self.post_message(self.AgentChosen(row.cand.session_id))
+            elif self.mode in _TAG_EDIT_MODES and self._tag_agent is not None:
+                self._hide()
+                self.post_message(self.TagEdited(self._tag_agent.session_id,
+                                                 row.cand.session_id.split(),
+                                                 add=self.mode == "tag_add"))
             else:
                 self._hide()
                 self.post_message(self.TagChosen(row.cand.session_id or None))
@@ -373,7 +446,7 @@ class CommandPalette(ModalBase):
         cmd = row.match.command
         if cmd.action in MODE_SWITCHES:
             target = MODE_SWITCHES[cmd.action]
-            if {"agents": self._agents, "tags": self._tags, "sort": self._sorts}[target]:
+            if self._can_switch(target):
                 self._switch(target)
                 return
         keep_open = keep_open and cmd.repeatable
@@ -382,6 +455,15 @@ class CommandPalette(ModalBase):
             self._hide()
         self.post_message(self.CommandChosen(cmd.action, keep_open, target, self.text,
                                              self.selected_index if self.text.strip() else None))
+
+    def _can_switch(self, target: str) -> bool:
+        """Whether a mode-switching command lists something here; else it
+        runs as an action, which says why there is nothing to list."""
+        if target == "tag_add":
+            return self._tag_agent is not None  # a new tag can always be typed
+        if target == "tag_remove":
+            return self._tag_agent is not None and bool(self._tag_remove)
+        return bool({"agents": self._agents, "tags": self._tags, "sort": self._sorts}[target])
 
     def _close(self) -> None:
         self._hide()
@@ -404,6 +486,9 @@ class CommandPalette(ModalBase):
             empty = {"commands": "No matching commands",
                      "agents": "No matching agents" if self.text else "No agents",
                      "tags": "No matching tags",
+                     "tag_add": ("Type a tag to add" if not self.text.strip()
+                                 else "It has these tags already"),
+                     "tag_remove": "No matching tags",
                      "sort": "No matching columns"}[self.mode]
             out.append(f"  {empty}\n", style=f"italic {MUTED}")
             visible = [None]
@@ -423,8 +508,8 @@ class CommandPalette(ModalBase):
         if not self.text:
             line.append(PLACEHOLDERS[self.mode], style=f"italic {STATE_OTHER}")
         n = len(self._items)
-        total = {"commands": len(COMMANDS), "agents": len(self._agents), "tags": len(self._tags),
-                 "sort": len(self._sorts)}[self.mode]
+        total = len(COMMANDS) if self.mode == "commands" else (
+            len(self._sorts) if self.mode == "sort" else len(self._candidates))
         count = f"{n}/{total}" if self.text else f"{total}"
         right = Text(count, style=MUTED)
         return _spread(line, right, w)
@@ -519,7 +604,8 @@ class CommandPalette(ModalBase):
             tip.append("press ", style=MUTED)
             tip.append_text(_keycaps(keys))
             if cmd.action in MODE_SWITCHES:
-                listed = {"sort": "sort choices"}.get(MODE_SWITCHES[cmd.action], MODE_SWITCHES[cmd.action])
+                listed = {"sort": "sort choices", "tag_add": "tags",
+                          "tag_remove": "its tags"}.get(MODE_SWITCHES[cmd.action], MODE_SWITCHES[cmd.action])
                 tip.append(f"  lists {listed} here", style=MUTED)
         else:
             tip.append("palette only", style=f"italic {MUTED}")

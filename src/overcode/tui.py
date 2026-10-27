@@ -288,6 +288,9 @@ class SupervisorTUI(
         # set of tags so the user can pick one. Press T again with the
         # filter active and pick `(clear)` to remove.
         ("T", "filter_by_tag", "Filter by tag"),
+        # Add a tag to the highlighted agent (#538): the palette on the
+        # fleet's tags, or type a new one. Remove tag is palette-only.
+        ("number_sign", "add_tag", "Add tag"),
         # Cycle focal repo for the focused agent (#170). No-op when the
         # agent's start_directory is a single repo.
         ("ctrl+r", "cycle_focal_repo", "Cycle focal repo"),

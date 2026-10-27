@@ -389,6 +389,9 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("focus_human_annotation", "Annotation…", "Agent", "note comment", agent=True),
     _C("edit_agent_value", "Agent value…", "Agent", "priority", agent=True),
     _C("edit_cost_budget", "Cost budget…", "Agent", "money limit dollars", agent=True),
+    # #538: the palette lists the fleet's tags (add) or the agent's (remove)
+    _C("add_tag", "Add tag…", "Agent", "tags label group hashtag", agent=True),
+    _C("remove_tag", "Remove tag…", "Agent", "tags untag label group delete clear", agent=True),
     _C("set_billing_code", "Rebill this agent…", "Agent",
        "billing code rebill client charge spend ledger account", agent=True),
     _C("reset_trip", "Reset trip counter", "Agent",
@@ -465,7 +468,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
 )
 
 # Commands the palette handles itself by switching list rather than closing.
-MODE_SWITCHES = {"jump_to_agent": "agents", "filter_by_tag": "tags", "choose_sort": "sort"}
+MODE_SWITCHES = {"jump_to_agent": "agents", "filter_by_tag": "tags", "choose_sort": "sort",
+                 "add_tag": "tag_add", "remove_tag": "tag_remove"}
 
 
 # ---------------------------------------------------------------------------
@@ -488,10 +492,11 @@ class SortChoice:
 
 
 TREE_CHOICE_DESCRIPTION = "Parents with their children indented beneath (← / → fold)"
+TAG_CHOICE_DESCRIPTION = "Grouped by first tag, untagged last (# adds a tag)"
 
 
 def sort_choices(sort_mode: str, sort_reversed: bool) -> List[SortChoice]:
-    """Every sortable column in list order, then tree order."""
+    """Every sortable column in list order, then tag (#538) and tree order."""
     from .summary_columns import SUMMARY_COLUMNS
     from .tui_logic import sort_descending, sort_mode_for_column
 
@@ -506,6 +511,11 @@ def sort_choices(sort_mode: str, sort_reversed: bool) -> List[SortChoice]:
             description=col.description, active=active,
             descending=sort_descending(mode, sort_reversed) if active else col.sort_desc,
         ))
+    tag_active = sort_mode == "by_tag"
+    choices.append(SortChoice(
+        mode="by_tag", name="Tag", description=TAG_CHOICE_DESCRIPTION, active=tag_active,
+        descending=sort_descending("by_tag", sort_reversed) if tag_active else False,
+    ))
     choices.append(SortChoice(
         mode="by_tree", name="Tree", description=TREE_CHOICE_DESCRIPTION,
         active=sort_mode == "by_tree",

@@ -160,6 +160,8 @@ EXTRA_ACTIONS = {
     "fork_focused": ("cli:fork",),
     "rename_focused": ("cli:rename",),
     "set_billing_code": ("cli:rebill",),
+    "add_tag": ("cli:tag",),
+    "remove_tag": ("cli:untag",),
     "kill_focused": ("cli:kill",),
     "restart_focused": ("cli:restart",),
 }
@@ -264,7 +266,7 @@ COMPETENCIES = (
                lambda s: s.uses("open_column_config") >= 1, ("o_detail",), try_action="open_column_config"),
     Competency("o_timeline", "Read the timeline", "t: who was busy, when.", "oversight",
                lambda s: s.uses("toggle_timeline") >= 1, try_action="toggle_timeline"),
-    Competency("o_tags", "Group agents with tags", "overcode tag, then T to filter.", "oversight",
+    Competency("o_tags", "Group agents with tags", "# tags an agent, T filters by tag.", "oversight",
                lambda s: s.uses("filter_by_tag") >= 1, ("f_new",), try_action="filter_by_tag"),
     Competency("o_summarizer", "Let AI summarise each agent", "A turns on the summarizer.", "oversight",
                lambda s: s.uses("toggle_summarizer") >= 1),

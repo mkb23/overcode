@@ -272,6 +272,7 @@ class TestHelpCoversEveryBinding:
         "question_mark": "?", "colon": ":", "dollar_sign": "$", "comma": ",",
         "full_stop": ".", "less_than_sign": "<", "down": "↓", "up": "↑", "left": "←", "right": "→",
         "enter": "Enter", "escape": "Esc", "equals_sign": "=", "minus": "-", "slash": "/", "exclamation_mark": "!",
+        "number_sign": "#",
     }
     # Documented as a range or pair rather than one key each.
     GROUPED = {"1": "1-5", "2": "1-5", "3": "1-5", "4": "1-5", "5": "1-5",

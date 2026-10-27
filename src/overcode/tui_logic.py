@@ -196,6 +196,24 @@ def _tree_aware_sort(sessions, key=None, parent_id_fn=None, reverse=False, order
     return result
 
 
+def sort_sessions_by_tag(sessions: List[T], parent_id_fn=None, reverse=False) -> List[T]:
+    """Group agents by their first tag (#538), A→Z (Z→A reversed), name
+    order within a group; untagged agents last either way. Children stay
+    under their parents, as in every sort."""
+    def first_tag(s) -> Optional[str]:
+        tags = getattr(s, 'tags', None) or []
+        return tags[0].lower() if tags else None
+
+    def order(items):
+        items = sorted(items, key=lambda s: s.name.lower())
+        tagged = [s for s in items if first_tag(s) is not None]
+        untagged = [s for s in items if first_tag(s) is None]
+        tagged.sort(key=first_tag, reverse=reverse)
+        return tagged + untagged
+
+    return _tree_aware_sort(sessions, parent_id_fn=parent_id_fn, order=order)
+
+
 def sort_sessions_by_tree(sessions: List[T], parent_id_fn=None) -> List[T]:
     """Sort sessions in tree order: roots first (alphabetical), children immediately after parent.
 
@@ -269,7 +287,8 @@ def sort_sessions(
 
     Args:
         sessions: List of session objects
-        mode: One of "alphabetical", "by_status", "by_value", "by_tree", or
+        mode: One of "alphabetical", "by_status", "by_value", "by_tree",
+            "by_tag" (#538), or
             "col:<column id>" to sort by a summary column (#487)
         reverse: Flip the mode's natural direction (ignored for by_tree)
         values: For "col:" modes, session id -> the column's sort key
@@ -285,6 +304,8 @@ def sort_sessions(
         return sort_sessions_by_value(sessions, reverse=reverse)
     elif mode == "by_tree":
         return sort_sessions_by_tree(sessions)
+    elif mode == "by_tag":
+        return sort_sessions_by_tag(sessions, reverse=reverse)
     elif mode.startswith(COLUMN_SORT_PREFIX):
         return sort_sessions_by_column(
             sessions, values or {}, sort_descending(mode, reverse),
@@ -322,6 +343,8 @@ def sort_column_for_mode(mode: str) -> Optional[str]:
 
 def sort_descending(mode: str, reverse: bool) -> bool:
     """Whether a sort_mode currently runs largest-first (drawn ▼)."""
+    if mode == "by_tag":
+        return reverse  # A→Z by first tag, like a text column
     col_id = sort_column_for_mode(mode)
     if col_id is None:
         return False
@@ -440,6 +463,7 @@ def get_sort_mode_display_name(mode: str) -> str:
         "by_status": "By Status",
         "by_value": "By Value (priority)",
         "by_tree": "By Tree (hierarchy)",
+        "by_tag": "By Tag",
     }
     if mode.startswith(COLUMN_SORT_PREFIX):
         from .summary_columns import COLUMNS_BY_ID
