@@ -131,6 +131,31 @@ class TestContinues:
         assert claude_bg.continues(missing, MINE) is None
         assert claude_bg.continues(job(MOVED, moved), None) is None
 
+    def test_parked_mid_turn_the_unfinished_reply_is_not_copied(self, tmp_path):
+        """#559: the reply being streamed when it was parked stays behind."""
+        mine = transcript(tmp_path, "original", MINE)
+        with open(mine, "a") as f:
+            f.write(json.dumps({"type": "assistant", "uuid": "cut-off-reply",
+                                "sessionId": MINE}) + "\n")
+        moved = transcript(tmp_path, "fork", MOVED)
+        assert claude_bg.continues(job(MOVED, moved), MINE) is True
+
+    def test_the_cli_that_parked_it_says_so(self, tmp_path, monkeypatch):
+        """Claude's registry: the agent's CLI parked this job (``parkedJobId``)."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+        mine = project_dir(tmp_path) / f"{MINE}.jsonl"
+        mine.write_text(json.dumps({"type": "user", "uuid": "only-here", "sessionId": MINE}) + "\n")
+        moved = transcript(tmp_path, "fork", MOVED)
+        assert claude_bg.continues(job(MOVED, moved), MINE) is False
+        (tmp_path / "sessions").mkdir()
+        (tmp_path / "sessions" / "41.json").write_text(json.dumps(
+            {"sessionId": MINE, "kind": "interactive", "parkedJobId": MOVED[:8]}))
+        assert claude_bg.continues(job(MOVED, moved), MINE) is True
+        # Parked by another conversation's CLI (a nested Claude): not the agent's
+        (tmp_path / "sessions" / "41.json").write_text(json.dumps(
+            {"sessionId": OTHER, "kind": "interactive", "parkedJobId": MOVED[:8]}))
+        assert claude_bg.continues(job(MOVED, moved), MINE) is False
+
     def test_handed_off_under_the_same_id(self, tmp_path):
         mine = transcript(tmp_path, "original", MINE)
         assert claude_bg.continues(job(MINE, mine), MINE) is True
@@ -287,6 +312,10 @@ class TestWorkerWithoutTheAgentsEnvironment:
     registry (``sessions/<pid>.json``), its ``sessionId`` still the old one."""
 
     def park(self, agent, worker) -> Path:
+        # Parked mid-turn, as live: the reply it was streaming is not copied
+        with open(agent.mine, "a") as f:
+            f.write(json.dumps({"type": "assistant", "uuid": "cut-off-reply",
+                                "sessionId": MINE}) + "\n")
         moved = agent.move_to_worker()
         registry = agent.claude / "sessions"
         registry.mkdir(parents=True, exist_ok=True)

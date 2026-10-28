@@ -103,6 +103,14 @@ def parked_from(session_id: str, jobs: Optional[Path] = None,
     job = find_job(session_id, jobs, scan_all=False)
     if job is None or job.get("interactiveLineage") is not True:
         return None
+    return _parked_by(job, registry)
+
+
+def _parked_by(job: Mapping[str, Any], registry: Optional[Path] = None) -> Optional[str]:
+    """The conversation of the CLI whose registry entry parked ``job``, or None."""
+    session_id = job.get("sessionId")
+    if not isinstance(session_id, str) or not session_id:
+        return None
     short = job.get("daemonShort") or session_id[:8]
     base = registry if registry is not None else sessions_dir()
     try:
@@ -465,10 +473,13 @@ _FORK_FIELDS = ("forkSessionId", "forkSourceAlive", "forkBoundaryAt", "forkParen
 # How much of a transcript's end is searched for its last message
 _TAIL_BYTES = 256 * 1024
 _SCAN_CHUNK = 1 << 20
+# How many of its last messages are looked for in the copy: a conversation
+# parked mid-turn (#559) leaves the reply it was streaming behind, uncopied
+_LAST_MESSAGES = 8
 
 
-def _last_uuid(path: Path) -> Optional[str]:
-    """The ``uuid`` of the last record of ``path`` that has one, or None."""
+def _last_uuids(path: Path, count: int = _LAST_MESSAGES) -> List[str]:
+    """The ``uuid``s of the last ``count`` records of ``path`` that have one, newest first."""
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -476,7 +487,8 @@ def _last_uuid(path: Path) -> Optional[str]:
             f.seek(max(0, size - _TAIL_BYTES))
             tail = f.read()
     except OSError:
-        return None
+        return []
+    found: List[str] = []
     for line in reversed(tail.splitlines()):
         if b'"uuid"' not in line:
             continue
@@ -485,13 +497,16 @@ def _last_uuid(path: Path) -> Optional[str]:
         except ValueError:
             continue  # the cut first line, or one mid-write
         uuid = record.get("uuid") if isinstance(record, dict) else None
-        if isinstance(uuid, str) and uuid:
-            return uuid
-    return None
+        if isinstance(uuid, str) and uuid and uuid not in found:
+            found.append(uuid)
+            if len(found) >= count:
+                break
+    return found
 
 
-def _holds(path: Path, needle: bytes) -> Optional[bool]:
-    """Whether ``path`` contains ``needle`` (read in chunks); None: unreadable."""
+def _holds(path: Path, *needles: bytes) -> Optional[bool]:
+    """Whether ``path`` contains any of ``needles`` (read in chunks); None: unreadable."""
+    keep = max(len(n) for n in needles)
     try:
         with open(path, "rb") as f:
             carry = b""
@@ -499,9 +514,10 @@ def _holds(path: Path, needle: bytes) -> Optional[bool]:
                 chunk = f.read(_SCAN_CHUNK)
                 if not chunk:
                     return False
-                if needle in carry + chunk:
+                window = carry + chunk
+                if any(n in window for n in needles):
                     return True
-                carry = chunk[-len(needle):]
+                carry = window[-keep:]
     except OSError:
         return None
 
@@ -517,10 +533,13 @@ def continues(job: Mapping[str, Any], agent_session_id: Optional[str]) -> Option
     old transcript stops. Background work the agent starts is not that:
     ``claude --bg`` and Agent background sessions have no interactive
     lineage, and ``/fork`` (which keeps working here) records the fork
-    (``_FORK_FIELDS``). So: interactive lineage, no fork, and its
-    transcript holds the last message of ``agent_session_id``'s (the
-    agent's active conversation, beside it in the same project directory).
-    That last check also keeps a nested Claude's own ``/background`` out.
+    (``_FORK_FIELDS``). So: interactive lineage, no fork, and either the
+    CLI that parked it was in ``agent_session_id`` (its ``parkedJobId`` in
+    Claude's registry, ``_parked_by``), or its transcript holds one of the
+    last messages of ``agent_session_id``'s (the agent's active
+    conversation, beside it in the same project directory): any of the
+    last few, as one parked mid-turn leaves its unfinished reply behind
+    (#559). Either check keeps a nested Claude's own ``/background`` out.
 
     None when it can't be told yet (a transcript not written yet).
     """
@@ -532,13 +551,15 @@ def continues(job: Mapping[str, Any], agent_session_id: Optional[str]) -> Option
         return None
     if job.get("sessionId") == agent_session_id:
         return True  # handed off under the same id
+    if _parked_by(job) == agent_session_id:
+        return True
     path = transcript_path(job)
     if path is None:
         return False
-    last = _last_uuid(path.with_name(f"{agent_session_id}.jsonl"))
-    if last is None:
+    last = _last_uuids(path.with_name(f"{agent_session_id}.jsonl"))
+    if not last:
         return None
-    return _holds(path, f'"{last}"'.encode())
+    return _holds(path, *(f'"{uuid}"'.encode() for uuid in last))
 
 
 # ── Rows ───────────────────────────────────────────────────────────────
