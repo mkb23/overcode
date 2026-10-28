@@ -100,6 +100,7 @@ from .namer import Namer
 from .transcript_archive import ArchiveScheduler
 from .swarm_publisher import SwarmPublisher
 from .workflow_progress import WorkflowFiles
+from .weft_claims import WeftClaims
 from . import swarm
 from .claude_bg import ClaudeBgSource, fleet_agents
 from .claude_bg_ledger import BgLedger
@@ -487,6 +488,9 @@ class MonitorDaemon:
         # Each agent's workflow runs' progress (#498): journals read on
         # change only, watched between ticks (WakeLoop.publish_workflows_if_due)
         self.workflow_files = WorkflowFiles()
+        # The weft tasks each agent holds (the 🧶 column): local stores read
+        # each tick, servers followed on threads of their own
+        self.weft_claims = WeftClaims(log=self.log.warn, clock=self.clock.time)
         # Claude background sessions under the fleet's directories (phase 3):
         # adopted rows, published as agent views to the views only
         self.claude_bg = ClaudeBgSource(claude_jobs_dir)
@@ -803,6 +807,7 @@ class MonitorDaemon:
         except Exception as e:  # progress is never worth a failed tick
             self.log.warn(f"[{session.name}] workflow progress not read: {e}")
             workflow_progress = None
+        weft_claims = self.weft_claims.of(session_id)
         try:
             cli_title_lag = self.namer.title_lag(session)
         except Exception:  # a cosmetic mark is never worth a failed tick
@@ -877,6 +882,7 @@ class MonitorDaemon:
                                   bg_shells if isinstance(bg_shells, list) else None),
             subagent_cost_usd=swarm.subagent_cost(getattr(stats, "conversations", None)),
             workflow_progress=workflow_progress,
+            weft_claims=weft_claims,
             # Last user command (from history sync)
             last_command=self.stats_sync.last_commands.get(session_id),
             pr_number=session.pr_number,
@@ -1470,6 +1476,12 @@ class MonitorDaemon:
         quota.sync([self._pending.view(s) for s in sessions], now.timestamp())
         self.state.usage = quota.fleet_usage
 
+    def _sync_weft(self, sessions: list) -> None:
+        try:
+            self.weft_claims.refresh(sessions)
+        except Exception as e:  # claims are never worth a failed tick
+            self.log.warn(f"weft claims not read: {type(e).__name__}: {e}")
+
     def _start_engine_socket(self) -> None:
         """Serve engine.sock next to the state file; log and carry on if it can't."""
         from .engine_socket import EngineServer, socket_path
@@ -1600,6 +1612,7 @@ class MonitorDaemon:
         self._sync_git(sessions, now)
         self._sync_burn(sessions, now)
         self._sync_quota(sessions, now)
+        self._sync_weft(sessions)
         self._dispatch_heartbeats(sessions, now)
         newly_done: list = []
         try:

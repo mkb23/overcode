@@ -522,6 +522,7 @@ class SessionSummary(Static, can_focus=True):
             has_quota=isinstance(self.engine.get("quota"), dict),
             has_workflow=workflow_progress.active_run(self.engine.get("workflow_progress"))
             is not None,
+            has_weft=bool(self.engine.get("weft_claims")),
         )
 
     def watch_summary_detail(self, summary_detail: str) -> None:
@@ -636,6 +637,7 @@ class SessionSummary(Static, can_focus=True):
             background_shells=self.engine.get("background_shells") if self.engine else None,
             subagent_cost_usd=self.engine.get("subagent_cost_usd") if self.engine else None,
             workflow_progress=self.engine.get("workflow_progress") if self.engine else None,
+            weft_claims=self.engine.get("weft_claims") if self.engine else None,
             quota=self.engine.get("quota") if self.engine else None,
             trip=self.engine.get("trip") if self.engine else None,
             cli_title_lag=self.engine.get("cli_title_lag") if self.engine else None,

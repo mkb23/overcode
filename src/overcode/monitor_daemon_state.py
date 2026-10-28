@@ -222,6 +222,11 @@ class SessionDaemonState:
     # "started", "done", "failed"}], "source"}. Counts and absolute times
     # only. None for an agent that never ran a workflow.
     workflow_progress: Optional[list] = None
+    # The weft tasks it holds a live claim on (weft_claims.WeftClaims), oldest
+    # first, each {"task", "title", "status", "since", "until", "actor",
+    # "project"}; "until" is when the lease lapses (absolute, so a held
+    # claim publishes nothing until it is renewed). None if it holds none.
+    weft_claims: Optional[list] = None
 
     # Skills (#252)
     available_skills: List[str] = field(default_factory=list)  # All skills in ~/.claude/skills

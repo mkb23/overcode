@@ -1596,7 +1596,7 @@ class TestComputeFleetFlags:
         row_fields = {k: kw.pop(k) for k in ("pr_number", "subtree_cost_usd", "window_burn",
                                               "has_status_detail", "has_swarm",
                                               "has_live_subagents",
-                                              "has_quota", "has_workflow")
+                                              "has_quota", "has_workflow", "has_weft")
                       if k in kw}
         session = SimpleNamespace(**{
             "cost_budget_usd": 0.0, "oversight_policy": "wait", "oversight_timeout_seconds": 0.0,
@@ -1632,6 +1632,7 @@ class TestComputeFleetFlags:
             "any_has_live_subagents": self._row(has_live_subagents=True),
             "any_has_quota": self._row(has_quota=True),
             "any_has_workflow": self._row(has_workflow=True),
+            "any_has_weft": self._row(has_weft=True),
         }
         # swarm_types_shown comes from the TUI's expanded lines, never from rows
         assert set(cases) == _FLEET_FIELDS - {"swarm_types_shown"}

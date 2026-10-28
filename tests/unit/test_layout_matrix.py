@@ -432,3 +432,50 @@ async def test_layout_holds_with_workflow_progress(make_tui, width, expanded):
                 assert "lint" not in _row_text(app, "charlie")
         if not expanded or width >= 160:
             assert seen == {"🧩 review-", "Wk review-", "🧩 2/3", "Wk 2/3"}
+
+
+class WeftEngine(GridEngine):
+    """GridEngine with weft claims: bravo holds two (one stuck, with a long
+    title), charlie one at work; alpha's WFT cell is the placeholder."""
+
+    def snapshot_now(self):
+        snap = super().snapshot_now()
+        lease = {"since": "2026-10-28T12:00:00Z", "until": "2026-10-28T13:00:00Z",
+                 "actor": "x", "project": "useful-bit"}
+        snap.agents["id-bravo"]["weft_claims"] = [
+            dict(lease, task="t-3c9e01", status="stuck",
+                 title="Rerun the uncertainty-shapes tranche at zero cost on spark"),
+            dict(lease, task="us-fixes", status="working", title="Fix the inspector")]
+        snap.agents["id-charlie"]["weft_claims"] = [
+            dict(lease, task="t-0a1b2c", status="working", title="Sweep")]
+        return snap
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_layout_holds_with_weft_claims(make_tui, width):
+    """The WFT cell at every width, detail level, content mode, with and
+    without emoji: bravo's stuck claim (+1), charlie's, alpha's placeholder."""
+    engine = WeftEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _settle(pilot)
+        for emoji_free in (False, True):
+            if emoji_free:
+                app.action_toggle_emoji_free()
+            for level in app.SUMMARY_LEVELS:
+                app._set_summary_level(level)
+                await _settle(pilot)
+                for _ in app.SUMMARY_CONTENT_MODES:
+                    mode = app.summary_content_mode
+                    try:
+                        assert_layout_invariants(app)
+                    except AssertionError as e:
+                        raise AssertionError(f"{width} cols, {level}, {mode}, "
+                                             f"emoji-free {emoji_free}: {e}") from e
+                    _shot(app, f"layout-weft-{width}-{level}-{mode}-{emoji_free}")
+                    app.action_cycle_summary_content()
+                    await _settle(pilot)
+                bravo = _row_text(app, "bravo")
+                assert "t-3c9e01" in bravo and "stuck +1" in bravo, (width, level, bravo)
+                assert "t-0a1b2c" in _row_text(app, "charlie"), (width, level)

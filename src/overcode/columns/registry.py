@@ -20,6 +20,7 @@ from .hover import (
     hover_subtree_cost,
     hover_status_detail,
     hover_subagents,
+    hover_weft,
     hover_workflow,
     hover_wrapper,
 )
@@ -97,6 +98,8 @@ from .render_supervision import (
     render_teams_plain,
     render_tools_plain,
     render_value_plain,
+    render_weft,
+    render_weft_plain,
     render_wrapper,
     render_wrapper_plain,
 )
@@ -245,6 +248,14 @@ def _sort_workflow(ctx: ColumnContext) -> Optional[tuple]:
     return (run.get("phase_index") or 0, run.get("done") or 0)
 
 
+def _sort_weft(ctx: ColumnContext) -> Optional[tuple]:
+    """Stuck claims first, then most held."""
+    claims = ctx.weft_claims
+    if not claims:
+        return None
+    return (any(c.get("status") == "stuck" for c in claims), len(claims))
+
+
 def _if_stats(fn: Callable[[ColumnContext], object]) -> Callable[[ColumnContext], object]:
     """Sort key that is None for backends reporting no stats (the column shows '-')."""
     return lambda ctx: fn(ctx) if ctx.claude_stats is not None else None
@@ -336,6 +347,17 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_key=_sort_workflow,
                   sort_desc=True,
                   hover=hover_workflow),
+    # The weft task it has claimed, if any agent holds one: overcode only
+    # watches what agents do with weft (weft_claims.py)
+    SummaryColumn(id="weft", group="identity", detail_levels=ALL, render=render_weft,
+                  label="weft", render_plain=render_weft_plain,
+                  visible=lambda ctx: ctx.fleet.any_has_weft,
+                  header="WFT", name="weft Claims",
+                  description="The weft task it holds a live claim on: id, title, and its "
+                              "status unless working; +N for more (hover: every claim)",
+                  sort_key=_sort_weft,
+                  sort_desc=True,
+                  hover=hover_weft),
 
     # Git group — repo, branch (high/full only), diff stats
     SummaryColumn(id="repo_name", group="git", detail_levels=HIGH_PLUS, render=render_repo_name,

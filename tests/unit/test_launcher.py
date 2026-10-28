@@ -3175,6 +3175,7 @@ class TestLaunchRestartDivergence:
             "OVERCODE_SESSION_NAME=divergence-check",
             f"OVERCODE_SESSION_ID={session.id}",
             "OVERCODE_TMUX_SESSION=agents",
+            "WEFT_ACTOR=divergence-check",
             "--permission-mode",
             "dontAsk",
             "--model haiku",

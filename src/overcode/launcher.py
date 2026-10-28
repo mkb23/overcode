@@ -423,6 +423,10 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
             "OVERCODE_SESSION_NAME": spec.name,
             "OVERCODE_SESSION_ID": spec.session_id,
             "OVERCODE_TMUX_SESSION": spec.tmux_session,
+            # Its own weft identity: unset, every agent on the box would be
+            # user@host and share claims. overcode's weft column matches
+            # claims to agents by this name (or a name they had before)
+            "WEFT_ACTOR": spec.name,
         }
 
         if spec.parent_session_id:

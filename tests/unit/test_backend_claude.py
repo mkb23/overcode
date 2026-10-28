@@ -314,7 +314,7 @@ class TestLaunchCmdStr:
             "-u CLAUDE_PID -u CLAUDE_EFFORT -u CLAUDE_JOB_DIR "
             "-u OVERCODE_PARENT_SESSION_ID -u OVERCODE_PARENT_NAME -u OVERCODE_BACKEND "
             "OVERCODE_SESSION_NAME=agent-1 OVERCODE_SESSION_ID=sid "
-            "OVERCODE_TMUX_SESSION=agents claude --foo"
+            "OVERCODE_TMUX_SESSION=agents WEFT_ACTOR=agent-1 claude --foo"
         )
 
     def test_parent_linkage(self, tmp_path, backend):
@@ -326,7 +326,7 @@ class TestLaunchCmdStr:
         cmd = launcher._build_launch_cmd_str(backend, spec, ["claude"])
         assert cmd == _unset("OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME") + " " + (
             "OVERCODE_SESSION_NAME=child OVERCODE_SESSION_ID=sid "
-            "OVERCODE_TMUX_SESSION=agents OVERCODE_PARENT_SESSION_ID=psid "
+            "OVERCODE_TMUX_SESSION=agents WEFT_ACTOR=child OVERCODE_PARENT_SESSION_ID=psid "
             "OVERCODE_PARENT_NAME=parent claude"
         )
 
@@ -341,7 +341,7 @@ class TestLaunchCmdStr:
         ):
             cmd = launcher._build_launch_cmd_str(backend, spec, ["claude"])
         assert cmd == _unset() + " " + (
-            "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s OVERCODE_TMUX_SESSION=agents "
+            "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s OVERCODE_TMUX_SESSION=agents WEFT_ACTOR=a "
             "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_CODE_USE_BEDROCK=1 "
             "AWS_REGION=eu-west-1 claude"
         )
@@ -354,7 +354,7 @@ class TestLaunchCmdStr:
         )
         cmd = launcher._build_launch_cmd_str(backend, spec, ["claude"])
         assert cmd == _unset() + " " + (
-            "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s OVERCODE_TMUX_SESSION=agents "
+            "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s OVERCODE_TMUX_SESSION=agents WEFT_ACTOR=a "
             "OVERCODE_WRAPPER_DIR=/tmp/proj /opt/w.sh claude"
         )
 
@@ -376,7 +376,7 @@ class TestLaunchCmdStr:
         cmd = launcher._build_launch_cmd_str(backend, spec, ["/tmp/mock_claude.py"])
         assert cmd == "MOCK_SCENARIO=idle " + _unset() + " " + (
             "OVERCODE_SESSION_NAME=a OVERCODE_SESSION_ID=s "
-            "OVERCODE_TMUX_SESSION=agents OVERCODE_WRAPPER_DIR=/tmp/proj "
+            "OVERCODE_TMUX_SESSION=agents WEFT_ACTOR=a OVERCODE_WRAPPER_DIR=/tmp/proj "
             "python /tmp/mock_claude.py"
         )
 

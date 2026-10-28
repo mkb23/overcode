@@ -261,6 +261,42 @@ def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
         return [(f" {hb}    - @--:--", f"dim{ctx.bg}")]
 
 
+# The task title in the weft cell, by detail level (the id always shows)
+WEFT_TITLE_CHARS = {"low": 0, "med": 12, "high": 16, "full": 22}
+WEFT_STATUS_STYLE = {"stuck": "bold red", "waiting": "yellow"}
+
+
+def render_weft(ctx: ColumnContext) -> ColumnOutput:
+    """The weft task it has claimed (weft_claims): " 🧶 t-3c9e01 Run the
+    swe… · stuck +1". A stuck claim is shown first, else the newest; the
+    status shows only when it is not "working". No claim: " 🧶  -", the
+    same shape. The engine publishes the claims; overcode only watches."""
+    from ..weft_claims import shown_claim
+    glyph = ctx.e("🧶")
+    claim = shown_claim(ctx.weft_claims)
+    if claim is None:
+        return [(f" {glyph} {'-':>2}", f"dim{ctx.bg}")]
+    text = f" {glyph} {claim.get('task')}"
+    chars = WEFT_TITLE_CHARS.get(ctx.summary_detail, 12)
+    title = claim.get("title") or ""
+    if chars and title:
+        text += " " + (title if len(title) <= chars else title[:chars - 1] + "…")
+    status = claim.get("status") or "working"
+    if status != "working":
+        text += f" · {status}"
+    more = len(ctx.weft_claims) - 1
+    if more > 0:
+        text += f" +{more}"
+    return [(text, f"{WEFT_STATUS_STYLE.get(status, 'bold cyan')}{ctx.bg}")]
+
+
+def render_weft_plain(ctx: ColumnContext) -> Optional[str]:
+    """Every claim, one per line, for ``overcode show``."""
+    from ..weft_claims import describe_claim
+    claims = [c for c in ctx.weft_claims or () if isinstance(c, dict)]
+    return "\n".join(describe_claim(c) for c in claims) or None
+
+
 def render_agent_value(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     if ctx.summary_detail in ("full", "high"):

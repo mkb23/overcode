@@ -51,6 +51,7 @@ class FleetFlags:
     any_has_live_subagents: bool = False
     any_has_quota: bool = False  # a subscription agent with a quota estimate (Q%)
     any_has_workflow: bool = False  # an agent with a Workflow run going (WF, #498)
+    any_has_weft: bool = False  # an agent holding a live weft claim (WFT)
     # The expanded delegated rows hold two or more agent types (TYPE): set
     # by the TUI from its swarm lines, never by compute_fleet_flags
     swarm_types_shown: bool = False
@@ -70,6 +71,7 @@ class FleetRow:
     has_live_subagents: bool = False  # subagents running by the file / status-bar count
     has_quota: bool = False  # a quota estimate published for it
     has_workflow: bool = False  # a Workflow run of its going (#498)
+    has_weft: bool = False  # a live weft claim of its
 
 
 def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
@@ -103,6 +105,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
         any_has_live_subagents=any(r.has_live_subagents for r in rows),
         any_has_quota=any(r.has_quota for r in rows),
         any_has_workflow=any(r.has_workflow for r in rows),
+        any_has_weft=any(r.has_weft for r in rows),
     )
 
 
@@ -180,6 +183,8 @@ class ColumnContext:
     subagent_cost_usd: Optional[float] = None
     # Its Workflow runs' progress (engine: workflow_progress, #498)
     workflow_progress: Optional[list] = None
+    # The weft tasks it holds a live claim on (engine: weft_claims)
+    weft_claims: Optional[list] = None
     # Its subscription quota estimate (engine: quota): pp7d, pp5h, w7, w5, conf
     quota: Optional[dict] = None
     # Its trip counter (engine: trip, trip.trip_view): spend since its trip
@@ -349,6 +354,7 @@ def build_cli_context(
     child_rollup: Optional[dict] = None,
     swarm_rollup: Optional[dict] = None,
     workflow_progress: Optional[list] = None,
+    weft_claims: Optional[list] = None,
     quota: Optional[dict] = None,
     trip: Optional[dict] = None,
     subtree_trip_cost_usd: Optional[float] = None,
@@ -419,6 +425,7 @@ def build_cli_context(
         child_rollup=child_rollup,
         swarm_rollup=swarm_rollup,
         workflow_progress=workflow_progress,
+        weft_claims=weft_claims,
         quota=quota,
         trip=trip,
         subtree_trip_cost_usd=subtree_trip_cost_usd,

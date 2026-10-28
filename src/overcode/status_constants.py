@@ -213,6 +213,8 @@ EMOJI_ASCII = {
     "❓": "??",
     "📥": "In",
     "👥": "Sa",
+    # A weft task the agent has claimed (weft_claims.py)
+    "🧶": "Wv",
     # A reset trip counter on the spend cells (trip.py; "~" marks an auto name)
     "↺": "*",
 }

@@ -998,6 +998,14 @@ def list_agents(
 
     workflows = {sess.id: _workflows(sess) for sess, *_ in session_data}
 
+    # Each agent's weft claims (the WFT column): the daemon's
+    def _weft(sess):
+        ds = daemon_state.get_session(sess.id) if use_daemon else None
+        claims = getattr(ds, "weft_claims", None) if ds is not None else None
+        return claims if isinstance(claims, list) and claims else None
+
+    wefts = {sess.id: _weft(sess) for sess, *_ in session_data}
+
     # Each agent's trip counter (trip.py): the daemon's, else from its record
     def _trip(sess):
         from ..trip import trip_view
@@ -1018,6 +1026,7 @@ def list_agents(
             has_live_subagents=live_subs[sess.id] > 0,
             has_quota=quotas[sess.id] is not None,
             has_workflow=active_run(workflows[sess.id]) is not None,
+            has_weft=wefts[sess.id] is not None,
         )
         for sess, status, *_ in session_data
     )
@@ -1081,6 +1090,7 @@ def list_agents(
             child_rollup=child_rollup(children.get(sess.id, ())),
             swarm_rollup=swarms[sess.id],
             workflow_progress=workflows[sess.id],
+            weft_claims=wefts[sess.id],
             quota=quotas[sess.id],
             cli_title_lag=title_lag,
             trip=trips[sess.id][0],
@@ -1963,6 +1973,7 @@ def show(
             git_untracked_count=git_untracked,
             in_session_mode=in_session_mode,
             workflow_progress=getattr(daemon_session, "workflow_progress", None),
+            weft_claims=getattr(daemon_session, "weft_claims", None),
         )
 
         print(f"=== {name} ===")

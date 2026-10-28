@@ -179,6 +179,16 @@ def hover_workflow(ctx: ColumnContext):
                          "how many it starts.")
 
 
+def hover_weft(ctx: ColumnContext):
+    """The weft cell's popup: every task it holds, and until when."""
+    from ..weft_claims import describe_claim
+    claims = [c for c in ctx.weft_claims or () if isinstance(c, dict)]
+    if not claims:
+        return None
+    return _emoji_legend("weft claims", [(ctx.e("🧶"), describe_claim(c)) for c in claims],
+                         "Leases lapse at 'until' unless the agent renews them.")
+
+
 TRIP_FOOTER = "Budgets count the total: a trip reset never adds budget."
 
 
