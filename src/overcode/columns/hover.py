@@ -292,10 +292,16 @@ def hover_status_detail(ctx: ColumnContext):
 _SHELL_BADGE = {"batch": "bg_batch", "watcher": "bg_watcher", "service": "bg_service"}
 
 
+# A popup's text width (tui.tcss Tooltip: max-width 48, padding 0 1)
+POPUP_TEXT_WIDTH = 46
+
+
 def _append_shells(text: "Text", ctx: ColumnContext) -> None:  # noqa: F821
     """One line per background shell (#515): kind, age, command, and for a
-    watcher what it watches."""
+    watcher what it watches. The command is cut to the popup's width, so a
+    shell is one row and the popup stays short enough for the top pane."""
     import time
+    from rich.cells import cell_len
     now = time.time()
     text.append("\nBackground shells", style="bold")
     for shell in ctx.background_shells:
@@ -305,9 +311,11 @@ def _append_shells(text: "Text", ctx: ColumnContext) -> None:  # noqa: F821
         since = shell.get("since")
         age = f"{format_duration(int(now - since))} " if isinstance(since, (int, float)) else ""
         command = " ".join(str(shell.get("command") or "").split())
-        if len(command) > 60:
-            command = command[:59] + "…"
-        text.append(f"\n{glyph}  {shell.get('kind')} {age}")
+        head = f"{glyph}  {shell.get('kind')} {age}"
+        room = max(8, POPUP_TEXT_WIDTH - cell_len(head))
+        if len(command) > room:
+            command = command[:room - 1] + "…"
+        text.append(f"\n{head}")
         text.append(command, style="dim")
         target = shell.get("target")
         if target:
