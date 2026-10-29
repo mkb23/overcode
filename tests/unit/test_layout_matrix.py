@@ -434,6 +434,41 @@ async def test_layout_holds_with_workflow_progress(make_tui, width, expanded):
             assert seen == {"🧩 review-", "Wk review-", "🧩 2/3", "Wk 2/3"}
 
 
+def test_fit_widths_drops_droppable_columns_rightmost_first():
+    from overcode.columns.layout import SUMMARY_BAR_WIDTH, SUMMARY_MIN_WIDTH, fit_widths
+    width = 30 + SUMMARY_BAR_WIDTH + SUMMARY_MIN_WIDTH  # room for 30 cells
+    widths = [10, 8, 8, 8, 6]
+    assert fit_widths(widths, [False] * 5, width) == widths  # nothing to drop: cut as before
+    assert fit_widths(widths, [False, True, False, True, True], width) == [10, 8, 8, 0, 0]
+    assert fit_widths([10, 8], [True, True], width) == [10, 8]  # fits: untouched
+
+
+@pytest.mark.parametrize("width", [200, 250])
+async def test_full_keeps_the_columns_high_shows_when_it_does_not_fit(make_tui, width):
+    """Full on a row too narrow for every column: the columns only full
+    adds (hidden at high) give way, rightmost first, instead of whatever
+    sits at the grid's right end. CTX and the model stay, and the header
+    says how many are hidden."""
+    engine = GridEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
+    app._prefs.column_config = {"high": {c: False for c in (
+        "subagents", "pr_number", "stalled_time", "sleep_time", "active_pct",
+        "human_count", "robot_count", "heartbeat", "oversight_countdown", "agent_value")}}
+    async with app.run_test(size=(width, 40)) as pilot:
+        app._set_summary_level("full")
+        await _settle(pilot)
+        assert_layout_invariants(app)
+        _shot(app, f"layout-full-fit-{width}")
+        header = app.query_one("#column-headers").render().plain
+        dropped = [n for n, w in zip(app._natural_column_widths, app.column_widths) if n and not w]
+        assert dropped and f"+{len(dropped)} hidden" in header, header
+        for label in (" CTX", " MDL"):
+            assert label in header, (label, header)
+        assert "📚" in _row_text(app, "alpha")
+        assert sum(app.column_widths) < sum(app._natural_column_widths)
+
+
 class WeftEngine(GridEngine):
     """GridEngine with weft claims: bravo holds two (one stuck, with a long
     title), charlie one at work; alpha's WFT cell is the placeholder."""

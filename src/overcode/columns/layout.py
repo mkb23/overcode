@@ -29,6 +29,24 @@ def grid_room(column_widths: List[int], width: int) -> int:
     return edge
 
 
+def fit_widths(column_widths: List[int], droppable: List[bool], width: int) -> List[int]:
+    """The widths a `width`-cell row shows the grid at: as they are if they
+    fit, else with droppable columns set to 0, rightmost first, until the
+    grid fits (or none is left to drop: grid_room then cuts the rest).
+    A 0-width column is not drawn (pad_and_join_cells, render_header_cells),
+    so rows, the header and hover all lose the same columns."""
+    room = max(0, width - SUMMARY_BAR_WIDTH - SUMMARY_MIN_WIDTH)
+    widths = list(column_widths)
+    total = sum(widths)
+    for i in reversed(range(len(widths))):
+        if total <= room:
+            break
+        if i < len(droppable) and droppable[i] and widths[i]:
+            total -= widths[i]
+            widths[i] = 0
+    return widths
+
+
 def column_at(x: int, column_ids: List[str], column_widths: List[int],
               width: Optional[int] = None) -> Optional[str]:
     """The column under cell offset `x` of an aligned row, or None.
@@ -84,6 +102,8 @@ def pad_and_join_cells(cells: "List[Text]", column_widths: "List[int]", pad_styl
     from rich.text import Text
     line = Text()
     for i, cell in enumerate(cells):
+        if i < len(column_widths) and column_widths[i] == 0:
+            continue  # a column dropped to fit (fit_widths), or blank on every row
         line.append_text(cell)
         if i < len(column_widths):
             pad = column_widths[i] - cell_len(cell.plain)

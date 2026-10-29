@@ -421,6 +421,8 @@ class SupervisorTUI(
         self._session_name_width: int = 10  # the agents' longest name
         self.all_names_match_repos: bool = False
         self.column_widths: list = []  # Per-cell column widths for alignment
+        # The widths the cells need, before fit_widths dropped any to fit the row
+        self._natural_column_widths: list = []
         # Per column, where its widest text ends: a virtual row's "-" placeholder
         self.column_edges: list = []
         # {column id: value} for columns every row shows the same value in —
@@ -1005,7 +1007,7 @@ class SupervisorTUI(
 
     def _rows_fit_column_widths(self, rows: list) -> bool:
         """True if ``rows``, measured again, leave the aligned widths as they are."""
-        widths = self.column_widths
+        widths = self._natural_column_widths
         if not widths:
             return False
         measured = []
@@ -1418,10 +1420,18 @@ class SupervisorTUI(
                 self.call_after_refresh(dialog.relayout)
         self.refresh()
         self.update_session_widgets()
+        # Columns dropped to fit the old width may fit the new one (fit_widths)
+        self.call_after_refresh(self._refit_columns)
         # Cascade to the nested agent tmux windows so they track the outer
         # terminal size — otherwise you get either zoom artefacts (content
         # cut off) or dotted-fill padding when the outer pane has grown.
         self._schedule_agent_window_resize()
+
+    def _refit_columns(self) -> None:
+        self._column_widths_dirty = True
+        self._recompute_cell_column_widths()
+        for widget in self.query(SessionSummary):
+            widget.refresh_if_changed()
 
     def _periodic_agent_resize(self) -> None:
         """Reconcile agent tmux window sizes with the bottom pane."""
@@ -1617,7 +1627,7 @@ class SupervisorTUI(
         from .summary_columns import compute_column_widths
         widgets = list(self.query(SessionSummary))
         if not widgets:
-            self.column_widths = []
+            self.column_widths = self._natural_column_widths = []
             self._column_widths_dirty = False
             return
         all_cells = []
@@ -1627,12 +1637,33 @@ class SupervisorTUI(
             w._cell_widths = [cell_len(c.plain) for c in cells]
         # Expanded parents' delegated-work rows share the grid (render_virtual)
         all_cells.extend(self._swarm_cells())
-        self.column_widths = compute_column_widths(all_cells)
+        self._natural_column_widths = compute_column_widths(all_cells)
+        self.column_widths = self._fit_column_widths(self._natural_column_widths,
+                                                     widgets[0]._row_width())
         self.column_edges = column_edges(all_cells)
         self._column_widths_dirty = False
         self._paint_swarm_rows()
         # Update column headers if visible
         self._update_column_headers()
+
+    def _fit_column_widths(self, widths: list, row_width: int) -> list:
+        """The aligned widths, fitted to the row (fit_widths). At full, the
+        columns that only full adds (hidden at high, and not switched on
+        here) give way first, so a grid wider than the row loses those
+        rather than whatever sits at its right end (CTX, model...)."""
+        from .summary_columns import SUMMARY_COLUMNS, fit_widths, resolve_column_visible
+        level = self.SUMMARY_LEVELS[self.summary_level_index]
+        if level != "full":
+            return list(widths)
+        overrides = self._current_column_overrides(level)
+        high = self._prefs.column_config.get("high", {})
+        shown = [c for c in SUMMARY_COLUMNS
+                 if resolve_column_visible(c, level, overrides, self.uniform_columns)]
+        if len(shown) != len(widths):
+            return list(widths)
+        droppable = [overrides.get(c.id) is not True and not resolve_column_visible(c, "high", high)
+                     for c in shown]
+        return fit_widths(widths, droppable, row_width)
 
     def _selected_session_id(self) -> Optional[str]:
         """Id of the agent the highlight is on, in the *current* display order.
@@ -2478,6 +2509,11 @@ class SupervisorTUI(
                 if value and col_filter(COLUMNS_BY_ID[cid]) is False
                 and resolve_column_visible(COLUMNS_BY_ID[cid], level, overrides)
             ]
+            # Columns full dropped to fit the row (fit_widths): never silently
+            dropped = sum(1 for n, w in zip(self._natural_column_widths, self.column_widths)
+                          if n and not w)
+            if dropped:
+                header_line.append(f"   +{dropped} hidden: too narrow", style="dim")
             if shared:
                 header_line.append("   all: " + " · ".join(shared), style="dim")
             header_widget.update(header_line)

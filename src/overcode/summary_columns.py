@@ -83,7 +83,7 @@ from .columns.registry import (
 )
 from .columns.layout import (
     column_at, compute_column_widths, pad_and_join_cells, align_summary_rows,
-    render_header_cells, grid_room,
+    render_header_cells, grid_room, fit_widths,
 )
 
 __all__ = [
@@ -122,5 +122,5 @@ __all__ = [
     "canonical_column_id", "migrate_column_overrides", "resolve_column_visible",
     "uniform_columns", "render_summary_cells", "cell_segments", "cell_text", "render_cell",
     "render_summary_line", "render_cli_stats", "column_at", "compute_column_widths",
-    "pad_and_join_cells", "align_summary_rows", "render_header_cells", "grid_room",
+    "pad_and_join_cells", "align_summary_rows", "render_header_cells", "grid_room", "fit_widths",
 ]

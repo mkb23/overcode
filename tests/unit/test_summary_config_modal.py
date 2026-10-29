@@ -373,7 +373,7 @@ class TestTUIHeaderSync:
         app._prefs.column_config = {"med": {}}  # prefs: no overrides at med
         app.SUMMARY_LEVELS = ["low", "med", "high", "full"]
         app.summary_level_index = 1
-        app.column_widths = []
+        app.column_widths = app._natural_column_widths = []
 
         header_widget = MagicMock()
         header_widget.display = True

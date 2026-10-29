@@ -352,12 +352,15 @@ def _check_painted(widget, lines: list, what: str) -> None:
 def _check_cells(line: str, cells: list, widths: list, width: int, what: str) -> None:
     """Each non-empty cell starts at its column's x (the sum of the widths
     before it), up to where the grid is cut (``grid_room``: the summary
-    keeps its minimum)."""
+    keeps its minimum). A 0-width column (dropped to fit, fit_widths) is
+    not drawn."""
     from overcode.summary_columns import grid_room
 
     width = grid_room(widths, width) if widths else width
     x = 0
     for j, cell in enumerate(cells):
+        if j < len(widths) and widths[j] == 0:
+            continue
         if cell.strip() and x < width:
             want = _crop(cell, 0, width - x)
             got = _crop(_at(line, x), 0, cell_len_(want))
