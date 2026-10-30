@@ -1474,6 +1474,36 @@ class TestLauncherHierarchy:
         with pytest.raises(LaunchError, match="mutually exclusive"):
             launcher.launch(name="c", parent_name="p", no_parent=True)
 
+    def test_a_launch_from_an_agents_job_is_its_child(self, tmp_path):
+        """A job's window has no agent env, only its owner: still the owner's child."""
+        launcher, _ = self._launcher(tmp_path)
+        owner = launcher.launch(name="head")
+        with patch.dict("os.environ", {"OVERCODE_JOB_OWNER_ID": owner.id}):
+            child = launcher.launch(name="dispatched")
+        assert child.parent_session_id == owner.id
+
+    def test_a_job_whose_owner_is_gone_launches_top_level(self, tmp_path, capsys):
+        launcher, _ = self._launcher(tmp_path)
+        with patch.dict("os.environ", {"OVERCODE_JOB_OWNER_ID": "no-such-agent"}):
+            child = launcher.launch(name="orphan")
+        assert child.parent_session_id is None
+        assert "started this job is gone" in capsys.readouterr().err
+
+    def test_in_a_job_no_parent_and_parent_win_over_the_owner(self, tmp_path):
+        launcher, _ = self._launcher(tmp_path)
+        owner = launcher.launch(name="head")
+        other = launcher.launch(name="other")
+        with patch.dict("os.environ", {"OVERCODE_JOB_OWNER_ID": owner.id}):
+            solo = launcher.launch(name="solo", no_parent=True)
+            placed = launcher.launch(name="placed", parent_name="other")
+        assert solo.parent_session_id is None
+        assert placed.parent_session_id == other.id
+
+    def test_an_agent_launched_from_a_job_does_not_carry_the_owner(self, tmp_path):
+        """A tmux server started in a job would hand its owner to every window."""
+        from overcode.launcher import HOST_SESSION_VARS
+        assert "OVERCODE_JOB_OWNER_ID" in HOST_SESSION_VARS
+
     def test_depth_limit_enforced(self, tmp_path, capsys):
         """Launch fails when max depth would be exceeded."""
         mock_tmux = MockTmux()

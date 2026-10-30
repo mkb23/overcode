@@ -39,7 +39,8 @@ from .backends.claude_code import (  # noqa: F401  (compat re-export)
 from .backends.shell import SHELL_BACKEND
 from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 from .tmux_utils import AGENT_ID_OPTION
-from .agent_identity import current_agent, env_agent_id, env_agent_name, in_agent
+from .agent_identity import (JOB_OWNER_VAR, current_agent, env_agent_id, env_agent_name,
+                             env_job_owner_id, in_agent)
 from .session_manager import SessionManager, Session, rename_notice
 from .config import get_default_standing_instructions
 from .launch_settings import NORMAL_PERMISSIONS_CONFLICT, LaunchArgs, resolve_launch_settings
@@ -110,8 +111,9 @@ def drop_model_flag(extra_args: Optional[List[str]]) -> Optional[List[str]]:
 
 # Variables that mark the process that started the tmux server, never the
 # agent: a host Claude session's (CLAUDE_CODE_* identity, socket, pid,
-# effort, job dir) and an overcode agent's parent link and backend, which
-# the launch line sets itself when they apply. Cleared from every launch
+# effort, job dir), an overcode agent's parent link and backend, which
+# the launch line sets itself when they apply, and a job's owner (an agent
+# launched from a job is not itself in that job). Cleared from every launch
 # line (_build_launch_cmd_str) unless the line sets them.
 HOST_SESSION_VARS = (
     "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
@@ -120,6 +122,7 @@ HOST_SESSION_VARS = (
     "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_AGENT", "CLAUDE_CODE_EXECPATH",
     "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_JOB_DIR",
     "OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME", "OVERCODE_BACKEND",
+    JOB_OWNER_VAR,
 )
 
 
@@ -572,6 +575,16 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
                 raise LaunchError(
                     f"parent agent '{env_agent_name() or env_agent_id()}' not found")
             parent_name = parent_session.name
+        elif parent_name is None and env_job_owner_id():
+            # Run from a job an agent started: that agent's child. A job
+            # outlives its agent, so with the owner gone it launches
+            # top-level, warned, rather than failing a dispatcher's loop
+            parent_session = self.sessions.get_session(env_job_owner_id())
+            if parent_session:
+                parent_name = parent_session.name
+            else:
+                print("Warning: the agent that started this job is gone: "
+                      "launching top-level", file=sys.stderr)
 
         if parent_name:
             if parent_session is None:

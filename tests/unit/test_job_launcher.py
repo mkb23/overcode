@@ -108,6 +108,30 @@ class TestJobLauncherLaunch:
         assert f"│ Directory: {directory}" in out.stdout
         assert "done\nit's 2\n" in out.stdout
 
+    @pytest.mark.parametrize("agent_id, parent_launches, expected", [
+        ("owner-id", True, "owner-id"),
+        ("owner-id", False, ""),   # --top-level-launches
+        (None, True, ""),          # a job no agent started
+    ])
+    def test_the_job_passes_its_owner_to_launches(self, tmp_path, agent_id,
+                                                  parent_launches, expected):
+        """The window's env is the tmux server's: the wrapper sets or clears the owner."""
+        import os
+        import subprocess
+        mock_tmux = MagicMock()
+        mock_tmux.create_window.return_value = "w"
+        launcher = JobLauncher(tmux_manager=mock_tmux,
+                               job_manager=JobManager(state_dir=tmp_path))
+        launcher.launch(command='printf "[%s]" "$OVERCODE_JOB_OWNER_ID"', name="j",
+                        directory=str(tmp_path), agent_session_id=agent_id,
+                        parent_launches=parent_launches)
+
+        wrapper = mock_tmux.send_keys.call_args[0][1].replace("exec bash", "true")
+        env = {**os.environ, "OVERCODE_JOB_OWNER_ID": "stale-from-the-server"}
+        out = subprocess.run(["bash", "-c", "overcode() { :; }; " + wrapper],
+                             capture_output=True, text=True, timeout=10, env=env)
+        assert f"[{expected}]" in out.stdout
+
 
 class TestJobLauncherListJobs:
     """Test job listing with killed detection."""
@@ -176,6 +200,24 @@ class TestJobLauncherListJobs:
 
         assert len(jobs) == 1
         assert jobs[0].status == "running"
+
+    @patch("overcode.job_launcher._has_child_processes", return_value=False)
+    def test_a_job_whose_command_has_not_started_is_still_running(self, _children, tmp_path):
+        """No children yet, no exit file: it used to read as completed, exit 0,
+        in its first second, and its command ran on untracked."""
+        mock_tmux = MagicMock()
+        mock_tmux.list_windows.return_value = [{"name": "young", "index": 0}]
+        mock_tmux.get_pane_pid.return_value = 12345
+        manager = JobManager(state_dir=tmp_path)
+        job = manager.create_job(command="python dispatcher.py", name="young",
+                                 tmux_window="young")
+        launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
+
+        assert launcher.list_jobs()[0].status == "running"
+        # The wrapper writes the exit file when the command ends
+        launcher._exit_code_path(job.id).write_text("3\n")
+        (finished,) = launcher.list_jobs(include_completed=True)
+        assert finished.status == "failed" and finished.exit_code == 3
 
     @patch("overcode.job_launcher._has_child_processes", return_value=False)
     def test_a_finished_job_does_not_hide_a_later_killed_one(self, mock_has_children, tmp_path):

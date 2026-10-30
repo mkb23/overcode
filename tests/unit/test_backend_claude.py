@@ -313,6 +313,7 @@ class TestLaunchCmdStr:
             "-u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_AGENT -u CLAUDE_CODE_EXECPATH "
             "-u CLAUDE_PID -u CLAUDE_EFFORT -u CLAUDE_JOB_DIR "
             "-u OVERCODE_PARENT_SESSION_ID -u OVERCODE_PARENT_NAME -u OVERCODE_BACKEND "
+            "-u OVERCODE_JOB_OWNER_ID "
             "OVERCODE_SESSION_NAME=agent-1 OVERCODE_SESSION_ID=sid "
             "OVERCODE_TMUX_SESSION=agents WEFT_ACTOR=agent-1 claude --foo"
         )

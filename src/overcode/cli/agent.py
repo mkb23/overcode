@@ -63,9 +63,10 @@ def _store_oversight_policy(result, policy: str, timeout_seconds: float,
 
 
 def _launches_child(parent: Optional[str], no_parent: bool) -> bool:
-    """Whether this launch makes a child (the launcher's rule: --parent, or run inside an agent)."""
-    from ..agent_identity import in_agent
-    return parent is not None or (not no_parent and in_agent())
+    """Whether this launch makes a child (the launcher's rule: --parent, or
+    run inside an agent or a job an agent started)."""
+    from ..agent_identity import env_job_owner_id, in_agent
+    return parent is not None or (not no_parent and (in_agent() or bool(env_job_owner_id())))
 
 
 def _resolve_child_settings(preset: Optional[str], is_child: bool, on_stuck: Optional[str],
@@ -1384,6 +1385,82 @@ def release(
 
 
 @app.command()
+def adopt(
+    names: Annotated[List[str], typer.Argument(help="Top-level agents to make children")],
+    parent: Annotated[
+        Optional[str],
+        typer.Option("--parent", help="The new parent (default: the calling agent)"),
+    ] = None,
+    no_notify: Annotated[
+        bool, typer.Option("--no-notify", help="Don't tell the agents they now report")
+    ] = False,
+    session: SessionOption = "agents",
+):
+    """Make top-level agents children of a parent: release's reverse.
+
+    For agents that should have been children and came out top-level, such
+    as ones launched from a job by an older overcode. Each one, with its
+    own children, joins the parent's tree: tree view, the parent's subtree
+    cost (what it spent so far included), `kill` cascades and oversight,
+    under its own oversight setting. From now on it bills to the parent's
+    billing code; what it spent so far stays on its old code. Its budget is
+    kept, and reclaim never hands that much to the parent.
+
+    From inside an agent, the parent must be the calling agent or one of
+    its descendants. A running agent is told it now reports to the parent
+    (typed into its pane, as `overcode send` does) unless --no-notify.
+
+    Examples:
+        overcode adopt spec-e015 work-build-e016 --parent useful-bit
+    """
+    from ..agent_identity import current_agent, in_agent
+    from ..lifecycle import adopt_agent
+
+    launcher = AgentLauncher(session)
+    caller = current_agent(launcher.sessions) if in_agent() else None
+    if parent:
+        new_parent = find_agent(launcher.sessions, parent)
+        if not new_parent:
+            rprint(f"[red]Error: Agent '{parent}' not found[/red]")
+            raise typer.Exit(code=1)
+    elif caller:
+        new_parent = caller
+    else:
+        rprint("[red]Error: --parent is required outside an agent[/red]")
+        raise typer.Exit(code=1)
+    if in_agent() and (caller is None or not (
+            new_parent.id == caller.id
+            or launcher.sessions.is_ancestor(caller.id, new_parent.id))):
+        rprint("[red]Error: an agent may adopt only into itself or its descendants[/red]")
+        raise typer.Exit(code=1)
+
+    failed = False
+    for name in names:
+        sess = find_agent(launcher.sessions, name)
+        if not sess:
+            rprint(f"[red]Error: Agent '{name}' not found[/red]")
+            failed = True
+            continue
+        result = adopt_agent(launcher.for_agent(sess), sess, new_parent,
+                             notify=not no_notify)
+        if not result.ok:
+            rprint(f"[red]Error: {sess.name}: {result.note}[/red]")
+            failed = True
+            continue
+        rprint(f"[green]✓[/green] Adopted '[bold]{sess.name}[/bold]' under "
+               f"'{new_parent.name}' (${result.cost_usd:.4f} spent so far, now in its SUB$)")
+        if result.rebilled:
+            rprint(f"[dim]Billing to '{new_parent.name}''s code from now on: "
+                   f"{', '.join(result.rebilled)}[/dim]")
+        if result.notified:
+            rprint(f"[dim]Told '{sess.name}' it now reports to '{new_parent.name}'[/dim]")
+        if result.note:
+            rprint(f"[dim]{result.note}[/dim]")
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def rename(
     name: Annotated[str, typer.Argument(help="Current name of agent")],
     new_name: Annotated[
@@ -1856,6 +1933,12 @@ def _release_lines(sess) -> list:
         cost = getattr(sess, "cost_at_release_usd", None)
         spent = f", ${cost:.4f} spent under it" if isinstance(cost, (int, float)) else ""
         lines.append(("Released", f"from {parent} at {when}{spent}"))
+    adopter_id = getattr(sess, "adopted_by_session_id", None)
+    if isinstance(adopter_id, str) and adopter_id:
+        adopter = getattr(sess, "adopted_by_name", None) or adopter_id
+        when = getattr(sess, "adopted_at", None)
+        when = when.replace("T", " ")[:19] if isinstance(when, str) else "?"
+        lines.append(("Adopted", f"by {adopter} at {when}"))
     carried = getattr(sess, "released_children_cost_usd", 0.0)
     if isinstance(carried, (int, float)) and carried > 0:
         lines.append(("Released children", f"${carried:.4f} spent before release (in SUB$)"))

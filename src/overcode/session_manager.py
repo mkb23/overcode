@@ -264,6 +264,14 @@ class Session:
     # On a parent: what the children it released had spent (each one's
     # subtree, at its release). Its subtree total keeps counting it.
     released_children_cost_usd: float = 0.0
+    # Adopted by a parent (``SessionManager.adopt_child``), release's
+    # reverse: launched top-level (e.g. from a job before job owners were
+    # parents), a child since. Its budget then was nobody's grant, so
+    # reclaim never refunds that much to the parent.
+    adopted_by_session_id: Optional[str] = None
+    adopted_by_name: Optional[str] = None
+    adopted_at: Optional[str] = None
+    budget_at_adoption_usd: float = 0.0
 
     # User-applied tags for grouping/filtering (#356).
     # Lower-cased on write so lookups can be case-insensitive without storing
@@ -1496,6 +1504,72 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         return {"parent_id": parent_id, "parent_name": parent_name,
                 "cost_usd": cost, "released_at": released_at}
 
+    def adopt_child(self, child_id: str, parent_id: str, max_depth: int,
+                    now: Optional[datetime] = None) -> dict:
+        """Make a root agent a child of ``parent_id``: release's reverse.
+
+        One locked write. The child and its subtree join the parent's tree:
+        tree view, SUB$ (their spend so far included), cascade kill and
+        oversight, under the child's own oversight policy. Its budget is
+        kept, and reclaim never hands that much to the parent
+        (``budget_at_adoption_usd``). Billing moves separately
+        (``lifecycle.adopt_agent`` rebills the subtree, forward only).
+
+        ``max_depth`` is the launcher's limit: the deepest agent of the
+        child's subtree must stay under it.
+
+        Returns ``{"cost_usd", "adopted_at", "subtree"}`` (the child's subtree
+        ids, child first). Raises ValueError, with a reason for a person,
+        when the child cannot be adopted.
+        """
+        adopted_at = (now or datetime.now()).isoformat()
+        with self._state_transaction() as txn:
+            state = txn.state
+            child, parent = state.get(child_id), state.get(parent_id)
+            if not isinstance(child, dict) or not isinstance(parent, dict):
+                raise ValueError("agent not found")
+            name = child.get("name") or child_id
+            if child_id == parent_id:
+                raise ValueError(f"'{name}' cannot adopt itself")
+            if child.get("parent_session_id"):
+                current = state.get(child["parent_session_id"]) or {}
+                raise ValueError(f"'{name}' already has a parent "
+                                 f"('{current.get('name', child['parent_session_id'])}'): "
+                                 "release it first")
+            # The parent's chain, and the child's subtree with each depth in it
+            chain, seen, sid = [], set(), parent_id
+            while sid and sid not in seen and isinstance(state.get(sid), dict):
+                seen.add(sid)
+                chain.append(sid)
+                sid = state[sid].get("parent_session_id")
+            if child_id in chain:
+                raise ValueError(f"'{name}' is an ancestor of '{parent.get('name')}'")
+            children: Dict[str, List[str]] = {}
+            for sid, record in state.items():
+                up = record.get("parent_session_id") if isinstance(record, dict) else None
+                if up:
+                    children.setdefault(up, []).append(sid)
+            subtree, height, todo = [], 0, [(child_id, 0)]
+            while todo:
+                sid, level = todo.pop(0)
+                if sid in subtree:
+                    continue
+                subtree.append(sid)
+                height = max(height, level)
+                todo.extend((c, level + 1) for c in children.get(sid, ()))
+            if len(chain) + height >= max_depth:
+                raise ValueError(f"maximum hierarchy depth ({max_depth}) exceeded")
+            cost = round(self._subtree_spend(child_id, state), 6)
+            child.update(
+                parent_session_id=parent_id,
+                adopted_by_session_id=parent_id,
+                adopted_by_name=parent.get("name"),
+                adopted_at=adopted_at,
+                budget_at_adoption_usd=float(child.get("cost_budget_usd", 0.0) or 0.0),
+            )
+            txn.dirty = True
+        return {"cost_usd": cost, "adopted_at": adopted_at, "subtree": subtree}
+
     def reclaim_budget(self, child_id: str) -> Optional[float]:
         """Refund a child's unused budget back to its parent (#432).
 
@@ -1525,12 +1599,15 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 return None
 
             spent = float(((child.get('stats') or {}).get('estimated_cost_usd', 0.0)) or 0.0)
-            remaining = max(0.0, child_budget - spent)
+            # An adopted child's budget at adoption was nobody's grant: only
+            # what the parent gave it since can go back
+            floor = max(spent, float(child.get('budget_at_adoption_usd', 0.0) or 0.0))
+            remaining = max(0.0, child_budget - floor)
             if remaining <= 0:
                 return 0.0
 
-            # Cap child at what was actually spent to make the reclaim idempotent.
-            child['cost_budget_usd'] = spent
+            # Cap child at the floor to make the reclaim idempotent.
+            child['cost_budget_usd'] = floor
 
             parent_budget = state[parent_id].get('cost_budget_usd', 0.0)
             # Unlimited parent budget stays unlimited.

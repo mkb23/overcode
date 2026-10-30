@@ -250,6 +250,33 @@ the child's own. Its billing code, budget and preset are unchanged.
 `overcode show` says whom it was released from, when, and what it had
 spent by then.
 
+## Adopting an agent
+
+`overcode adopt <agent>... --parent <parent>` is release's reverse: it
+makes top-level agents children, for ones that should have been and were
+not (launched from a job by an older overcode, say). Each one, with its own
+children, joins the parent's tree: the tree view, `kill`'s cascade,
+oversight (under its own on-stuck setting) and the parent's SUB$, its spend
+so far included. From then on it bills to the parent's code; what it spent
+before stays on its old code. Its budget is kept, and reclaim never hands
+that much to the parent. A running agent is told it now reports to the
+parent, unless `--no-notify`.
+
+An agent with a parent is refused (release it first), and so is a cycle or
+a tree that would pass the depth limit. Inside an agent, `--parent`
+defaults to the calling agent and may only name it or one of its
+descendants.
+
+## Agents launched from a job
+
+A job an agent started (`overcode bash`, see
+[Jobs](cli-reference.md#overcode-bash--overcode-jobs)) passes that agent
+on: an agent the job launches is its child, as if the agent had launched
+it. `overcode bash --top-level-launches` makes them top-level instead, and
+`overcode launch --parent`/`--no-parent` inside the job win over both. If
+the agent has gone by the time the job launches, the launch is top-level,
+with a warning.
+
 ## What a child inherits
 
 Unless you pass a flag for a setting, a child takes these from its parent:

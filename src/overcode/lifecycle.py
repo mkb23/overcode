@@ -128,6 +128,72 @@ def release_agent(launcher, session: "Session", notify: bool = True) -> ReleaseR
     return result
 
 
+ADOPT_NOTICE = (
+    "[overcode] You are now a child of the agent '{parent}': it oversees your "
+    "work. When you finish, run `overcode report --status success --reason "
+    "\"<one line>\"` (or --status failure). Carry on with your current work."
+)
+
+
+@dataclass
+class AdoptResult:
+    """What ``adopt_agent`` did: adopted or not, and whether the agent was told."""
+
+    ok: bool
+    cost_usd: float = 0.0
+    # The child's subtree moved to the parent's billing code (forward only)
+    rebilled: List[str] = field(default_factory=list)
+    notified: bool = False
+    # Why it was not adopted, or why it was not told, or billing not moved
+    note: str = ""
+
+
+def adopt_agent(launcher, session: "Session", parent: "Session",
+                notify: bool = True) -> AdoptResult:
+    """Make a root agent ``parent``'s child (``SessionManager.adopt_child``).
+
+    Its subtree then bills to the parent's code from now on (``rebill``:
+    what it spent so far stays on its old code), as any child launched
+    under the parent does. With ``notify``, a running agent is told it now
+    reports to the parent, typed into its pane as for a release.
+    """
+    if getattr(session, "is_remote", False) or getattr(parent, "is_remote", False):
+        return AdoptResult(False, note="a remote agent is adopted on its own host")
+    try:
+        adopted = launcher.sessions.adopt_child(session.id, parent.id,
+                                                launcher.MAX_HIERARCHY_DEPTH)
+    except ValueError as e:
+        return AdoptResult(False, note=str(e))
+    result = AdoptResult(True, cost_usd=adopted["cost_usd"])
+    notes = []
+    try:
+        code_id, code_name = launcher._parent_billing_code(parent)
+        for sid in adopted["subtree"]:
+            record = launcher.sessions.get_session(sid)
+            if record is not None and record.billing_code_id != code_id:
+                launcher.sessions.rebill(sid, code_name)
+                result.rebilled.append(record.name)
+    except Exception as e:  # the adoption stands; say billing did not move
+        notes.append(f"billing code not moved: {e}")
+    if not notify:
+        notes.append("not told (--no-notify)")
+    elif session.is_asleep:
+        notes.append("not told: it is asleep")
+    elif session.status in ("terminated", "done"):
+        notes.append(f"not told: it is {session.status}")
+    else:
+        try:
+            result.notified = bool(launcher.send_to_session_by_id(
+                session.id, ADOPT_NOTICE.format(parent=parent.name)))
+        except Exception as e:
+            notes.append(f"not told: {e}")
+        else:
+            if not result.notified:
+                notes.append("not told: its window did not take the message")
+    result.note = "; ".join(notes)
+    return result
+
+
 class AgentLifecycleMixin:
     """Kill agents and settle their lifecycle (see module docstring).
 

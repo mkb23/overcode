@@ -22,6 +22,17 @@ def env_agent_name(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
     return (os.environ if env is None else env).get("OVERCODE_SESSION_NAME") or None
 
 
+# Set in a job an agent started (``overcode bash``): an agent the job
+# launches is that agent's child. Not OVERCODE_SESSION_ID: the job is not
+# the agent (its reports, hooks and state access are its own).
+JOB_OWNER_VAR = "OVERCODE_JOB_OWNER_ID"
+
+
+def env_job_owner_id(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """The id of the agent whose job this process runs in, or None."""
+    return (os.environ if env is None else env).get(JOB_OWNER_VAR) or None
+
+
 def in_agent(env: Optional[Mapping[str, str]] = None) -> bool:
     """True inside an agent overcode launched (either variable set)."""
     return bool(env_agent_id(env) or env_agent_name(env))

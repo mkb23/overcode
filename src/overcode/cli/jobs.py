@@ -17,8 +17,16 @@ def bash(
     directory: Annotated[str, typer.Option("--directory", "-d", help="Working directory")] = ".",
     agent: Annotated[Optional[str], typer.Option("--agent", "-a", help="Link to an agent session by name")] = None,
     follow: Annotated[bool, typer.Option("--follow/--no-follow", "-f", help="Attach to the job's tmux window after launch")] = True,
+    top_level_launches: Annotated[bool, typer.Option(
+        "--top-level-launches",
+        help="Agents the job launches are top-level, not children of the linked agent")] = False,
 ):
-    """Launch a bash command as a tracked job."""
+    """Launch a bash command as a tracked job.
+
+    A job linked to an agent (the calling agent, or --agent) passes it on:
+    an agent the job launches with `overcode launch` is that agent's child,
+    under its budget, oversight and kill cascade, unless --top-level-launches.
+    """
     import os
     from ..agent_identity import current_agent, env_agent_id, env_agent_name, in_agent
     from ..job_launcher import JobLauncher
@@ -50,6 +58,7 @@ def bash(
         directory=directory,
         agent_session_id=agent_session_id,
         agent_name=agent_name,
+        parent_launches=not top_level_launches,
     )
 
     rprint(f"[green]✓[/green] Job '[bold]{job.name}[/bold]' launched")

@@ -36,11 +36,14 @@ class JobLauncher:
         directory: Optional[str] = None,
         agent_session_id: Optional[str] = None,
         agent_name: Optional[str] = None,
+        parent_launches: bool = True,
     ) -> Job:
         """Launch a bash command as a tracked job.
 
         Creates a tmux window, sends a wrapper script that reports completion,
-        and persists the job to state.
+        and persists the job to state. A job linked to an agent exports its
+        id (``JOB_OWNER_VAR``), so an agent the job launches is that agent's
+        child, unless ``parent_launches`` is False: then they are top-level.
         """
         directory = directory or os.getcwd()
         base_name = name or _slugify_command(command)
@@ -76,7 +79,13 @@ class JobLauncher:
         escaped_cmd = command.replace("'", "'\\''")
         escaped_dir = shlex.quote(directory)
         exit_file = self._exit_code_path(job.id)
+        # The window's environment is the tmux server's, never the caller's:
+        # set (or clear) the owner explicitly
+        from .agent_identity import JOB_OWNER_VAR
+        owner = (f"export {JOB_OWNER_VAR}={shlex.quote(agent_session_id)}; "
+                 if agent_session_id and parent_launches else f"unset {JOB_OWNER_VAR}; ")
         wrapper = (
+            f"{owner}"
             f"echo {shlex.quote('╭─── Job: ' + job.name)} && "
             f"echo {shlex.quote('│ Command: ' + command)} && "
             f"echo {shlex.quote('│ Directory: ' + directory)} && "
@@ -148,10 +157,16 @@ class JobLauncher:
                 continue
 
             # Window still alive — check if the command has finished by
-            # looking for child processes of the pane's shell.
+            # looking for child processes of the pane's shell. Then the
+            # exit file must be there too: a shell whose wrapper has not
+            # started yet (or runs only builtins) has no children either,
+            # and a job read that way was marked completed in its first
+            # second while its command ran on, untracked
             pane_pid = self.tmux.get_pane_pid(job.tmux_window)
             if pane_pid is not None and not _has_child_processes(pane_pid):
                 exit_code = self._read_exit_code(job.id)
+                if exit_code is None:
+                    continue
                 status = "completed" if exit_code == 0 else "failed"
                 self.jobs.mark_complete(job.id, exit_code)
                 job.status = status
@@ -195,13 +210,14 @@ class JobLauncher:
         """Path to the exit code file for a job, beside jobs.json."""
         return self.jobs.state_dir / f"exit-{job_id}"
 
-    def _read_exit_code(self, job_id: str) -> int:
-        """Read exit code from file, defaulting to 0 if missing/unreadable."""
+    def _read_exit_code(self, job_id: str) -> Optional[int]:
+        """The exit code the wrapper wrote, or None while there is none (the
+        command has not finished, or the write is not complete)."""
         path = self._exit_code_path(job_id)
         try:
             return int(path.read_text().strip())
-        except (FileNotFoundError, ValueError, OSError):
-            return 0
+        except (ValueError, OSError):
+            return None
 
     def _cleanup_exit_code_file(self, job_id: str):
         """Remove the exit code file after reading it."""

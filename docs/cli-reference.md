@@ -362,6 +362,20 @@ unchanged. A running agent is told it no longer reports, unless
 overcode release <agent-name> [--no-notify] [--session <session>]
 ```
 
+### `overcode adopt`
+
+Make top-level agents children of a parent: release's reverse. Each joins
+the parent's tree with its own children (tree view, cascade kill, SUB$ with
+its spend so far, oversight under its own setting) and bills to the
+parent's code from now on. Its budget is kept; reclaim never refunds it to
+the parent. Inside an agent, `--parent` defaults to the caller and must be
+the caller or one of its descendants. See
+[Child Agents](children.md#adopting-an-agent).
+
+```bash
+overcode adopt <agent-name>... [--parent <parent>] [--no-notify] [--session <session>]
+```
+
 ### `overcode budget`
 
 Manage agent cost budgets.
@@ -698,7 +712,9 @@ uses another archive directory: a trial sweep or import of the real
 ### `overcode bash` / `overcode jobs`
 
 Run a long command as a tracked job in its own window of the `jobs` tmux
-session, linked to the agent that started it.
+session, linked to the agent that started it. An agent the job launches
+(`overcode launch` in a dispatcher script, say) is that agent's child,
+unless `--top-level-launches`.
 
 ```bash
 overcode bash "pytest tests/" -n full-tests
