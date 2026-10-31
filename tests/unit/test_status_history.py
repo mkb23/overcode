@@ -952,6 +952,15 @@ class TestSpinUnits:
         assert spin_units("running", {"running": 2}, shells) == 4
         assert spin_units("waiting_user", None, shells) == 1
 
+    def test_a_yellow_agent_counts_its_work_not_itself(self):
+        """busy_sleeping is in GREEN_STATUSES, so an agent stopped on one
+        batch shell counted 2: Spin read 4 with two yellow agents and no
+        green one."""
+        from overcode.status_history import spin_units
+        assert spin_units("busy_sleeping", None, [{"kind": "batch"}]) == 1
+        assert spin_units("busy_sleeping", {"running": 2}) == 2
+        assert spin_units("busy_sleeping", None, [{"kind": "watcher"}, {"kind": "service"}]) == 0
+
     def test_spin_round_trips_and_old_rows_have_none(self, tmp_path):
         from overcode.status_history import row_spin
         path = tmp_path / "history.csv"

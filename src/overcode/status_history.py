@@ -30,7 +30,7 @@ from typing import Deque, Dict, List, Optional, Set, Tuple
 from .background_shells import KIND_BATCH
 from .clock import from_iso, local_naive, stamp, to_epoch
 from .settings import DAEMON, get_agent_history_path
-from .status_constants import is_green_status
+from .status_constants import STATUS_BUSY_SLEEPING, is_green_status
 
 
 def spin_units(status: str, swarm_rollup: Optional[dict] = None,
@@ -41,8 +41,13 @@ def spin_units(status: str, swarm_rollup: Optional[dict] = None,
     rollup's ``running``: subagents, forks, teammates) and each batch
     background shell not stuck. Watchers and services wait by design and
     do not count.
+
+    An agent in busy_sleeping (yellow: stopped, its background work in
+    flight) is not itself spinning: that work is, and counts as above.
+    ``is_green_status`` still includes it, which counted such an agent
+    twice: once as itself and once for its batch shell.
     """
-    units = 1 if is_green_status(status) else 0
+    units = 1 if is_green_status(status) and status != STATUS_BUSY_SLEEPING else 0
     if isinstance(swarm_rollup, dict):
         running = swarm_rollup.get("running")
         units += running if isinstance(running, int) and running > 0 else 0
