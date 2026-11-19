@@ -20,7 +20,6 @@ from overcode.quota_model import prior_model  # noqa: E402
 
 T0 = 1_800_000_000.0
 R7 = T0 + 3 * 86400  # the weekly window resets in three days
-R5 = T0 + 3600
 
 
 def _config(**over):
@@ -40,16 +39,16 @@ def _agent(sid, out_tokens=0, *, model="claude-opus-x", provider="web", backend=
 
 
 class FakeApi:
-    def __init__(self, w7=10.0, w5=4.0):
+    def __init__(self, w7=10.0):
         self.calls = 0
-        self.w7, self.w5 = w7, w5
+        self.w7 = w7
         self.result = None
 
     def __call__(self):
         self.calls += 1
         if self.result is not None:
             return self.result
-        return {"line": {"w7": self.w7, "w5": self.w5, "r7": R7, "r5": R5}, "plan": "max20x"}
+        return {"line": {"w7": self.w7, "r7": R7}, "plan": "max20x"}
 
 
 def _engine(tmp_path, api=None, **cfg):
@@ -74,23 +73,23 @@ class TestReading:
 
     def test_parse_usage_reads_windows_credits_and_surfaces(self):
         line = qe.parse_usage({
-            "five_hour": {"utilization": 12.0, "resets_at": "2027-01-15T10:00:00Z"},
+            "five_hour": None,  # Claude dropped the 5-hour window (2026-11)
             "seven_day": {"utilization": 37.0, "resets_at": "2027-01-18T00:00:00+00:00"},
             "seven_day_fable": {"utilization": 5.0},
             "extra_usage": {"is_enabled": True, "used_credits": 2.5},
             "seven_day_by_surface": {"claude_code": {"utilization": 30}, "chat": 7},
         })
-        assert line["w7"] == 37.0 and line["w5"] == 12.0
+        assert line["w7"] == 37.0 and "w5" not in line
         assert line["r7"] == pytest.approx(1800230400.0)
         assert line["w7f"] == 5.0
         assert line["credits"] == 2.5
         assert line["surf"] == {"claude_code": 30.0, "chat": 7.0}
-        assert qe.parse_usage({"five_hour": {}}) is None
+        assert qe.parse_usage({"five_hour": None}) is None
 
     def test_parse_statusline(self):
         got = qe.parse_statusline({"t": 5.0, "rl": {"seven_day": {"used_percentage": 3, "resets_at": 99},
                                                    "five_hour": {"used_percentage": 1}}})
-        assert got == {"t": 5.0, "w7": 3.0, "r7": 99.0, "w5": 1.0, "r5": None}
+        assert got == {"t": 5.0, "w7": 3.0, "r7": 99.0}
         assert qe.parse_statusline({"t": 1.0}) is None
 
     def test_counts_toward_quota(self):
@@ -223,7 +222,7 @@ class TestPolling:
 
     def test_fresh_line_from_another_daemon_is_adopted(self, tmp_path):
         store = qe.UsageStore(tmp_path / "usage")
-        store.append_history("acct1", {"t": T0 - 30, "src": "api", "w7": 42.0, "r7": R7, "r5": R5})
+        store.append_history("acct1", {"t": T0 - 30, "src": "api", "w7": 42.0, "r7": R7})
         api = FakeApi()
         eng = _engine(tmp_path, api)
         eng.sync([], T0)

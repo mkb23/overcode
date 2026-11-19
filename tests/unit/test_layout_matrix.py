@@ -119,7 +119,7 @@ class TripEngine(GridEngine):
                                 "energy_j": 900.0, "quota_pp": 0.84}
                 for h in (1, 3, 6, 12, 24)}
         for view in snap.agents.values():
-            view.update(quota={"pp7d": 12.34, "pp5h": 3.1, "w7": 40, "w5": 10, "conf": "low"},
+            view.update(quota={"pp7d": 12.34, "w7": 40, "conf": "low"},
                         burn=burn, estimated_energy_j=5.0e5)
         snap.agents["id-alpha"]["trip"] = {
             "reset_at": "2026-10-07T10:00:00+00:00", "estimated_cost_usd": 0.02,

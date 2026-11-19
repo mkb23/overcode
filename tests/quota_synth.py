@@ -87,7 +87,6 @@ def simulate(weeks=3, *, theta=None, poll_minutes=5, ticks=False, seed=1,
         k = math.floor(true_u(theta, x) + offset + extra)
         credits = 1.0 if credits_from is not None and minute >= credits_from else 0.0
         base = {"t": t, "w7": k, "r7": start + (window + 1) * WEEK,
-                "w5": k % 50, "r5": t - t % 18000 + 18000,
                 "plan": plan, "credits": credits,
                 "x": {m: dict(v) for m, v in x.items()}}
         if ticks and prev_k is not None and k == prev_k + 1:

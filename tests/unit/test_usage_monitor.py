@@ -15,9 +15,7 @@ class TestUsageSnapshot:
 
     def test_defaults(self):
         s = UsageSnapshot()
-        assert s.five_hour_pct == 0.0
         assert s.seven_day_pct == 0.0
-        assert s.five_hour_resets_at is None
         assert s.seven_day_resets_at is None
         assert s.opus_pct is None
         assert s.sonnet_pct is None
@@ -27,18 +25,16 @@ class TestUsageSnapshot:
     def test_frozen(self):
         s = UsageSnapshot()
         with pytest.raises(AttributeError):
-            s.five_hour_pct = 1.0
+            s.seven_day_pct = 1.0
 
     def test_with_values(self):
         s = UsageSnapshot(
-            five_hour_pct=0.5,
             seven_day_pct=0.3,
-            five_hour_resets_at="2024-01-01T12:00:00",
             seven_day_resets_at="2024-01-07T12:00:00",
             opus_pct=0.8,
             sonnet_pct=0.2,
         )
-        assert s.five_hour_pct == 0.5
+        assert s.seven_day_pct == 0.3
         assert s.opus_pct == 0.8
 
     def test_error_snapshot(self):
@@ -75,7 +71,7 @@ class TestUsageMonitor:
     def test_fetch_with_token(self):
         m = UsageMonitor()
         m._last_fetch_time = 0
-        expected = UsageSnapshot(five_hour_pct=0.5, seven_day_pct=0.3)
+        expected = UsageSnapshot(seven_day_pct=0.3)
 
         with patch.object(UsageMonitor, "_get_access_token", return_value="test-token"):
             with patch.object(UsageMonitor, "_fetch_usage", return_value=expected):
@@ -95,7 +91,7 @@ class TestUsageMonitor:
     def test_fetch_failure_preserves_prior_good_snapshot(self):
         """Rate-limited / network-failed refresh must not blank out cached data (#453)."""
         m = UsageMonitor()
-        good = UsageSnapshot(five_hour_pct=0.42, seven_day_pct=0.18)
+        good = UsageSnapshot(seven_day_pct=0.18)
         m._snapshot = good
         m._last_fetch_time = 0
 
@@ -105,7 +101,7 @@ class TestUsageMonitor:
                 m.fetch()
 
         assert m.snapshot is good
-        assert m.snapshot.five_hour_pct == 0.42
+        assert m.snapshot.seven_day_pct == 0.18
 
     def test_fetch_failure_with_no_prior_snapshot_sets_error(self):
         """First-ever fetch that fails still records the error so UI can show '--'."""
@@ -123,7 +119,7 @@ class TestUsageMonitor:
     def test_fetch_no_token_preserves_prior_good_snapshot(self):
         """Losing the token mid-session should not wipe previously fetched usage."""
         m = UsageMonitor()
-        good = UsageSnapshot(five_hour_pct=0.5)
+        good = UsageSnapshot(seven_day_pct=0.5)
         m._snapshot = good
         m._last_fetch_time = 0
 
@@ -137,7 +133,7 @@ class TestUsageMonitor:
         m = UsageMonitor()
         m._snapshot = UsageSnapshot(error="prior failure")
         m._last_fetch_time = 0
-        good = UsageSnapshot(five_hour_pct=0.7)
+        good = UsageSnapshot(seven_day_pct=0.7)
 
         with patch.object(UsageMonitor, "_get_access_token", return_value="t"):
             with patch.object(UsageMonitor, "_fetch_usage", return_value=good):
@@ -207,7 +203,6 @@ class TestFetchUsage:
 
     def test_successful_fetch(self):
         api_response = json.dumps({
-            "five_hour": {"utilization": 0.42, "resets_at": "2024-01-01T15:00:00"},
             "seven_day": {"utilization": 0.18, "resets_at": "2024-01-07T00:00:00"},
             "seven_day_opus": {"utilization": 0.6},
             "seven_day_sonnet": {"utilization": 0.1},
@@ -221,7 +216,6 @@ class TestFetchUsage:
         with patch("overcode.usage_monitor.urllib.request.urlopen", return_value=mock_resp):
             snap = UsageMonitor._fetch_usage("test-token")
 
-        assert snap.five_hour_pct == 0.42
         assert snap.seven_day_pct == 0.18
         assert snap.opus_pct == 0.6
         assert snap.sonnet_pct == 0.1
@@ -229,7 +223,8 @@ class TestFetchUsage:
 
     def test_fetch_without_model_breakdown(self):
         api_response = json.dumps({
-            "five_hour": {"utilization": 0.5},
+            "five_hour": None,  # the live shape since 2026-11
+            "seven_day_opus": None,
             "seven_day": {"utilization": 0.2},
         }).encode()
 

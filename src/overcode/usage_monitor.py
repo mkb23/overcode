@@ -1,7 +1,8 @@
 """
 Claude Code subscription usage monitor.
 
-Fetches 5-hour session and 7-day weekly usage limits from the Anthropic API.
+Fetches the 7-day weekly usage limit from the Anthropic API (Claude dropped
+the 5-hour session limit in 2026-11; the API sends ``"five_hour": null``).
 Self-contained module: all failures produce UsageSnapshot(error=...), never raises.
 """
 
@@ -23,9 +24,7 @@ USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 @dataclass(frozen=True)
 class UsageSnapshot:
     """Immutable snapshot of Claude Code usage data."""
-    five_hour_pct: float = 0.0
     seven_day_pct: float = 0.0
-    five_hour_resets_at: Optional[str] = None
     seven_day_resets_at: Optional[str] = None
     opus_pct: Optional[float] = None
     sonnet_pct: Optional[float] = None
@@ -174,21 +173,20 @@ class UsageMonitor:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
 
-            five_hour = data.get("five_hour", {})
-            seven_day = data.get("seven_day", {})
-            opus = data.get("seven_day_opus")
-            sonnet = data.get("seven_day_sonnet")
+            # The API sends null for limits that do not apply
+            seven_day = data.get("seven_day") or {}
+            opus = data.get("seven_day_opus") or {}
+            sonnet = data.get("seven_day_sonnet") or {}
 
             return UsageSnapshot(
-                five_hour_pct=five_hour.get("utilization", 0.0),
-                seven_day_pct=seven_day.get("utilization", 0.0),
-                five_hour_resets_at=five_hour.get("resets_at"),
+                seven_day_pct=seven_day.get("utilization") or 0.0,
                 seven_day_resets_at=seven_day.get("resets_at"),
-                opus_pct=opus.get("utilization") if opus else None,
-                sonnet_pct=sonnet.get("utilization") if sonnet else None,
+                opus_pct=opus.get("utilization"),
+                sonnet_pct=sonnet.get("utilization"),
                 fetched_at=datetime.now(),
             )
-        except (urllib.error.URLError, json.JSONDecodeError, OSError, KeyError) as e:
+        except (urllib.error.URLError, json.JSONDecodeError, OSError, KeyError,
+                AttributeError, TypeError) as e:
             return UsageSnapshot(
                 error=str(e),
                 fetched_at=datetime.now(),

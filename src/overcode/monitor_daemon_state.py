@@ -261,8 +261,8 @@ class SessionDaemonState:
     # "energy_j"}}. Computed only while attended.
     burn: Optional[dict] = None
     # Subscription quota (cost model Phase B, quota_engine): {"pp7d": its
-    # predicted points of the weekly quota this week, "pp5h": of the 5-hour
-    # window, "w7" / "w5": the account's observed %, "conf": the model's
+    # predicted points of the weekly quota this week, "w7": the account's
+    # observed %, "conf": the model's
     # confidence}. None for an agent off the subscription (API key,
     # Bedrock, another backend) or before the first usage reading.
     quota: Optional[dict] = None
@@ -414,7 +414,7 @@ class MonitorDaemonState:
     state_file_error: Optional[str] = None
 
     # The account's subscription usage, polled by the engine (quota_engine):
-    # {"w7", "w5", "r7", "r5", "w7f", "fetched_at", "src", "plan", "conf",
+    # {"w7", "r7", "w7f", "fetched_at", "src", "plan", "conf",
     # "pp_attributed", "pp_unattributed", "error"}. None without a
     # subscription login, or with quota.enabled off.
     usage: Optional[dict] = None

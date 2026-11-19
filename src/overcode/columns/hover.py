@@ -244,7 +244,7 @@ _CONFIDENCE = {
 
 
 def hover_quota(ctx: ColumnContext):
-    """The quota estimate: this agent's weekly and 5-hour points, the account's readings."""
+    """The quota estimate: this agent's weekly points, the account's reading."""
     from ..quota_model import format_pp
 
     q = ctx.quota
@@ -256,12 +256,9 @@ def hover_quota(ctx: ColumnContext):
         from ..trip import describe
         rows.insert(0, (ctx.e("↺"), f"{format_pp(trip.get('pp7d'))} {describe(trip)} "
                                     "(this week's only, once the week rolls over)"))
-    if q.get("pp5h") is not None:
-        rows.append(("5h", f"{format_pp(q.get('pp5h'))} of the current 5-hour window"))
-    w7, w5 = q.get("w7"), q.get("w5")
+    w7 = q.get("w7")
     if isinstance(w7, (int, float)):
-        five = f", 5-hour {w5:.0f}%" if isinstance(w5, (int, float)) else ""
-        rows.append(("Σ", f"account: weekly {w7:.0f}% used{five} (all surfaces)"))
+        rows.append(("Σ", f"account: weekly {w7:.0f}% used (all surfaces)"))
     conf = q.get("conf") or "prior"
     rows.append(("±", f"model {conf}: {_CONFIDENCE.get(conf, conf)}"))
     return _emoji_legend("Quota (estimate)", rows,

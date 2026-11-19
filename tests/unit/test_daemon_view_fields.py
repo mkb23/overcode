@@ -72,7 +72,7 @@ class TestAQuietFleetPublishesNothing:
         r7 = clock.now.timestamp() + 86400
         daemon.quota = QuotaEngine(
             "agents", store=UsageStore(env / "usage"), account=lambda: "acct",
-            fetch=lambda: {"line": {"w7": 12.0, "w5": 3.0, "r7": r7, "r5": r7 - 80000},
+            fetch=lambda: {"line": {"w7": 12.0, "r7": r7},
                            "plan": "pro"},
             config=lambda: {"enabled": True, "calibration": False, "plan": None,
                             "weekly_usd": None, "weeks": 4, "poll_minutes": 5.0, "breaks": []},

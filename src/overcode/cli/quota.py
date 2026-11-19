@@ -77,8 +77,6 @@ def usage_model(
         print(f"  fit: {model.n_obs} observations ({model.n_ticks} statusline ticks) in "
               f"{model.n_windows} window(s), {model.n_segments} segment(s); σ {model.sigma_pp}pp, "
               f"RMSE {model.rmse_pp}pp{cov}")
-        print(f"  5-hour: {model.five_hour_ratio:.2f} points per weekly point "
-              f"({model.five_hour_n} intervals)")
     samples = status["samples"]
     print(f"  samples (last {cfg['weeks']} weeks): {samples['api']} usage polls, "
           f"{samples['statusline']} statusline ticks"

@@ -63,8 +63,6 @@ UNKNOWN_PLAN_USD = 1000.0
 PRIOR_REL_SD = 0.5
 # Cache reads: prior mean 0, sd this fraction of the base weight
 CACHE_READ_PRIOR_SD = 0.3
-# 5-hour points per weekly point (prior; the engine fits it from data)
-FIVE_HOUR_RATIO_PRIOR = 8.0
 
 PriceRow = Tuple[Dict[str, float], Optional[Dict[str, float]]]
 PriceFn = Callable[[Optional[str]], PriceRow]
@@ -187,8 +185,6 @@ class QuotaModel:
     rmse_pp: Optional[float] = None
     coverage: Optional[float] = None  # share of polls whose interval held the prediction
     sigma_pp: Optional[float] = None
-    five_hour_ratio: float = FIVE_HOUR_RATIO_PRIOR
-    five_hour_n: int = 0
     notes: list = field(default_factory=list)
 
     def predict(self, feats: Mapping[str, float]) -> float:

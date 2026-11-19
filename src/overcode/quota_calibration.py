@@ -40,10 +40,6 @@ moved (a credits period bills money, not quota); a plan change and a
 configured limit change (``breaks``) start a new window. Lines older than
 the history the caller passes are its business (2–4 rolling weeks).
 
-The 5-hour window gets one number, the ratio of 5-hour to weekly points
-(``five_hour_ratio``): the ratio of their summed rises over intervals
-inside one 5-hour window.
-
 Pure: lists in, a ``QuotaModel`` out.
 """
 
@@ -55,7 +51,6 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .quota_model import (
     FEATURES,
-    FIVE_HOUR_RATIO_PRIOR,
     PriceFn,
     QuotaModel,
     features,
@@ -120,7 +115,7 @@ def observations(lines: Iterable[Mapping], *, price_fn: Optional[PriceFn] = None
 
     A line (``quota_engine`` writes them)::
 
-        {"t", "src": "api" | "statusline", "w7", "w5", "r7", "r5", "plan",
+        {"t", "src": "api" | "statusline", "w7", "r7", "plan",
          "credits", "surf"?, "x": {model: {kind: tokens}}, "prev"?, "dt"?}
 
     ``x`` is the fleet's cumulative tokens since the window began.
@@ -425,37 +420,3 @@ def fit(obs: List[Obs], prior: QuotaModel, *, now: Optional[float] = None,
     model.notes = notes
     return model
 
-
-def five_hour_ratio(lines: Iterable[Mapping], prior: float = FIVE_HOUR_RATIO_PRIOR,
-                    prior_weight_pp: float = 5.0) -> Tuple[float, int]:
-    """5-hour points per weekly point: Σ 5-hour rises / Σ weekly rises over
-    consecutive samples inside one 5-hour window (and one weekly window),
-    with ``prior_weight_pp`` weekly points of prior. Returns (ratio, intervals)."""
-    rows = sorted((ln for ln in lines if isinstance(ln, Mapping)
-                   and isinstance(ln.get("t"), (int, float))), key=lambda ln: ln["t"])
-    up5 = up7 = 0.0
-    n = 0
-    prev = None
-    for line in rows:
-        if prev is not None and _same(prev, line, "r5") and _same(prev, line, "r7"):
-            d5 = _diff(line, prev, "w5")
-            d7 = _diff(line, prev, "w7")
-            if d5 is not None and d7 is not None and d5 >= 0 and d7 >= 0 and (d5 or d7):
-                up5 += d5
-                up7 += d7
-                n += 1
-        prev = line
-    ratio = (up5 + prior * prior_weight_pp) / (up7 + prior_weight_pp)
-    return ratio, n
-
-
-def _same(a: Mapping, b: Mapping, key: str) -> bool:
-    x, y = a.get(key), b.get(key)
-    return isinstance(x, (int, float)) and isinstance(y, (int, float)) and abs(x - y) < 600
-
-
-def _diff(a: Mapping, b: Mapping, key: str) -> Optional[float]:
-    x, y = a.get(key), b.get(key)
-    if isinstance(x, (int, float)) and isinstance(y, (int, float)) and x < 100 and y < 100:
-        return float(x) - float(y)
-    return None

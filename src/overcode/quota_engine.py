@@ -27,7 +27,7 @@ account (``quota.poll_minutes``, at least 5; a 429 backs off, honouring
 ``Retry-After``); a fresh enough line another daemon wrote is taken
 instead. A poll's line::
 
-    {"t", "src": "api", "w7", "w5", "r7", "r5", "w7f"?, "credits"?, "surf"?,
+    {"t", "src": "api", "w7", "r7", "w7f"?, "credits"?, "surf"?,
      "plan", "x": {model: {kind: n}}}
 
 ``x`` is the fleet's tokens since the weekly window began (``r7`` − 7
@@ -45,11 +45,11 @@ yields ``{"t", "w7", "r7", ...}`` samples; the engine stamps ``x``.
 thread, over ``quota.weeks`` of history (``quota_calibration``), and is
 saved to ``model.json``.
 
-**The view.** Per agent: ``{"pp7d", "pp5h", "w7", "w5", "conf"}``: its
-predicted share of the weekly quota this week (its tokens since the weekly
-reset) and of the current 5-hour window, the account's observed figures and
-the model's confidence. It changes only when the agent's tokens, the model
-or the observed figures do. The fleet's ``usage``: the latest observation,
+**The view.** Per agent: ``{"pp7d", "w7", "conf"}``: its predicted share
+of the weekly quota this week (its tokens since the weekly reset), the
+account's observed figure and the model's confidence. (Claude dropped the
+5-hour window in 2026-11: the API sends ``"five_hour": null``.) It
+changes only when the agent's tokens, the model or the observed figure do. The fleet's ``usage``: the latest observation,
 the plan, and the attributed / unattributed split of the weekly figure.
 """
 
@@ -76,7 +76,6 @@ except ImportError:  # pragma: no cover - Windows
 logger = logging.getLogger(__name__)
 
 WEEK = 7 * 86400.0
-FIVE_HOURS = 5 * 3600.0
 FLUSH_SECONDS = 60.0
 FIT_INTERVAL_SECONDS = 3600.0
 MAX_BACKOFF_SECONDS = 3600.0
@@ -183,12 +182,10 @@ def parse_usage(data: Mapping) -> Optional[dict]:
     if not isinstance(data, Mapping):
         return None
     week = data.get("seven_day") if isinstance(data.get("seven_day"), Mapping) else {}
-    five = data.get("five_hour") if isinstance(data.get("five_hour"), Mapping) else {}
     w7 = _pct(week.get("utilization"))
     if w7 is None:
         return None
-    line = {"w7": w7, "r7": _epoch(week.get("resets_at")),
-            "w5": _pct(five.get("utilization")), "r5": _epoch(five.get("resets_at"))}
+    line = {"w7": w7, "r7": _epoch(week.get("resets_at"))}
     for key in ("seven_day_fable", "seven_day_opus"):
         value = data.get(key)
         if isinstance(value, Mapping) and _pct(value.get("utilization")) is not None:
@@ -206,24 +203,21 @@ def parse_usage(data: Mapping) -> Optional[dict]:
 
 
 def parse_statusline(sample: Mapping) -> Optional[dict]:
-    """The weekly / 5-hour figures of one statusline sample, None without them."""
+    """The weekly figure of one statusline sample, None without it."""
     rl = sample.get("rl") if isinstance(sample, Mapping) else None
     if not isinstance(rl, Mapping):
         return None
     week = rl.get("seven_day") if isinstance(rl.get("seven_day"), Mapping) else {}
-    five = rl.get("five_hour") if isinstance(rl.get("five_hour"), Mapping) else {}
     w7 = _pct(week.get("used_percentage", week.get("utilization")))
     t = sample.get("t")
     if w7 is None or not isinstance(t, (int, float)):
         return None
-    return {"t": float(t), "w7": w7, "r7": _epoch(week.get("resets_at")),
-            "w5": _pct(five.get("used_percentage", five.get("utilization"))),
-            "r5": _epoch(five.get("resets_at"))}
+    return {"t": float(t), "w7": w7, "r7": _epoch(week.get("resets_at"))}
 
 
 class SampleSource(Protocol):
     """A finer ground-truth source (e.g. a future header feed): new samples
-    since the last call, each ``{"t", "w7", "r7", "w5"?, "r5"?, "src"}``."""
+    since the last call, each ``{"t", "w7", "r7", "src"}``."""
 
     def poll(self, now: float) -> Iterable[dict]: ...
 
@@ -524,12 +518,9 @@ class QuotaEngine:
         self._marks_dirty = False
         # windows and totals
         self.start7: Optional[float] = None
-        self.start5: Optional[float] = None
         self._tail_offsets: Dict[str, int] = {}
         self.tot7: Dict[str, dict] = {}
-        self.tot5: Dict[str, dict] = {}
         self.fleet7: Dict[str, dict] = {}
-        self.fleet5: Dict[str, dict] = {}
         self._tokens_version = 0
         # ground truth
         self.latest: Optional[dict] = None
@@ -680,32 +671,23 @@ class QuotaEngine:
         if self.start7 is not None and t >= self.start7:
             qm.add_tokens(self.tot7.setdefault(sid, {}), tok)
             qm.add_tokens(self.fleet7, tok)
-        if self.start5 is not None and t >= self.start5:
-            qm.add_tokens(self.tot5.setdefault(sid, {}), tok)
-            qm.add_tokens(self.fleet5, tok)
         self._tokens_version += 1
 
     def _tail_tokens(self) -> None:
         if self.start7 is None:
             return
-        for row in self.store.tail_tokens(self._tail_offsets, min(self.start7, self.start5 or self.start7)):
+        for row in self.store.tail_tokens(self._tail_offsets, self.start7):
             self._apply_row(row)
 
-    def _set_windows(self, r7: Optional[float], r5: Optional[float]) -> None:
+    def _set_windows(self, r7: Optional[float]) -> None:
         start7 = r7 - WEEK if isinstance(r7, (int, float)) else None
-        start5 = r5 - FIVE_HOURS if isinstance(r5, (int, float)) else None
         if start7 is None:
             return
         # The API's stamp jitters by seconds: only a real move rebuilds
-        moved7 = self.start7 is None or abs(start7 - self.start7) > 600
-        moved5 = start5 is not None and (self.start5 is None or abs(start5 - self.start5) > 600)
-        if not moved7 and not moved5:
+        if self.start7 is not None and abs(start7 - self.start7) <= 600:
             return
-        if moved7:
-            self.start7 = start7
-        if moved5:
-            self.start5 = start5
-        self.tot7, self.tot5, self.fleet7, self.fleet5 = {}, {}, {}, {}
+        self.start7 = start7
+        self.tot7, self.fleet7 = {}, {}
         self._tail_offsets = {}
         self._tokens_version += 1
         self._tail_tokens()
@@ -727,7 +709,7 @@ class QuotaEngine:
         self.latest.pop("x", None)
         if line.get("plan"):
             self.plan = line["plan"]
-        self._set_windows(line.get("r7"), line.get("r5"))
+        self._set_windows(line.get("r7"))
 
     def _maybe_poll(self, now: float, cfg: Mapping) -> None:
         if now < self.next_poll_at or (self._poll_thread is not None and self._poll_thread.is_alive()):
@@ -799,7 +781,7 @@ class QuotaEngine:
         line.setdefault("t", now)
         line.setdefault("src", "other")
         line["plan"] = self._plan()
-        self._set_windows(line.get("r7"), line.get("r5"))
+        self._set_windows(line.get("r7"))
         if self.start7 is not None:
             line["x"] = self._with_pending(self.fleet7)
         try:
@@ -907,22 +889,20 @@ class QuotaEngine:
                 continue
             sid = session.id
             key = (self._tokens_version, self._model_version, id(model),
-                   latest.get("w7"), latest.get("w5"), plan)
+                   latest.get("w7"), plan)
             if self._view_keys.get(sid) == key and sid in self.views:
                 views[sid] = self.views[sid]
                 continue
             self._view_keys[sid] = key
             pp7 = model.predict_tokens(self._with_pending(self.tot7.get(sid, {}), sid), self.price_fn)
-            pp5 = model.predict_tokens(self._with_pending(self.tot5.get(sid, {}), sid), self.price_fn)
-            view = {"pp7d": round(pp7, 2), "pp5h": round(pp5 * model.five_hour_ratio, 2),
-                    "w7": latest.get("w7"), "w5": latest.get("w5"), "conf": model.confidence}
+            view = {"pp7d": round(pp7, 2), "w7": latest.get("w7"), "conf": model.confidence}
             old = self.views.get(sid)
             views[sid] = old if old == view else view
         self.views = views
         attributed = model.predict_tokens(self._with_pending(self.fleet7), self.price_fn)
         w7 = latest.get("w7")
         usage = {
-            "w7": w7, "w5": latest.get("w5"), "r7": latest.get("r7"), "r5": latest.get("r5"),
+            "w7": w7, "r7": latest.get("r7"),
             "w7f": latest.get("w7f"), "fetched_at": _t(latest), "src": latest.get("src"),
             "plan": plan, "conf": model.confidence,
             "pp_attributed": round(attributed, 2),
@@ -980,15 +960,12 @@ def _epoch_local(value: Any) -> Optional[float]:
 def fit_account(store: UsageStore, account: str, prior: qm.QuotaModel, *, now: float,
                 weeks: int = 4, breaks=(), price_fn: Optional[qm.PriceFn] = None) -> qm.QuotaModel:
     """Fit the model on ``account``'s last ``weeks`` of history."""
-    from .quota_calibration import fit, five_hour_ratio, observations, thin
+    from .quota_calibration import fit, observations, thin
 
     lines = store.read_history(account, since=now - weeks * WEEK)
     obs, report = observations(lines, price_fn=price_fn, breaks=breaks)
     model = fit(thin(obs), prior, now=now, report=report)
     model.fitted_at = now
-    ratio, n = five_hour_ratio(lines)
-    model.five_hour_ratio = round(ratio, 4)
-    model.five_hour_n = n
     return model
 
 

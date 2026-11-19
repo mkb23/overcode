@@ -466,7 +466,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   visible=lambda ctx: ctx.fleet.any_has_quota,
                   header="Q%", name="Weekly Quota",
                   description="Estimated share of the weekly subscription quota this week, "
-                              "in percentage points (hover: 5-hour window, model confidence)",
+                              "in percentage points (hover: account reading, model confidence)",
                   sort_key=quota_pp,
                   sort_desc=True, hover=hover_quota,
                   virtual_render=render_virtual_quota),

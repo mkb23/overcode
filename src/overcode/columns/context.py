@@ -185,7 +185,7 @@ class ColumnContext:
     workflow_progress: Optional[list] = None
     # The weft tasks it holds a live claim on (engine: weft_claims)
     weft_claims: Optional[list] = None
-    # Its subscription quota estimate (engine: quota): pp7d, pp5h, w7, w5, conf
+    # Its subscription quota estimate (engine: quota): pp7d, w7, conf
     quota: Optional[dict] = None
     # Its trip counter (engine: trip, trip.trip_view): spend since its trip
     # was reset; the spend cells show it, marked ↺. None if never reset.

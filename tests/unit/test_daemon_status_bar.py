@@ -377,7 +377,7 @@ class TestDaemonStatusBarRenderSpinStats:
                                  quota={"pp7d": 1.25})
         s2 = _make_session_state(session_id="s2", name="a2", current_status="running",
                                  quota={"pp7d": 0.5})
-        state = _make_monitor_state(sessions=[s1, s2], usage={"w7": 37.0, "w5": 12.0})
+        state = _make_monitor_state(sessions=[s1, s2], usage={"w7": 37.0})
         widget = _make_bare_status_bar(monitor_state=state, show_cost="quota")
         plain = widget.render().plain
         assert "Σ1.75% wk" in plain
@@ -569,7 +569,6 @@ class TestDaemonStatusBarRenderUsage:
     def test_usage_snapshot_shown(self):
         from overcode.usage_monitor import UsageSnapshot
         snap = UsageSnapshot(
-            five_hour_pct=45.0,
             seven_day_pct=60.0,
             fetched_at=datetime.now() - timedelta(seconds=30),
         )
@@ -577,26 +576,10 @@ class TestDaemonStatusBarRenderUsage:
         result = widget.render()
         plain = result.plain
         assert "Usage:" in plain
-        assert "5h:" in plain
-        assert "45%" in plain
+        assert "5h" not in plain
         assert "7d:" in plain
         assert "60%" in plain
         assert "ago" in plain
-
-    def test_usage_snapshot_with_5h_reset(self):
-        from overcode.usage_monitor import UsageSnapshot
-        future = (datetime.now(timezone.utc) + timedelta(hours=2, minutes=30)).isoformat()
-        snap = UsageSnapshot(
-            five_hour_pct=45.0,
-            seven_day_pct=60.0,
-            five_hour_resets_at=future,
-        )
-        widget = _make_bare_status_bar(_usage_snapshot=snap)
-        result = widget.render()
-        plain = result.plain
-        assert "↻" in plain
-        # ~2.5h remaining
-        assert "2.5h" in plain
 
     def test_usage_snapshot_error(self):
         from overcode.usage_monitor import UsageSnapshot

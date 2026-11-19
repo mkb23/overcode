@@ -12,7 +12,6 @@ from quota_synth import TRUE_THETA, price_fn, simulate  # noqa: E402
 
 from overcode.quota_calibration import (  # noqa: E402
     Obs,
-    five_hour_ratio,
     fit,
     invert,
     nnls_quadratic,
@@ -215,20 +214,3 @@ class TestFit:
         model = fit(thin(obs), prior_model("max20x"), report=report)
         assert set(model.sd) == set(FEATURES)
         assert all(v >= 0 and math.isfinite(v) for v in model.sd.values())
-
-
-class TestFiveHourRatio:
-    def test_ratio_from_rises_in_one_window(self):
-        lines = [
-            {"t": 0, "w5": 10, "w7": 1, "r5": 18000, "r7": 600000},
-            {"t": 60, "w5": 18, "w7": 2, "r5": 18000, "r7": 600000},
-            {"t": 120, "w5": 26, "w7": 3, "r5": 18000, "r7": 600000},
-            # a 5-hour reset in between: not compared
-            {"t": 20000, "w5": 2, "w7": 4, "r5": 36000, "r7": 600000},
-        ]
-        ratio, n = five_hour_ratio(lines, prior=8.0, prior_weight_pp=0.0001)
-        assert n == 2
-        assert ratio == pytest.approx(8.0, rel=1e-3)
-
-    def test_prior_without_data(self):
-        assert five_hour_ratio([], prior=6.0) == (6.0, 0)

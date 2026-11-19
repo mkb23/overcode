@@ -71,11 +71,10 @@ class TestColumn:
         assert self.col.render_plain(_ctx(None)) is None
         assert self.col.sort_key(_ctx({"pp7d": 2.5})) == 2.5
 
-    def test_hover_has_weekly_five_hour_and_confidence(self):
-        text = self.col.hover(_ctx({"pp7d": 1.37, "pp5h": 9.1, "w7": 37, "w5": 12, "conf": "prior"})).plain
+    def test_hover_has_weekly_and_confidence(self):
+        text = self.col.hover(_ctx({"pp7d": 1.37, "w7": 37, "conf": "prior"})).plain
         assert "1.37% of the weekly quota" in text
-        assert "9.10% of the current 5-hour window" in text
-        assert "weekly 37%" in text and "5-hour 12%" in text
+        assert "weekly 37%" in text and "5-hour" not in text
         assert "estimate" in text.lower() and "not fitted yet" in text
         assert self.col.hover(_ctx(None)) is None
 
@@ -96,8 +95,8 @@ class TestEngineToRow:
 
     def test_status_bar_takes_the_engine_reading(self):
         from overcode.tui_widgets.daemon_status_bar import engine_usage_snapshot
-        snap = engine_usage_snapshot({"w7": 37.0, "w5": 12.0, "r7": T0, "r5": T0 - 60, "fetched_at": T0})
-        assert snap.seven_day_pct == 37.0 and snap.five_hour_pct == 12.0
+        snap = engine_usage_snapshot({"w7": 37.0, "r7": T0, "fetched_at": T0})
+        assert snap.seven_day_pct == 37.0
         assert snap.seven_day_resets_at.startswith("2027-")
         assert engine_usage_snapshot(None) is None and engine_usage_snapshot({"w7": None}) is None
 
@@ -148,8 +147,8 @@ def usage_files(tmp_path, monkeypatch):
     monkeypatch.setattr("overcode.quota_engine.default_account", lambda: "acct1")
     store = UsageStore(root)
     now = time.time()
-    store.append_history("acct1", {"t": now - 60, "src": "api", "w7": 10.0, "w5": 3.0,
-                                   "r7": now + 86400, "r5": now + 3600, "plan": "max20x"})
+    store.append_history("acct1", {"t": now - 60, "src": "api", "w7": 10.0,
+                                   "r7": now + 86400, "plan": "max20x"})
     store.append_tokens([
         {"t": now - 120, "sid": "a", "code": "client-a", "acct": "acct1",
          "tok": {"claude-opus-4-1": {"out": 206_667}}},   # $15.50 of list output

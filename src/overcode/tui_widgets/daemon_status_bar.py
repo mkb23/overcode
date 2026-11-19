@@ -92,9 +92,7 @@ def engine_usage_snapshot(usage):
     from ..usage_monitor import UsageSnapshot
     fetched = usage.get("fetched_at")
     return UsageSnapshot(
-        five_hour_pct=float(usage.get("w5") or 0.0),
         seven_day_pct=float(usage["w7"]),
-        five_hour_resets_at=_iso_utc(usage.get("r5")),
         seven_day_resets_at=_iso_utc(usage.get("r7")),
         fetched_at=(datetime.fromtimestamp(fetched) if isinstance(fetched, (int, float))
                     else datetime.now()),
@@ -180,21 +178,6 @@ class DaemonStatusBar(Static):
         return f"{format_duration(delta)} ago"
 
     @staticmethod
-    def _format_reset_in(resets_at: Optional[str]) -> str:
-        """Return a short duration until the given ISO reset time, or '' if unknown."""
-        if not resets_at:
-            return ""
-        try:
-            dt = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            return ""
-        now = datetime.now(timezone.utc) if dt.tzinfo else datetime.now()
-        remaining = (dt - now).total_seconds()
-        if remaining <= 0:
-            return "0s"
-        return format_duration(remaining)
-
-    @staticmethod
     def _usage_pct_style(pct: float) -> str:
         """Return a Rich style string based on usage percentage."""
         if pct >= 90:
@@ -226,12 +209,7 @@ class DaemonStatusBar(Static):
             if snap.error:
                 content.append("--", style="dim")
             else:
-                content.append("5h:", style="dim")
-                content.append(f"{snap.five_hour_pct:.0f}%", style=self._usage_pct_style(snap.five_hour_pct))
-                reset_in = self._format_reset_in(snap.five_hour_resets_at)
-                if reset_in:
-                    content.append(f"(↻{reset_in})", style="dim")
-                content.append(" 7d:", style="dim")
+                content.append("7d:", style="dim")
                 content.append(f"{snap.seven_day_pct:.0f}%", style=self._usage_pct_style(snap.seven_day_pct))
             queried_ago = self._format_queried_ago(snap.fetched_at)
             if queried_ago:

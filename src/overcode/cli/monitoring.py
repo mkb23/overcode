@@ -597,7 +597,7 @@ app.add_typer(usage_app, name="usage")
 
 @usage_app.callback()
 def usage(ctx: typer.Context):
-    """Show Claude Code subscription usage (5h session + 7d weekly limits).
+    """Show Claude Code subscription usage (the 7d weekly limit).
 
     Subcommands: `model` (the fitted quota model), `calibration on|off`.
     """
@@ -645,11 +645,9 @@ def usage(ctx: typer.Context):
         except (ValueError, TypeError):
             return f" [dim](resets at {reset_at})[/dim]"
 
-    five_h_style = _pct_style(snap.five_hour_pct)
     seven_d_style = _pct_style(snap.seven_day_pct)
 
     rprint("\n[bold]Claude Code Usage[/bold]\n")
-    rprint(f"  5h session:  [{five_h_style}]{snap.five_hour_pct:.0f}%[/{five_h_style}]{_fmt_reset(snap.five_hour_resets_at)}")
     rprint(f"  7d weekly:   [{seven_d_style}]{snap.seven_day_pct:.0f}%[/{seven_d_style}]{_fmt_reset(snap.seven_day_resets_at)}")
 
     if snap.opus_pct is not None or snap.sonnet_pct is not None:
