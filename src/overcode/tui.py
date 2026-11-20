@@ -1647,21 +1647,25 @@ class SupervisorTUI(
         self._update_column_headers()
 
     def _fit_column_widths(self, widths: list, row_width: int) -> list:
-        """The aligned widths, fitted to the row (fit_widths). At full, the
-        columns that only full adds (hidden at high, and not switched on
-        here) give way first, so a grid wider than the row loses those
-        rather than whatever sits at its right end (CTX, model...)."""
+        """The aligned widths, fitted to the row (fit_widths). Columns that
+        give way (``gives_way``: tags) go first at every level; at full, so
+        do the columns that only full adds (hidden at high, and not switched
+        on here). A grid wider than the row loses those rather than whatever
+        sits at its right end (CTX, model, the burn rate...)."""
         from .summary_columns import SUMMARY_COLUMNS, fit_widths, resolve_column_visible
         level = self.SUMMARY_LEVELS[self.summary_level_index]
-        if level != "full":
-            return list(widths)
         overrides = self._current_column_overrides(level)
-        high = self._prefs.column_config.get("high", {})
         shown = [c for c in SUMMARY_COLUMNS
                  if resolve_column_visible(c, level, overrides, self.uniform_columns)]
         if len(shown) != len(widths):
             return list(widths)
-        droppable = [overrides.get(c.id) is not True and not resolve_column_visible(c, "high", high)
+        if level != "full":
+            if not any(c.gives_way for c in shown):
+                return list(widths)
+            return fit_widths(widths, [c.gives_way for c in shown], row_width)
+        high = self._prefs.column_config.get("high", {})
+        droppable = [c.gives_way or (overrides.get(c.id) is not True
+                                     and not resolve_column_visible(c, "high", high))
                      for c in shown]
         return fit_widths(widths, droppable, row_width)
 

@@ -347,7 +347,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `V` | Edit agent priority value |
 | `B` | Edit cost budget |
 | `c` | Sync to main + clear (double-press to confirm) |
-| `T` | Filter agents by tag |
+| `T` | Filter agents by tag (the TAG column lists each agent's `#tags` while they differ; it gives way first on a narrow row) |
 | `H` | Configure heartbeat |
 | `K` | Toggle detection mode (hooks/polling) |
 | `Ctrl+T` | Toggle time context |

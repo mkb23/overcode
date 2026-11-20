@@ -2354,6 +2354,17 @@ class TestListExtended:
         assert "test-agent" in result.output
         assert "Working on code" in result.output
 
+    def test_list_shows_tags_while_they_differ(self, fleet):
+        """The TAG column (#356): each agent's #tags, "-" for none."""
+        fleet.add_with_history("tagged", tags=["infra", "paper"])
+        fleet.add_with_history("untagged")
+        with _dispatcher_seeing("running"):
+            result = runner.invoke(app, ["list"], env={"COLUMNS": "400"})
+        assert result.exit_code == 0, result.output
+        line = next(ln for ln in result.output.splitlines() if "tagged" in ln and "un" not in ln)
+        assert "#infra #paper" in line
+        assert "#" not in next(ln for ln in result.output.splitlines() if "untagged" in ln)
+
     def test_list_terminated_shows_cleanup_hint(self, fleet):
         """List shows cleanup hint when terminated sessions exist."""
         fleet.add_with_history(status="terminated", window=False)

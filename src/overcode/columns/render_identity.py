@@ -229,3 +229,44 @@ def render_host_plain(ctx: ColumnContext) -> Optional[str]:
     if not ctx.has_sisters:
         return None
     return ctx.source_host or ctx.local_hostname
+
+
+# Characters of tags the TAG cell shows, by detail level ("+N" counts the rest)
+TAGS_CHARS = {"low": 12, "med": 16, "high": 22, "full": 32}
+
+
+def agent_tags(ctx: ColumnContext) -> list:
+    """Its tags (#356), in the order they were added."""
+    return [t for t in getattr(ctx.session, "tags", None) or () if isinstance(t, str) and t]
+
+
+def render_tags(ctx: ColumnContext) -> ColumnOutput:
+    """Its tags as ``#name``: " #infra #paper +1". As many as fit the
+    detail level's width (TAGS_CHARS), "+N" for the rest (hover: all of
+    them); a first tag too long alone is cut with "…". No tags: " -"."""
+    tags = agent_tags(ctx)
+    if not tags:
+        return [(" -", f"dim{ctx.bg}")]
+    budget = TAGS_CHARS.get(ctx.summary_detail, 16)
+    shown: list = []
+    used = 0
+    for i, tag in enumerate(tags):
+        word = f"#{tag}"
+        rest = len(tags) - i - 1
+        need = used + (1 if shown else 0) + len(word)
+        if need + (len(f" +{rest}") if rest else 0) <= budget:
+            shown.append(word)
+            used = need
+            continue
+        if not shown:
+            room = budget - (len(f" +{rest}") if rest else 0)
+            shown.append(word[:max(room - 1, 2)] + "…")
+        break
+    more = len(tags) - len(shown)
+    text = " " + " ".join(shown) + (f" +{more}" if more else "")
+    return [(text, f"cyan{ctx.bg}")]
+
+
+def render_tags_plain(ctx: ColumnContext) -> Optional[str]:
+    """Every tag, for ``overcode list``'s plain text and uniform_columns."""
+    return " ".join(f"#{t}" for t in agent_tags(ctx)) or None

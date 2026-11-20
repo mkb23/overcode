@@ -179,6 +179,19 @@ def hover_workflow(ctx: ColumnContext):
                          "how many it starts.")
 
 
+def hover_tags(ctx: ColumnContext):
+    """The TAG cell's popup: every tag, the ones the cell cut off too."""
+    from rich.text import Text
+    from .render_identity import agent_tags
+    tags = agent_tags(ctx)
+    if not tags:
+        return None
+    text = Text("Tags", style="bold")
+    for tag in tags:
+        text.append(f"\n#{tag}", style="cyan")
+    return text
+
+
 def hover_weft(ctx: ColumnContext):
     """The weft cell's popup: every task it holds, and until when."""
     from ..weft_claims import describe_claim

@@ -52,6 +52,7 @@ class FleetFlags:
     any_has_quota: bool = False  # a subscription agent with a quota estimate (Q%)
     any_has_workflow: bool = False  # an agent with a Workflow run going (WF, #498)
     any_has_weft: bool = False  # an agent holding a live weft claim (WFT)
+    any_has_tags: bool = False  # an agent with a tag (#356; the TAG column)
     # The expanded delegated rows hold two or more agent types (TYPE): set
     # by the TUI from its swarm lines, never by compute_fleet_flags
     swarm_types_shown: bool = False
@@ -106,6 +107,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
         any_has_quota=any(r.has_quota for r in rows),
         any_has_workflow=any(r.has_workflow for r in rows),
         any_has_weft=any(r.has_weft for r in rows),
+        any_has_tags=any(getattr(s, 'tags', None) for s in sessions),
     )
 
 

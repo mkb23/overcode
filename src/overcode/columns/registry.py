@@ -20,6 +20,7 @@ from .hover import (
     hover_subtree_cost,
     hover_status_detail,
     hover_subagents,
+    hover_tags,
     hover_weft,
     hover_workflow,
     hover_wrapper,
@@ -57,6 +58,8 @@ from .render_identity import (
     render_sleep_countdown,
     render_status_plain,
     render_status_symbol,
+    render_tags,
+    render_tags_plain,
     render_time_in_state,
     render_unvisited_alert,
 )
@@ -248,6 +251,13 @@ def _sort_workflow(ctx: ColumnContext) -> Optional[tuple]:
     return (run.get("phase_index") or 0, run.get("done") or 0)
 
 
+def _sort_tags(ctx: ColumnContext) -> Optional[str]:
+    """By first tag, A→Z, as the tag sort (#538) groups them; untagged last."""
+    from .render_identity import agent_tags
+    tags = agent_tags(ctx)
+    return tags[0].lower() if tags else None
+
+
 def _sort_weft(ctx: ColumnContext) -> Optional[tuple]:
     """Stuck claims first, then most held."""
     claims = ctx.weft_claims
@@ -333,6 +343,19 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Machine the agent runs on (shown when sister hosts are configured)",
                   sort_key=lambda ctx: _lower(ctx.source_host or ctx.local_hostname),
                   hide_when_uniform=True),
+
+    # Its tags (#356): shown while some agent has one and the agents' tags
+    # differ (all the same: the header says so instead). Near the name, but
+    # it gives way first on a row too narrow for the grid
+    SummaryColumn(id="tags", group="identity", detail_levels=ALL, render=render_tags,
+                  label="Tags", render_plain=render_tags_plain,
+                  visible=lambda ctx: ctx.fleet.any_has_tags,
+                  header="TAG", name="Tags",
+                  description="Its tags as #name, in the order they were added; +N for "
+                              "those that do not fit (hover: all of them). Gives way first "
+                              "on a row too narrow for every column",
+                  sort_key=_sort_tags, hide_when_uniform=True, gives_way=True,
+                  hover=hover_tags),
 
     # The running Workflow run's progress (#498). After the name, so a
     # narrow terminal crops it before the agent's identity. No width while

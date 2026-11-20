@@ -1633,6 +1633,7 @@ class TestComputeFleetFlags:
             "any_has_quota": self._row(has_quota=True),
             "any_has_workflow": self._row(has_workflow=True),
             "any_has_weft": self._row(has_weft=True),
+            "any_has_tags": self._row(tags=["infra"]),
         }
         # swarm_types_shown comes from the TUI's expanded lines, never from rows
         assert set(cases) == _FLEET_FIELDS - {"swarm_types_shown"}
@@ -1842,3 +1843,58 @@ class TestKindGap:
         with patch.object(render_virtual, "_line", return_value=line):
             (text, _), = render_virtual.render_virtual_kind(_make_ctx())
         assert text.endswith(" ") and len(text) == 6
+
+
+# ===========================================================================
+# TAG: an agent's tags (#356)
+# ===========================================================================
+
+class TestTagsColumn:
+    def _cell(self, tags, detail="full"):
+        from overcode.columns.render_identity import render_tags
+        (text, style), = render_tags(_make_ctx(session=_make_session(tags=tags),
+                                               summary_detail=detail))
+        return text, style
+
+    def test_tags_as_hashtags_in_their_order(self):
+        assert self._cell(["infra", "paper"])[0] == " #infra #paper"
+
+    def test_no_tags_is_a_dim_placeholder(self):
+        text, style = self._cell([])
+        assert text == " -" and style.startswith("dim")
+
+    def test_what_does_not_fit_is_counted(self):
+        # low fits 12 characters: "#infra" and " +2", not "#paper" too
+        assert self._cell(["infra", "paper", "urgent"], "low")[0] == " #infra +2"
+        text = self._cell(["infra", "paper", "urgent"], "full")[0]
+        assert text == " #infra #paper #urgent"
+
+    def test_a_first_tag_too_long_is_cut(self):
+        text = self._cell(["an-extremely-long-tag-name", "x"], "low")[0]
+        assert text.endswith("… +1") and len(text) - 1 <= 12
+
+    def test_plain_hover_and_sort(self):
+        from overcode.columns.hover import hover_tags
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        col = next(c for c in SUMMARY_COLUMNS if c.id == "tags")
+        ctx = _make_ctx(session=_make_session(tags=["Paper", "infra"]))
+        assert col.render_plain(ctx) == "#Paper #infra"
+        assert hover_tags(ctx).plain == "Tags\n#Paper\n#infra"
+        assert col.sort_key(ctx) == "paper"  # as the tag sort groups them
+        none = _make_ctx(session=_make_session(tags=[]))
+        assert col.render_plain(none) is None and col.sort_key(none) is None
+        assert hover_tags(none) is None
+
+    def test_shown_only_while_some_agent_has_a_tag_and_gives_way(self):
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        col = next(c for c in SUMMARY_COLUMNS if c.id == "tags")
+        assert col.gives_way and col.hide_when_uniform
+        assert not col.visible(_make_ctx(fleet=FleetFlags()))
+        assert col.visible(_make_ctx(fleet=FleetFlags(any_has_tags=True)))
+
+    def test_one_shared_tag_set_is_uniform(self):
+        from overcode.summary_columns import uniform_columns
+        same = [_make_ctx(session=_make_session(tags=["ui"])) for _ in range(2)]
+        assert uniform_columns(same).get("tags") == "#ui"
+        mixed = same + [_make_ctx(session=_make_session(tags=[]))]
+        assert "tags" not in uniform_columns(mixed)

@@ -163,7 +163,7 @@ async def test_layout_holds_with_trip_counters_in_every_cost_mode(make_tui, widt
                     marked.add(mode)
                 if mode == "quota" and level in ("high", "full") and width >= 200:
                     # 0.84 points over the burn window, in points per hour
-                    assert re.search(r"🔥\d+\.\d\d%/h", line), line
+                    assert re.search(r"🔥\d+\.\d\d%/h", line), (width, level, line)
         assert {"tokens", "cost", "joules", "quota"} <= marked
 
         app.action_toggle_emoji_free()
@@ -514,3 +514,42 @@ async def test_layout_holds_with_weft_claims(make_tui, width):
                 bravo = _row_text(app, "bravo")
                 assert "t-3c9e01" in bravo and "stuck +1" in bravo, (width, level, bravo)
                 assert "t-0a1b2c" in _row_text(app, "charlie"), (width, level)
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_layout_holds_with_tags(make_tui, width):
+    """The TAG cell at every width, detail level and content mode: alpha's
+    long list (cut, +N), bravo's placeholder, charlie's one very long tag."""
+    agents = _named_agents()
+    agents[0].tags = ["infra", "paper-2026", "urgent", "spark", "needs-review"]
+    agents[2].tags = ["an-extremely-long-tag-name-that-cannot-fit"]
+    engine = GridEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(agents, engine=engine, size=(width, 40))
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _settle(pilot)
+        for level in app.SUMMARY_LEVELS:
+            app._set_summary_level(level)
+            await _settle(pilot)
+            for _ in app.SUMMARY_CONTENT_MODES:
+                mode = app.summary_content_mode
+                try:
+                    assert_layout_invariants(app)
+                except AssertionError as e:
+                    raise AssertionError(f"{width} cols, {level}, {mode}: {e}") from e
+                _shot(app, f"layout-tags-{width}-{level}-{mode}")
+                app.action_cycle_summary_content()
+                await _settle(pilot)
+            # It shows where the grid has room; where it has not, it gives
+            # way (0 width) and the columns to its right keep their places
+            from overcode.tui_widgets import ColumnHeader
+            header = app.query_one("#column-headers", ColumnHeader)
+            widths = dict(zip(header.column_ids, header.column_widths))
+            alpha = _row_text(app, "alpha")
+            if widths.get("tags"):
+                assert "#infra" in alpha and "+" in alpha, (width, level, alpha)
+                assert "#an-extrem" in _row_text(app, "charlie"), (width, level)  # cut with …
+            else:
+                assert "#infra" not in alpha, (width, level)
+            if width == 260 and level == "low":
+                assert widths.get("tags"), "room at low on a wide row"
