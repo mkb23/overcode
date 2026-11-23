@@ -8,6 +8,7 @@ stays in the parent's subtree total.
 from collections import deque
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from tests.tmux_doubles import follow_pane
 
 import pytest
 from typer.testing import CliRunner
@@ -249,7 +250,7 @@ class TestFollow:
         sessions.resolve_session_name.return_value = _released_session(True)
         sessions.get_session.return_value = _released_session(False)
         with patch("overcode.follow_mode.SessionManager", return_value=sessions), \
-             patch("overcode.follow_mode._capture_pane", return_value="out"), \
+             follow_pane(return_value="out"), \
              patch("overcode.follow_mode._check_hook_stop", return_value=False), \
              patch("overcode.follow_mode.time.sleep"):
             assert follow_mode.follow_agent("child", "agents") == 0
@@ -272,7 +273,7 @@ class TestFollow:
         sessions.resolve_session_name.return_value = _released_session(False)
         sessions.get_session.return_value = _released_session(False)
         with patch("overcode.follow_mode.SessionManager", return_value=sessions), \
-             patch("overcode.follow_mode._capture_pane", return_value=None), \
+             follow_pane(return_value=None), \
              patch("overcode.follow_mode._check_session_terminated", return_value=True):
             assert follow_mode.follow_agent("child", "agents") == 1  # terminated, as before
 

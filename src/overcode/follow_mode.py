@@ -70,6 +70,26 @@ _wall_clock = time.time
 _monotonic = time.monotonic
 
 
+def _parse_probe(stdout: str, tmux_session: str, window_name) -> Optional[tuple]:
+    """``(activity, signature)`` from one line of ``_PROBE_FORMAT`` output.
+
+    None when the line is short or garbled, or names another window than
+    the one asked for.
+    """
+    parts = stdout.rstrip("\n").split("\t")
+    if len(parts) < 9:
+        return None
+    session, name, index = "\t".join(parts[:-8]), parts[-8], parts[-7]
+    window = str(window_name)
+    if session != tmux_session or (name != window and not (window.isdigit() and index == window)):
+        return None
+    try:
+        activity = int(parts[-6])
+    except ValueError:
+        return None
+    return activity, tuple(parts)
+
+
 def _probe_pane(tmux_session: str, window_name) -> Optional[tuple]:
     """``(activity, signature)`` of the window's pane from ONE ``display-message``.
 
@@ -92,18 +112,43 @@ def _probe_pane(tmux_session: str, window_name) -> Optional[tuple]:
         return None
     if result.returncode != 0:
         return None
-    parts = result.stdout.rstrip("\n").split("\t")
-    if len(parts) < 9:
-        return None
-    session, name, index = "\t".join(parts[:-8]), parts[-8], parts[-7]
-    window = str(window_name)
-    if session != tmux_session or (name != window and not (window.isdigit() and index == window)):
-        return None
+    return _parse_probe(result.stdout, tmux_session, window_name)
+
+
+def _probe_and_capture(
+    tmux_session: str, window_name, lines: int = DEFAULT_CAPTURE_LINES,
+) -> tuple:
+    """``(probe, raw)``: the probe and the capture from ONE tmux invocation.
+
+    ``display-message -p … ; capture-pane -p …`` chained in one command, so
+    a pane that keeps changing (a running child's spinner) costs one spawn
+    per poll, not a probe and then a capture. tmux runs the two back to
+    back in its own loop, so the probe describes exactly the capture that
+    follows it. The first output line is the probe; the rest is byte for
+    byte what :func:`_capture_pane` returns. tmux stops the chain and exits
+    non-zero when the capture cannot find the window (a missing
+    ``session:=name`` makes ``display-message`` answer for another window,
+    but ``capture-pane`` still fails), so ``raw`` is None exactly when
+    :func:`_capture_pane` would have returned None.
+    """
+    target = tmux_window_target(tmux_session, window_name)
     try:
-        activity = int(parts[-6])
-    except ValueError:
-        return None
-    return activity, tuple(parts)
+        result = subprocess.run(
+            [*_build_tmux_cmd(),
+             "display-message", "-p", "-t", target, _PROBE_FORMAT, ";",
+             "capture-pane", "-t", target, "-p", "-S", f"-{lines}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None, None
+    if result.returncode != 0:
+        return None, None
+    line, sep, raw = result.stdout.partition("\n")
+    if not sep:
+        return None, None
+    return _parse_probe(line, tmux_session, window_name), raw
 
 
 # What ChangeGatedCapture.capture returns when the pane cannot have changed
@@ -114,11 +159,17 @@ UNCHANGED = object()
 class ChangeGatedCapture:
     """A follower's pane capture, skipped while the pane cannot have changed.
 
-    Every poll costs one ``display-message`` (:func:`_probe_pane`) at the
-    same rate as before; the 500-line ``capture-pane`` and its parse run only
-    when the probe says the pane may have changed since the last capture. The
-    rule has no same-second blind spot: a capture is skipped only when the
-    probe equals the one taken just before the last capture AND that
+    Every poll costs ONE tmux spawn at the same rate as before. After a poll
+    that captured (or with no earlier probe) the pane is likely still moving
+    (a running child's spinner stamps ``window_activity`` every second), so
+    the probe and the 500-line capture go in one chained invocation
+    (:func:`_probe_and_capture`) and the text is dropped if the probe turns
+    out unchanged. After an unchanged poll only the one-line
+    ``display-message`` probe (:func:`_probe_pane`) runs, and the capture
+    follows only when it moved: that transition poll costs two spawns.
+
+    The rule has no same-second blind spot: a capture is skipped only when
+    the probe equals the one taken just before the last capture AND that
     activity second is strictly before the second the last capture started
     in. Output arriving after that capture started would be stamped with a
     later second, so it moves the probe; output in the same second as the
@@ -132,21 +183,34 @@ class ChangeGatedCapture:
         self._last: Optional[tuple] = None
         self._last_started: float = 0.0
         self._last_mono: float = 0.0
+        self._last_changed = True
         self.captures = 0
         self.skipped = 0
+        self.spawns = 0
+
+    def _unchanged(self, probe: Optional[tuple], mono: float) -> bool:
+        return (probe is not None and self._last is not None
+                and probe[1] == self._last
+                and probe[0] < int(self._last_started)
+                and mono - self._last_mono < self.keepalive_seconds)
 
     def capture(self, tmux_session: str, window_name):
         started = _wall_clock()
         mono = _monotonic()
-        probe = _probe_pane(tmux_session, window_name)
-        if (probe is not None and self._last is not None
-                and probe[1] == self._last
-                and probe[0] < int(self._last_started)
-                and mono - self._last_mono < self.keepalive_seconds):
+        self.spawns += 1
+        if self._last_changed:  # also the first poll, and after a lost probe
+            probe, raw = _probe_and_capture(tmux_session, window_name)
+        else:
+            probe, raw = _probe_pane(tmux_session, window_name), UNCHANGED
+        if self._unchanged(probe, mono):
             self.skipped += 1
+            self._last_changed = False
             return UNCHANGED
-        raw = _capture_pane(tmux_session, window_name)
+        if raw is UNCHANGED:
+            self.spawns += 1
+            raw = _capture_pane(tmux_session, window_name)
         self.captures += 1
+        self._last_changed = True
         if probe is None or raw is None:
             self._last = None
         else:

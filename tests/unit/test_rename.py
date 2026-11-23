@@ -25,6 +25,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from tests.tmux_doubles import follow_pane
 
 import pytest
 
@@ -779,7 +780,7 @@ class TestFollowAcrossRename:
             return {"status": "success"} if name == "beta" else None
 
         with patch.object(follow_mode, "_check_report", side_effect=check_report), \
-                patch.object(follow_mode, "_capture_pane", return_value=""), \
+                follow_pane(return_value=""), \
                 patch.object(follow_mode.time, "sleep"):
             result = follow_mode._poll_for_report(
                 "alpha", "agents", sm, "alpha-sid1", "wait", 0.0, 0.1, deque(),
@@ -805,8 +806,7 @@ class TestFollowAcrossRename:
         captured = []
 
         with patch.object(follow_mode, "SessionManager", return_value=sm), \
-                patch.object(follow_mode, "_capture_pane",
-                             side_effect=lambda s, w: captured.append(w) or "out"), \
+                follow_pane(side_effect=lambda s, w: captured.append(w) or "out"), \
                 patch.object(follow_mode, "_check_hook_stop", return_value=True), \
                 patch.object(follow_mode, "_check_report", return_value={"status": "success"}), \
                 patch.object(follow_mode.time, "sleep"):

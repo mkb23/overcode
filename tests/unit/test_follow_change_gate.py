@@ -16,20 +16,39 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from overcode import follow_mode
-from overcode.follow_mode import UNCHANGED, ChangeGatedCapture, _probe_pane
+from overcode.follow_mode import (
+    UNCHANGED, ChangeGatedCapture, _capture_pane, _probe_and_capture, _probe_pane,
+)
 
 
 @pytest.fixture
 def gate(monkeypatch):
-    """A gate over scripted probes, a counting capture and a settable clock."""
-    state = {"probes": iter(()), "wall": 1000.5, "mono": 0.0, "captures": []}
+    """A gate over scripted probes, counting tmux spawns, with a settable clock.
+
+    ``spawns`` logs each tmux invocation: "both" (probe and capture chained
+    in one), "probe" or "capture". Every capture's text is numbered.
+    """
+    state = {"probes": iter(()), "wall": 1000.5, "mono": 0.0, "spawns": [], "texts": 0}
+
+    def text():
+        state["texts"] += 1
+        return f"text {state['texts']}"
+
+    def probe(session, window):
+        state["spawns"].append("probe")
+        return next(state["probes"])
 
     def capture(session, window):
-        state["captures"].append(window)
-        return f"text {len(state['captures'])}"
+        state["spawns"].append("capture")
+        return text()
 
-    monkeypatch.setattr(follow_mode, "_probe_pane", lambda s, w: next(state["probes"]))
+    def both(session, window, lines=None):
+        state["spawns"].append("both")
+        return next(state["probes"]), text()
+
+    monkeypatch.setattr(follow_mode, "_probe_pane", probe)
     monkeypatch.setattr(follow_mode, "_capture_pane", capture)
+    monkeypatch.setattr(follow_mode, "_probe_and_capture", both)
     monkeypatch.setattr(follow_mode, "_wall_clock", lambda: state["wall"])
     monkeypatch.setattr(follow_mode, "_monotonic", lambda: state["mono"])
 
@@ -43,10 +62,10 @@ def gate(monkeypatch):
 
 class TestChangeGatedCapture:
 
-    def test_first_poll_captures(self, gate):
+    def test_first_poll_captures_in_one_spawn(self, gate):
         g = gate([(999, ("a",))])
         assert g.capture("agents", "w") == "text 1"
-        assert gate.state["captures"] == ["w"]
+        assert gate.state["spawns"] == ["both"]
 
     def test_a_pane_quiet_since_before_the_capture_is_not_captured_again(self, gate):
         g = gate([(999, ("a",))] * 3)
@@ -55,7 +74,10 @@ class TestChangeGatedCapture:
         gate.state["mono"] += 0.5
         assert g.capture("agents", "w") is UNCHANGED
         assert g.capture("agents", "w") is UNCHANGED
-        assert len(gate.state["captures"]) == 1 and g.skipped == 2
+        assert g.captures == 1 and g.skipped == 2
+        # The poll after a capture chains the capture and drops it; once
+        # unchanged, only the probe runs.
+        assert gate.state["spawns"] == ["both", "both", "probe"]
 
     def test_activity_in_the_capture_second_keeps_capturing(self, gate):
         """Output stamped in the second a capture ran may have come after it."""
@@ -75,17 +97,88 @@ class TestChangeGatedCapture:
         gate.state["wall"] = 1001.5
         assert g.capture("agents", "w") == "text 2"
 
+    def test_a_running_pane_costs_one_spawn_per_poll(self, gate):
+        """A spinner moves the activity every second: every poll captures,
+        and each capture is one tmux invocation, not a probe then a capture."""
+        g = gate([(1000 + i, ("a", str(i))) for i in range(10)])
+        for i in range(10):
+            gate.state["wall"] = 1000.5 + i
+            assert g.capture("agents", "w") == f"text {i + 1}"
+        assert gate.state["spawns"] == ["both"] * 10
+        assert g.spawns == 10
+
+    def test_a_change_after_a_quiet_poll_is_captured_on_that_poll(self, gate):
+        g = gate([(999, ("a",)), (999, ("a",)), (999, ("a",)), (1001, ("b",)), (1002, ("c",))])
+        g.capture("agents", "w")
+        g.capture("agents", "w")
+        assert g.capture("agents", "w") is UNCHANGED
+        gate.state["wall"] = 1001.5
+        assert g.capture("agents", "w") == "text 3"   # texts 1-2 were chained
+        gate.state["wall"] = 1002.5
+        assert g.capture("agents", "w") == "text 4"
+        assert gate.state["spawns"] == ["both", "both", "probe", "probe", "capture", "both"]
+
     def test_without_a_probe_answer_every_poll_captures(self, gate):
         g = gate([None, None])
+        assert g.capture("agents", "w") == "text 1"
+        assert g.capture("agents", "w") == "text 2"
+        assert gate.state["spawns"] == ["both", "both"]
+
+    def test_a_probe_lost_after_a_quiet_poll_still_captures(self, gate):
+        """The window went away: the caller still sees the capture's answer."""
+        g = gate([(999, ("a",)), (999, ("a",)), None, None])
         g.capture("agents", "w")
         g.capture("agents", "w")
-        assert len(gate.state["captures"]) == 2
+        assert g.capture("agents", "w") == "text 3"
+        assert g.capture("agents", "w") == "text 4"
+        assert gate.state["spawns"] == ["both", "both", "probe", "capture", "both"]
+
+    def test_a_failed_chained_call_is_none(self, gate, monkeypatch):
+        monkeypatch.setattr(follow_mode, "_probe_and_capture", lambda s, w, lines=None: (None, None))
+        g = gate([])
+        assert g.capture("agents", "w") is None
+        assert g.capture("agents", "w") is None
 
     def test_keepalive_captures_an_unchanged_pane(self, gate):
         g = gate([(999, ("a",))] * 2)
         g.capture("agents", "w")
         gate.state["mono"] += 5.0
         assert g.capture("agents", "w") == "text 2"
+
+
+class TestProbeAndCapture:
+
+    PROBE = "agents\tw\t3\t1000\t5\t0\t1\t80\t24"
+
+    def _run(self, returncode, stdout):
+        result = MagicMock(returncode=returncode, stdout=stdout)
+        with patch("overcode.follow_mode.subprocess.run", return_value=result) as run:
+            out = _probe_and_capture("agents", "w", lines=50)
+        return out, run.call_args.args[0]
+
+    def test_one_tmux_command_chains_the_probe_and_the_capture(self):
+        (probe, raw), argv = self._run(0, self.PROBE + "\nline 1\n\nline 2\n")
+        assert probe == (1000, tuple(self.PROBE.split("\t")))
+        assert raw == "line 1\n\nline 2\n"   # the capture's bytes, untouched
+        cut = argv.index(";")
+        assert argv[cut - 5:cut - 1] == ["display-message", "-p", "-t", "agents:=w"]
+        assert argv[cut + 1:] == ["capture-pane", "-t", "agents:=w", "-p", "-S", "-50"]
+
+    def test_a_failed_chain_is_no_probe_and_no_text(self):
+        """A missing window: display-message answers for another window, then
+        capture-pane fails and tmux exits non-zero."""
+        assert self._run(1, "agents\tother\t2\t1\t0\t0\t0\t80\t24\n")[0] == (None, None)
+
+    def test_another_window_is_no_probe_but_keeps_the_text(self):
+        (probe, raw), _ = self._run(0, self.PROBE.replace("\tw\t", "\tother\t") + "\nx\n")
+        assert probe is None and raw == "x\n"
+
+    def test_no_answer_is_none(self):
+        assert self._run(0, "")[0] == (None, None)
+        import subprocess
+        with patch("overcode.follow_mode.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired(cmd="tmux", timeout=5)):
+            assert _probe_and_capture("agents", "w") == (None, None)
 
 
 class TestProbe:
@@ -128,14 +221,17 @@ class TestFollowLoopWithTheGate:
         captures = []
         monkeypatch.setattr(follow_mode, "_capture_pane",
                             lambda s, w: captures.append(w) or "hello")
+        monkeypatch.setattr(follow_mode, "_probe_and_capture",
+                            lambda s, w, lines=None: ((1, ("same",)), "hello"))
         monkeypatch.setattr(follow_mode, "_check_hook_stop", lambda *a: next(stops))
         monkeypatch.setattr(follow_mode, "_check_report", lambda *a: {"status": "success"})
         monkeypatch.setattr(follow_mode, "_check_session_terminated", lambda *a: False)
         monkeypatch.setattr(follow_mode.time, "sleep", lambda s: None)
 
         assert follow_mode.follow_agent("child", "agents") == 0
-        # One gated capture, two skipped polls, then the final post-Stop capture
-        assert len(captures) == 2
+        # Polls: a chained capture, then two skipped (the first drops its
+        # chained text); then the final post-Stop capture
+        assert len(captures) == 1
         assert capsys.readouterr().out.count("hello") == 1
 
 
@@ -166,6 +262,18 @@ def _settle(g):
 
 
 class TestRealTmux:
+
+    def test_the_chained_capture_is_byte_identical_to_capture_pane(self, server):
+        server.cmd("send-keys", "-t", "agents:=w", "-l", "hello  ")
+        time.sleep(0.3)
+        probe, raw = _probe_and_capture("agents", "w")
+        assert probe == _probe_pane("agents", "w")
+        assert raw == _capture_pane("agents", "w") and "hello" in raw
+
+    def test_a_missing_window_chains_to_nothing(self, server):
+        assert _probe_and_capture("agents", "nope") == (None, None)
+        assert _capture_pane("agents", "nope") is None
+        assert _probe_and_capture("gone", "w") == (None, None)
 
     def test_probe_resolves_only_the_named_window(self, server):
         assert _probe_pane("agents", "w") is not None

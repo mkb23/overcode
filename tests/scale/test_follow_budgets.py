@@ -66,3 +66,53 @@ def test_a_change_is_still_captured_on_the_next_poll(server):
     time.sleep(0.3)
     raw = gate.capture("agents", "w0")
     assert raw is not UNCHANGED and "fresh-line" in raw
+
+
+@pytest.fixture
+def spawns(monkeypatch):
+    """Every tmux invocation follow mode makes, as argv lists."""
+    from overcode import follow_mode
+
+    calls = []
+    real_run = follow_mode.subprocess.run
+
+    def run(argv, *a, **kw):
+        calls.append(argv)
+        return real_run(argv, *a, **kw)
+
+    monkeypatch.setattr(follow_mode.subprocess, "run", run)
+    return calls
+
+
+def test_idle_followers_spawn_once_per_poll(server, spawns):
+    from overcode.follow_mode import ChangeGatedCapture
+
+    gates = [ChangeGatedCapture() for _ in range(FOLLOWERS)]
+    for _ in range(POLLS):
+        for i, gate in enumerate(gates):
+            gate.capture("agents", f"w{i}")
+    assert len(spawns) == FOLLOWERS * POLLS
+
+
+RUNNING_POLLS = 10
+
+
+def test_a_running_child_costs_one_tmux_command_per_poll(server, spawns):
+    """A spinner moves the pane every second, so every poll captures. The
+    probe and the capture go to tmux as one chained command: one spawn per
+    poll, as before the gate (it was two: probe, then capture)."""
+    from overcode.follow_mode import UNCHANGED, ChangeGatedCapture
+
+    server.cmd("new-window", "-d", "-t", "agents", "-n", "busy",
+               "sh", "-c", "while :; do printf .; sleep 0.3; done")
+    time.sleep(0.5)
+    gate = ChangeGatedCapture()
+    seen = 0
+    for _ in range(RUNNING_POLLS):
+        raw = gate.capture("agents", "busy")
+        if raw is not UNCHANGED:
+            assert raw is not None and "." in raw
+            seen += 1
+        time.sleep(0.5)  # follow's poll interval
+    assert seen == RUNNING_POLLS, f"only {seen} of {RUNNING_POLLS} polls captured a running pane"
+    assert len(spawns) == RUNNING_POLLS, f"{len(spawns)} tmux commands for {RUNNING_POLLS} polls"

@@ -173,3 +173,30 @@ class MockTmux:
         windows.setdefault(window_name, {"name": window_name, "placeholder": True})
         return True
 
+
+
+def follow_pane(new=None, **kwargs):
+    """Patch follow mode's pane reads with one fake capture.
+
+    Takes ``patch``'s arguments for ``follow_mode._capture_pane``. The
+    change gate's chained probe-and-capture answers with no probe (as an
+    absent tmux window would) and that fake's text, so every poll reads the
+    fake, as it did before the gate.
+    """
+    from contextlib import ExitStack, contextmanager
+    from unittest.mock import DEFAULT, patch
+
+    from overcode import follow_mode
+
+    @contextmanager
+    def patched():
+        with ExitStack() as stack:
+            fake = stack.enter_context(patch.object(
+                follow_mode, "_capture_pane", DEFAULT if new is None else new, **kwargs))
+            stack.enter_context(patch.object(
+                follow_mode, "_probe_and_capture",
+                lambda s, w, lines=None: (None, follow_mode._capture_pane(s, w))))
+            stack.enter_context(patch.object(follow_mode, "_probe_pane", lambda s, w: None))
+            yield fake
+
+    return patched()

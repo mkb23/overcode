@@ -10,6 +10,7 @@ import pytest
 from collections import deque
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+from tests.tmux_doubles import follow_pane
 
 from overcode.follow_mode import (
     _capture_pane,
@@ -253,7 +254,7 @@ class TestFollowAgent:
             mock_instance.get_session.return_value = mock_session
             mock_sm.return_value = mock_instance
 
-            with patch("overcode.follow_mode._capture_pane", return_value=None):
+            with follow_pane(return_value=None):
                 with patch("overcode.follow_mode._check_session_terminated", return_value=True):
                     result = follow_agent("test-agent", "agents")
 
@@ -285,7 +286,7 @@ class TestFollowAgent:
             mock_instance.get_session.return_value = mock_session
             mock_sm.return_value = mock_instance
 
-            with patch("overcode.follow_mode._capture_pane", side_effect=mock_capture):
+            with follow_pane(side_effect=mock_capture):
                 with patch("overcode.follow_mode._check_hook_stop", side_effect=mock_hook_stop):
                     with patch("overcode.follow_mode._check_report", return_value=report):
                         with patch("overcode.follow_mode.time.sleep"):
@@ -340,7 +341,7 @@ class TestPollForReport:
 
         with patch("overcode.follow_mode._check_report", return_value=None):
             with patch("overcode.follow_mode._check_session_terminated", return_value=False):
-                with patch("overcode.follow_mode._capture_pane", return_value=None):
+                with follow_pane(return_value=None):
                     with patch("overcode.follow_mode.time.sleep"):
                         with patch("overcode.follow_mode.time.time", side_effect=lambda: next(times)):
                             result = _poll_for_report(
@@ -360,7 +361,7 @@ class TestPollForReport:
 
         with patch("overcode.follow_mode._check_report", return_value=None), \
                 patch("overcode.follow_mode._check_session_terminated", return_value=False), \
-                patch("overcode.follow_mode._capture_pane", return_value=None), \
+                follow_pane(return_value=None), \
                 patch("overcode.follow_mode.time.sleep"):
             result = _poll_for_report("test", "agents", mock_sessions, 1,
                                       "timeout", 3600.0, 0.1, deque())
@@ -392,7 +393,7 @@ class TestPollForReport:
                 reports = iter([None, {"status": "success"}])
                 with patch("overcode.follow_mode._check_report", side_effect=lambda *a: next(reports)), \
                         patch("overcode.follow_mode._check_session_terminated", return_value=False), \
-                        patch("overcode.follow_mode._capture_pane", return_value=None), \
+                        follow_pane(return_value=None), \
                         patch("overcode.follow_mode.time.sleep"), \
                         patch("overcode.follow_mode.time.time", return_value=now.timestamp()), \
                         patch("overcode.follow_mode.datetime") as mock_dt:
@@ -411,7 +412,7 @@ class TestPollForReport:
 
         with patch("overcode.follow_mode._check_report", return_value=None):
             with patch("overcode.follow_mode._check_session_terminated", return_value=True):
-                with patch("overcode.follow_mode._capture_pane", return_value=None):
+                with follow_pane(return_value=None):
                     with patch("overcode.follow_mode.time.sleep"):
                         result = _poll_for_report(
                             "test", "agents", mock_sessions, 1,
@@ -435,7 +436,7 @@ class TestPollForReport:
 
         with patch("overcode.follow_mode._check_report", side_effect=check_report_side_effect):
             with patch("overcode.follow_mode._check_session_terminated", return_value=False):
-                with patch("overcode.follow_mode._capture_pane", return_value="streaming output"):
+                with follow_pane(return_value="streaming output"):
                     with patch("overcode.follow_mode.time.sleep"):
                         result = _poll_for_report(
                             "test", "agents", mock_sessions, 1,

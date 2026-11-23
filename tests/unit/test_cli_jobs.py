@@ -5,6 +5,7 @@ Unit tests for CLI jobs commands.
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from tests.tmux_doubles import follow_pane
 from typer.testing import CliRunner
 
 import sys
@@ -147,7 +148,7 @@ class TestWaitCommand:
 
         with patch("overcode.job_launcher.JobLauncher.__init__", return_value=None), \
              patch("overcode.job_launcher.JobLauncher.list_jobs", list_jobs), \
-             patch("overcode.follow_mode._capture_pane", capture), \
+             follow_pane(capture), \
              patch("time.sleep"):
             return runner.invoke(app, ["jobs", "wait", "test-job", *args])
 
