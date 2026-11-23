@@ -3,7 +3,9 @@ Tests for web_api.py - the sister API's data functions.
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 
 # Test session name for all tests
@@ -338,6 +340,103 @@ class TestGetStatusData:
             assert len(result["agents"]) == 2
             assert result["agents"][0]["name"] == "agent1"
             assert result["agents"][1]["name"] == "agent2"
+
+
+class TestPaneCapturesGatedOnTheListing:
+    """``/api/status`` lists the session once and reuses unchanged panes (#528)."""
+
+    @pytest.fixture
+    def tmux(self, monkeypatch):
+        from overcode import web_api
+        fake = Mock()
+        fake.list_panes.return_value = {"w1": self._info("w1", 990), "w2": self._info("w2", 990)}
+        fake.capture_pane.side_effect = lambda sess, win, lines=100: f"{win} text"
+        web_api._reset_pane_reader()
+        monkeypatch.setattr(web_api, "_pane_tmux", fake)
+        monkeypatch.setattr(web_api.time, "time", lambda: 1000.5)
+        yield fake
+        web_api._reset_pane_reader()
+
+    @staticmethod
+    def _info(name, activity, history=10):
+        from overcode.tmux_utils import PaneInfo
+        return PaneInfo(name, int(name[1:]), 100, activity, history, 0, 5, "claude", 1)
+
+    @staticmethod
+    def _state(*windows):
+        from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
+        state = MonitorDaemonState(sessions=[
+            SessionDaemonState(session_id=f"s{w}", name=f"agent-{w}", tmux_window=w)
+            for w in windows
+        ])
+        state.last_loop_time = datetime.now().isoformat()
+        return state
+
+    def _status(self, state):
+        from overcode.web_api import get_status_data
+        with patch("overcode.web_api.get_monitor_daemon_state", return_value=state):
+            return get_status_data(TEST_SESSION)
+
+    def test_an_unchanged_pane_is_not_captured_again(self, tmux):
+        state = self._state("w1", "w2")
+        for _ in range(3):
+            data = self._status(state)
+            assert [a["pane_content"] for a in data["agents"]] == ["w1 text", "w2 text"]
+        assert tmux.capture_pane.call_count == 2
+        assert tmux.list_panes.call_count == 3  # one listing per request
+
+    def test_a_moved_pane_is_captured_again(self, tmux):
+        state = self._state("w1", "w2")
+        self._status(state)
+        tmux.list_panes.return_value = {"w1": self._info("w1", 990, history=11),
+                                        "w2": self._info("w2", 990)}
+        tmux.capture_pane.side_effect = lambda sess, win, lines=100: f"{win} new"
+        data = self._status(state)
+        assert [a["pane_content"] for a in data["agents"]] == ["w1 new", "w2 text"]
+
+    def test_activity_in_the_listing_second_is_captured_again(self, tmux):
+        tmux.list_panes.return_value = {"w1": self._info("w1", 1000)}
+        state = self._state("w1")
+        self._status(state)
+        self._status(state)
+        assert tmux.capture_pane.call_count == 2
+
+    def test_without_a_listing_every_request_captures(self, tmux):
+        tmux.list_panes.return_value = None
+        state = self._state("w1", "w2")
+        self._status(state)
+        self._status(state)
+        assert tmux.capture_pane.call_count == 4
+
+    def test_one_client_serves_every_request(self, tmux):
+        from overcode import web_api
+        self._status(self._state("w1"))
+        self._status(self._state("w1"))
+        assert web_api._pane_tmux is tmux
+
+    def test_gone_agents_are_forgotten(self, tmux):
+        from overcode import web_api
+        self._status(self._state("w1", "w2"))
+        assert len(web_api._pane_captures[TEST_SESSION]) == 2
+        self._status(self._state("w2"))
+        assert len(web_api._pane_captures[TEST_SESSION]) == 1
+
+    def test_an_empty_capture_is_not_reused(self, tmux):
+        tmux.capture_pane.side_effect = lambda sess, win, lines=100: ""
+        state = self._state("w1")
+        assert self._status(state)["agents"][0]["pane_content"] == ""
+        self._status(state)
+        assert tmux.capture_pane.call_count == 2
+
+    def test_a_single_agent_read_always_captures(self, tmux):
+        from overcode.web_api import get_single_agent_status
+        state = self._state("w1")
+        with patch("overcode.web_api.get_monitor_daemon_state", return_value=state):
+            get_single_agent_status(TEST_SESSION, "agent-w1")
+            info = get_single_agent_status(TEST_SESSION, "agent-w1")
+        assert info["pane_content"] == "w1 text"
+        assert tmux.capture_pane.call_count == 2
+        tmux.list_panes.assert_not_called()
 
 
 class TestGetHealthData:

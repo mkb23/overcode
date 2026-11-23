@@ -248,6 +248,57 @@ def query_pane_attended(
         return None
 
 
+# A pane whose listing has not moved is captured again after this long
+# anyway (a wall-clock step backstop); inside it the last text is reused.
+CAPTURE_KEEPALIVE_SECONDS = 60.0
+
+
+class ListingGatedCaptures:
+    """Each pane's last capture, reused while its listing has not moved (#528).
+
+    For a caller that lists the session once (``list_panes``) and would
+    otherwise capture every pane. ``reuse`` hands back the last text when
+    the pane is unchanged: the listing's signature equals the one listed
+    before that capture, and its activity second is strictly before the
+    second that listing was taken in (output after the listing would
+    carry a later second), and the capture is under
+    ``CAPTURE_KEEPALIVE_SECONDS`` old. Without a listing (``pane`` None)
+    nothing is reused. ``keep_only`` drops entries for keys no longer
+    present, so the cache is bounded by the fleet.
+    """
+
+    def __init__(self, keepalive: float = CAPTURE_KEEPALIVE_SECONDS):
+        self.keepalive = keepalive
+        # key -> (signature, listed at (wall), captured at (monotonic), text)
+        self._records: Dict[Any, Tuple[tuple, float, float, str]] = {}
+
+    def reuse(self, key: Any, pane: Optional[PaneInfo]) -> Optional[str]:
+        """The last captured text for ``key`` if its pane has not moved, else None."""
+        record = self._records.get(key)
+        if (pane is not None and record is not None
+                and pane.signature == record[0]
+                and pane.activity < int(record[1])
+                and time.monotonic() - record[2] < self.keepalive):
+            return record[3]
+        return None
+
+    def store(self, key: Any, pane: Optional[PaneInfo], listed_at: float,
+              content: Optional[str]) -> None:
+        """Remember a fresh capture taken after the listing made at ``listed_at``."""
+        if pane is not None and content:
+            self._records[key] = (pane.signature, listed_at, time.monotonic(), content)
+        else:
+            self._records.pop(key, None)
+
+    def keep_only(self, keys: Collection[Any]) -> None:
+        """Forget every key not in ``keys``."""
+        for key in [k for k in self._records if k not in keys]:
+            del self._records[key]
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+
 def pane_for_window(panes: Mapping[str, PaneInfo], window: str) -> Optional[PaneInfo]:
     """The pane ``RealTmux`` would address for ``window``.
 

@@ -562,6 +562,13 @@ class TestServeJson:
         parsed = json.loads(written.decode("utf-8"))
         assert parsed == data
 
+    def test_body_is_compact(self):
+        """No indent or spaces: indent forces the pure-Python encoder (#528)."""
+        handler = _make_handler()
+        OvercodeHandler._serve_json(handler, {"agents": [{"name": "a1", "n": 2}]})
+        written = handler.wfile.write.call_args[0][0]
+        assert written == b'{"agents":[{"name":"a1","n":2}]}'
+
     def test_handles_non_serializable_with_default_str(self):
         """Should use default=str for non-serializable types like datetime."""
         from datetime import datetime

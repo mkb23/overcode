@@ -7,6 +7,8 @@ Reuses existing helpers from tui_helpers.py and reads from Monitor Daemon state.
 import importlib.metadata
 import logging
 import subprocess
+import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -26,6 +28,7 @@ from .tui_helpers import (
 )
 from .config import get_hostname
 from .status_constants import is_green_status
+from .tmux_utils import ListingGatedCaptures, pane_for_window
 # The API publishes the classic glyph and colour: status themes are a
 # view's, and its readers (the web page, scripts) see one fixed contract.
 from .status_theme import CLASSIC_THEME
@@ -105,20 +108,79 @@ def _get_version() -> str:
     return base_version
 
 
-def _capture_agent_pane(tmux_session: str, window_id: int) -> str:
-    """Capture pane content for a single agent window.
+# One tmux client for every request, so libtmux's session and pane objects
+# stay warm (a fresh client per agent cost four tmux commands each), and per
+# tmux session each agent's last capture, reused while its listing has not
+# moved (#528). The lock covers both: the gate's records and the client's
+# caches are read and written together.
+_pane_lock = threading.Lock()
+_pane_tmux = None
+_pane_captures: Dict[str, ListingGatedCaptures] = {}
+
+
+def _shared_tmux():
+    """The process's tmux client for pane reads, built on first use. Hold ``_pane_lock``."""
+    global _pane_tmux
+    if _pane_tmux is None:
+        from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+        _pane_tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
+    return _pane_tmux
+
+
+def _reset_pane_reader() -> None:
+    """Forget the shared client and every cached capture (tests: a new socket)."""
+    global _pane_tmux
+    with _pane_lock:
+        _pane_tmux = None
+        _pane_captures.clear()
+
+
+def _capture_agent_pane(tmux_session: str, window_id) -> str:
+    """Capture pane content for a single agent window. Hold ``_pane_lock``.
 
     Returns the captured text, or empty string on failure.
     """
     try:
-        from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
         from .protocols import TmuxTimeoutError
-        tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
-        content = tmux.capture_pane(tmux_session, window_id, lines=100)
+        content = _shared_tmux().capture_pane(tmux_session, window_id, lines=100)
         return content or ""
     except (subprocess.SubprocessError, ImportError, OSError, TmuxTimeoutError) as e:
         logger.debug("Failed to capture pane for window %s: %s", window_id, e)
         return ""
+
+
+def _capture_fleet_panes(tmux_session: str, sessions) -> Dict[str, str]:
+    """Every agent's pane text by session id, from one listing of the session.
+
+    A pane whose listing has not moved since its last capture is not
+    captured again (``ListingGatedCaptures``); without a listing (tmux down
+    or slow) every pane is captured, as before.
+    """
+    contents: Dict[str, str] = {}
+    with _pane_lock:
+        tmux = _shared_tmux()
+        listed_at = time.time()
+        try:
+            panes = tmux.list_panes(tmux_session)
+        except Exception as e:  # the listing only spares captures
+            logger.debug("list_panes failed for %s: %s", tmux_session, e)
+            panes = None
+        if not isinstance(panes, dict):
+            panes = None
+        gate = _pane_captures.setdefault(tmux_session, ListingGatedCaptures())
+        keys = set()
+        for s in sessions:
+            key = (s.session_id, s.tmux_window)
+            keys.add(key)
+            pane = pane_for_window(panes, str(s.tmux_window)) if panes is not None else None
+            content = gate.reuse(key, pane)
+            if content is None:
+                content = _capture_agent_pane(tmux_session, s.tmux_window)
+                gate.store(key, pane, listed_at, content)
+            if content:
+                contents[s.session_id] = content
+        gate.keep_only(keys)
+    return contents
 
 
 def get_status_data(tmux_session: str) -> Dict[str, Any]:
@@ -134,12 +196,9 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
     now = datetime.now()
 
     # Capture pane content for each agent (for sister preview sync)
-    pane_contents: Dict[int, str] = {}
+    pane_contents: Dict[str, str] = {}
     if state and state.sessions:
-        for s in state.sessions:
-            content = _capture_agent_pane(tmux_session, s.tmux_window)
-            if content:
-                pane_contents[s.tmux_window] = content
+        pane_contents = _capture_fleet_panes(tmux_session, state.sessions)
 
     result = {
         "timestamp": _wire_time(now),
@@ -153,7 +212,7 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
 
     if state:
         for s in state.sessions:
-            pane_content = pane_contents.get(s.tmux_window, "")
+            pane_content = pane_contents.get(s.session_id, "")
             result["agents"].append(_build_agent_info(s, now, pane_content))
 
     return result
@@ -185,7 +244,8 @@ def get_single_agent_status(tmux_session: str, agent_name: str) -> Optional[Dict
     if target is None:
         return None
 
-    pane_content = _capture_agent_pane(tmux_session, target.tmux_window)
+    with _pane_lock:
+        pane_content = _capture_agent_pane(tmux_session, target.tmux_window)
     return _build_agent_info(target, now, pane_content)
 
 

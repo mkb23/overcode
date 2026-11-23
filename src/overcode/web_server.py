@@ -224,7 +224,9 @@ class OvercodeHandler(BaseHTTPRequestHandler):
     def _serve_json(self, data) -> None:
         """Serve JSON data."""
         try:
-            body = json.dumps(data, indent=2, default=str)
+            # Compact: indent forces the pure-Python encoder (#528); the
+            # readers are overcode processes, not people
+            body = json.dumps(data, separators=(",", ":"), default=str)
             body_bytes = body.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

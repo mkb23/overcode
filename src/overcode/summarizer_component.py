@@ -14,12 +14,12 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 from .status_constants import DEFAULT_CAPTURE_LINES
 from .status_patterns import is_status_bar_line, strip_ansi
 from .summarizer_client import SummarizerClient
-from .tmux_utils import PaneInfo, pane_for_window
+from .tmux_utils import ListingGatedCaptures, PaneInfo, pane_for_window
 
 if TYPE_CHECKING:
     from .protocols import TmuxInterface
@@ -33,10 +33,6 @@ _TICKING_LINE = re.compile(
     r"esc to interrupt|\(\s*\d+(?:m\s*\d+)?s\b|\d+(?:\.\d+)?k?\s+tokens", re.IGNORECASE)
 _DIGITS = re.compile(r"\d+")
 _LEADING_GLYPHS = re.compile(r"^[^\w\s(]+\s*")
-
-# A pane whose listing has not moved is captured again after this long
-# anyway (a wall-clock step backstop); inside it the last text is reused.
-CAPTURE_KEEPALIVE_SECONDS = 60.0
 
 
 def normalise_for_change(content: str, lines: int = DEFAULT_CAPTURE_LINES) -> str:
@@ -131,11 +127,11 @@ class SummarizerComponent:
         self._last_context_hash: Dict[str, int] = {}
 
         # The pass's one ``list-panes`` (window -> PaneInfo), and per session
-        # the last capture: (signature, listed at, monotonic, text). A pane
-        # whose signature has not moved is not captured again (#528).
+        # the last capture. A pane whose signature has not moved is not
+        # captured again (#528).
         self._panes: Optional[Dict[str, PaneInfo]] = None
         self._listed_at: float = 0.0
-        self._captured: Dict[str, Tuple[tuple, float, float, str]] = {}
+        self._captured = ListingGatedCaptures()
         self.captures = 0
 
         # Where the next update() pass starts. A pass cut short by
@@ -335,26 +331,17 @@ class SummarizerComponent:
     def _content_for(self, session) -> Optional[str]:
         """The session's pane text: the last capture while the pane is unchanged.
 
-        Unchanged means the listing's signature equals the one listed
-        before the last capture and its activity second is strictly before
-        the second that listing was taken in: output after that listing
-        would carry a later second. Without a listing every call captures.
+        ``ListingGatedCaptures`` holds the rule; without a listing every
+        call captures.
         """
         window = session.tmux_window
         pane = pane_for_window(self._panes, str(window)) if self._panes else None
-        record = self._captured.get(session.id)
-        mono = time.monotonic()
-        if (pane is not None and record is not None
-                and pane.signature == record[0]
-                and pane.activity < int(record[1])
-                and mono - record[2] < CAPTURE_KEEPALIVE_SECONDS):
-            return record[3]
+        content = self._captured.reuse(session.id, pane)
+        if content is not None:
+            return content
         content = self._capture_pane(window)
         self.captures += 1
-        if pane is not None and content:
-            self._captured[session.id] = (pane.signature, self._listed_at, mono, content)
-        else:
-            self._captured.pop(session.id, None)
+        self._captured.store(session.id, pane, self._listed_at, content)
         return content
 
     def _capture_pane(self, window: str) -> Optional[str]:
