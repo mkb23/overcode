@@ -506,8 +506,10 @@ def cleanup_agents(tmux_session: str, include_done: bool = False) -> dict:
         and (s.status == "terminated" or (include_done and s.status == "done"))
     ]
 
-    for s in targets:
-        sm.delete_session(s.id)
+    # One commit for the lot, as ``overcode cleanup`` does: delete_session
+    # is delete_sessions of one, so the side effects are the same
+    if targets:
+        sm.delete_sessions([s.id for s in targets])
 
     return {"ok": True, "cleaned": len(targets)}
 

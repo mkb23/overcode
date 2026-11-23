@@ -114,8 +114,8 @@ class JobLauncher:
 
         Detection layers for running jobs:
         1. Window gone + no _complete call → killed
-        2. Window alive but shell has no child processes → command finished,
-           read exit code from file and mark completed/failed
+        2. Window alive, exit code file written and the shell has no child
+           processes left → command finished, mark completed/failed
         """
         jobs = self.jobs.list_jobs(include_completed=include_completed)
 
@@ -156,17 +156,20 @@ class JobLauncher:
                 job.end_time = now.isoformat()
                 continue
 
-            # Window still alive — check if the command has finished by
-            # looking for child processes of the pane's shell. Then the
-            # exit file must be there too: a shell whose wrapper has not
-            # started yet (or runs only builtins) has no children either,
-            # and a job read that way was marked completed in its first
-            # second while its command ran on, untracked
+            # Window still alive. A job is finished only when the wrapper
+            # has written its exit file AND the pane's shell has no child
+            # processes left (a background child keeps it running). A shell
+            # whose wrapper has not started yet (or runs only builtins) has
+            # no children either, and a job read that way was marked
+            # completed in its first second while its command ran on,
+            # untracked. Read the exit file first: it is one file read,
+            # where the pane pid and pgrep cost three subprocesses, and
+            # while it is missing the job stays running whatever they say
+            exit_code = self._read_exit_code(job.id)
+            if exit_code is None:
+                continue
             pane_pid = self.tmux.get_pane_pid(job.tmux_window)
             if pane_pid is not None and not _has_child_processes(pane_pid):
-                exit_code = self._read_exit_code(job.id)
-                if exit_code is None:
-                    continue
                 status = "completed" if exit_code == 0 else "failed"
                 self.jobs.mark_complete(job.id, exit_code)
                 job.status = status

@@ -633,7 +633,8 @@ class TestCleanupAgents:
         result = cleanup_agents("agents")
 
         assert result == {"ok": True, "cleaned": 1}
-        sm.delete_session.assert_called_once_with(terminated.id)
+        sm.delete_sessions.assert_called_once_with([terminated.id])
+        sm.delete_session.assert_not_called()
 
     @patch(SM_PATH)
     def test_includes_done_when_requested(self, MockSM):
@@ -645,6 +646,16 @@ class TestCleanupAgents:
         result = cleanup_agents("agents", include_done=True)
 
         assert result == {"ok": True, "cleaned": 2}
+        # one commit for both, not one per agent
+        sm.delete_sessions.assert_called_once_with([terminated.id, "sess-done"])
+
+    @patch(SM_PATH)
+    def test_nothing_to_clean_commits_nothing(self, MockSM):
+        sm = MockSM.return_value
+        sm.list_sessions.return_value = [_mock_session(tmux_session="agents", status="running")]
+
+        assert cleanup_agents("agents") == {"ok": True, "cleaned": 0}
+        sm.delete_sessions.assert_not_called()
 
 
 class TestRestartMonitor:

@@ -219,6 +219,42 @@ class TestJobLauncherListJobs:
         (finished,) = launcher.list_jobs(include_completed=True)
         assert finished.status == "failed" and finished.exit_code == 3
 
+    @patch("overcode.job_launcher._has_child_processes")
+    def test_no_exit_file_costs_no_subprocesses(self, mock_children, tmp_path):
+        """While the wrapper has not written its exit file the job is running
+        whatever the pane holds, so the pass asks tmux and pgrep nothing."""
+        mock_tmux = MagicMock()
+        mock_tmux.list_windows.return_value = [{"name": "busy", "index": 0}]
+        mock_tmux.get_pane_pid.return_value = 12345
+        manager = JobManager(state_dir=tmp_path)
+        manager.create_job(command="sleep 999", name="busy", tmux_window="busy")
+        launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
+
+        assert launcher.list_jobs()[0].status == "running"
+        mock_tmux.get_pane_pid.assert_not_called()
+        mock_children.assert_not_called()
+
+    @patch("overcode.job_launcher._has_child_processes", return_value=True)
+    def test_a_background_child_keeps_a_job_with_an_exit_file_running(self, _children, tmp_path):
+        """The wrapper wrote its exit code but a background child still runs
+        in the pane: the job stays running and its exit file stays put."""
+        mock_tmux = MagicMock()
+        mock_tmux.list_windows.return_value = [{"name": "bg", "index": 0}]
+        mock_tmux.get_pane_pid.return_value = 12345
+        manager = JobManager(state_dir=tmp_path)
+        job = manager.create_job(command="serve &", name="bg", tmux_window="bg")
+        launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
+        launcher._exit_code_path(job.id).write_text("0\n")
+
+        assert launcher.list_jobs()[0].status == "running"
+        mock_tmux.get_pane_pid.assert_called_once_with("bg")
+        assert launcher._exit_code_path(job.id).exists()
+
+        _children.return_value = False
+        (done,) = launcher.list_jobs(include_completed=True)
+        assert done.status == "completed" and done.exit_code == 0
+        assert not launcher._exit_code_path(job.id).exists()
+
     @patch("overcode.job_launcher._has_child_processes", return_value=False)
     def test_a_finished_job_does_not_hide_a_later_killed_one(self, mock_has_children, tmp_path):
         """A finished job rebound the pass's ``now`` to a string, so a later
