@@ -49,7 +49,7 @@ because it's described in its own section. Updated on 2026-10-20 for gap 6
 4. **A child reporting back can hit a permission prompt (opencode in normal permission mode, when the project asks for bash).**
    - Claude children get `Bash(overcode report *)` pre-allowed (`cli/perms.py:13`).
    - opencode has no per-launch allowlist (`PERMISSION_INJECTION` is unset, `backends/opencode.py:423-429`). In a project whose config sets `permission.bash: ask` (as the live capture harness does, `tests/e2e/test_live_opencode_states.py:84`), a normal-mode child asks before it runs `overcode report`, so the parent sees orange "permission" instead of the report. opencode's default bash permission was not checked here: **unverified** whether this bites in an unconfigured project.
-5. **The PR column comes only from the pane (opencode, opencode2).**
+5. **Fixed (#532)**: **The PR column came only from the pane (opencode, opencode2).** The stats readers now take the PR from the stored output of the agent's newest `gh pr create` call (v1 `part` rows, v2 inline assistant `content`) as `stats.pr_number`, which the daemon applies like Claude's pr-link; the pane scrape is the fallback.
    - Claude's PR number comes from transcript pr-link records (`monitor_daemon.py:873-887`). opencode only gets the GitHub URL scrape (`monitor_daemon.py:1797-1803`, `status_patterns.py:858`).
    - The PR is missed once the URL scrolls off screen, or if it never appeared there.
 6. **Fixed (#533)**: **Rename and time context never reached the opencode model.**

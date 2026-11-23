@@ -65,6 +65,7 @@ from .opencode_stats import (
     connect,
     database_path,
     default_data_dir,
+    pr_from_tool_call,
     remember_window_index,
 )
 
@@ -268,6 +269,15 @@ def _parse_session_message_record(
     times = envelope.get("time")
     times = times if isinstance(times, dict) else {}
     agent = envelope.get("agent")
+    # v2 keeps tool calls inline in the assistant envelope's `content`: the
+    # PR the newest `gh pr create` among them names (#532).
+    pr = None
+    content = envelope.get("content") if mtype == "assistant" else None
+    if isinstance(content, list):
+        for item in content:
+            found = pr_from_tool_call(item)
+            if found is not None:
+                pr = found
     record = {
         "input": as_int(tokens.get("input")),
         "output": as_int(tokens.get("output")),
@@ -279,6 +289,7 @@ def _parse_session_message_record(
         "model": _parse_model(envelope.get("model")),
         "effort": _parse_variant(envelope.get("model")),
         "agent": agent if isinstance(agent, str) and agent else None,
+        "pr": pr,
     }
     in_flight = mtype == "assistant" and record["completed"] is None
     return record, not in_flight
@@ -296,8 +307,9 @@ def _scan_messages(
     newest assistant message's context snapshot (the live context size),
     the newest assistant message's model/agent (v2's session-row columns
     are NULL on verified live rows), a ``WindowIndex`` over the assistant
-    turns (None when the scan failed), and, when ``since_ms`` is given, the token usage inside that
-    window.
+    turns (None when the scan failed), the PR the newest ``gh pr create``
+    call names (#532), and, when ``since_ms`` is given, the token usage
+    inside that window.
 
     Rows are consumed newest-first (``time_created DESC`` with ``seq`` as
     the tie-breaker — ``seq`` alone would interleave multiple owned
@@ -313,6 +325,7 @@ def _scan_messages(
         "model": None,
         "effort": None,
         "agent": None,
+        "pr_number": None,
     }
     ids = [sid for sid in session_ids if sid]
     if not ids:
@@ -341,6 +354,10 @@ def _scan_messages(
             continue
         if mtype != "assistant":
             continue
+
+        # Newest first: the first PR found is the newest `gh pr create`'s.
+        if out["pr_number"] is None and record["pr"] is not None:
+            out["pr_number"] = record["pr"]
 
         # v2's assistant data has no `tokens.total` (verified); the context
         # size is the processed prompt — input + cache read + cache write —
@@ -469,6 +486,10 @@ class Opencode2StatsReader(_OpencodeFamilyReader):
                 # would corrupt the session record.
                 provider=None,
                 per_conversation=self._per_conversation(rows),
+                # The PR its own `gh pr create` named (#532); the daemon
+                # takes it like Claude's pr-link, the pane scrape is the
+                # fallback.
+                pr_number=scan["pr_number"],
             )
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return None

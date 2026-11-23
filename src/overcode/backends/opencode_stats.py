@@ -25,6 +25,7 @@ daemon tick.
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -477,6 +478,7 @@ def _cached_records(
     table: str,
     rows: Sequence[Tuple[str, str, Any, Any]],
     parse: RowParser,
+    enrich: Optional[Callable[[sqlite3.Connection, Dict[str, Optional[Dict[str, Any]]]], None]] = None,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """Records for ``rows`` of ``(id, conversation id, time_updated, hint)``,
     parsed at most once per ``(store, table, conversation, id, time_updated)``.
@@ -484,8 +486,10 @@ def _cached_records(
     ``rows`` must be whole scans of their conversations (each one's newest
     ``_MESSAGE_SCAN_LIMIT`` rows): a conversation's cache is replaced by
     the cacheable rows seen here. ``hint`` is handed to ``parse`` alongside
-    the body (v2 keeps the row type outside the envelope). Unparseable rows
-    map to None.
+    the body (v2 keeps the row type outside the envelope). ``enrich``, when
+    given, sees the freshly parsed records (id -> record) before they are
+    cached, to add what lives outside the row (v1's tool parts). Unparseable
+    rows map to None.
     """
     db = _database_key(conn)
     now = row_cache_clock()
@@ -509,8 +513,10 @@ def _cached_records(
 
     if missing:
         bodies = _fetch_data(conn, table, [row[0] for row in missing])
-        for msg_id, conversation, version, hint in missing:
-            record, cacheable = parse(bodies.get(msg_id), hint)
+        parsed = [(row, *parse(bodies.get(row[0]), row[3])) for row in missing]
+        if enrich is not None:
+            enrich(conn, {row[0]: record for row, record, _ok in parsed})
+        for (msg_id, conversation, version, _hint), record, cacheable in parsed:
             records[msg_id] = record
             if cacheable:
                 seen[conversation][1][msg_id] = (version, record)
@@ -617,6 +623,105 @@ def clear_window_indexes() -> None:
         _window_indexes.clear()
 
 
+# The PR an agent opened (#532). Claude Code records a pr-link event when it
+# links a session to a PR (#489); opencode has none, but it stores every tool
+# call's output, and `gh pr create` prints the new PR's URL (or, when the
+# branch already has one, an error naming it). So the PR is the last
+# github.com/<owner>/<repo>/pull/N in the output of the newest `gh pr create`
+# call. Only that command counts: a URL the agent merely read (`gh pr view`
+# of someone else's PR, a link in a web page) says nothing about its branch.
+_GH_PR_CREATE = re.compile(r"\bgh\s+pr\s+create\b")
+_PR_URL = re.compile(r"github\.com/[^/\s]+/[^/\s]+/pull/(\d+)")
+
+
+def _tool_texts(state: Dict[str, Any]) -> List[str]:
+    """Every output string a tool call's ``state`` holds, v1 or v2 shape.
+
+    v1 keeps ``output`` (and ``metadata.output``) and a string ``error``;
+    v2 keeps ``content[].text`` (and ``metadata.output``) and an
+    ``error.message``.
+    """
+    texts: List[str] = []
+    for value in (state.get("output"), state.get("error")):
+        if isinstance(value, str):
+            texts.append(value)
+    error = state.get("error")
+    if isinstance(error, dict) and isinstance(error.get("message"), str):
+        texts.append(error["message"])
+    metadata = state.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("output"), str):
+        texts.append(metadata["output"])
+    content = state.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                texts.append(item["text"])
+    return texts
+
+
+def pr_from_tool_call(call: Any) -> Optional[int]:
+    """The PR a ``gh pr create`` tool call names, else None.
+
+    ``call`` is one tool call: a v1 ``part.data`` or a v2 assistant
+    ``content`` item, both ``{"type": "tool", "state": {...}}``.
+    """
+    if not isinstance(call, dict) or call.get("type") != "tool":
+        return None
+    state = call.get("state")
+    if not isinstance(state, dict):
+        return None
+    tool_input = state.get("input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(command, str) or not _GH_PR_CREATE.search(command):
+        return None
+    found = None
+    for text in _tool_texts(state):
+        matches = _PR_URL.findall(text)
+        if matches:
+            found = int(matches[-1])
+    return found
+
+
+def _attach_part_prs(
+    conn: sqlite3.Connection, records: Dict[str, Optional[Dict[str, Any]]]
+) -> None:
+    """Fill ``record["pr"]`` for freshly parsed v1 assistant messages.
+
+    v1 keeps tool calls in ``part`` rows, not in the message envelope. Only
+    rows parsed this scan come here (``_cached_records`` caches the result
+    with the record), so a completed message's parts are read once. The
+    lookup is by ``message_id`` through ``part_message_id_id_idx``, chunked,
+    with no ORDER BY/LIMIT (#476), and the ``LIKE`` keeps parts without a
+    PR URL from ever reaching Python. A store without a ``part`` table
+    (older fixtures, drift) just finds no PR.
+    """
+    ids = [msg_id for msg_id, record in records.items()
+           if record is not None and record.get("role") == "assistant"]
+    found: List[Tuple[str, str, Optional[int]]] = []
+    try:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            sql = (
+                "SELECT message_id, id, data FROM part "
+                f"WHERE message_id IN ({placeholders(len(chunk))}) "
+                "AND data LIKE '%/pull/%'"
+            )
+            for message_id, part_id, data in conn.execute(sql, chunk):
+                try:
+                    pr = pr_from_tool_call(json.loads(data))
+                except (ValueError, TypeError):
+                    continue
+                if pr is not None:
+                    found.append((message_id, part_id, pr))
+    except sqlite3.Error:
+        return
+    # Part ids ascend in creation order: the newest call in a message wins.
+    for message_id, _part_id, pr in sorted(found):
+        record = records.get(message_id)
+        if record is not None:
+            record["pr"] = pr
+
+
 def _optional_ms(value: Any) -> Optional[float]:
     return value if isinstance(value, (int, float)) else None
 
@@ -648,6 +753,8 @@ def _parse_message_record(
         "cache_write": as_int(cache.get("write")),
         "created": _optional_ms(times.get("created")),
         "completed": _optional_ms(times.get("completed")),
+        # Filled from the message's tool parts by _attach_part_prs
+        "pr": None,
     }
     in_flight = role == "assistant" and record["completed"] is None
     return record, not in_flight
@@ -662,9 +769,10 @@ def _scan_messages(
     """One pass over recent messages for the counts the columns need.
 
     Returns interaction count (user messages), per-turn work times, the newest
-    assistant message's total-token snapshot (the live context size), a
-    ``WindowIndex`` over the assistant turns (None when the scan failed), and, when ``since_ms`` is
-    given, the token usage inside that window.
+    assistant message's total-token snapshot (the live context size), the
+    PR the newest ``gh pr create`` call names (#532), a ``WindowIndex``
+    over the assistant turns (None when the scan failed), and, when
+    ``since_ms`` is given, the token usage inside that window.
     """
     out: Dict[str, Any] = {
         "interaction_count": 0,
@@ -673,6 +781,7 @@ def _scan_messages(
         "window": empty_window_usage(),
         # None until a scan succeeds: a failed one must not be published.
         "window_index": None,
+        "pr_number": None,
     }
     ids = [sid for sid in session_ids if sid]
     if not ids:
@@ -684,7 +793,7 @@ def _scan_messages(
         rows.sort(key=lambda row: row[2], reverse=True)  # time_created DESC
         records = _cached_records(
             conn, "message", [(row[0], row[1], row[3], None) for row in rows],
-            _parse_message_record,
+            _parse_message_record, _attach_part_prs,
         )
     except sqlite3.Error:
         return out
@@ -701,6 +810,10 @@ def _scan_messages(
             continue
         if role != "assistant":
             continue
+
+        # Newest first: the first PR found is the newest `gh pr create`'s.
+        if out["pr_number"] is None and record.get("pr") is not None:
+            out["pr_number"] = record["pr"]
 
         # Rows arrive newest-first, so the first assistant turn carrying a
         # total is the live context size. Only the active conversation's
@@ -1063,6 +1176,10 @@ class OpencodeStatsReader(_OpencodeFamilyReader):
                 # session record.
                 provider=None,
                 per_conversation=self._per_conversation(rows),
+                # The PR its own `gh pr create` named (#532); the daemon
+                # takes it like Claude's pr-link, the pane scrape is the
+                # fallback.
+                pr_number=scan["pr_number"],
             )
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return None
@@ -1092,5 +1209,6 @@ __all__ = [
     "missing_columns",
     "models_cache_path",
     "opencode_context_limit",
+    "pr_from_tool_call",
     "schema_findings",
 ]
