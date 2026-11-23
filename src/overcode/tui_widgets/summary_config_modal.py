@@ -195,15 +195,20 @@ class SummaryConfigModal(ModalBase):
         return resolve_column_visible(col, self.level, self.overrides)
 
     def _col_default(self, col_id: str) -> bool:
-        """Get default visibility for a column at current level (no overrides)."""
+        """Get default visibility for a column at current level (no overrides):
+        at full every column, as resolve_column_visible has it."""
         col = next((c for c in SUMMARY_COLUMNS if c.id == col_id), None)
         if col is None:
             return False
-        return self.level in col.detail_levels
+        return self.level == "full" or self.level in col.detail_levels
+
+    def _toggleable(self, group_id: str) -> list:
+        """The group's columns the dialog can switch (not ``locked``)."""
+        return [c for c in self._cols_by_group.get(group_id, []) if not c.locked]
 
     def _group_state(self, group_id: str) -> str:
-        """Get group checkbox state: 'all', 'none', or 'mixed'."""
-        cols = self._cols_by_group.get(group_id, [])
+        """Get group checkbox state over its switchable columns: 'all', 'none', or 'mixed'."""
+        cols = self._toggleable(group_id)
         if not cols:
             return "all"
         on_count = sum(1 for c in cols if self._col_effective(c.id))
@@ -225,7 +230,7 @@ class SummaryConfigModal(ModalBase):
             if group is None:
                 return None
             state = self._group_state(row_id)
-            lead = ds.check({"all": True, "none": False}.get(state), locked=group.always_visible)
+            lead = ds.check({"all": True, "none": False}.get(state), locked=not self._toggleable(row_id))
             return ds.section(group.name, w, selected=sel, lead=lead)
 
         col = COLUMNS_BY_ID.get(row_id)
@@ -233,7 +238,7 @@ class SummaryConfigModal(ModalBase):
             return None
         is_on = self._col_effective(row_id)
         is_default = self._col_default(row_id)
-        locked = col.group == "identity"
+        locked = col.locked
 
         line = ds.item(sel)
         line.append("  ")  # indent under the group
@@ -281,10 +286,13 @@ class SummaryConfigModal(ModalBase):
             cols = self._cols_by_group.get(row_id, [])
             on = sum(1 for c in cols if self._col_effective(c.id))
             lines = ds.wrap(f"{group.name if group else row_id}: {on} of {len(cols)} columns shown", w, 1)
-            if group is not None and group.always_visible:
+            locked = len(cols) - len(self._toggleable(row_id))
+            if not self._toggleable(row_id):
                 facts.append("Always shown")
             else:
                 facts.append("space shows or hides the whole group")
+                if locked:
+                    facts.append(f" · {locked} always shown")
             return lines + [ds.finish(facts, w)]
 
         col = COLUMNS_BY_ID[row_id]
@@ -292,7 +300,7 @@ class SummaryConfigModal(ModalBase):
         lines = ds.wrap(f"{head}{col.name or col.id} — {col.description}", w, self._TIP_LINES - 1)
         levels = [lv for lv in ("low", "med", "high", "full") if lv in col.detail_levels or lv == "full"]
         facts.append("default at " + " ".join(levels))
-        if col.group == "identity":
+        if col.locked:
             facts.append(" · always shown")
         elif self._col_effective(row_id) != self._col_default(row_id):
             facts.append(f" · you turned it {'on' if self._col_effective(row_id) else 'off'} at {self.level}",
@@ -403,10 +411,9 @@ class SummaryConfigModal(ModalBase):
         row_type, row_id = self._flat_rows[self.cursor_pos]
 
         if row_type == "group":
-            group = SUMMARY_GROUPS_BY_ID.get(row_id)
-            if group and group.always_visible:
-                return  # Can't toggle identity group
-            cols = self._cols_by_group.get(row_id, [])
+            cols = self._toggleable(row_id)
+            if not cols:
+                return
             # Determine current group state
             state = self._group_state(row_id)
             # If all on -> set all off; otherwise -> set all on
@@ -416,8 +423,8 @@ class SummaryConfigModal(ModalBase):
 
         elif row_type == "column":
             col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
-            if col and col.group == "identity":
-                return  # Can't toggle identity columns
+            if col and col.locked:
+                return
             current = self._col_effective(row_id)
             self.overrides[row_id] = not current
 

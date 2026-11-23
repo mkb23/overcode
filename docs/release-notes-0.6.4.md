@@ -16,6 +16,10 @@
 - **Spin counts delegated work (#555):** each running subagent and batch
   background shell adds one, so Spin can pass the agent count; a yellow
   agent counts its work, not itself as well.
+- **Most identity columns switch off.** In the `C` dialog only the status
+  light, the alert, ST, DTL, the fold marker and NAME stay fixed; SUBA,
+  KIND, TYPE, TAG, WF and WFT now switch per level like any other column
+  (KIND was stuck on at full).
 - **Fixes.** The TUI no longer crashes now that Claude's usage API has no
   5-hour window (it is gone from the status bar and quota). A done child
   that starts work again goes back to running (#556). Hooks from Claude's

@@ -275,30 +275,31 @@ def _if_stats(fn: Callable[[ColumnContext], object]) -> Callable[[ColumnContext]
 # Ordered column list — reorder by moving items
 # ---------------------------------------------------------------------------
 SUMMARY_COLUMNS: List[SummaryColumn] = [
-    # Identity group — always visible
+    # Identity group. Locked (always shown): the light, the alert, ST, DTL,
+    # the fold marker and the name; the rest switch off in the C dialog
     SummaryColumn(id="status_symbol", group="identity", detail_levels=ALL, render=render_status_symbol,
                   label="Status", render_plain=render_status_plain, name="Status",
                   description="What the agent is doing and whether it needs you: working, waiting "
                               "on something automatic, needs approval or input, at rest, unknown, gone",
                   sort_key=lambda ctx: ctx.stats.current_state,
-                  virtual_render=render_virtual_status),
+                  virtual_render=render_virtual_status, locked=True),
     SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert,
                   name="Alert",
                   description="Flags an agent that stalled and you haven't looked at since",
                   sort_key=lambda ctx: int(ctx.is_unvisited_stalled),
                   sort_desc=True,
-                  virtual_render=render_virtual_alert),
+                  virtual_render=render_virtual_alert, locked=True),
     SummaryColumn(id="time_in_state", ticks=True, group="identity", detail_levels=ALL, render=render_time_in_state,
                   header="ST", name="Time in State",
                   description="How long the agent has been in its current status",
                   sort_key=lambda ctx: _age_seconds(ctx.status_changed_at),
                   sort_desc=True,
-                  virtual_render=render_virtual_time),
+                  virtual_render=render_virtual_time, locked=True),
     SummaryColumn(id="sleep_countdown", ticks=True, group="identity", detail_levels=ALL, render=render_sleep_countdown,
                   visible=lambda ctx: ctx.fleet.any_is_sleeping or ctx.fleet.any_has_status_detail,
                   header="DTL", name="Status Detail",
                   description="Status detail: current tool, subagents, sleep wake-up estimate",
-                  hover=hover_status_detail),
+                  hover=hover_status_detail, locked=True),
     # Merged from DLG (swarm, the hook rollup) and SUB (subagent_count, the
     # transcript-file count) in 0.6.1: the old ids alias to it (COLUMN_ALIASES).
     # Left of the name, at every level: its ▸ says → expands the row.
@@ -316,7 +317,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand",
                   description="Fold marker for tree view",
-                  virtual_render=render_virtual_expand),
+                  virtual_render=render_virtual_expand, locked=True),
     SummaryColumn(id="kind", group="identity", detail_levels=set(), render=render_kind,
                   label="Kind", header="KIND", name="Kind",
                   description="Agent, a child another agent launched, or bg: a 🌙 Claude "
@@ -328,7 +329,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Agent name (tree connectors show parent/child in tree sort); "
                               "dim: a default name, ~: named by overcode",
                   sort_key=lambda ctx: ctx.session.name.lower(), hover=hover_agent_name,
-                  virtual_render=render_virtual_name, virtual_hover=hover_virtual_name),
+                  virtual_render=render_virtual_name, virtual_hover=hover_virtual_name,
+                  locked=True),
     # An expanded agent's delegated agents of two or more types: each
     # one's type (subagent type, fork, workflow and phase, teammate); the
     # agent rows show their own kind. No width otherwise (FleetFlags).
@@ -733,8 +735,11 @@ def resolve_column_visible(col: SummaryColumn, level: str, overrides: dict,
     - low/med/high: start from col.detail_levels default, then apply overrides
     - a column in ``uniform`` (see uniform_columns) is hidden unless the
       user switched it on explicitly
+    - a locked column ignores overrides: a row is not readable without it
     """
     base = True if level == "full" else level in col.detail_levels
+    if col.locked:
+        return base
     col_override = overrides.get(col.id)
     if col_override is not None:
         return col_override

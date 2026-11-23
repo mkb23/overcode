@@ -64,6 +64,10 @@ class SummaryColumn:
     # unless the user switched it on explicitly. (backend also has its own
     # older gate, mixed_backends, which hides its placeholder too.)
     hide_when_uniform: bool = False
+    # Always shown at its levels: what a row cannot be read without (the
+    # light, the name, the fold marker, how long and why it is in that
+    # state). The C dialog cannot switch it off and overrides are ignored.
+    locked: bool = False
     # Nice to have: when the grid is wider than the row, it gives way first
     # (0 width) at every level, so it never pushes a metric off the right end
     # (tui._fit_column_widths; at full, the columns only full adds do too)

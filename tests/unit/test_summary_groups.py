@@ -36,10 +36,13 @@ class TestSummaryGroups:
                 f"Column {col.id} references unknown group {col.group!r}"
             )
 
-    def test_identity_group_always_visible(self):
-        """Test that identity group is always visible."""
-        identity = SUMMARY_GROUPS_BY_ID["identity"]
-        assert identity.always_visible is True
+    def test_only_a_few_columns_are_locked(self):
+        """The light, the alert, ST, DTL, the fold marker and the name are
+        always shown; every other column, identity group or not, switches."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        assert {c.id for c in SUMMARY_COLUMNS if c.locked} == {
+            "status_symbol", "unvisited_alert", "time_in_state", "sleep_countdown",
+            "expand_icon", "agent_name"}
 
 
 class TestSummaryGroupsById:

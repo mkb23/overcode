@@ -396,3 +396,44 @@ class TestTUIHeaderSync:
         with_override = set(captured["visible"])
         assert "uptime" not in with_override
         assert with_override != baseline
+
+
+class TestLockedColumns:
+    """Only locked columns are fixed; the rest of the identity group switches."""
+
+    def test_a_locked_column_ignores_the_toggle_and_overrides(self):
+        from overcode.summary_columns import COLUMNS_BY_ID, resolve_column_visible
+        modal = SummaryConfigModal()
+        modal.show("low", {})
+        modal.cursor_pos = modal._flat_rows.index(("column", "agent_name"))
+        modal._toggle_current()
+        assert "agent_name" not in modal.overrides
+        assert resolve_column_visible(COLUMNS_BY_ID["agent_name"], "low", {"agent_name": False})
+
+    @pytest.mark.parametrize("col_id", ["subagents", "agent_type", "tags", "workflow", "weft"])
+    def test_the_rest_of_identity_switches_off(self, col_id):
+        modal = SummaryConfigModal()
+        modal.show("low", {})
+        modal.cursor_pos = modal._flat_rows.index(("column", col_id))
+        modal._toggle_current()
+        assert modal.overrides[col_id] is False
+        assert modal._col_effective(col_id) is False
+
+    def test_kind_can_be_switched_off_at_full(self):
+        """Full shows every column; KIND was locked there and could not be hidden."""
+        modal = SummaryConfigModal()
+        modal.show("full", {})
+        assert modal._col_default("kind") is True and modal._col_effective("kind") is True
+        modal.cursor_pos = modal._flat_rows.index(("column", "kind"))
+        modal._toggle_current()
+        assert modal._col_effective("kind") is False
+
+    def test_the_identity_group_toggle_leaves_locked_columns_on(self):
+        modal = SummaryConfigModal()
+        modal.show("low", {"kind": True})
+        assert modal._group_state("identity") == "all"
+        modal.cursor_pos = modal._flat_rows.index(("group", "identity"))
+        modal._toggle_current()
+        assert modal._group_state("identity") == "none"
+        assert modal._col_effective("agent_name") and modal._col_effective("time_in_state")
+        assert not modal._col_effective("tags")

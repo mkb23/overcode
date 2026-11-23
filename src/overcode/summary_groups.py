@@ -3,7 +3,7 @@ Summary line group definitions for the TUI.
 
 Group membership is declared per-column on SummaryColumn.group in
 summary_columns.py. This file only defines the group *metadata* (display
-name, default visibility, identity flag) and the group *ordering* used by
+name, default visibility) and the group *ordering* used by
 the column configurator.
 
 Group ordering here matches the first-appearance order of each group in
@@ -22,12 +22,12 @@ class SummaryGroup:
     id: str
     name: str
     default_enabled: bool = True
-    always_visible: bool = False  # identity group is always visible
 
 
 # Group ordering — mirrors SUMMARY_COLUMNS first-appearance order.
 SUMMARY_GROUPS: List[SummaryGroup] = [
-    SummaryGroup(id="identity", name="Identity", always_visible=True),
+    # Its locked columns (SummaryColumn.locked) are always shown; the rest switch
+    SummaryGroup(id="identity", name="Identity"),
     SummaryGroup(id="sisters", name="Sisters"),
     SummaryGroup(id="git", name="Git"),
     SummaryGroup(id="time", name="Time"),

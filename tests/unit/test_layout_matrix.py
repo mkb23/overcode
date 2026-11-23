@@ -443,6 +443,36 @@ def test_fit_widths_drops_droppable_columns_rightmost_first():
     assert fit_widths([10, 8], [True, True], width) == [10, 8]  # fits: untouched
 
 
+SWITCHABLE_IDENTITY = ("subagents", "kind", "agent_type", "tags", "workflow", "weft")
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+async def test_layout_holds_with_the_switchable_identity_columns_off(make_tui, width):
+    """SUBA, KIND, TYPE, TAG, WF and WFT switched off at every level (they
+    were locked on until 0.6.4): the grid holds, they are gone from the
+    header, and the locked ones (the light, ST, NAME) stay."""
+    engine = WeftEngine()
+    engine.publish(engine.snapshot_now())
+    app = make_tui(_named_agents(), engine=engine, size=(width, 40))
+    app._prefs.column_config = {level: {c: False for c in SWITCHABLE_IDENTITY}
+                                for level in ("low", "med", "high", "full")}
+    async with app.run_test(size=(width, 40)) as pilot:
+        await _settle(pilot)
+        for level in app.SUMMARY_LEVELS:
+            app._set_summary_level(level)
+            await _settle(pilot)
+            try:
+                assert_layout_invariants(app)
+            except AssertionError as e:
+                raise AssertionError(f"{width} cols, {level}: {e}") from e
+            _shot(app, f"layout-identity-off-{width}-{level}")
+            header = app.query_one("#column-headers")
+            assert not set(SWITCHABLE_IDENTITY) & set(header.column_ids), (level, header.column_ids)
+            assert {"status_symbol", "time_in_state", "agent_name"} <= set(header.column_ids)
+            alpha = _row_text(app, "alpha")
+            assert "#ui" not in alpha and "🧶" not in _row_text(app, "bravo"), (level, alpha)
+
+
 @pytest.mark.parametrize("width", [200, 250])
 async def test_full_keeps_the_columns_high_shows_when_it_does_not_fit(make_tui, width):
     """Full on a row too narrow for every column: the columns only full
