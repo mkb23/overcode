@@ -35,9 +35,25 @@ def test_emoji_or_ascii_routes_through_safe_emoji_in_emoji_mode(monkeypatch):
 
 def test_emoji_or_ascii_returns_ascii_fallback_in_emoji_free_mode():
     from overcode import status_constants
-    # 🖥️ has a known ASCII fallback in EMOJI_ASCII
-    out = status_constants.emoji_or_ascii("\U0001f5a5️", emoji_free=True)
-    assert out == status_constants.EMOJI_ASCII["\U0001f5a5️"]
+    # 💻 (Bash) has a known ASCII fallback in EMOJI_ASCII
+    out = status_constants.emoji_or_ascii("\U0001f4bb", emoji_free=True)
+    assert out == status_constants.EMOJI_ASCII["\U0001f4bb"] == "Sh"
+
+
+def test_default_glyphs_are_emoji_presentation():
+    """No built-in glyph needs VS16 (#461): a text-default codepoint renders
+    at an ambiguous width on Windows Terminal and Konsole, with or without it."""
+    from overcode.columns import emoji
+    from overcode.status_constants import BADGE_KINDS, EMOJI_ASCII
+    glyphs = {
+        **{f"tool {k}": v for k, v in emoji.TOOL_EMOJI.items()},
+        **{f"skill {k}": v for k, v in emoji._SKILL_EMOJI_DEFAULTS.items()},
+        **{f"wrapper {k}": v for k, v in emoji._WRAPPER_EMOJI_DEFAULTS.items()},
+        **{f"badge {k}": v[0] for k, v in BADGE_KINDS.items()},
+        "sandbox": emoji.SANDBOX_EMOJI,
+    }
+    assert [k for k, g in glyphs.items() if "\ufe0f" in g] == []
+    assert set(emoji.TOOL_EMOJI.values()) <= EMOJI_ASCII.keys()
 
 
 def test_detection_respects_explicit_override(monkeypatch):

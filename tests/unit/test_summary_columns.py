@@ -994,12 +994,12 @@ class TestRenderWrapper:
         ctx = _make_ctx(session=session)
         assert render_wrapper_plain(ctx) == "mywrap"
 
-    def test_sandbox_only_shows_beach(self):
+    def test_sandbox_only_shows_package(self):
         session = _make_session(wrapper=None, sandbox_enabled=True)
         ctx = _make_ctx(session=session)
         result = render_wrapper(ctx)
         assert result is not None
-        assert "🏖" in result[0][0]
+        assert "📦" in result[0][0]
         assert render_wrapper_plain(ctx) == "sandbox"
 
     def test_sandbox_off_hides_column(self):
@@ -1020,7 +1020,7 @@ class TestRenderWrapper:
         ctx = _make_ctx(session=session)
         result = render_wrapper(ctx)
         assert "🐳" in result[0][0]
-        assert "🏖" in result[0][0]
+        assert "📦" in result[0][0]
         assert render_wrapper_plain(ctx) == "devcontainer+sandbox"
 
 
@@ -1143,7 +1143,7 @@ class TestRenderAgentValue:
         session = _make_session(agent_value=1000)
         ctx = _make_ctx(session=session, summary_detail="low")
         result = render_agent_value(ctx)
-        assert "⏹" in result[0][0]
+        assert "➖" in result[0][0]
 
 
 # ===========================================================================

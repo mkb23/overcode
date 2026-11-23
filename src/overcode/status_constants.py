@@ -142,19 +142,19 @@ EMOJI_ASCII = {
     "✅": "ok",
     "❌": "XX",
     # Tool indicators
-    "🖥️": "Sh",
+    "💻": "Sh",
     "📖": "Rd",
-    "✏️": "Wr",
+    "📝": "Wr",
     "🔨": "Ed",  # Edit
     "🔧": "Tl",  # wrench — DTL tool badge
     "🔍": "Gl",
     "🔎": "Gr",
     "🌐": "Wf",
-    "🕵️": "Ws",
+    "🔦": "Ws",
     "🧵": "Tk",
     "📓": "Nb",
     "📋": "Cb",
-    "📝": "Tw",
+    "📌": "Tw",
     "🔹": "--",
     # Permission modes
     "🔥": "B!",
@@ -189,9 +189,8 @@ EMOJI_ASCII = {
     "🧘": "Id",
     "🚶": "Ac",
     # Value arrows
-    "⏫️": "^^",
-    "⏬️": "vv",
-    "⏹️": "==",
+    "⏫": "^^",
+    "⏬": "vv",
     # Misc
     "⚠": "!W",
     "➖": "--",

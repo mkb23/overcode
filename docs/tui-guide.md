@@ -715,7 +715,7 @@ Press `l` to cycle through what's shown in the summary line:
 1. **AI Short** (💬) - Brief AI-generated summary of current activity
 2. **AI Long** (📖) - Detailed AI summary with broader context
 3. **Orders** (🎯) - Standing orders for this agent
-4. **Annotation** (✏️) - Human-written notes
+4. **Annotation** (📝) - Human-written notes
 5. **Heartbeat** (💓) - Latest heartbeat data
 6. **Last command** (⌨) - The last instruction sent to the agent
 7. **Result** - A child's outcome: 📭 unreported, ✅ / ❌ with its reason,

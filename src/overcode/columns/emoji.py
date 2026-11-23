@@ -7,19 +7,19 @@ from typing import Optional
 # Tool name → emoji registry for allowed-tools column
 # ---------------------------------------------------------------------------
 TOOL_EMOJI: dict[str, str] = {
-    "Bash": "🖥️",
+    "Bash": "💻",
     "Read": "📖",
-    "Write": "✏️",
+    "Write": "📝",
     "Edit": "🔨",  # 🔧 is the DTL `tool` badge; the screwdriver was too new for VSCode (#504)
     "Glob": "🔍",
     "Grep": "🔎",
     "WebFetch": "🌐",
-    "WebSearch": "🕵️",
+    "WebSearch": "🔦",
     "Task": "🧵",
     "Notebook": "📓",
     "NotebookEdit": "📓",
     "TodoRead": "📋",
-    "TodoWrite": "📝",
+    "TodoWrite": "📌",
 }
 TOOL_EMOJI_DEFAULT = "🔹"  # Fallback for unknown tools
 MAX_TOOL_EMOJI = 10  # Configurable cap
@@ -50,7 +50,7 @@ _WRAPPER_EMOJI_DEFAULTS: dict[str, str] = {
     "passthrough": "🔗",
 }
 WRAPPER_EMOJI_DEFAULT = "🎁"  # Fallback for unknown wrappers
-SANDBOX_EMOJI = "🏖️"  # Badge when Claude /sandbox is detected as ON (#451)
+SANDBOX_EMOJI = "📦"  # Badge when Claude /sandbox is detected as ON (#451)
 
 
 def get_skill_emoji() -> dict[str, str]:

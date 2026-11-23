@@ -457,8 +457,8 @@ def get_summary_content_text(
     """
     if mode == "annotation":
         if annotation:
-            return f"✏️ {annotation[:remaining_width-3]}", "bold_magenta"
-        return "✏️ (no annotation)", "dim"
+            return f"📝 {annotation[:remaining_width-3]}", "bold_magenta"
+        return "📝 (no annotation)", "dim"
 
     elif mode == "orders":
         if standing_instructions:

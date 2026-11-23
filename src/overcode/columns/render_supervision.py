@@ -303,11 +303,11 @@ def render_agent_value(ctx: ColumnContext) -> ColumnOutput:
         return [(f" {ctx.e('💰')}{s.agent_value:>4}", f"bold magenta{ctx.bg}")]
     else:
         if s.agent_value > 1000:
-            return [(f" {ctx.e('⏫️')}", f"bold red{ctx.bg}")]
+            return [(f" {ctx.e('⏫')}", f"bold red{ctx.bg}")]
         elif s.agent_value < 1000:
-            return [(f" {ctx.e('⏬️')}", f"bold blue{ctx.bg}")]
+            return [(f" {ctx.e('⏬')}", f"bold blue{ctx.bg}")]
         else:
-            return [(f" {ctx.e('⏹️')} ", f"dim{ctx.bg}")]
+            return [(f" {ctx.e('➖')} ", f"dim{ctx.bg}")]
 
 
 def render_mode_plain(ctx: ColumnContext) -> Optional[str]:

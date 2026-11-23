@@ -432,7 +432,7 @@ Add notes to agents for yourself or collaborators.
 
 ### Viewing
 
-Press `l` to cycle to annotation mode (✏️) to see annotations in the summary line.
+Press `l` to cycle to annotation mode (📝) to see annotations in the summary line.
 
 ### Use Cases
 
