@@ -13,6 +13,7 @@ state into <dir>, to look at. Nothing is written by default.
 
 import os
 import re
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -122,7 +123,9 @@ class TripEngine(GridEngine):
             view.update(quota={"pp7d": 12.34, "w7": 40, "conf": "low"},
                         burn=burn, estimated_energy_j=5.0e5)
         snap.agents["id-alpha"]["trip"] = {
-            "reset_at": "2026-10-07T10:00:00+00:00", "estimated_cost_usd": 0.02,
+            # Mid-bucket ("3.0d"), so the age can't tick between paint and check
+            "reset_at": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
+            "estimated_cost_usd": 0.02,
             "estimated_energy_j": 900.0, "input_tokens": 10, "output_tokens": 5,
             "cache_creation_tokens": 0, "cache_read_tokens": 0, "pp7d": 0.01}
         snap.agents["id-bravo"].update(subtree_cost_usd=3.0, subtree_trip_cost_usd=1.0)

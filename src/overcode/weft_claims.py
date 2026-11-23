@@ -36,9 +36,9 @@ import subprocess
 import threading
 import time
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Iterator, List, Optional
+from typing import Callable, Dict, Iterable, Iterator, Optional
 
 DEFAULT_TTL = 3600  # weft's default lease, in seconds
 # How long a directory's project lookup is trusted: a `weft init` shows up

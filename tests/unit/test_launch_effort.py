@@ -5,6 +5,7 @@ Each backend's mapping onto its own CLI, the validation, the CLI flags on
 """
 
 import json
+import re
 import shlex
 from unittest.mock import patch
 
@@ -196,7 +197,9 @@ class TestLaunchFlag:
         assert "ignored on backend 'shell'" in result.output + capsys.readouterr().err
 
     def test_help_lists_the_flag(self):
-        assert "--effort" in runner.invoke(app, ["launch", "--help"]).output
+        # CI renders help in colour, and the codes split "--effort".
+        output = re.sub(r"\x1b\[[0-9;]*m", "", runner.invoke(app, ["launch", "--help"]).output)
+        assert "--effort" in output
 
 
 class TestRestart:
