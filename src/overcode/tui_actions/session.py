@@ -8,7 +8,7 @@ through the SisterController HTTP client.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from textual.css.query import NoMatches
 from textual.widgets import Input
@@ -1019,48 +1019,107 @@ class SessionActionsMixin:
 
         self.run_worker(work, thread=True, group="shutdown", exclusive=True)
 
+    def _removal_started(self, session_id: str) -> bool:
+        """Claim ``session_id`` for a kill or clean-up; False if one is running.
+
+        The work runs in a thread; a second confirmed press meanwhile would
+        only find the record gone and report a failure.
+        """
+        in_flight = self.__dict__.setdefault("_removals_in_flight", set())
+        if session_id in in_flight:
+            return False
+        in_flight.add(session_id)
+        return True
+
+    def _removal_finished(self, session_id: str) -> None:
+        self.__dict__.setdefault("_removals_in_flight", set()).discard(session_id)
+
     def _execute_kill(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
-        """Execute the actual kill operation after confirmation."""
+        """Execute the actual kill operation after confirmation.
+
+        The kill (tmux, the archive commit, a cascade) runs in a thread; the
+        row goes when it is done (``_kill_done``).
+        """
+        if not self._removal_started(session_id):
+            return
         # Save a copy of the session for showing when show_terminated is True
         session_copy = focused.session
         # Mark it as terminated for display purposes
         from dataclasses import replace
         terminated_session = replace(session_copy, status="terminated")
+        chosen = self._chosen_session_id()
 
         # Use launcher to kill the session
         from ..launcher import AgentLauncher
-        launcher = AgentLauncher(
-            tmux_session=self.tmux_session,
-            session_manager=self.session_manager
-        )
+        tmux_session = self.tmux_session
+        session_manager = self.session_manager
 
-        if launcher.kill_session(session_name):
-            self.notify(f"Killed agent: {session_name}", severity="information")
+        def work() -> None:
+            try:
+                launcher = AgentLauncher(tmux_session=tmux_session,
+                                         session_manager=session_manager)
+                killed = launcher.kill_session(session_name)
+            except Exception:  # reported as a failed kill, not a dead worker
+                killed = False
+            self.call_from_thread(self._kill_done, focused, session_name, session_id,
+                                  terminated_session, killed, chosen)
 
-            # Store in terminated sessions cache for ghost mode
-            import time as _time
-            self._terminated_sessions[session_id] = terminated_session
-            self._terminated_times[session_id] = _time.monotonic()
+        self.run_worker(work, thread=True, group="kill", exclusive=False)
 
-            # Remove from self.sessions so j/k ordering stays consistent
-            self.sessions = [s for s in self.sessions if s.id != session_id]
-
-            # Remove the widget (will be re-added if show_terminated is True)
-            focused.leave()
-            # Reconcile widgets immediately — Textual's Widget.remove() is async,
-            # and without this kicker the row could linger until the next 10 s
-            # refresh_sessions tick (#456). update_session_widgets diffs DOM vs
-            # display_sessions and force-removes anything stale, *and* re-adds
-            # the row from _terminated_sessions when show_terminated is True.
-            self.update_session_widgets()
-            self._choose_after_removal(session_id)
-        else:
+    def _kill_done(self, focused: "SessionSummary", session_name: str, session_id: str,
+                   terminated_session, killed: bool, chosen: Optional[str]) -> None:
+        self._removal_finished(session_id)
+        if not killed:
             self.notify(f"Failed to kill agent: {session_name}", severity="error")
+            return
+        self.notify(f"Killed agent: {session_name}", severity="information")
+
+        # Store in terminated sessions cache for ghost mode
+        import time as _time
+        self._terminated_sessions[session_id] = terminated_session
+        self._terminated_times[session_id] = _time.monotonic()
+
+        # Remove from self.sessions so j/k ordering stays consistent
+        self.sessions = [s for s in self.sessions if s.id != session_id]
+
+        # Remove the widget (will be re-added if show_terminated is True)
+        focused.leave()
+        # Reconcile widgets immediately — Textual's Widget.remove() is async,
+        # and without this kicker the row could linger until the next 10 s
+        # refresh_sessions tick (#456). update_session_widgets diffs DOM vs
+        # display_sessions and force-removes anything stale, *and* re-adds
+        # the row from _terminated_sessions when show_terminated is True.
+        self.update_session_widgets()
+        self._choose_after_removal(session_id, chosen)
 
     def _execute_cleanup(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
-        """Clean up a terminated/done agent: archive and remove from display."""
-        self.session_manager.delete_session(session_id)
+        """Clean up a terminated/done agent: archive and remove from display.
 
+        The archive commit runs in a thread; the row goes when it is done
+        (``_cleanup_done``).
+        """
+        if not self._removal_started(session_id):
+            return
+        chosen = self._chosen_session_id()
+        session_manager = self.session_manager
+
+        def work() -> None:
+            error = None
+            try:
+                session_manager.delete_session(session_id)
+            except Exception as e:  # surface, don't crash the worker silently
+                error = str(e)
+            self.call_from_thread(self._cleanup_done, focused, session_name, session_id,
+                                  error, chosen)
+
+        self.run_worker(work, thread=True, group="cleanup", exclusive=False)
+
+    def _cleanup_done(self, focused: "SessionSummary", session_name: str, session_id: str,
+                      error: Optional[str], chosen: Optional[str]) -> None:
+        self._removal_finished(session_id)
+        if error is not None:
+            self.notify(f"Failed to clean up agent: {session_name}: {error}", severity="error")
+            return
         self.notify(f"Cleaned up agent: {session_name}", severity="information")
 
         # Remove from self.sessions so j/k ordering stays consistent
@@ -1072,15 +1131,21 @@ class SessionActionsMixin:
         self._terminated_times.pop(session_id, None)
         # Remove the widget
         focused.leave()
-        # Same reconciliation as _execute_kill (#456) — force a diff so the row
+        # Same reconciliation as _kill_done (#456) — force a diff so the row
         # disappears immediately rather than waiting for the next refresh tick.
         self.update_session_widgets()
-        self._choose_after_removal(session_id)
+        self._choose_after_removal(session_id, chosen)
 
-    def _choose_after_removal(self, session_id: str) -> None:
+    def _choose_after_removal(self, session_id: str, chosen: Optional[str] = None) -> None:
         """After a kill or clean-up: a ghost row of it (killed agents shown)
         keeps the choice; an agent gone from the list is replaced by the
-        row now in its place, chosen as j/k would (the pane follows)."""
+        row now in its place, chosen as j/k would (the pane follows).
+
+        ``chosen`` is the agent chosen when the kill was confirmed: a person
+        who chose another one while the work ran keeps that choice.
+        """
+        if self._chosen_session_id() != chosen:
+            return
         widgets = self._get_widgets_in_session_order()
         if not widgets or any(w.session.id == session_id for w in widgets):
             return
