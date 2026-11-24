@@ -158,6 +158,121 @@ class TestReviveAll:
 
 
 # ---------------------------------------------------------------------------
+# Cascade kill (#528 item 7)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def tree(tmp_path):
+    """A root with ten descendants: five children, each with one grandchild."""
+    mock_tmux = MockTmux()
+    sm = SessionManager(state_dir=tmp_path / "sessions", skip_git_detection=True)
+    launcher = AgentLauncher("agents", TmuxManager("agents", tmux=mock_tmux), sm)
+    launcher.launch(name="root")
+    for i in range(10):
+        launcher.launch(name=f"c{i}", parent_name="root" if i < 5 else f"c{i - 5}")
+    return launcher, mock_tmux, sm
+
+
+class _Counts:
+    """Spy on state writes and tmux window calls."""
+
+    def __init__(self, sm, mock_tmux, monkeypatch):
+        self.writes = 0
+        self.list_windows = 0
+        self.killed: list = []
+        real_txn = sm._state_transaction
+        from contextlib import contextmanager
+
+        @contextmanager
+        def txn():
+            with real_txn() as t:
+                yield t
+                if t.dirty:
+                    self.writes += 1
+
+        real_list, real_kill = mock_tmux.list_windows, mock_tmux.kill_window
+
+        def list_windows(session):
+            self.list_windows += 1
+            return real_list(session)
+
+        def kill_window(session, window):
+            self.killed.append(window)
+            return real_kill(session, window)
+
+        monkeypatch.setattr(sm, "_state_transaction", txn)
+        monkeypatch.setattr(mock_tmux, "list_windows", list_windows)
+        monkeypatch.setattr(mock_tmux, "kill_window", kill_window)
+
+
+class TestCascadeKill:
+    def test_cascade_of_ten_is_one_write_and_one_listing(self, tree, monkeypatch):
+        launcher, mock_tmux, sm = tree
+        windows = {s.name: s.tmux_window for s in sm.list_sessions()}
+        counts = _Counts(sm, mock_tmux, monkeypatch)
+        assert launcher.kill_session("root") is True
+        assert sm.list_sessions() == []
+        assert counts.writes == 1
+        assert counts.list_windows == 1
+        # grandchildren, then children, then the root
+        names = {w: n for n, w in windows.items()}
+        order = [names[w] for w in counts.killed]
+        assert order == [f"c{i}" for i in range(5, 10)] + [f"c{i}" for i in range(5)] + ["root"]
+        archived = {r["name"] for r in sm.iter_archived_records()}
+        assert archived == set(windows)
+
+    def test_no_cascade_orphans_in_one_write(self, tree, monkeypatch):
+        launcher, mock_tmux, sm = tree
+        counts = _Counts(sm, mock_tmux, monkeypatch)
+        assert launcher.kill_session("root", cascade=False) is True
+        left = sm.list_sessions()
+        assert len(left) == 10
+        assert [s.parent_session_id is None for s in left].count(True) == 5
+        assert counts.writes == 2  # the orphaning, then the root's archive
+        assert counts.list_windows == 1
+
+    def test_one_failed_window_kill_spares_only_its_record(self, tree, monkeypatch, capsys):
+        launcher, mock_tmux, sm = tree
+        stuck = sm.get_session_by_name("c7")
+        real_kill = mock_tmux.kill_window
+        monkeypatch.setattr(mock_tmux, "kill_window",
+                            lambda s, w: False if w == stuck.tmux_window else real_kill(s, w))
+        assert launcher.kill_session("root") is False
+        assert [s.name for s in sm.list_sessions()] == ["c7"]
+        assert "Failed to kill tmux window for 'c7'" in capsys.readouterr().out
+
+    def test_stale_windows_are_cleaned_up(self, tree, capsys):
+        launcher, mock_tmux, sm = tree
+        stale = sm.get_session_by_name("c3")
+        mock_tmux.kill_window("agents", stale.tmux_window)
+        assert launcher.kill_session("root") is True
+        assert sm.list_sessions() == []
+        assert "Cleaned up stale session 'c3'" in capsys.readouterr().out
+
+    def test_unresponsive_tmux_keeps_every_record(self, tree, monkeypatch):
+        launcher, mock_tmux, sm = tree
+        counts = _Counts(sm, mock_tmux, monkeypatch)
+        mock_tmux.unresponsive = True
+        assert launcher.kill_session("root") is False
+        assert len(sm.list_sessions()) == 11
+        assert counts.list_windows == 1  # asked once, not once per agent
+        assert counts.writes == 0
+
+    def test_agents_in_another_tmux_session_listed_there_once(self, tree, monkeypatch):
+        launcher, mock_tmux, sm = tree
+        for i in (5, 6):
+            s = sm.get_session_by_name(f"c{i}")
+            mock_tmux.new_session("work")
+            mock_tmux.sessions["work"][s.tmux_window] = mock_tmux.sessions["agents"].pop(s.tmux_window)
+            sm.update_session(s.id, tmux_session="work")
+        counts = _Counts(sm, mock_tmux, monkeypatch)
+        assert launcher.kill_session("root") is True
+        assert sm.list_sessions() == []
+        assert counts.list_windows == 2  # agents and work
+        assert not [w for w in mock_tmux.sessions["work"] if w.startswith("c")]
+
+
+# ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
 

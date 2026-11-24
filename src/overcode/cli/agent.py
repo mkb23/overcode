@@ -280,9 +280,9 @@ def _get_sessions_to_cleanup(launcher, done: bool) -> tuple[int, int]:
     if done:
         all_sessions = launcher.sessions.list_sessions()
         done_sessions = [s for s in all_sessions if s.status == "done"]
-        for sess in done_sessions:
-            launcher._kill_single_session(sess)
-            done_count += 1
+        # Windows killed one by one, records dropped in one commit
+        launcher._kill_sessions(done_sessions)
+        done_count = len(done_sessions)
 
     return terminated_count, done_count
 

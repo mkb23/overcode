@@ -312,59 +312,88 @@ class AgentLifecycleMixin:
             print(f"Session '{name}' not found")
             return False
 
-        # Handle cascade: kill descendants deepest-first (#244)
-        descendants_ok = True
+        # Handle cascade: kill descendants deepest-first (#244), over one
+        # snapshot of the tree
+        index = self.sessions.index()
         if cascade:
-            descendants = self.sessions.get_descendants(session.id)
+            descendants = index.descendants(session.id)
             # Sort by depth (deepest first) for clean teardown
-            descendants.sort(key=lambda s: self.sessions.compute_depth(s), reverse=True)
-            # Every descendant is tried; any that would not die fails the kill
-            descendants_ok = all([self._kill_single_session(desc) for desc in descendants])
+            descendants.sort(key=index.depth, reverse=True)
+            targets = descendants + [session]
         else:
-            # Orphan children: set their parent_session_id to None
-            children = self.sessions.get_children(session.id)
-            for child in children:
-                self.sessions.update_session(child.id, parent_session_id=None)
+            # Orphan children: clear their parent_session_id, in one write
+            children = index.children(session.id)
+            if children:
+                from .session_manager import PendingUpdates
 
-        killed = self._kill_single_session(session)
+                pending = PendingUpdates()
+                for child in children:
+                    pending.update_session(child.id, parent_session_id=None)
+                self.sessions.commit_pending(pending)
+            targets = [session]
+
+        # Every target is tried; any that would not die fails the kill
+        killed = all(self._kill_sessions(targets))
         self.tidy_agent_storage()
-        return killed and descendants_ok
+        return killed
 
     def _kill_single_session(self, session: Session) -> bool:
-        """Kill a single session (no cascade). Internal helper.
+        """Kill a single session (no cascade). Internal helper."""
+        return self._kill_sessions([session])[0]
 
-        Acts in the agent's own tmux session: looked for in this launcher's,
+    def _kill_sessions(self, sessions: List[Session]) -> List[bool]:
+        """Kill each agent's window in the order given, then drop their records
+        in one commit; one bool per agent (False: its record stays).
+
+        Acts in each agent's own tmux session: looked for in this launcher's,
         a live window elsewhere reads as gone and only the record would go.
+        Each tmux session's windows are listed once. A server too slow to
+        list them is not "gone": its agents' records stay, nothing is killed.
         """
         from .protocols import TmuxTimeoutError
 
-        owner = self.for_agent(session)
-        if owner is not self:
-            return owner._kill_single_session(session)
-        # Check if the tmux window/session still exists. A server too slow
-        # to say is not "gone": the record stays, nothing is killed.
-        try:
-            window_exists = self.tmux.window_exists(session.tmux_window)
-        except TmuxTimeoutError:
-            print(f"Failed to kill '{session.name}': tmux is not responding; "
-                  f"try again in a moment")
-            return False
-
-        if window_exists:
-            # Active session - try to kill the tmux window
-            if self.tmux.kill_window(session.tmux_window):
-                self.sessions.delete_session(session.id)
-                print(f"✓ Killed session '{session.name}'")
-                return True
+        owners: Dict[str, "AgentLifecycleMixin"] = {}
+        lookups: Dict[str, Optional[Tuple[set, set]]] = {}
+        results: List[bool] = []
+        to_delete: List[str] = []
+        done_lines: List[str] = []
+        for session in sessions:
+            owner = owners.get(session.tmux_session)
+            if owner is None:
+                owner = owners[session.tmux_session] = self.for_agent(session)
+            key = owner.tmux_session
+            if key not in lookups:
+                try:
+                    lookups[key] = window_lookup(owner.tmux.list_windows())
+                except TmuxTimeoutError:
+                    lookups[key] = None
+            lookup = lookups[key]
+            if lookup is None:
+                print(f"Failed to kill '{session.name}': tmux is not responding; "
+                      f"try again in a moment")
+                results.append(False)
+            elif window_in_lookup(session.tmux_window, lookup):
+                # Active session - try to kill the tmux window
+                if owner.tmux.kill_window(session.tmux_window):
+                    to_delete.append(session.id)
+                    done_lines.append(f"✓ Killed session '{session.name}'")
+                    results.append(True)
+                else:
+                    print(f"Failed to kill tmux window for '{session.name}'")
+                    results.append(False)
             else:
-                print(f"Failed to kill tmux window for '{session.name}'")
-                return False
-        else:
-            # Stale session - tmux window/session is already gone (e.g., after reboot)
-            # Just clean up the state file
-            self.sessions.delete_session(session.id)
-            print(f"✓ Cleaned up stale session '{session.name}' (tmux window no longer exists)")
-            return True
+                # Stale session - tmux window/session is already gone (e.g.,
+                # after reboot): just clean up the state file
+                to_delete.append(session.id)
+                done_lines.append(f"✓ Cleaned up stale session '{session.name}' "
+                                  f"(tmux window no longer exists)")
+                results.append(True)
+        if to_delete:
+            # One commit for all of them (agent_bundle's write-ahead order)
+            self.sessions.delete_sessions(to_delete)
+        for line in done_lines:
+            print(line)
+        return results
 
     def _list_tmux_windows_cheap(self) -> List[Dict[str, Any]]:
         """The tmux session's windows (``TmuxManager.list_windows``)."""
