@@ -74,3 +74,73 @@ def test_a_ticking_fleet_costs_no_api_calls_after_the_first_summaries():
     # before: 2 per agent per pass = 1,200 over the minute at these limits
     assert calls <= 2 * AGENTS, f"{calls} API calls"
     assert fleet.listings == PASSES
+
+
+def _sessions(ids):
+    out = []
+    for i in ids:
+        s = Mock(id=f"s{i}", tmux_window=f"w{i}", stats=Mock(current_state="running"))
+        s.name = f"agent{i}"
+        out.append(s)
+    return out
+
+
+def _component(fleet):
+    c = SummarizerComponent(tmux_session="agents", tmux=fleet, config=SummarizerConfig(enabled=True))
+    c._client = Mock()
+    c._client.summarize.return_value = "editing foo.py"
+    return c
+
+
+def test_dead_rows_cost_no_captures():
+    """Half the fleet's windows are gone: their rows cost nothing.
+
+    Before: every row was captured every pass, gone or not.
+    """
+    fleet = _TickingFleet()
+    c = _component(fleet)
+    rows = _sessions(range(AGENTS)) + _sessions(range(AGENTS, 2 * AGENTS))  # second half: no window
+    for _ in range(PASSES):
+        c.update(rows)
+    assert fleet.captures <= AGENTS * PASSES, f"{fleet.captures} captures"
+    assert not any(f"s{i}" in c.summaries for i in range(AGENTS, 2 * AGENTS))
+
+
+def test_churning_fleet_state_is_bounded_by_the_live_fleet():
+    """Agents come and go every pass: per-agent state tracks only the live ones.
+
+    Before: 500 pane lines per agent ever seen were kept for the TUI's life.
+    """
+    fleet = _TickingFleet()
+    c = _component(fleet)
+    for p in range(PASSES):
+        # a rolling window of AGENTS ids; window names recycle w0..w49
+        rows = []
+        for k, s in enumerate(_sessions(range(p * 10, p * 10 + AGENTS))):
+            s.tmux_window = f"w{k}"
+            rows.append(s)
+        c.update(rows)
+    for d in (c.summaries, c._last_update, c._last_context_update,
+              c._last_content_hash, c._last_context_hash, c._content_hashes):
+        assert len(d) <= AGENTS, f"{len(d)} entries"
+    assert len(c._captured) <= AGENTS
+
+
+def test_a_fifty_agent_pass_fits_the_tick():
+    """50 agents, 2 calls each at 100 ms: one after another that is 10 s,
+    twice the 5 s tick. On the pool it is a quarter of that."""
+    import time
+
+    fleet = _TickingFleet()
+    c = _component(fleet)
+
+    def slow(**kwargs):
+        time.sleep(0.1)
+        return "editing foo.py"
+
+    c._client.summarize.side_effect = slow
+    started = time.monotonic()
+    c.update(_sessions(range(AGENTS)))
+    elapsed = time.monotonic() - started
+    assert c._client.summarize.call_count == 2 * AGENTS
+    assert elapsed < 5.0, f"pass took {elapsed:.1f}s"

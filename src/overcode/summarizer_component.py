@@ -11,10 +11,12 @@ This ensures zero API costs when the TUI is closed (no one would see the summari
 import logging
 import re
 import subprocess
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Dict, Optional, TYPE_CHECKING
+from typing import Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
 
 from .status_constants import DEFAULT_CAPTURE_LINES
 from .status_patterns import is_status_bar_line, strip_ansi
@@ -25,6 +27,11 @@ if TYPE_CHECKING:
     from .protocols import TmuxInterface
 
 logger = logging.getLogger(__name__)
+
+# Summary calls in flight at once. One HTTP round trip per agent made a
+# 50-agent pass outlast the 5 s tick when run one after another (#528).
+# Captures stay on the pass's thread; only the calls go to the pool.
+SUMMARY_WORKERS = 4
 
 # A line that ticks while nothing else moves: the agent's busy line
 # ("✶ Pondering… (34s · ↑ 1.2k tokens · esc to interrupt)"). Its digits and
@@ -133,6 +140,9 @@ class SummarizerComponent:
         self._listed_at: float = 0.0
         self._captured = ListingGatedCaptures()
         self.captures = 0
+        # session -> (text, lines, hash of normalise_for_change(text, lines)):
+        # a reused capture is not normalised again
+        self._content_hashes: Dict[str, Tuple[str, int, int]] = {}
 
         # Where the next update() pass starts. A pass cut short by
         # should_stop resumes here, so a fleet too large to cover in one
@@ -145,6 +155,8 @@ class SummarizerComponent:
         self.total_tokens = 0
         self.total_cost_usd: float = 0.0
         self.cost_cap_hit: bool = False
+        # Guards the stats above: summary calls run on a small pool
+        self._stats_lock = threading.Lock()
 
     @property
     def available(self) -> bool:
@@ -174,28 +186,69 @@ class SummarizerComponent:
         if not self.enabled:
             return self.summaries
 
+        self._forget_gone(sessions)
         self._list_panes()
         count = len(sessions)
         start = self._next_index % count if count else 0
-        for offset in range(count):
-            if should_stop is not None and should_stop():
-                self._next_index = (start + offset) % count
-                break
-            self._update_session(sessions[(start + offset) % count])
-        else:
-            self._next_index = start
+        pool: Optional[ThreadPoolExecutor] = None
+        in_flight: Set[Future] = set()
+
+        def submit(work: Callable[[], None]) -> None:
+            # At most SUMMARY_WORKERS calls in flight: the loop waits for a
+            # slot, so should_stop is still checked as calls finish
+            nonlocal pool
+            if pool is None:
+                pool = ThreadPoolExecutor(SUMMARY_WORKERS, thread_name_prefix="summarizer")
+            if len(in_flight) >= SUMMARY_WORKERS:
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                in_flight.difference_update(done)
+            in_flight.add(pool.submit(work))
+
+        try:
+            for offset in range(count):
+                if should_stop is not None and should_stop():
+                    self._next_index = (start + offset) % count
+                    break
+                self._update_session(sessions[(start + offset) % count], run=submit)
+            else:
+                self._next_index = start
+        finally:
+            # The pass ends when its calls have: summaries returned are complete
+            if pool is not None:
+                pool.shutdown(wait=True)
 
         return self.summaries
 
-    def _update_session(self, session) -> None:
+    def _forget_gone(self, sessions) -> None:
+        """Drop per-agent state for agents no longer in ``sessions``.
+
+        ``summaries`` is rebound, not edited in place: the TUI holds the
+        dict the last pass returned and reads it from its own thread.
+        """
+        ids = {s.id for s in sessions}
+        self.summaries = {k: v for k, v in self.summaries.items() if k in ids}
+        for name in ("_last_update", "_last_context_update", "_last_content_hash",
+                     "_last_context_hash", "_content_hashes"):
+            d = getattr(self, name)
+            for key in [k for k in d if k not in ids]:
+                del d[key]
+        self._captured.keep_only(ids)
+
+    def _update_session(
+        self, session, run: Optional[Callable[[Callable[[], None]], None]] = None
+    ) -> None:
         """Update summaries for a single session.
 
         Generates two types of summaries:
         - Short: current activity (updated frequently)
         - Context: wider context (updated less frequently)
 
+        The rate and change checks and the capture happen here; the API
+        calls are handed to ``run`` (inline when None).
+
         Args:
             session: Session object with id, tmux_window, current_status
+            run: Runs the session's summary calls (update() passes its pool)
         """
         if not self._client:
             return
@@ -231,7 +284,7 @@ class SummarizerComponent:
         # Each kind of summary is asked for only when the pane has changed
         # since that kind was last made: spinner frames and ticking counters
         # are not changes (normalise_for_change)
-        content_hash = hash(normalise_for_change(content, self.config.lines))
+        content_hash = self._content_hash(session_id, content)
         need_short = need_short and self._last_content_hash.get(session_id) != content_hash
         need_context = need_context and self._last_context_hash.get(session_id) != content_hash
         if not need_short and not need_context:
@@ -248,11 +301,28 @@ class SummarizerComponent:
         if current_status:
             status = getattr(current_status, 'current_state', 'unknown')
 
-        if need_short and self._update_short_summary(session, prev_summary, content, status, now):
-            self._last_content_hash[session_id] = content_hash
+        def work() -> None:
+            # Touches only this session's keys: one task per session per pass
+            if need_short and self._update_short_summary(session, prev_summary, content, status, now):
+                self._last_content_hash[session_id] = content_hash
 
-        if need_context and self._update_context_summary(session, prev_summary, content, status, now):
-            self._last_context_hash[session_id] = content_hash
+            if need_context and self._update_context_summary(session, prev_summary, content, status, now):
+                self._last_context_hash[session_id] = content_hash
+
+        if run is None:
+            work()
+        else:
+            run(work)
+
+    def _content_hash(self, session_id: str, content: str) -> int:
+        """Hash of the normalised pane, computed once per distinct capture."""
+        lines = self.config.lines
+        cached = self._content_hashes.get(session_id)
+        if cached is not None and cached[1] == lines and cached[0] == content:
+            return cached[2]
+        content_hash = hash(normalise_for_change(content, lines))
+        self._content_hashes[session_id] = (content, lines, content_hash)
+        return content_hash
 
     def _update_short_summary(
         self, session, summary: AgentSummary, content: str, status: str, now: datetime
@@ -285,8 +355,9 @@ class SummarizerComponent:
                 mode=mode,
             )
 
-            self.total_calls += 1
-            self._accumulate_cost()
+            with self._stats_lock:
+                self.total_calls += 1
+                self._accumulate_cost()
 
             if result and result.strip().upper() != "UNCHANGED":
                 stripped = result.strip()
@@ -331,11 +402,17 @@ class SummarizerComponent:
     def _content_for(self, session) -> Optional[str]:
         """The session's pane text: the last capture while the pane is unchanged.
 
-        ``ListingGatedCaptures`` holds the rule; without a listing every
-        call captures.
+        ``ListingGatedCaptures`` holds the rule. A window missing from a
+        listing that succeeded is gone: nothing to capture. Without a
+        listing every call captures.
         """
         window = session.tmux_window
-        pane = pane_for_window(self._panes, str(window)) if self._panes else None
+        pane = None
+        if self._panes is not None:
+            pane = pane_for_window(self._panes, str(window))
+            if pane is None:
+                self._captured.store(session.id, None, self._listed_at, None)
+                return None
         content = self._captured.reuse(session.id, pane)
         if content is not None:
             return content

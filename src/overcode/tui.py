@@ -1949,11 +1949,12 @@ class SupervisorTUI(
             return
 
         # Update summaries (this makes API calls). One HTTP round trip per
-        # agent: a 50-agent pass outlasts the 5 s tick. Ticks that land
-        # mid-pass are coalesced by @single_flight into one rerun, so the
-        # pass runs to completion; the cancel check between agents fires
-        # only on app exit, and the round-robin cursor resumes from that
-        # agent on the next pass.
+        # agent, up to SUMMARY_WORKERS at once, so a 50-agent pass fits the
+        # 5 s tick at typical latency. Ticks that land mid-pass are
+        # coalesced by @single_flight into one rerun, so the pass runs to
+        # completion; the cancel check between agents fires only on app
+        # exit, and the round-robin cursor resumes from that agent on the
+        # next pass.
         summaries = self._summarizer.update(sessions, should_stop=worker_cancelled)
 
         # Apply to widgets on main thread

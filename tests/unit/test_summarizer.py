@@ -355,7 +355,7 @@ class TestUpdatePassCancellation:
     def test_full_pass_visits_every_agent_in_order(self):
         component = self._component()
         visited = []
-        component._update_session = lambda s: visited.append(s.id)
+        component._update_session = lambda s, run=None: visited.append(s.id)
         component.update(self._sessions(5))
         assert visited == ["s0", "s1", "s2", "s3", "s4"]
         component.update(self._sessions(5))
@@ -364,7 +364,7 @@ class TestUpdatePassCancellation:
     def test_stops_early_keeps_progress_and_resumes(self):
         component = self._component()
         visited = []
-        component._update_session = lambda s: visited.append(s.id)
+        component._update_session = lambda s, run=None: visited.append(s.id)
         calls = {"n": 0}
 
         def stop_after_two():
@@ -382,7 +382,7 @@ class TestUpdatePassCancellation:
         """Two agents per pass, five agents: three passes cover the fleet."""
         component = self._component()
         visited = []
-        component._update_session = lambda s: visited.append(s.id)
+        component._update_session = lambda s, run=None: visited.append(s.id)
         for _ in range(3):
             calls = {"n": 0}
 
@@ -397,7 +397,7 @@ class TestUpdatePassCancellation:
     def test_stop_before_first_agent_does_nothing_and_keeps_cursor(self):
         component = self._component()
         visited = []
-        component._update_session = lambda s: visited.append(s.id)
+        component._update_session = lambda s, run=None: visited.append(s.id)
         component.update(self._sessions(3), should_stop=lambda: True)
         assert visited == []
         component.update(self._sessions(3))
@@ -410,7 +410,7 @@ class TestUpdatePassCancellation:
     def test_cursor_survives_a_shrinking_fleet(self):
         component = self._component()
         visited = []
-        component._update_session = lambda s: visited.append(s.id)
+        component._update_session = lambda s, run=None: visited.append(s.id)
         calls = {"n": 0}
 
         def stop_after_four():

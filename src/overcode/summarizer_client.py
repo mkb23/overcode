@@ -28,6 +28,7 @@ Environment variable fallbacks:
 
 import json
 import logging
+import threading
 import urllib.error
 import urllib.request
 from typing import Optional
@@ -77,9 +78,30 @@ class SummarizerClient:
         self.api_key = api_key or config["api_key"]
         self.api_type = config.get("api_type", "openai")
         self._available = bool(self.api_key)
-        # Token usage from the most recent API call (for cost tracking)
-        self.last_input_tokens: int = 0
-        self.last_output_tokens: int = 0
+        # Token usage from the most recent API call (for cost tracking), per
+        # thread: the summarizer makes calls from a small pool (#528), and
+        # each caller reads the usage of its own call
+        self._usage = threading.local()
+
+    def _thread_usage(self) -> threading.local:
+        # setdefault: tests build clients with __new__, skipping __init__
+        return self.__dict__.setdefault("_usage", threading.local())
+
+    @property
+    def last_input_tokens(self) -> int:
+        return getattr(self._thread_usage(), "input", 0)
+
+    @last_input_tokens.setter
+    def last_input_tokens(self, value: int) -> None:
+        self._thread_usage().input = value
+
+    @property
+    def last_output_tokens(self) -> int:
+        return getattr(self._thread_usage(), "output", 0)
+
+    @last_output_tokens.setter
+    def last_output_tokens(self, value: int) -> None:
+        self._thread_usage().output = value
 
     @property
     def available(self) -> bool:
