@@ -13,12 +13,12 @@ a permanently pinned core (scaling audit R2).
 
 :func:`single_flight` runs at most one call per group on an instance at a
 time. A call that arrives while one is running is *coalesced*, not dropped:
-its arguments are queued (latest wins) and the running call executes the
-body once more after it finishes. That matters because the guarded workers
-are not only timer ticks — ``refresh_sessions``, ``update_timeline``,
-``_refresh_jobs`` and the resize sweep are also the event-driven refresh
-after a user creates, forks or revives an agent, changes a standing order
-or resizes the terminal. Dropping such a call would hide the new agent for
+its arguments are queued (latest wins, unless the group passes a ``merge``)
+and the running call executes the body once more after it finishes. That
+matters because the guarded workers are not only timer ticks —
+``refresh_sessions``, ``update_timeline``, ``_refresh_jobs`` and the resize
+sweep are also the event-driven refresh after a user creates, forks or
+revives an agent, changes a standing order or resizes the terminal. Dropping such a call would hide the new agent for
 up to a full period (10 s for sessions, 30 s for the timeline). Coalescing
 bounds the cost of a slow tick to one extra run and never a thread stack,
 and the rerun always reads fresher state than the run it followed, so the
@@ -92,7 +92,10 @@ def _state_for(instance: object, group: str) -> _GroupState:
     return state
 
 
-def single_flight(group: str) -> Callable[[F], F]:
+def single_flight(
+    group: str,
+    merge: Optional[Callable[[_Pending, _Pending], _Pending]] = None,
+) -> Callable[[F], F]:
     """Run one call in ``group`` at a time on this instance; coalesce the rest.
 
     Stack it *under* ``@work(thread=True, ...)`` so the check happens in the
@@ -104,6 +107,13 @@ def single_flight(group: str) -> Callable[[F], F]:
     ``call_from_thread`` before the rerun starts). The returned value is
     that of the last body executed. If the body raises, the queued rerun is
     discarded and the group is released.
+
+    Latest-wins is right when the arguments are a snapshot of state (the
+    newer snapshot supersedes the older). When they are a *work list* whose
+    calls add up — the resize group gets both the full sweep and one-window
+    fits — pass ``merge(queued, new) -> pending``, both ``(args, kwargs)``,
+    so a call queued behind another keeps the earlier call's work. It runs
+    under the group's mutex: keep it cheap and side-effect free.
     """
 
     def decorator(fn: F) -> F:
@@ -112,7 +122,11 @@ def single_flight(group: str) -> Callable[[F], F]:
             state = _state_for(self, group)
             with state.mutex:
                 if state.running:
-                    state.pending = (args, kwargs)
+                    queued = state.pending
+                    if queued is not None and merge is not None:
+                        state.pending = merge(queued, (args, kwargs))
+                    else:
+                        state.pending = (args, kwargs)
                     return None
                 state.running = True
             try:
@@ -154,3 +168,18 @@ def worker_cancelled() -> bool:
         return bool(get_current_worker().is_cancelled)
     except NoActiveWorker:
         return False
+
+
+def merge_window_lists(queued: _Pending, new: _Pending) -> _Pending:
+    """``single_flight`` merge for the resize group: the union of the window lists.
+
+    The group's calls take one positional window list: the full sweep (every
+    local agent) and the one-window fit on selection. Latest-wins let a
+    one-window fit replace a queued full sweep, leaving every other window
+    mis-sized until the next periodic sweep (#528). The union keeps the
+    queued windows first, in order, then the new call's unseen ones; a full
+    sweep already subsumes a fit, and two fits run both.
+    """
+    (queued_windows,), _ = queued
+    (new_windows,), _ = new
+    return (list(dict.fromkeys([*queued_windows, *new_windows])),), {}

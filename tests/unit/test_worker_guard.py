@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode import worker_guard  # noqa: E402
 from overcode.worker_guard import (  # noqa: E402
+    merge_window_lists,
     single_flight,
     worker_cancelled,
 )
@@ -95,6 +96,31 @@ class TestSingleFlight:
         t.join(timeout=5)
         assert obj.tags == ["first", "c"]
         assert obj.runs == 2
+
+    def test_merge_combines_queued_and_new_arguments(self):
+        """A group with ``merge`` folds each coalesced call into the queued one."""
+
+        class _Merging:
+            def __init__(self):
+                self.entered = threading.Event()
+                self.release = threading.Event()
+                self.calls = []
+
+            @single_flight("m", merge=lambda q, n: ((q[0][0] + n[0][0],), {}))
+            def tick(self, items):
+                self.calls.append(items)
+                self.entered.set()
+                self.release.wait(timeout=5)
+
+        obj = _Merging()
+        t, _ = _run_in_thread(obj.tick, ["first"])
+        assert obj.entered.wait(timeout=5)
+        assert obj.tick(["a"]) is None  # first queued call: nothing to merge with
+        assert obj.tick(["b"]) is None
+        assert obj.tick(["c"]) is None
+        obj.release.set()
+        t.join(timeout=5)
+        assert obj.calls == [["first"], ["a", "b", "c"]]
 
     def test_groups_are_independent_on_one_instance(self):
         obj = _Slow()
@@ -256,3 +282,48 @@ class TestTuiWorkersAreGuarded:
         t.join(timeout=5)
         assert reads == [1, 2]
         assert applied == [(["read1"],), (["read2"],)]  # fresher result applied last
+
+
+class TestMergeWindowLists:
+
+    def test_full_sweep_subsumes_a_later_single_fit(self):
+        merged = merge_window_lists(((["a", "b", "c"],), {}), ((["b"],), {}))
+        assert merged == ((["a", "b", "c"],), {})
+
+    def test_single_fit_then_full_sweep_keeps_every_window_once(self):
+        merged = merge_window_lists(((["b"],), {}), ((["a", "b", "c"],), {}))
+        assert merged == ((["b", "a", "c"],), {})
+
+    def test_two_single_fits_both_run(self):
+        merged = merge_window_lists(((["a"],), {}), ((["b"],), {}))
+        assert merged == ((["a", "b"],), {})
+
+    def test_queued_full_sweep_survives_a_single_fit_on_the_real_worker(self):
+        """#528 S1: a fit arriving behind a queued full sweep must not drop it.
+
+        While one resize pass runs, the periodic/on_resize sweep queues every
+        window, then selecting an agent queues a one-window fit. The rerun
+        must still cover every window, not just the selected one.
+        """
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        body = SupervisorTUI._resize_agent_windows_async.__wrapped__
+        entered, release = threading.Event(), threading.Event()
+        passes = []
+
+        class _Split:
+            def resize_agent_windows(self, windows):
+                passes.append(list(windows))
+                entered.set()
+                release.wait(timeout=5)
+
+        app.split = _Split()
+        t = threading.Thread(target=body, args=(app, ["w1"]))
+        t.start()
+        assert entered.wait(timeout=5)
+        assert body(app, ["w1", "w2", "w3"]) is None  # full sweep queued
+        assert body(app, ["w2"]) is None  # selection fit queued behind it
+        release.set()
+        t.join(timeout=5)
+        assert passes == [["w1"], ["w1", "w2", "w3"]]

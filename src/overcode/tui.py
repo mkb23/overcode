@@ -73,7 +73,7 @@ from .summarizer_component import (
 )
 from .sister_poller import SisterPoller
 from .usage_monitor import UsageMonitor
-from .worker_guard import single_flight, worker_cancelled
+from .worker_guard import merge_window_lists, single_flight, worker_cancelled
 from .summary_columns import FleetFlags, compute_fleet_flags, names_match_repos, repo_cell_width
 from .tui_logic import (
     sort_sessions,
@@ -1447,7 +1447,7 @@ class SupervisorTUI(
         self.split.schedule_agent_window_resize()
 
     @work(thread=True, group="agent_resize")
-    @single_flight("agent_resize")
+    @single_flight("agent_resize", merge=merge_window_lists)
     def _resize_agent_windows_async(self, windows: list) -> None:
         """Worker: resize each of ``windows`` to the bottom pane (tui_split)."""
         self.split.resize_agent_windows(windows)
