@@ -148,7 +148,7 @@ Standing orders are persistent instructions that guide an agent's behavior. Pres
 
 ## Using the Supervisor
 
-The supervisor daemon adds automated oversight. Start it with `[` in the dashboard (`]` stops it), or from the shell:
+The supervisor daemon adds automated oversight. Start it with "Start supervisor daemon" in the dashboard's `/` palette ("Stop supervisor daemon" stops it), or from the shell:
 
 ```bash
 overcode supervisor-daemon start

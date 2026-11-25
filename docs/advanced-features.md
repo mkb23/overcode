@@ -363,7 +363,7 @@ the same `api_key` on the sister's entry in `sisters:`.
 
 ### TUI Toggle
 
-Press `w` in the TUI to start/stop the API server. Its port appears in the daemon status bar.
+Run "API server (sisters)" from the TUI's `/` palette to start/stop the API server. Its port appears in the daemon status bar.
 
 ## AI Summarizer
 
@@ -609,7 +609,7 @@ If the TUI detects multiple monitor daemon processes, it shows a warning every 5
 
 ### Resolution
 
-Press `\` to restart the monitor daemon. This kills existing daemons and starts a fresh one.
+Run "Restart monitor daemon" from the TUI's `/` palette to restart the monitor daemon. This kills existing daemons and starts a fresh one.
 
 ### Prevention
 
@@ -631,7 +631,7 @@ This disables auto-refresh timers, letting you manually refresh with `r` and obs
 
 ### Color Issues
 
-If colors render incorrectly, press `M` for monochrome mode. This strips ANSI codes from the preview pane (sister agents and jobs).
+If colors render incorrectly, run "Monochrome" from the `/` palette. This strips ANSI codes from the preview pane (sister agents and jobs).
 
 ### Mouse Issues
 

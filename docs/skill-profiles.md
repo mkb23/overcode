@@ -47,7 +47,7 @@ overcode skills profile delete research
 
 A profile can name a skill by its frontmatter `name` or its folder name.
 
-In the TUI, press **`W`** (or choose *Skill profiles…* in the `/` palette):
+In the TUI, choose *Skill profiles…* in the `/` palette (`W` in the classic key preset):
 
 - The dialog lists every skill, with the ones agents use most at the top, and a checkbox for the selected profile.
 - `space` switches the highlighted skill on or off, `← →` changes profile, `n` makes a new one, and `D D` deletes it.
@@ -68,7 +68,7 @@ The first of these that applies:
    ```
 
    Pins live in `~/.overcode/config.yaml`, not in the folder.
-4. `new_agent_defaults.skill_profile` in config, or the *Skill profile* row in the `G` dialog.
+4. `new_agent_defaults.skill_profile` in config, or the *Skill profile* row in the *New agent defaults…* dialog.
 
 An agent without a profile launches exactly as before, with nothing hidden.
 

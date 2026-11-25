@@ -609,7 +609,7 @@ overcode web [options]
 | `--stop` | | Stop the running API server |
 | `--session` | | Tmux session name |
 
-Starts the server in the background and exits immediately. If already running, shows the current URL. Use `--stop` to stop a running server. Same toggle as the TUI `w` key.
+Starts the server in the background and exits immediately. If already running, shows the current URL. Use `--stop` to stop a running server. Same toggle as the TUI's "API server (sisters)" palette command.
 
 Routes: `GET /api/status`, `GET /api/agents/{name}/status`,
 `GET /api/timeline/raw`, `GET /health`, and the control routes under

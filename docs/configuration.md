@@ -240,7 +240,7 @@ Setting `wrapper: devcontainer` makes all new agents launch inside a Docker cont
 Omitting `backend` (or setting it to `null`) leaves new agents on overcode's
 built-in default (`claude-code`) — same effect as not having the key at all.
 There are two surfaces for setting it: editing `config.yaml` directly (as
-above), or the TUI's `G` new-agent-defaults modal, which has a **Backend**
+above), or the TUI's "New agent defaults…" modal (`/` palette), which has a **Backend**
 row that cycles through every registered backend plus `(unset)` (space/enter
 to cycle, `a` to apply). There is no `overcode config set` CLI subcommand —
 `overcode config` only supports `init`/`show`/`path`/`tmux` — so config.yaml
@@ -351,7 +351,7 @@ Every TUI key can be changed under `keys:` in `~/.overcode/config.yaml` (#510):
 
 ```yaml
 keys:
-  preset: vscode                     # default | vscode
+  preset: vscode                     # default | vscode | classic
   overrides:                         # main-screen actions
     jump_to_agent: [ctrl+j, J]       # action -> one key or a list
     toggle_monochrome: null          # unbind
@@ -378,6 +378,52 @@ overcode keys --presets        # list presets
 ```
 
 The palette's **Key preset** command switches preset and rebinds the running TUI immediately. The help overlay (`h`), the palette and the footer always show the keys in effect.
+
+### Classic preset
+
+Since 0.6.4 settings you set once and daemon admin have no bare key by
+default, because prose typed into the TUI pane by mistake flipped them a
+character at a time. They stay in the `/` palette (help marks them `·`).
+`keys: {preset: classic}` (or `overcode keys --use classic`) brings their
+old keys back:
+
+| Action | classic |
+|---|---|
+| Monochrome / Theme / Emoji-free | `M` / `Y` / `E` |
+| Column headers | `L` |
+| Start / stop supervisor daemon | `[` / `]` |
+| Restart monitor daemon | `\` |
+| AI summarizer | `A` |
+| API server (sisters) | `w` |
+| New agent defaults… / Skill profiles… / Sister visibility… | `G` / `W` / `U` |
+| Status detection (hooks/polling) | `K` |
+
+To keep just one of them, bind it yourself instead: `keys: {overrides: {toggle_theme: Y}}`.
+
+## Typing guard
+
+`tui.typing_guard` (default on) notices prose typed into the TUI pane by
+mistake: four or more typing keys, three or more of them different, each
+within 0.6 s of the last. From then until you stop typing for a second,
+every key is ignored, and what the earlier keys did is put back: toggles
+and cycles, the chosen agent, and any dialog or command bar they opened
+(closed without sending). Keys that act outside the TUI with no
+confirmation of their own (quit, the overagent, a new shell, sending
+`1`-`5`/Enter/Esc to an agent, restarting the monitor daemon) never fire
+in the middle of a burst of keys: they run once it settles, or not at all
+if it was typing. One warning says what was ignored and undone.
+
+`Ctrl+Z` ("Undo last change" in the palette) undoes the last setting
+changed from a key or the palette, newest first, whether or not the guard
+is on.
+
+```yaml
+tui:
+  typing_guard: false   # every key acts at once, as before 0.6.4
+```
+
+"Typing guard" in the `/` palette switches it and saves this setting. See
+[TUI guide → Typing guard](tui-guide.md#typing-guard).
 
 ### VSCode preset
 
@@ -844,7 +890,7 @@ billing:
 ```
 
 A value that isn't one of these is ignored with a warning (at launch and in
-the TUI's billing dialog). In the TUI, "New agent defaults…" (`G`) sets
+the TUI's billing dialog). In the TUI, "New agent defaults…" (`/` palette) sets
 both, and `s` in the billing codes dialog opens it on those rows; the new-agent
 dialog's Billing row shows the code the mode picks.
 
@@ -1185,7 +1231,7 @@ monitor_daemon:
 
 Read when the daemon starts: after changing it, restart the daemon with
 `overcode monitor-daemon stop` then `overcode monitor-daemon start`, or
-press `\` (Restart monitor) in the TUI.
+run "Restart monitor daemon" from the TUI's `/` palette.
 
 ## Pricing Configuration
 

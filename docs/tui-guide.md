@@ -272,13 +272,13 @@ status detail for 30 minutes, beside its own light; hover it for which one:
 
 From the keyboard, `S` opens the command palette on sort choices: every sortable column plus Tree order. Type a few letters of the column's name or its header code (`cpu`, `tok`, `git`) and press `Enter`; choosing the current sort again reverses it, and `Tab` does the same while keeping the picker open. "Reverse sort" in the `/` palette flips the current direction. The sort is saved in `tui_preferences.json`.
 
-Hover a column header to see what the column means. The column configurator (`C`) is the full guide: every column is listed under its group with its header code, what it shows for the focused agent, and what it means, and the foot explains the highlighted one — its default detail levels and whether it sorts. It sits at the bottom of the screen so the first agents stay in view as you toggle columns. `L` hides or shows the header row.
+Hover a column header to see what the column means. The column configurator (`C`) is the full guide: every column is listed under its group with its header code, what it shows for the focused agent, and what it means, and the foot explains the highlighted one — its default detail levels and whether it sorts. It sits at the bottom of the screen so the first agents stay in view as you toggle columns. "Column headers" in the `/` palette hides or shows the header row.
 
 In sorts driven by live data (status, value, CPU, time in state…) the list re-orders itself as agents change. The highlight follows the *agent*, not the row, so the selected agent — and the tmux pane synced to it — stay the same when a row moves (#471).
 
 ## Keyboard Shortcuts
 
-These are the default keys. Any of them can be remapped, or switched to the VSCode-safe preset, under `keys:` in config.yaml — see [Configuration → Keybindings](configuration.md#keybindings). The help overlay (`h`/`?`) always shows the keys in effect, grouped like the command palette, in one to three columns depending on terminal width; scroll it with `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`.
+These are the default keys. Any of them can be remapped, or switched to the VSCode-safe or classic preset, under `keys:` in config.yaml — see [Configuration → Keybindings](configuration.md#keybindings). Settings you set once and daemon admin have no key by default (prose typed into the pane by mistake used to flip them): they are in the `/` palette, marked `·` in help, and `keys: {preset: classic}` gives them their old keys back. The help overlay (`h`/`?`) always shows the keys in effect, grouped like the command palette, in one to three columns depending on terminal width; scroll it with `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`.
 
 ### Navigation
 
@@ -318,9 +318,7 @@ The daemon log panel and the TUI diagnostic log are in the `/` palette
 | `S` | Sort by any column or tree order (picker; choosing the current sort reverses it) |
 | `$` | Cycle cost display (tokens / dollars / energy: joules, with the burn rate in watts / weekly quota on a subscription) |
 | `C` | Open column configuration |
-| `L` | Toggle column headers |
-| `M` | Toggle monochrome mode |
-| `E` | Toggle emoji-free mode |
+| `/` → "Column headers", "Monochrome", "Emoji-free", "Theme" | Header row, monochrome and emoji-free modes, light/dark theme (no default key; `L`, `M`, `E`, `Y` in the classic preset) |
 
 ### Agent Control
 
@@ -349,11 +347,11 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `c` | Sync to main + clear (double-press to confirm) |
 | `T` | Filter agents by tag (the TAG column lists each agent's `#tags` while they differ; it gives way first on a narrow row) |
 | `H` | Configure heartbeat |
-| `K` | Toggle detection mode (hooks/polling) |
 | `Ctrl+T` | Toggle time context |
-| `G` | New agent defaults (backend, permissions, skill profile, where billing codes come from) |
-| `W` | Skill profiles: build named sets of skills, pin them to folders ([guide](skill-profiles.md)) |
-| `U` | Sister visibility |
+| `/` → "Status detection" | Toggle detection mode (hooks/polling) (no default key; `K` in the classic preset) |
+| `/` → "New agent defaults…" | Backend, permissions, skill profile, where billing codes come from (no default key; `G` in the classic preset) |
+| `/` → "Skill profiles…" | Build named sets of skills, pin them to folders ([guide](skill-profiles.md)) (no default key; `W` in the classic preset) |
+| `/` → "Sister visibility…" | Which sisters' agents show (no default key; `U` in the classic preset) |
 | `/` → "Rebill this agent…" | Bill the agent's spend to another code from now on (no default key; see [Billing codes](#billing-codes)) |
 | `/` → "Naming lab…" | Try naming advice on the whole fleet (no default key; see [Agent names](#agent-names)) |
 | `/` → "Reset trip counter" | Zero the agent's row spend; "Reset trip + children" and "Reset all trip counters" do its tree or every agent (no default key; see [Trip counters](#trip-counters)) |
@@ -361,13 +359,16 @@ Backends guide. Unsupported actions are grayed out for that agent.
 
 ### Daemon Control
 
-| Key | Action |
+None of these has a default key: run them from the `/` palette. The classic
+preset (`keys: {preset: classic}`) binds the keys in brackets.
+
+| Palette command | Action |
 |-----|--------|
-| `[` | Start supervisor daemon |
-| `]` | Stop supervisor daemon |
-| `\` | Restart monitor daemon |
-| `w` | Toggle the API server (sister API) |
-| `A` | Toggle AI summarizer |
+| "Start supervisor daemon" (`[`) | Start supervisor daemon (run it twice to confirm) |
+| "Stop supervisor daemon" (`]`) | Stop supervisor daemon (run it twice to confirm) |
+| "Restart monitor daemon" (`\`) | Restart monitor daemon |
+| "API server (sisters)" (`w`) | Toggle the API server (sister API) |
+| "AI summarizer" (`A`) | Toggle AI summarizer |
 
 ### Utility
 
@@ -380,7 +381,38 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `,` | Move timeline baseline back 15 minutes |
 | `.` | Move timeline baseline forward 15 minutes |
 | `0` | Reset timeline baseline to now |
+| `Ctrl+Z` | Undo the last setting you changed, from a key or the palette (see [Typing guard](#typing-guard)) |
 | `q` | Quit |
+
+### Typing guard
+
+Typing a sentence into the TUI pane by mistake (you thought the agent's
+pane had the keyboard) used to fire a key per character. Now overcode
+notices: a burst of four or more typing keys, at least three of them
+different, each within 0.6 s of the last, is typing. When it sees one it
+
+- ignores every key until you stop for a second;
+- puts back what the burst changed: toggles and cycles (timeline, summary
+  detail, sleep…), the agent you had chosen, and any dialog or command bar
+  it opened (closed, its text dropped, nothing sent);
+- drops the keys that act outside the TUI — quit, the overagent, a new
+  shell, sending `1`-`5`, Enter or Esc to an agent, restarting the monitor
+  daemon. Those wait until a burst of keys settles before they run, so
+  they never fire mid-sentence; `e`, `q` and `!` pressed on their own run
+  a quarter of a second late, while `1`-`5`, Enter and Esc run at once;
+- says so once: `Typing went to overcode — ignored "hi team, the build…";
+  undid Timeline, Summary detail. Ctrl+Z undoes more.`
+
+Opening a dialog with the first key and typing into it straight away (`i`
+then an instruction, `/` then a command) is what you meant, and works as
+before. Repeating one key (`jjjj`, a held key, `x x`) never counts as
+typing.
+
+`Ctrl+Z` (or "Undo last change" in the palette) undoes the last setting
+changed from a key or the palette, newest first, up to 20; a per-agent
+setting is undone on the agent you changed it on. Turn the guard off with
+"Typing guard" in the palette or `tui: {typing_guard: false}` in
+config.yaml; undo keeps working.
 
 ### Billing codes
 
@@ -725,7 +757,7 @@ The summary always keeps at least 24 cells: on a narrow terminal the
 columns at the right end of the row (and their headers) are cut instead,
 whole columns at a time.
 
-AI summaries require the summarizer to be enabled (press `A`) and configured with an API key.
+AI summaries require the summarizer to be enabled ("AI summarizer" in the `/` palette) and configured with an API key.
 
 ## Timeline
 
@@ -823,7 +855,7 @@ The TUI captures mouse events for interaction (row selection, header click-to-so
 
 ## Monochrome Mode
 
-If you experience color rendering issues in your terminal, press `M` to toggle monochrome mode. This strips ANSI color codes from the preview pane (sister agents and jobs).
+If you experience color rendering issues in your terminal, run "Monochrome" from the `/` palette to toggle monochrome mode. This strips ANSI color codes from the preview pane (sister agents and jobs).
 
 ## Priority Sorting
 
@@ -913,4 +945,4 @@ to you.
 - **Approve quickly**: `Enter` sends Enter to approve permission prompts
 - **Numbered options**: Press `1-5` to quickly select menu options
 - **Bulk sleep**: Use `z` to sleep agents you're not actively using—they won't count toward stats
-- **Watch from another machine**: Press `w` to start the API server, then add this machine as a sister on the other one
+- **Watch from another machine**: Run "API server (sisters)" from the `/` palette to start the API server, then add this machine as a sister on the other one
