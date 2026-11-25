@@ -9,12 +9,14 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
 import uuid
 from pathlib import Path
 
+from .backends import MockBackend
 from .core import MOCK_CLAUDE, MOCK_OPENCODE, REPO_ROOT
 from .tmux_sandbox import TmuxSandbox
 
@@ -39,7 +41,12 @@ class OvercodeCLI:
         self.overcode_dir = base_dir / "overcode"
         self.state_dir = self.overcode_dir / "state"
         self.log_dir = base_dir / "logs"
-        for d in (self.home, self.overcode_dir, self.state_dir, self.log_dir):
+        self.projects_dir = base_dir / "projects"
+        # mock_opencode.py's store (opencode's own env var; the stats reader
+        # honours it too). Without it the mock writes no store at all.
+        self.opencode_data_dir = base_dir / "opencode-data"
+        for d in (self.home, self.overcode_dir, self.state_dir, self.log_dir,
+                  self.projects_dir, self.opencode_data_dir):
             d.mkdir(parents=True, exist_ok=True)
 
         env = {k: v for k, v in os.environ.items() if k not in _HOST_AGENT_VARS}
@@ -51,6 +58,7 @@ class OvercodeCLI:
         if mock_claude:
             env["CLAUDE_COMMAND"] = str(MOCK_CLAUDE)
             env["OPENCODE_COMMAND"] = str(MOCK_OPENCODE)
+        env["OPENCODE_DATA_DIR"] = str(self.opencode_data_dir)
         self.env = env
 
         self._daemons: list[subprocess.Popen] = []
@@ -97,6 +105,46 @@ class OvercodeCLI:
         """
         extra_env = {"MOCK_SCENARIO": scenario, **kwargs.pop("extra_env", {})}
         return self.ok("launch", "-n", name, *args, extra_env=extra_env, **kwargs)
+
+    def launch_on(self, backend: MockBackend, name: str, *args,
+                  scenario: str = "startup_idle", **kwargs):
+        """Launch NAME on BACKEND's mock; ``scenario`` is a mock_claude name."""
+        extra = []
+        if backend.name != "claude-code":
+            extra += ["--backend", backend.name]
+        if backend.own_project_dir and "-d" not in args and "--directory" not in args:
+            project = self.projects_dir / name
+            project.mkdir(parents=True, exist_ok=True)
+            extra += ["-d", str(project)]
+        return self.launch(name, *extra, *args, scenario=backend.scenario(scenario),
+                           **kwargs)
+
+    def agent_argv(self, name: str, script: str = "mock_claude.py") -> str:
+        """The last agent command line typed into NAME's pane (wrapped lines
+        joined) — the launch line overcode built, read off the screen."""
+        windows = [w for w in self.sandbox.list_windows(self.session)
+                   if w.startswith(name)]
+        if not windows:
+            return ""
+        r = self.sandbox.cmd("capture-pane", "-p", "-J", "-S", "-500",
+                             "-t", f"{self.session}:{windows[0]}")
+        typed = [line for line in r.stdout.splitlines() if script in line]
+        return typed[-1] if typed else ""
+
+    def opencode_sessions(self) -> dict:
+        """mock_opencode's store: conversation id -> session row."""
+        db = self.opencode_data_dir / "opencode.db"
+        if not db.exists():
+            return {}
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        try:
+            conn.row_factory = sqlite3.Row
+            return {row["id"]: dict(row)
+                    for row in conn.execute("SELECT * FROM session")}
+        except sqlite3.Error:
+            return {}
+        finally:
+            conn.close()
 
     def pane(self, agent_name: str, lines: int = 200) -> str:
         """Capture the agent's tmux pane content."""
@@ -232,6 +280,15 @@ class OvercodeCLI:
         parts.append(f"--- registry ---\n{json.dumps(self.sessions(), indent=2)[:4000]}")
         state = self.daemon_state()
         parts.append(f"--- daemon state ---\n{json.dumps(state, indent=2)[:4000]}")
+        store = self.opencode_sessions()
+        if store:
+            parts.append("--- opencode store sessions ---\n" + json.dumps(
+                {sid: {k: row[k] for k in ("title", "directory", "cost", "time_created")}
+                 for sid, row in store.items()}, indent=2)[:3000])
+        mock_log = self.opencode_data_dir / "mock-opencode.log"
+        if mock_log.exists():
+            parts.append("--- mock-opencode.log (tail) ---\n"
+                         + "\n".join(mock_log.read_text().splitlines()[-20:]))
         for log in self.log_dir.glob("*.log"):
             tail = "\n".join(log.read_text().splitlines()[-30:])
             parts.append(f"--- {log.name} (tail) ---\n{tail}")

@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from tests.container.harness import OvercodeCLI, TmuxSandbox, wait_for
+from tests.container.harness import BACKENDS, OvercodeCLI, TmuxSandbox, wait_for
 
 
 def pytest_ignore_collect(collection_path, config):
@@ -112,3 +112,9 @@ def oc_wait(oc):
         )
 
     return _wait
+
+
+@pytest.fixture(params=BACKENDS, ids=str)
+def mock_backend(request):
+    """Each mock agent CLI a backend-neutral workflow runs over (#534)."""
+    return request.param

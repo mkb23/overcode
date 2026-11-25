@@ -30,14 +30,15 @@ WINDOW = "oc-mock-1"
 def render(scenario_name: str, *, stop_after: int = None) -> str:
     """Concatenate a scenario's output steps into a pane-shaped string.
 
-    ``stop_after`` truncates mid-scenario, which is how a poll that lands
-    while the agent is working sees the pane.
+    ``stop_after`` keeps that many output steps (the ``oc_*`` store and
+    telemetry steps print nothing), which is how a poll that lands while
+    the agent is working sees the pane.
     """
     scenario = mock_opencode.get_builtin_scenarios()[scenario_name]
-    steps = scenario["steps"]
+    steps = [s for s in scenario["steps"] if s.get("type") == "output"]
     if stop_after is not None:
         steps = steps[:stop_after]
-    return "".join(s["text"] for s in steps if s.get("type") == "output")
+    return "".join(s["text"] for s in steps)
 
 
 def detect(pane: str):
@@ -50,11 +51,14 @@ def detect(pane: str):
 
 
 class TestScenarios:
-    def test_all_three_scenarios_exist(self):
+    def test_all_scenarios_exist(self):
         assert set(mock_opencode.get_builtin_scenarios()) == {
             "oc_launch_and_idle",
             "oc_simple_response",
             "oc_permission_bash",
+            "oc_task_complete",
+            "oc_task_running",
+            "oc_crash_mid_task",
         }
 
     def test_scenario_names_cannot_collide_with_mock_claude(self):
@@ -80,6 +84,10 @@ class TestDetectorAgreesWithMockChrome:
         status, _activity, _content = detect(
             render("oc_simple_response", stop_after=3)
         )
+        assert status == STATUS_RUNNING
+
+    def test_turn_in_flight_is_running(self):
+        status, _activity, _content = detect(render("oc_task_running"))
         assert status == STATUS_RUNNING
 
     def test_permission_dialog_is_waiting_approval(self):

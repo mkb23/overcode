@@ -1,10 +1,10 @@
 """OpencodeStatsReader against a fixture database built from the real schema.
 
-``SESSION_DDL`` / ``MESSAGE_DDL`` are verbatim copies of the ``CREATE TABLE``
-statements read out of a live opencode v1.18.19 store
-(``sqlite3 ~/.local/share/opencode/opencode.db "select sql from sqlite_master"``),
-so the fixture drifts only when opencode does — at which point
-``TestSchemaDrift`` documents what the reader does about it.
+``SESSION_DDL`` / ``MESSAGE_DDL`` (``tests/opencode_store.py``, shared with
+``tests/mock_opencode.py``) are verbatim copies of the ``CREATE TABLE``
+statements read out of a live opencode v1.18.19 store, so the fixture drifts
+only when opencode does — at which point ``TestSchemaDrift`` documents what
+the reader does about it.
 """
 
 import json
@@ -26,50 +26,7 @@ from overcode.backends.opencode_stats import (
     schema_findings,
 )
 from overcode.stats_reader import hook_session_ids
-
-SESSION_DDL = """
-CREATE TABLE `session` (
-  `id` text PRIMARY KEY,
-  `project_id` text NOT NULL,
-  `workspace_id` text,
-  `parent_id` text,
-  `slug` text NOT NULL,
-  `directory` text NOT NULL,
-  `path` text,
-  `title` text NOT NULL,
-  `version` text NOT NULL,
-  `share_url` text,
-  `summary_additions` integer,
-  `summary_deletions` integer,
-  `summary_files` integer,
-  `summary_diffs` text,
-  `metadata` text,
-  `cost` real DEFAULT 0 NOT NULL,
-  `tokens_input` integer DEFAULT 0 NOT NULL,
-  `tokens_output` integer DEFAULT 0 NOT NULL,
-  `tokens_reasoning` integer DEFAULT 0 NOT NULL,
-  `tokens_cache_read` integer DEFAULT 0 NOT NULL,
-  `tokens_cache_write` integer DEFAULT 0 NOT NULL,
-  `revert` text,
-  `permission` text,
-  `agent` text,
-  `model` text,
-  `time_created` integer NOT NULL,
-  `time_updated` integer NOT NULL,
-  `time_compacting` integer,
-  `time_archived` integer
-)
-"""
-
-MESSAGE_DDL = """
-CREATE TABLE `message` (
-  `id` text PRIMARY KEY,
-  `session_id` text NOT NULL,
-  `time_created` integer NOT NULL,
-  `time_updated` integer NOT NULL,
-  `data` text NOT NULL
-)
-"""
+from tests.opencode_store import MESSAGE_DDL, SESSION_DDL
 
 # Schema drift the reader has to survive: opencode renames a token column.
 DRIFTED_SESSION_DDL = SESSION_DDL.replace("`tokens_input`", "`input_tokens`")
