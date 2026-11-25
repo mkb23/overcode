@@ -42,7 +42,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from . import ledger as ledger_mod
 from .agent_identity import BILL_TO_VAR, JOB_OWNER_VAR
@@ -213,6 +213,16 @@ def default_source() -> dict:
     return {"pid": os.getppid(), "host": socket.gethostname()}
 
 
+@dataclass
+class Item:
+    """One amount to record in a batch (``record_batch``)."""
+    target: Target
+    spend: Spend
+    run: Optional[str] = None
+    label: Optional[str] = None
+    source: Optional[dict] = None
+
+
 def record(manager, spend: Spend, *, agent: Optional[str] = None, code: Optional[str] = None,
            run: Optional[str] = None, label: Optional[str] = None,
            source: Optional[dict] = None, env: Optional[Mapping[str, str]] = None,
@@ -223,75 +233,126 @@ def record(manager, spend: Spend, *, agent: Optional[str] = None, code: Optional
     "priced", "provider", "run_cost", "external_cost", "charged",
     "budget", "over_budget"}``.
     """
+    spend.validate()
+    target = resolve_target(manager, agent=agent, code=code, env=env)
+    return record_batch(manager, [Item(target, spend, run, label, source)], now=now)[0]
+
+
+def record_batch(manager, items, *, now: Optional[datetime] = None,
+                 cursor: Optional[Tuple[str, object]] = None) -> List[dict]:
+    """Record several amounts in one write: one sessions transaction, one
+    ledger lock, one row per run touched (its last cumulative).
+
+    ``cursor`` (name, value) is saved in the run state in the same write
+    (``cursors``), so a source read up to it (a gateway's usage feed) is
+    recorded exactly once. A batch whose rows never reached the ledger (a
+    crash after the state was saved) has them written by the next batch.
+    """
     from .budget_gate import charged_cost
     from .codes import HUMAN, is_code_id
 
-    spend.validate()
     now = now or datetime.now()
-    target = resolve_target(manager, agent=agent, code=code, env=env)
-    run_id = (run or "").strip() or uuid.uuid4().hex[:12]
     ledger = manager.ledger
-    explicit_code = (ledger.codes.resolve(target.code_name, source=HUMAN)
-                     if target.code_name else None)
-    out: dict = {"run": run_id, "sid": RUN_PREFIX + run_id, "agent": target.agent_id,
-                 "agent_name": target.agent_name}
+    for item in items:
+        item.spend.validate()
+    explicit = {item.target.code_name: ledger.codes.resolve(item.target.code_name, source=HUMAN)
+                for item in items if item.target.code_name}
+    outs: List[dict] = []
     with manager._state_transaction() as txn:
         state = txn.state
-        record_ = state.get(target.agent_id) if target.agent_id else None
-        if record_ is None and target.agent_id and not target.live:
-            record_ = target.record  # archived: bill to the code it ended on
-        provider = routing = None
-        if record_ is not None:
-            provider = record_.get("provider")
-            routing = record_.get("bedrock_routing")
-        # An agent on claude.ai (a subscription) still runs its evals on an API key
-        provider = provider if provider == "bedrock" else "anthropic"
-        cost, priced, provider = price_spend(spend, provider, routing)
         with ledger.locked():
             data = _load_state(ledger)
-            existing = data["runs"].get(run_id)
-            if explicit_code:
-                code_key = explicit_code
-            elif record_ is not None:
-                code_key = ledger_mod.billing_code_of(record_)
-            elif existing:
-                code_key = existing.get("code")
-            else:
-                raise RecordError(f"agent '{target.agent_id}' has no billing code")
-            code_name = ledger.codes.name_of(code_key)
-            entry = dict(existing) if isinstance(existing, dict) else {
-                "seg": 0, "cum": _empty_cum(), "base": _empty_cum()}
-            if existing and existing.get("code") != code_key:
-                # Its agent was rebilled since: later spend goes to the new code
-                entry["seg"] = int(existing.get("seg", 0)) + 1
-                entry["base"] = dict(existing["cum"])
-            cum = dict(entry["cum"])
-            cum["cost"] = float(cum.get("cost", 0.0)) + cost
-            for k, v in spend.usage().items():
-                cum[k] = int(cum.get(k, 0) or 0) + v
-            entry.update(cum=cum, code=code_key, code_is_id=is_code_id(code_key),
-                         code_name=code_name, agent=target.agent_id or entry.get("agent"),
-                         name=label or entry.get("name") or run_id,
-                         model=spend.model or entry.get("model"), provider=provider,
-                         priced=priced if entry.get("priced") in (None, priced) else "mixed",
-                         t=stamp(now))
-            data["runs"][run_id] = entry
-            # Run state first: a crash before the row is made good by the next record
+            data.setdefault("cursors", {})
+            # Rows a crash kept from the ledger last time
+            heal = [(rid, run) for rid, run in data["runs"].items()
+                    if isinstance(run, dict) and run.get("unrowed")]
+            touched: Dict[str, Tuple[dict, Optional[dict]]] = {}
+            agents: Dict[str, float] = {}
+            for item in items:
+                target, spend = item.target, item.spend
+                run_id = (item.run or "").strip() or uuid.uuid4().hex[:12]
+                record_ = state.get(target.agent_id) if target.agent_id else None
+                if record_ is None and target.agent_id and not target.live:
+                    record_ = target.record  # archived: bill to the code it ended on
+                provider = record_.get("provider") if record_ is not None else None
+                routing = record_.get("bedrock_routing") if record_ is not None else None
+                # An agent on claude.ai (a subscription) still runs its evals on an API key
+                provider = provider if provider == "bedrock" else "anthropic"
+                cost, priced, provider = price_spend(spend, provider, routing)
+                existing = data["runs"].get(run_id)
+                if target.code_name:
+                    code_key = explicit[target.code_name]
+                elif record_ is not None:
+                    code_key = ledger_mod.billing_code_of(record_)
+                elif existing:
+                    code_key = existing.get("code")
+                else:
+                    raise RecordError(f"agent '{target.agent_id}' has no billing code")
+                code_name = ledger.codes.name_of(code_key)
+                entry = dict(existing) if isinstance(existing, dict) else {
+                    "seg": 0, "cum": _empty_cum(), "base": _empty_cum()}
+                if existing and existing.get("code") != code_key:
+                    # Its agent was rebilled since: later spend goes to the new code
+                    entry["seg"] = int(existing.get("seg", 0)) + 1
+                    entry["base"] = dict(existing["cum"])
+                cum = dict(entry["cum"])
+                cum["cost"] = float(cum.get("cost", 0.0)) + cost
+                for k, v in spend.usage().items():
+                    cum[k] = int(cum.get(k, 0) or 0) + v
+                entry.update(cum=cum, code=code_key, code_is_id=is_code_id(code_key),
+                             code_name=code_name, agent=target.agent_id or entry.get("agent"),
+                             name=item.label or entry.get("name") or run_id,
+                             model=spend.model or entry.get("model"), provider=provider,
+                             priced=priced if entry.get("priced") in (None, priced) else "mixed",
+                             t=stamp(now), unrowed=True)
+                data["runs"][run_id] = entry
+                touched[run_id] = (entry, item.source)
+                if target.agent_id:
+                    agents[target.agent_id] = agents.get(target.agent_id, 0.0) + cost
+                outs.append({"run": run_id, "sid": RUN_PREFIX + run_id,
+                             "agent": target.agent_id, "agent_name": target.agent_name,
+                             "code": code_key, "code_name": code_name, "cost": cost,
+                             "priced": priced, "provider": provider,
+                             "run_cost": float(cum["cost"]) - float(entry["base"].get("cost", 0.0)),
+                             "_tokens": _tokens(spend.usage())})
+            if cursor is not None:
+                data["cursors"][cursor[0]] = cursor[1]
+            # Run state (and cursor) first: a crash before the rows is healed next batch
             _save_state(ledger, data, now)
-            ledger.append_locked([_row(run_id, entry, now=now, source=source)], now=now)
-        live = state.get(target.agent_id) if target.agent_id else None
-        if live is not None:
+            rows = [_row(rid, run, now=now, source=None) for rid, run in heal
+                    if rid not in touched]
+            rows += [_row(rid, entry, now=now, source=source)
+                     for rid, (entry, source) in touched.items()]
+            ledger.append_locked(rows, now=now)
+            for _, run in heal:
+                run.pop("unrowed", None)
+            for entry, _ in touched.values():
+                entry.pop("unrowed", None)
+            _save_state(ledger, data, now)
+            totals = {}
+            for run in data["runs"].values():
+                if isinstance(run, dict) and run.get("agent") in agents:
+                    totals[run["agent"]] = totals.get(run["agent"], 0.0) + float(
+                        (run.get("cum") or {}).get("cost", 0.0))
+        for agent_id, cost in agents.items():
+            live = state.get(agent_id)
+            if live is None:
+                continue
             stats = live.setdefault("stats", {})
-            stats["external_cost_usd"] = float(stats.get("external_cost_usd", 0.0) or 0.0) + cost
-            stats["external_tokens"] = int(stats.get("external_tokens", 0) or 0) + _tokens(
-                spend.usage())
+            before = float(stats.get("external_cost_usd", 0.0) or 0.0)
+            # The runs' total heals a write a crash lost; never below what it was
+            stats["external_cost_usd"] = max(before + cost, totals.get(agent_id, 0.0))
             txn.dirty = True
+        for out in outs:
+            tokens = out.pop("_tokens")
+            live = state.get(out["agent"]) if out["agent"] else None
+            if live is None:
+                out.update(external_cost=None, charged=None, budget=None, over_budget=False)
+                continue
+            stats = live["stats"]
+            stats["external_tokens"] = int(stats.get("external_tokens", 0) or 0) + tokens
             budget = float(live.get("cost_budget_usd", 0.0) or 0.0)
             charged = charged_cost(stats)
             out.update(external_cost=stats["external_cost_usd"], charged=charged, budget=budget,
                        over_budget=budget > 0 and charged >= budget)
-        else:
-            out.update(external_cost=None, charged=None, budget=None, over_budget=False)
-    out.update(code=code_key, code_name=code_name, cost=cost, priced=priced, provider=provider,
-               run_cost=float(cum["cost"]) - float(entry["base"].get("cost", 0.0)))
-    return out
+    return outs

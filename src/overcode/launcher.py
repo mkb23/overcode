@@ -445,6 +445,12 @@ class AgentLauncher(AgentIOMixin, RenameMixin, AgentLifecycleMixin):
 
         env.update(backend.env_prefix(spec))
 
+        # The spend gateway's variables (billing.gateway.env): every process
+        # the agent spawns reaches the gateway by this agent's token
+        from .gateway import configured_worker_env
+        for key, value in configured_worker_env(self.sessions.ledger.dir, spec.session_id).items():
+            env[key] = shlex.quote(value)
+
         if spec.wrapper:
             env["OVERCODE_WRAPPER_DIR"] = shlex.quote(spec.start_directory)
 

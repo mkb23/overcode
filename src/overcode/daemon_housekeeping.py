@@ -90,6 +90,11 @@ class Housekeeping:
         # Whether the archive's spend is restated at the current reader
         # version (spend_recompute)
         self.spend_restated = False
+        # The spend gateway sync (gateway.sync): a background thread every
+        # billing.gateway.sync_seconds; a failure backs off and warns once
+        self.gateway_thread: Optional[threading.Thread] = None
+        self.last_gateway_sync: Optional[float] = None
+        self.gateway_failing = False
 
     def due(self, now: datetime) -> bool:
         """Wall-clock replacement for ``loop_count % 60 == 0``.
@@ -393,6 +398,50 @@ class Housekeeping:
                 self.log.info(f"Rotated {SWARM_HISTORY_FILE} -> {result['archived'].name}")
         except Exception as e:
             self.log.error(f"History rotation check failed: {e}")
+
+    def maybe_sync_gateway(self, session_manager) -> None:
+        """Sync with the spend gateway when configured and due (``gateway``).
+
+        A config check per tick (cached by the config loader); the sync
+        itself runs on a daemon thread, so the loop never waits on the
+        network. After a failure the next try waits ten intervals.
+        """
+        thread = self.gateway_thread
+        if thread is not None and thread.is_alive():
+            return
+        try:
+            from .config import get_gateway_config
+
+            cfg = get_gateway_config()
+        except Exception:
+            return
+        if not cfg or not cfg.get("url"):
+            return
+        every = cfg["sync_seconds"] * (10 if self.gateway_failing else 1)
+        last = self.last_gateway_sync
+        if last is not None and self.clock.monotonic() - last < every:
+            return
+        self.last_gateway_sync = self.clock.monotonic()
+        thread = threading.Thread(target=self._run_gateway_sync, args=(session_manager, cfg),
+                                  name="gateway-sync", daemon=True)
+        self.gateway_thread = thread
+        thread.start()
+
+    def _run_gateway_sync(self, session_manager, cfg) -> None:
+        try:
+            from .gateway import GatewayClient, sync
+
+            counts = sync(session_manager, GatewayClient.from_config(cfg))
+            if self.gateway_failing:
+                self.log.info("Spend gateway reachable again")
+            self.gateway_failing = False
+            if counts and counts["events"]:
+                self.log.info(f"Spend gateway: {counts['events']} usage events recorded "
+                              f"(${counts['recorded_usd']:.4f})")
+        except Exception as e:
+            if not self.gateway_failing:
+                self.log.warn(f"Spend gateway sync failed (retrying less often): {e}")
+            self.gateway_failing = True
 
     def maybe_refresh_model_metadata(self, now: datetime) -> None:
         """Refresh the local models.dev cache when opted in and stale (#473).

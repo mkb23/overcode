@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import yaml
 
 from . import paths
@@ -1000,7 +1000,7 @@ def get_ledger_config() -> dict:
 # billing.new_agent_code: name (the default) | folder | default
 NEW_AGENT_CODE_MODES = ("name", "folder", "default")
 DEFAULT_BILLING_CODE = "general"
-_BILLING_KEYS = ("codes", "new_agent_code", "default_code")
+_BILLING_KEYS = ("codes", "new_agent_code", "default_code", "gateway")
 
 
 def get_billing_config() -> dict:
@@ -1044,6 +1044,68 @@ def get_billing_config() -> dict:
         if code not in codes:
             codes.append(code)
     return {"codes": codes, "warnings": warnings}
+
+
+# billing.gateway: the corp LLM gateway evals and sims spend through
+# (docs/design/experiment-billing.md)
+GATEWAY_KEYS = ("url", "admin_key_env", "env", "sync_seconds", "timeout_seconds")
+GATEWAY_ADMIN_KEY_ENV = "OVERCODE_GATEWAY_KEY"
+
+
+def get_gateway_config() -> Optional[dict]:
+    """The spend gateway, or None when ``billing.gateway`` is not set.
+
+    Config format in ~/.overcode/config.yaml::
+
+        billing:
+          gateway:
+            url: https://llm-gw.corp.example/overcode   # the gateway's overcode API
+            admin_key_env: OVERCODE_GATEWAY_KEY         # env var holding its key
+            env:                                        # set in every agent and job
+              OPENAI_BASE_URL: https://llm-gw.corp.example/v1
+              OPENAI_API_KEY: "{token}"
+            sync_seconds: 30
+            timeout_seconds: 10
+
+    ``env`` values may use ``{token}`` (the agent's gateway token) and
+    ``{agent_id}``. Never raises: a malformed entry is dropped with a
+    warning in ``warnings``; no ``url`` and no ``env`` is no gateway.
+    """
+    cfg = _get_config_value("billing.gateway", None)
+    if cfg is None:
+        return None
+    warnings: List[str] = []
+    if not isinstance(cfg, dict):
+        return None
+    for key in cfg:
+        if key not in GATEWAY_KEYS:
+            warnings.append(f"billing.gateway: unknown key '{key}' — ignored")
+    url = cfg.get("url")
+    if url is not None and (not isinstance(url, str) or not url.strip()):
+        warnings.append("billing.gateway.url: should be a URL — ignored")
+        url = None
+    env: Dict[str, str] = {}
+    raw_env = cfg.get("env") or {}
+    if not isinstance(raw_env, dict):
+        warnings.append("billing.gateway.env: should be a mapping of variable: value — ignored")
+        raw_env = {}
+    for name, value in raw_env.items():
+        if (not isinstance(name, str) or not name.replace("_", "").isalnum()
+                or not isinstance(value, (str, int, float)) or isinstance(value, bool)):
+            warnings.append(f"billing.gateway.env: {name!r} — ignored")
+            continue
+        env[name] = str(value)
+    if not url and not env:
+        return None
+    key_env = cfg.get("admin_key_env") or GATEWAY_ADMIN_KEY_ENV
+    if not isinstance(key_env, str):
+        warnings.append("billing.gateway.admin_key_env: should be a variable name — default used")
+        key_env = GATEWAY_ADMIN_KEY_ENV
+    return {"url": url.strip().rstrip("/") if url else None, "admin_key_env": key_env,
+            "env": env,
+            "sync_seconds": _non_negative(cfg.get("sync_seconds", 30), 30.0) or 30.0,
+            "timeout_seconds": _non_negative(cfg.get("timeout_seconds", 10), 10.0) or 10.0,
+            "warnings": warnings}
 
 
 def get_billing_defaults() -> dict:

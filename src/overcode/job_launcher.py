@@ -88,6 +88,12 @@ class JobLauncher:
         # its agent, whether or not agents it launches are that agent's children
         owner += (f"export {BILL_TO_VAR}={shlex.quote(agent_session_id)}; "
                   if agent_session_id else f"unset {BILL_TO_VAR}; ")
+        # And it reaches the spend gateway by its agent's token
+        if agent_session_id:
+            from .gateway import configured_worker_env
+            from .paths import ledger_dir
+            for key, value in configured_worker_env(ledger_dir(), agent_session_id).items():
+                owner += f"export {key}={shlex.quote(value)}; "
         wrapper = (
             f"{owner}"
             f"echo {shlex.quote('╭─── Job: ' + job.name)} && "

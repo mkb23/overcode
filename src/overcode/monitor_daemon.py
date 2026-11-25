@@ -1638,6 +1638,7 @@ class MonitorDaemon:
             self._refund_done_children(newly_done)
         self.housekeeping.maybe_rotate_history(now)
         self.housekeeping.maybe_refresh_model_metadata(now)
+        self.housekeeping.maybe_sync_gateway(self.session_manager)
         if self.transcripts is not None:
             self.transcripts.tick()
 

@@ -132,3 +132,70 @@ def spend_helper_path():
     from .. import spend_client
 
     print(spend_client.__file__)
+
+
+@spend_app.command("sync")
+def spend_sync(
+    as_json: Annotated[bool, typer.Option("--json", help="Print the counts as JSON")] = False,
+):
+    """Sync with the spend gateway now (the daemon does it every sync_seconds).
+
+    Pushes every live agent's token and spending limit, then records the
+    usage the gateway metered since the last sync. Needs billing.gateway.url
+    in config.yaml and the gateway's key in its admin_key_env variable.
+    """
+    import json
+
+    from ..config import get_gateway_config
+    from ..gateway import GatewayClient, GatewayError, sync
+    from ..session_manager import SessionManager
+
+    cfg = get_gateway_config()
+    if not cfg or not cfg.get("url"):
+        rprint("[red]Error: no spend gateway configured (billing.gateway.url)[/red]")
+        raise typer.Exit(code=1)
+    try:
+        counts = sync(SessionManager(), GatewayClient.from_config(cfg))
+    except GatewayError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    if counts is None:
+        rprint("[dim]Another sync is running[/dim]")
+        return
+    if as_json:
+        print(json.dumps(counts))
+        return
+    rprint(f"[green]✓[/green] {counts['agents']} agents' limits pushed; "
+           f"{counts['events']} usage events recorded (${counts['recorded_usd']:.4f})")
+
+
+@spend_app.command("env")
+def spend_env(
+    agent: Annotated[Optional[str], typer.Argument(help="Agent (default: this process's agent)")] = None,
+):
+    """Print the spend gateway's variables for an agent, as shell exports.
+
+    For a process started outside the agent's own tree that should still
+    bill to it: eval "$(overcode spend env my-agent)".
+    """
+    import shlex
+
+    from ..external_spend import RecordError, resolve_target
+    from ..gateway import configured_worker_env
+    from ..session_manager import SessionManager
+
+    manager = SessionManager()
+    try:
+        target = resolve_target(manager, agent=agent)
+    except RecordError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    if not target.agent_id:
+        rprint("[red]Error: give an agent[/red]")
+        raise typer.Exit(code=1)
+    env = configured_worker_env(manager.ledger.dir, target.agent_id)
+    if not env:
+        rprint("[red]Error: no spend gateway variables configured (billing.gateway.env)[/red]")
+        raise typer.Exit(code=1)
+    for key, value in env.items():
+        print(f"export {key}={shlex.quote(value)}")
