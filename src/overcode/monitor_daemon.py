@@ -1804,7 +1804,8 @@ class MonitorDaemon:
                 continue  # no file reads for a top-level agent
             session = self._pending.view(snapshot)
             if session.status == "done":
-                if resumed_after_done(session, self._hook_state(session)):
+                if resumed_after_done(session, self._hook_state(session),
+                                      self._recent_hook_events(session)):
                     self._resume_done_child(session)
                 continue
             stopped = self._hook_stopped(session)
@@ -1833,7 +1834,7 @@ class MonitorDaemon:
         from .agent_files import retire_report
         retire_report(session.tmux_session, session.id, session.name)
         self._pending.update_session(
-            session.id, report_status=None, report_reason="",
+            session.id, report_status=None, report_reason="", done_at=None,
             oversight_deadline=None, oversight_deadline_at=None)
         self._pending.update_session_status(session.id, "running")
         self.log.info(f"[{session.name}] at work again after its report: running")
@@ -2265,6 +2266,17 @@ class MonitorDaemon:
             return read(session.name)
         except Exception:
             return None
+
+    def _recent_hook_events(self, session) -> list:
+        """The tail of ``session``'s hook event log, oldest first; [] without one."""
+        read = getattr(getattr(self.detector, "hooks", None), "_read_recent_events", None)
+        if read is None:
+            return []
+        self._note_agent(session)
+        try:
+            return read(session.name)
+        except Exception:
+            return []
 
     def _note_agent(self, session) -> None:
         """Tell the hook detector whose files ``session``'s are (agents/<id>/, item 35)."""

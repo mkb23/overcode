@@ -15,6 +15,7 @@ Either way the child is *at rest* (⚪): the light says it stopped, and
 
 import json
 import os
+import time
 from typing import Iterable, Optional, Tuple
 
 from .paths import agent_path
@@ -122,12 +123,19 @@ def settled_child_status(session, stopped: Optional[bool] = None) -> Optional[st
     return status if status != session.status else None
 
 
-def done_since(session) -> Optional[float]:
+def done_since(session, now: Optional[float] = None) -> Optional[float]:
     """When a done child finished (epoch seconds), or None if unknown.
 
-    Its report's mtime, or the oversight deadline that expired; the later
-    of the two when both exist.
+    ``done_at``, stamped when it went done. A record from before that stamp
+    falls back to its report's mtime, or the oversight deadline once it has
+    expired; the later of the two. A deadline still ahead is not when it
+    finished: a reported child keeps its deadline, and taking a future one
+    hid every event until it passed (a done child at work for hours).
     """
+    done_at = getattr(session, "done_at", None)
+    if done_at:
+        return float(done_at)
+    now = time.time() if now is None else now
     times = []
     report_file = agent_path(session.tmux_session, session.id, session.name, "report",
                              base=get_session_dir(session.tmux_session))
@@ -136,28 +144,43 @@ def done_since(session) -> Optional[float]:
     except OSError:
         pass
     deadline_at = getattr(session, "oversight_deadline_at", None)
-    if deadline_at:
+    if deadline_at and float(deadline_at) <= now:
         times.append(float(deadline_at))
     return max(times) if times else None
 
 
-def resumed_after_done(session, hook_state: Optional[dict]) -> bool:
+def _resume_at(event: object) -> Optional[float]:
+    """The timestamp of a hook event that means work, or None."""
+    if not isinstance(event, dict) or event.get("event") not in RESUME_EVENTS:
+        return None
+    try:
+        return float(event["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def resumed_after_done(session, hook_state: Optional[dict],
+                       recent_events: Iterable[dict] = (),
+                       now: Optional[float] = None) -> bool:
     """True if a done child is at work again (#556).
 
-    ``hook_state`` is the child's last hook event. A done child settled on a
-    Stop, so a prompt or tool event newer than the moment it finished means
-    it was given more work (``overcode send``, or typed into its pane).
+    A prompt or tool event newer than the moment it went done means it was
+    given more work (``overcode send``, or typed into its pane). ``hook_state``
+    is its last hook event; ``recent_events`` the tail of its event log, so a
+    turn that started and ended between two daemon ticks (last event a Stop
+    again) still counts. The log is read only with ``done_at``: before it,
+    the moment is the report's mtime, and the report's own tool call and
+    the rest of that turn come after it.
     """
     if session.parent_session_id is None or session.status != "done":
         return False
-    if not isinstance(hook_state, dict) or hook_state.get("event") not in RESUME_EVENTS:
+    since = done_since(session, now)
+    if since is None:
         return False
-    try:
-        at = float(hook_state["timestamp"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    since = done_since(session)
-    return since is not None and at > since
+    events = [hook_state]
+    if getattr(session, "done_at", None):
+        events.extend(recent_events or ())
+    return any((at := _resume_at(e)) is not None and at > since for e in events)
 
 
 def task_result(session, status: Optional[str] = None) -> Tuple[Optional[str], str]:

@@ -1581,6 +1581,43 @@ def rename(
     rprint(f"[green]Renamed agent: {name} → {new_name} (conversation preserved)[/green]")
 
 
+def _still_running(sm, session, tmux_session: str) -> list:
+    """What ``session`` started that is still running: its child agents at
+    work and its overcode jobs, one line each (``overcode report``'s guard).
+
+    A child's status is the daemon's when it is fresh, its record's otherwise.
+    """
+    from ..child_lifecycle import CHILD_NOT_WORKING
+    from ..monitor_daemon_state import get_monitor_daemon_state
+
+    lines = []
+    children = sm.get_children(session.id)
+    if children:
+        daemon_state = None
+        try:
+            daemon_state = get_monitor_daemon_state(tmux_session)
+            if daemon_state is not None and daemon_state.is_stale():
+                daemon_state = None
+        except Exception:
+            daemon_state = None
+        for child in children:
+            status = child.status
+            if daemon_state is not None:
+                published = daemon_state.get_session(child.id)
+                if published is not None and published.current_status:
+                    status = published.current_status
+            if status not in CHILD_NOT_WORKING:
+                lines.append(f"child agent {child.name} ({status})")
+    try:
+        from ..job_manager import JobManager
+        for job in JobManager().list_jobs():
+            if job.agent_session_id == session.id and job.status == "running":
+                lines.append(f"job {job.name}")
+    except Exception:
+        pass
+    return lines
+
+
 @app.command()
 def report(
     status: Annotated[
@@ -1591,12 +1628,26 @@ def report(
         Optional[str],
         typer.Option("--reason", "-r", help="Reason for the report"),
     ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Report even with child agents or jobs still running"),
+    ] = False,
 ):
     """Report completion status from a child agent.
 
     Called by child agents to signal success or failure to the parent.
     Reads OVERCODE_SESSION_NAME and OVERCODE_TMUX_SESSION from env vars
     (automatically set for all child agents).
+
+    Report last: once your work is finished and nothing you started is
+    still running. A report marks you done when your turn ends. While your
+    own child agents or overcode jobs are still running it is refused
+    (exit 1, nothing filed): wait for them, or kill them, or pass --force
+    if they are meant to outlive you. Background shells you started are
+    not checked, so end or wait for those yourself.
+
+    Given more work after reporting (a new prompt), you go back to
+    running and the report is set aside: report again when that is done.
 
     Examples:
         overcode report --status success
@@ -1618,6 +1669,21 @@ def report(
         rprint("[dim]This command should be run from within a child agent launched by overcode[/dim]")
         raise typer.Exit(code=1)
 
+    from ..agent_identity import current_agent
+    from ..session_manager import SessionManager
+    sm = SessionManager()
+    session = current_agent(sm)
+
+    if session and not force:
+        outstanding = _still_running(sm, session, tmux_session)
+        if outstanding:
+            rprint("[red]Not reported: still running[/red]")
+            for line in outstanding:
+                rprint(f"  {line}")
+            rprint("[dim]Wait for these (overcode follow / jobs), kill them, or pass "
+                   "--force if they are meant to outlive this report.[/dim]")
+            raise typer.Exit(code=1)
+
     # Write the report in the agent's own directory (agents/<id>/, item 35)
     from ..hook_handler import agent_file_for_write
     report_file = agent_file_for_write(
@@ -1632,10 +1698,6 @@ def report(
 
     # Also update session fields for persistence: the agent by its id (its
     # launch name is stale after a rename), by name only for a pre-0.6 agent
-    from ..agent_identity import current_agent
-    from ..session_manager import SessionManager
-    sm = SessionManager()
-    session = current_agent(sm)
     if session:
         sm.update_session(
             session.id,

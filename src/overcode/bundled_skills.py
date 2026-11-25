@@ -132,6 +132,13 @@ Do the task in your prompt, then run the `overcode report` line it gave you, or
 may be blocked waiting on you and can't answer questions, so make reasonable
 calls yourself and mention them in `--reason`.
 
+Report last, as the final step of your turn: a report says you are finished.
+Before it, wait for (or kill) every child agent, overcode job and background
+shell you started. `overcode report` refuses while your own children or jobs
+are still running; `--force` only for ones meant to outlive you. If you are
+given more work after reporting, you go back to running and the report is set
+aside: report again when that work is done.
+
 ## More
 
 `overcode <command> --help` documents every command and flag.

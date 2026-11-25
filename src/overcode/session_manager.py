@@ -7,6 +7,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields, replace
+import time
 import uuid
 
 import logging
@@ -294,6 +295,9 @@ class Session:
     # How long a done child keeps its window before the daemon closes it
     # (child_presets): None is the default hour, negative never
     archive_after_seconds: Optional[float] = None
+    # When the child last went done (epoch seconds; #556): a prompt or tool
+    # event after it means it was given more work. None before it was done.
+    done_at: Optional[float] = None
     report_status: Optional[str] = None  # "success" | "failure"
     report_reason: str = ""
 
@@ -445,7 +449,10 @@ class PendingUpdates:
         self.fields.setdefault(session_id, {}).update(kwargs)
 
     def update_session_status(self, session_id: str, status: str) -> None:
-        self.update_session(session_id, status=status)
+        if status == "done":
+            self.update_session(session_id, status=status, done_at=time.time())
+        else:
+            self.update_session(session_id, status=status)
 
     def update_stats(self, session_id: str, **stats_kwargs) -> None:
         self.stats.setdefault(session_id, {}).update(stats_kwargs)
@@ -1042,6 +1049,8 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id]['status'] = status
+                if status == "done":
+                    state[session_id]['done_at'] = time.time()
 
     def delete_session(self, session_id: str, archive: bool = True):
         """Delete a session, optionally archiving it first.
