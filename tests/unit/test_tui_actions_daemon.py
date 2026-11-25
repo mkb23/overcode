@@ -78,7 +78,7 @@ class TestSupervisorStart:
         mock_tui._confirm_double_press.assert_called_once()
         args = mock_tui._confirm_double_press.call_args
         assert args[0][0] == "supervisor_start"
-        assert "Press [ again" in args[0][1]
+        assert "Run it again to start Supervisor Daemon" in args[0][1]  # no key by default
 
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=True)
     @patch("overcode.monitor_daemon.is_monitor_daemon_running", return_value=True)
@@ -208,7 +208,7 @@ class TestSupervisorStop:
         mock_tui._confirm_double_press.assert_called_once()
         args = mock_tui._confirm_double_press.call_args
         assert args[0][0] == "supervisor_stop"
-        assert "Press ] again" in args[0][1]
+        assert "Run it again to stop Supervisor Daemon" in args[0][1]
 
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=False)
     def test_warns_when_not_running(self, mock_is_running):

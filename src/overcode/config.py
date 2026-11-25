@@ -1139,6 +1139,23 @@ def save_prefer_claude_messaging(on: bool) -> None:
     save_config(config)
 
 
+def get_typing_guard_enabled() -> bool:
+    """``tui.typing_guard`` (#560, default on): prose typed into the TUI pane by
+    mistake is ignored and what its keys changed is put back."""
+    section = _get_config_value("tui", {})
+    return not (isinstance(section, dict) and section.get("typing_guard") is False)
+
+
+def save_typing_guard_enabled(on: bool) -> None:
+    """Set ``tui.typing_guard`` in config.yaml, keeping the rest of ``tui:``."""
+    config = load_config()
+    section = config.get("tui")
+    section = dict(section) if isinstance(section, dict) else {}
+    section["typing_guard"] = bool(on)
+    config["tui"] = section
+    save_config(config)
+
+
 NAMING_MAX_LENGTH_DEFAULT = 18
 NAMING_COST_CAP_DEFAULT = 10.0  # USD a day for the namer's model calls
 _NAMING_KEYS = ("enabled", "advice", "max_length", "rules", "first_after", "rename_every",

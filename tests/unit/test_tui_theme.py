@@ -104,9 +104,12 @@ class TestSupervisorTUIPilot:
 
     @pytest.mark.asyncio
     async def test_toggle_flips_theme_prefs_and_filters(self, make_tui):
+        from overcode.keymap import effective_keymap
         app = make_tui(tmux_session="test-pilot")
         async with app.run_test() as pilot:
             await pilot.pause()
+            # Y is a key of the classic preset only (#560)
+            app.apply_keymap(effective_keymap(preset="classic", use_config=False))
             assert app.ui_theme == "dark"
             assert app.theme == "textual-dark"
             assert not any(isinstance(f, LightThemeFilter) for f in app.get_line_filters())

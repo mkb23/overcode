@@ -632,6 +632,6 @@ def toggle_summarizer(tmux_session: str) -> dict:
     # But we can signal via a file that the TUI can pick up.
     # For now, return an error suggesting use via TUI.
     raise ControlError(
-        "Summarizer toggle is only available via TUI (press A)",
+        "Summarizer toggle is only available in the TUI (AI summarizer, in its / palette)",
         status=409,
     )

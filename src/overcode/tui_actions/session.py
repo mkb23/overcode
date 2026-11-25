@@ -105,6 +105,11 @@ class SessionActionsMixin:
 
                 def run() -> None:
                     self._confirm_timers.pop(action_key, None)
+                    # A second press inside a run of typing keys waits for
+                    # the run to settle, and is dropped if it is typing (#560)
+                    hold = getattr(self, "typing_hold_confirmed", None)
+                    if hold is not None and hold(action_key, callback):
+                        return
                     callback()
 
                 self._confirm_timers[action_key] = self.set_timer(KEY_REPEAT_GAP, run)

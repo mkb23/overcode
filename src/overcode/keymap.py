@@ -11,7 +11,7 @@ Other presets are deltas on top of those defaults, shipped as YAML in
 ``overcode/data/keymaps/``. The user's own deltas go in config.yaml::
 
     keys:
-      preset: vscode                      # default | vscode
+      preset: vscode                      # default | vscode | classic
       overrides:                          # main-screen actions
         jump_to_agent: ["ctrl+j", "J"]    # action -> one key or a list
         toggle_monochrome: null           # unbind

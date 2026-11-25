@@ -459,6 +459,14 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     # toggle` (agents) may not run it.
     _C("cycle_key_preset", "Key preset", "App",
        "keymap keybindings shortcuts vscode bindings remap settings", state=_key_preset_state),
+    # The typing guard (#560): App, not Settings, so `overcode view toggle`
+    # (which agents may run) can neither switch off the person's guard nor
+    # undo what the person changed.
+    _C("undo_last_change", "Undo last change", "App",
+       "undo revert back restore previous setting toggle ctrl+z mistake"),
+    _C("toggle_typing_guard", "Typing guard", "App",
+       "prose typing typed keys wrong pane focus protect ignore mistake undo",
+       state=lambda app: _toggle(getattr(app, "_typing_enabled", None))),
     _C("quit", "Quit", "App", "exit close detach"),
     # After Quit: they share "exit"/"close", and ties go to registry order,
     # so the everyday quit stays the first answer.
@@ -466,6 +474,54 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        "stop everything exit quit close terminate end halt kill all agents daemons "
        "tmux power off teardown wind down"),
 )
+
+COMMANDS_BY_ACTION: Dict[str, PaletteCommand] = {c.action: c for c in COMMANDS}
+
+
+# ---------------------------------------------------------------------------
+# The typing guard (#560)
+# ---------------------------------------------------------------------------
+#
+# Every action a key runs is either reversible or one of these. Reversible
+# means a stateful command (it has `state`, so undo can put it back),
+# navigation (the guard puts the chosen agent back), or opening a dialog
+# (the guard closes it). The rest act outside the TUI with no confirmation
+# of their own: a key for one of them in the middle of a typing run waits
+# for the run to settle, and is dropped if the run turns out to be typing.
+# (Kill, restart, sync and the daemons ask for a second press already.)
+IRREVERSIBLE_ACTIONS = frozenset({
+    "quit",
+    "open_overagent",           # launches one, or hands it the keyboard
+    "new_shell",
+    "open_journey",             # its panel opens later, from a worker
+    "monitor_restart",
+    "send_enter_to_focused",
+    "send_escape_to_focused",
+    "send_ctrl_o_to_focused",
+    "send_1_to_focused", "send_2_to_focused", "send_3_to_focused",
+    "send_4_to_focused", "send_5_to_focused",
+    "attach_background_session",  # hands the bottom pane the keyboard
+    "reset_trip", "reset_trip_tree", "reset_trip_all",
+    "name_by_overcode", "keep_name",
+    "cycle_focal_repo",
+})
+# One-shots only in the jobs view, where they act with no second press
+# (kill the job, clear finished jobs).
+IRREVERSIBLE_IN_JOBS = frozenset({"kill_focused", "sync_to_main_and_clear"})
+
+# Undo runs a stateful command again until its state is back. These run
+# another command instead, since running them again is not their inverse.
+UNDO_INVERSES: Dict[str, str] = {
+    "baseline_back": "baseline_forward",
+    "baseline_forward": "baseline_back",
+    "baseline_reset": "baseline_back",
+    "split_grow": "split_shrink",
+    "split_shrink": "split_grow",
+    "toggle_expand_all": "toggle_expand_all",
+}
+# No state to read back: undone by running the inverse once.
+STATELESS_UNDO = frozenset({"split_grow", "split_shrink", "toggle_expand_all"})
+
 
 # Commands the palette handles itself by switching list rather than closing.
 MODE_SWITCHES = {"jump_to_agent": "agents", "filter_by_tag": "tags", "choose_sort": "sort",

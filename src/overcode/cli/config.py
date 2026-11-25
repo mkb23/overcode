@@ -51,6 +51,11 @@ CONFIG_TEMPLATE = """\
 # send:
 #   prefer_claude_messaging: false
 
+# The TUI's typing guard (#560): prose typed into the monitor pane by mistake
+# is ignored and what its keys changed is put back (Ctrl+Z undoes settings).
+# tui:
+#   typing_guard: true
+
 # Transcript archive (Transcript Archive in docs/configuration.md): keep a
 # byte-exact copy of Claude Code's transcripts under ~/.overcode/transcripts.
 # Off by default; `overcode archive` still reads what is already kept.
@@ -200,6 +205,10 @@ def _config_show():
     if "send" in config:
         from ..config import get_prefer_claude_messaging
         rprint(f"  send.prefer_claude_messaging: {get_prefer_claude_messaging()}")
+
+    if "tui" in config:
+        from ..config import get_typing_guard_enabled
+        rprint(f"  tui.typing_guard: {get_typing_guard_enabled()}")
 
     if "naming" in config:
         from ..config import describe_auto_naming, get_naming_config

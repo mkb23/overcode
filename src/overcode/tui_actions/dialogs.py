@@ -1093,7 +1093,8 @@ class DialogsMixin:
             return
         target = message.focus_target
         self.screen.set_focus(target if target is not None and target.is_attached else None)
-        method()
+        # Never held back by the typing guard; a setting it changes can be undone (#560)
+        self.typing_record_palette(message.action, method)
         if message.keep_open:
             try:
                 palette = self.query_one("#command-palette", CommandPalette)

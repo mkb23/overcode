@@ -19,6 +19,14 @@ def _log_to_daemon_panel(tui, message: str) -> None:
         pass
 
 
+def _again(tui, action: str) -> str:
+    """How to confirm: "Press [ again", or "Run it again" with no key (the
+    default keys leave the daemons to the palette, #560)."""
+    from ..keymap import keymap_of
+    key = keymap_of(tui).label(action, sep=" or ")
+    return f"Press {key} again" if key else "Run it again"
+
+
 class DaemonActionsMixin:
     """Mixin providing daemon control actions for SupervisorTUI."""
 
@@ -44,7 +52,7 @@ class DaemonActionsMixin:
         """Start the Supervisor Daemon (requires double-press confirmation)."""
         self._confirm_double_press(
             "supervisor_start",
-            "Press [ again to start Supervisor Daemon",
+            f"{_again(self, 'supervisor_start')} to start Supervisor Daemon",
             self._do_supervisor_start,
         )
 
@@ -80,7 +88,7 @@ class DaemonActionsMixin:
         """Stop the Supervisor Daemon (requires double-press confirmation)."""
         self._confirm_double_press(
             "supervisor_stop",
-            "Press ] again to stop Supervisor Daemon",
+            f"{_again(self, 'supervisor_stop')} to stop Supervisor Daemon",
             self._do_supervisor_stop,
         )
 

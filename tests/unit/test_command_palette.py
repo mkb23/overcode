@@ -214,7 +214,9 @@ class TestPaletteInTUI:
         async with tui.run_test(size=(120, 40)) as pilot:
             await _ready(pilot)
             await pilot.press("j")  # focus bravo
-            await pilot.pause()
+            # A pause, as a person makes: j then / and a word at once is a
+            # run of typing the typing guard swallows (#560)
+            await pilot.pause(0.7)
             session = tui._get_focused_widget().session
             assert session.name == "bravo"
             with patch.object(tui.session_manager, "update_session") as update:

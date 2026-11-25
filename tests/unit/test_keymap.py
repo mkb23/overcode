@@ -530,3 +530,69 @@ class TestWidgetScopes:
         from textual.binding import Binding
         e = default_entries([Binding("a,b", "act", "Desc", show=False)])
         assert [(x.key, x.action, x.show) for x in e] == [("a", "act", False), ("b", "act", False)]
+
+
+# ---------------------------------------------------------------------------
+# Fewer bare keys by default, and the classic preset (#560)
+# ---------------------------------------------------------------------------
+
+# Set-and-forget settings and daemon admin: palette-only by default
+CLASSIC_KEYS = {
+    "toggle_monochrome": "M", "toggle_theme": "Y", "toggle_emoji_free": "E",
+    "toggle_column_headers": "L", "supervisor_start": "left_square_bracket",
+    "supervisor_stop": "right_square_bracket", "monitor_restart": "backslash",
+    "toggle_summarizer": "A", "toggle_web_server": "w", "open_new_agent_defaults": "G",
+    "open_skills": "W", "open_sister_selection": "U", "toggle_hook_detection": "K",
+}
+
+
+class TestClassicPreset:
+
+    def test_default_binds_none_of_them(self):
+        km = _km()
+        for action in CLASSIC_KEYS:
+            assert km.keys_for(action) == [], action
+
+    def test_they_stay_in_the_palette(self):
+        from overcode.command_palette import COMMANDS_BY_ACTION
+        assert set(CLASSIC_KEYS) <= set(COMMANDS_BY_ACTION)
+
+    def test_classic_brings_back_exactly_those_keys(self):
+        d, c = _km(), _km(preset="classic")
+        assert "classic" in list_presets()
+        for action, key in CLASSIC_KEYS.items():
+            assert c.keys_for(action) == [key], action
+        changed = {b.action for b in c.bindings("app")} ^ {b.action for b in d.bindings("app")}
+        assert changed == set(CLASSIC_KEYS)
+        others = [(b.key, b.action) for b in c.bindings("app") if b.action not in CLASSIC_KEYS]
+        assert others == [(b.key, b.action) for b in d.bindings("app")]
+        assert c.warnings == []
+
+    @pytest.mark.parametrize("preset", ["default", "classic", "vscode"])
+    def test_presets_have_no_duplicates_or_warnings(self, preset):
+        km = _km(preset=preset)
+        for scope in SCOPES:
+            keys = [b.key for b in km.bindings(scope)]
+            assert len(keys) == len(set(keys)), (preset, scope)
+        assert km.warnings == []
+
+    def test_undo_is_ctrl_z_everywhere(self):
+        for preset in list_presets():
+            assert _km(preset=preset).keys_for("undo_last_change") == ["ctrl+z"]
+
+    def test_vscode_names_no_removed_key(self):
+        """vscode.yaml remaps keys only: none of its actions lost its key here."""
+        p = load_preset("vscode")
+        assert not set(p.scopes.get("app", {})) & set(CLASSIC_KEYS)
+
+    def test_help_lists_them_without_keys(self):
+        from overcode.tui_widgets.help_overlay import UNBOUND, build_help
+        text = build_help(220, _km()).plain
+        assert "Monochrome" in text and "Restart monitor daemon" in text
+        line = next(ln for ln in text.split("\n") if "Restart monitor daemon" in ln)
+        assert UNBOUND in line
+        assert "Undo last change" in text and "Typing guard" in text
+
+    def test_configured_classic_preset(self, tmp_config):
+        km_mod.set_configured_preset("classic")
+        assert effective_keymap().keys_for("toggle_monochrome") == ["M"]

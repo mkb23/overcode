@@ -1182,7 +1182,8 @@ class TestSupervisorTUIPilot:
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
             await pilot.press("e")
-            await pilot.pause()
+            # e starting a run waits START_SETTLE for a second typing key (#560)
+            await pilot.pause(0.4)
 
         app._launch_overagent_async.assert_called_once()
         name, _directory, backend = app._launch_overagent_async.call_args[0]

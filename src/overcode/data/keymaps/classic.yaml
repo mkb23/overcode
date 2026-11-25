@@ -1,0 +1,27 @@
+# Classic key preset (#560).
+#
+# The default keys, plus the bare keys overcode had before 0.6.4 for
+# set-and-forget settings and daemon admin. They left the defaults because
+# prose typed into the TUI pane by mistake fired them a character at a time
+# (the typing guard catches that now, but a key that is not bound cannot
+# misfire at all). Everything here is also in the command palette (/).
+#
+# Use it with `keys: {preset: classic}` in config.yaml, the palette's
+# "Key preset", or `overcode keys --use classic`.
+name: classic
+description: the default keys plus the pre-0.6.4 bare keys for settings and daemons
+
+overrides:
+  toggle_monochrome: [M]
+  toggle_theme: [Y]
+  toggle_emoji_free: [E]
+  toggle_column_headers: [L]
+  supervisor_start: ["["]
+  supervisor_stop: ["]"]
+  monitor_restart: ["\\"]
+  toggle_summarizer: [A]
+  toggle_web_server: [w]
+  open_new_agent_defaults: [G]
+  open_skills: [W]
+  open_sister_selection: [U]
+  toggle_hook_detection: [K]

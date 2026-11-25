@@ -124,6 +124,7 @@ from .tui_actions import (
     SwarmMixin,
 )
 from .tui_actions.activity import ActivityMixin
+from .tui_actions.typing_guard import TypingGuardMixin
 from .tui_actions.claude_bg import BackgroundSessionsMixin
 from .tui_actions.view_control import ViewControlMixin
 from .tui_actions.overagent import JourneyMixin, OveragentMixin
@@ -180,6 +181,7 @@ def remote_visits(prefs) -> dict:
 
 
 class SupervisorTUI(
+    TypingGuardMixin,  # first: it sees every key and binding action (#560)
     SwarmMixin,
     BackgroundSessionsMixin,
     ActivityMixin,
@@ -238,12 +240,7 @@ class SupervisorTUI(
         ("i", "focus_command_bar", "Send"),
         ("colon", "focus_command_bar", "Send"),
         ("o", "focus_standing_orders", "Standing orders"),
-        # Daemon controls (simple keys that work everywhere)
-        ("left_square_bracket", "supervisor_start", "Start supervisor"),
-        ("right_square_bracket", "supervisor_stop", "Stop supervisor"),
-        ("backslash", "monitor_restart", "Restart monitor"),
         ("a", "focus_human_annotation", "Annotation"),
-        ("A", "toggle_summarizer", "AI summarizer"),
         # Resize focused agent's tmux window to match pane size
         ("r", "resize_focused_window", "Resize pane"),
         # Agent management
@@ -272,8 +269,6 @@ class SupervisorTUI(
         ("y", "toggle_copy_mode", "Copy mode"),
         # Heartbeat pause/resume toggle (#265) - promoted to lowercase
         ("p", "toggle_heartbeat_pause", "Pause heartbeat"),
-        # API server (sister API) toggle
-        ("w", "toggle_web_server", "API server (sisters)"),
         # Sleep mode toggle - mark agent as paused (excluded from stats)
         ("z", "toggle_sleep", "Sleep mode"),
         # Show terminated/killed sessions (ghost mode)
@@ -322,12 +317,6 @@ class SupervisorTUI(
         ("0", "baseline_reset", "Reset baseline"),
         # Timeline scope cycle (#191)
         ("less_than_sign", "cycle_timeline_hours", "Timeline scope"),
-        # Monochrome mode for terminals with ANSI issues (#138)
-        ("M", "toggle_monochrome", "Monochrome"),
-        # Light / dark colour theme (#508)
-        ("Y", "toggle_theme", "Light/dark theme"),
-        # Emoji-free mode for terminals without emoji fonts (#315)
-        ("E", "toggle_emoji_free", "Emoji-free"),
         # Cycle between token count, dollar cost, and joules display
         ("dollar_sign", "toggle_cost_display", "Cycle $/⚡"),
         # Heartbeat configuration (#171)
@@ -338,23 +327,21 @@ class SupervisorTUI(
         ("g", "new_agent_in_worktree", "New agent in worktree"),
         # Enhanced context toggle - per-agent context injection hook
         ("ctrl+t", "toggle_enhanced_context", "Enhanced context"),
-        # Hook-based status detection toggle (#5)
-        ("K", "toggle_hook_detection", "Agent detection"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
-        # Column headers toggle
-        ("L", "toggle_column_headers", "Column headers"),
-        # New agent defaults modal
-        ("G", "open_new_agent_defaults", "Agent defaults"),
-        ("W", "open_skills", "Skill profiles"),
         # Tmux pane-toggle key modal (#442)
         ("ctrl+g", "open_tmux_config", "Tmux toggle key"),
-        # Sister selection modal (#323)
-        ("U", "open_sister_selection", "Sisters"),
         # Instruction history modal (#376)
         ("I", "open_instruction_history", "Instruction history"),
         # Jobs mode toggle
         ("J", "toggle_tui_mode", "Jobs"),
+        # Undo the last setting changed from a key or the palette (#560)
+        ("ctrl+z", "undo_last_change", "Undo"),
+        # Set-and-forget settings and daemon admin (monochrome, theme,
+        # emoji-free, column headers, supervisor/monitor, summarizer, API
+        # server, agent defaults, skills, sisters, status detection) have no
+        # bare key by default: prose typed into the pane fired them (#560).
+        # They are in the palette; `keys: {preset: classic}` brings the keys back.
     ]
 
     # Timeline scope presets in hours (#191)
@@ -398,6 +385,7 @@ class SupervisorTUI(
         from .keymap import effective_keymap
         self.apply_keymap(effective_keymap(), refresh=False)
         self._init_activity()  # usage log (#483)
+        self._init_typing_guard()  # prose typed into the pane by mistake (#560)
         self._init_view_control()  # overcode view (#484)
         self._init_mentor()  # occasional tips, off by default (#483)
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
