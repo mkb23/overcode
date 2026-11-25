@@ -83,12 +83,14 @@ SESSION_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
 def drop_model_flag(extra_args: Optional[List[str]]) -> Optional[List[str]]:
-    """Remove ``--model X`` / ``--model=X`` from pass-through CLI args.
+    """Remove ``--model X`` / ``--model=X`` / ``-m X`` from pass-through CLI args.
 
     Backends append extra args after their own ``--model``, so a model
     passed through at launch would win on every relaunch over
     ``Session.model``, which the daemon keeps at the model the agent last
-    ran on (#505).
+    ran on (#505). ``-m`` is the model flag of opencode, codex, grok and
+    hermes (the last three put their own model there); Claude Code has no
+    ``-m``.
     """
     if not extra_args:
         return extra_args
@@ -100,9 +102,9 @@ def drop_model_flag(extra_args: Optional[List[str]]) -> Optional[List[str]]:
         for tok in tokens:
             if skip:
                 skip = False
-            elif tok == "--model":
+            elif tok in ("--model", "-m"):
                 skip = True
-            elif not tok.startswith("--model="):
+            elif not tok.startswith(("--model=", "-m=")):
                 out.append(tok)
         if out:
             kept.append(arg if out == tokens else shlex.join(out))

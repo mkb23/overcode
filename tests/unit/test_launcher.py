@@ -3036,6 +3036,14 @@ class TestDropModelFlag:
         assert drop_model_flag(["--model=haiku", "--x 'a b'"]) == ["--x 'a b'"]
         assert drop_model_flag(["--verbose --model haiku"]) == ["--verbose"]
 
+    def test_short_form(self):
+        """opencode/codex/grok/hermes take the model as -m too (#534)."""
+        from overcode.launcher import drop_model_flag
+        assert drop_model_flag(["-m openai/gpt-5"]) == []
+        assert drop_model_flag(["-m", "openai/gpt-5", "--auto"]) == ["--auto"]
+        assert drop_model_flag(["-m=gpt-5 --auto"]) == ["--auto"]
+        assert drop_model_flag(["--max-turns 3"]) == ["--max-turns 3"]
+
 
 class TestLauncherRevive:
     """Test AgentLauncher.revive — revival preserves full launch context."""
