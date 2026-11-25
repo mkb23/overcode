@@ -741,6 +741,60 @@ class TestWaitForPrompt:
                 session.tmux_window, timeout=5.0, backend=get_backend("codex"))
         assert sent == [["1"]]
 
+    @staticmethod
+    def _codex_pane(name: str) -> str:
+        from pathlib import Path
+        return (Path(__file__).parent.parent / "fixtures_codex_panes"
+                / f"{name}.txt").read_text(encoding="utf-8")
+
+    def _run_codex_startup(self, tmp_path, screens, pane_shows):
+        from overcode.backends import get_backend
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+        idle = screens[-1]
+        screens = iter(screens)
+        sent = []
+        with patch("overcode.agent_io.get_tmux_pane_content",
+                   side_effect=lambda *a, **k: next(screens, idle)), \
+                patch("overcode.agent_io.subprocess.run",
+                      side_effect=lambda cmd, **k: sent.append(cmd[cmd.index("-t") + 2:])), \
+                patch("overcode.agent_io.time.sleep"), \
+                patch.object(launcher, "_pane_shows", side_effect=pane_shows):
+            assert launcher._wait_for_prompt(
+                session.tmux_window, timeout=5.0, backend=get_backend("codex"))
+        return sent
+
+    def test_codex_0_164_update_menu_then_trust_dialog(self, tmp_path):
+        """codex 0.164 (captured live): the update menu, then a trust dialog
+        where "1" only moves the highlight. A bare "1" left it up until the
+        launcher timed out and pasted the initial prompt into it; now Enter
+        follows while "Trust and continue" is still highlighted."""
+        update = self._codex_pane("update_menu_0164")
+        trust = self._codex_pane("trust_dialog_0164")
+        idle = self._codex_pane("idle_fresh_0164")
+        seen = []
+
+        def pane_shows(window, text, timeout):
+            seen.append(text)
+            return True  # "1" did not dismiss it: still on screen
+
+        sent = self._run_codex_startup(tmp_path, [update, trust, trust, idle], pane_shows)
+        assert sent == [["2"], ["1"], ["", "Enter"]]
+        assert seen == ["› 1. Trust and continue"]
+
+    def test_codex_0_156_trust_dialog_confirmed_by_its_digit_gets_no_enter(self, tmp_path):
+        """Where "1" confirms at once (0.156) the dialog is gone: no Enter
+        follows into the input box, and the dialog is not answered again."""
+        trust = self._codex_pane("trust_dialog_0164")
+        idle = self._codex_pane("idle_fresh_0164")
+        sent = self._run_codex_startup(tmp_path, [trust, idle],
+                                       lambda window, text, timeout: False)
+        assert sent == [["1"]]
+
     def test_detects_angled_bracket_prompt(self, tmp_path):
         """Also detects > prompt character"""
         mock_tmux = MockTmux()

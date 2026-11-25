@@ -425,10 +425,26 @@ class TestStartupDialogRules:
                   "Run npm install -g @openai/codex to update.")
         assert not [r for r in CodexBackend().startup_dialog_rules() if r.marker in banner]
 
-    def test_the_0_156_trust_dialog_is_accepted_by_its_digit(self):
+    def test_the_trust_folder_dialog_is_selected_by_digit_then_confirmed(self):
+        """codex 0.156 confirmed on "1"; 0.164 only moves the highlight
+        there and needs Enter. "1" then Enter, the Enter only while option
+        1 is still drawn highlighted (gone where "1" already confirmed)."""
         from overcode.backends.codex import CodexBackend
         rules = {r.marker: r for r in CodexBackend().startup_dialog_rules()}
-        assert [(p.keys, p.enter) for p in rules["Trust this folder?"].presses] == [("1", False)]
+        presses = rules["Trust this folder?"].presses
+        assert [(p.keys, p.enter) for p in presses] == [("1", False), ("", True)]
+        assert presses[0].wait_for is None
+        assert presses[1].wait_for == "› 1. Trust and continue"
+        trust = (Path(__file__).parent.parent / "fixtures_codex_panes"
+                 / "trust_dialog_0164.txt").read_text(encoding="utf-8")
+        assert presses[1].wait_for in trust
+
+    def test_the_0_164_update_menu_is_skipped_by_digit(self):
+        from overcode.backends.codex import CodexBackend
+        menu = (Path(__file__).parent.parent / "fixtures_codex_panes"
+                / "update_menu_0164.txt").read_text(encoding="utf-8")
+        fired = [r for r in CodexBackend().startup_dialog_rules() if r.marker in menu]
+        assert [r.marker for r in fired] == ["Update now"]
 
     def test_trust_dialog_is_accepted_with_enter(self):
         from overcode.backends.codex import CodexBackend

@@ -150,6 +150,22 @@ class TestRealisticCorpus:
         status, _activity, _content = detect(load_pane("trust_dialog"))
         assert status == STATUS_WAITING_USER
 
+    @pytest.mark.parametrize("pane", [
+        "idle_fresh_0164", "trust_dialog_0164", "update_menu_0164",
+    ])
+    def test_0_164_startup_chrome_is_waiting_user(self, pane):
+        status, _activity, _content = detect(load_pane(pane))
+        assert status == STATUS_WAITING_USER
+
+    def test_0_164_splash_and_banner_leave_the_prompt_line_ready(self):
+        """The braille logo and the "Update available!" banner above the
+        input line do not hide it from the launcher's readiness check."""
+        from overcode.agent_io import AgentIOMixin
+        backend = CodexBackend()
+        assert AgentIOMixin._shows_prompt(load_pane("idle_fresh_0164"), backend)
+        for dialog in ("trust_dialog_0164", "update_menu_0164"):
+            assert not AgentIOMixin._shows_prompt(load_pane(dialog), backend)
+
 
 class TestPatternPredicates:
     """Unit-level checks on the pieces the phases lean on."""

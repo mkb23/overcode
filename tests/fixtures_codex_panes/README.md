@@ -11,6 +11,10 @@ and be replayed through the status detector the way
 chrome drifts, re-capture these files and the pattern tests will tell you what
 broke.
 
+The `*_0164.txt` files are later captures from codex 0.164.0 (80x24 pane,
+2026-11-25, launched by overcode in a temp dir; paths scrubbed to
+`/private/tmp/probe-codex-0164`).
+
 | File | State | Expected status |
 |---|---|---|
 | `idle_fresh.txt` | fresh launch, banner + empty `› Ask Codex to do anything` prompt | `waiting_user` |
@@ -21,6 +25,9 @@ broke.
 | `interrupted.txt` | Escape sent mid-generation; `■ Conversation interrupted` marker shown | `waiting_user` |
 | `exited_shell.txt` | after `/quit`, back at the shell prompt | `terminated` |
 | `trust_dialog.txt` | first-run folder-trust dialog, captured in a directory codex had never visited | `waiting_user` |
+| `update_menu_0164.txt` | codex **0.164.0**: the update menu drawn first on launch while a newer release is out ("2" skips it) | `waiting_user` |
+| `trust_dialog_0164.txt` | codex **0.164.0**: the "Trust this folder?" dialog. A digit only moves the highlight here; Enter confirms (on 0.156 "1" confirmed at once) | `waiting_user` |
+| `idle_fresh_0164.txt` | codex **0.164.0**: fresh idle screen — "Update available!" banner, header, the braille logo splash, then `› Ask Codex to do anything` | `waiting_user` |
 
 ## Load-bearing details
 

@@ -401,8 +401,13 @@ def read_char(timeout: float = 0.1) -> Optional[str]:
         return None
 
 
-def interactive_menu(options: List[str], prompt: str = "") -> int:
+def interactive_menu(options: List[str], prompt: str = "",
+                     digits_confirm: bool = True) -> int:
     """Display an interactive menu with arrow key navigation.
+
+    A digit key picks its option at once, or, with ``digits_confirm``
+    False, only moves the highlight there for Enter to confirm (codex
+    0.164's trust dialog).
 
     Returns the selected index (0-based), or -1 if cancelled.
     """
@@ -496,6 +501,10 @@ def interactive_menu(options: List[str], prompt: str = "") -> int:
             # four-option menu must honour '4' rather than swallow it and
             # let the trailing Enter confirm the preselected first option.
             elif ch.isdigit() and 1 <= int(ch) <= num_options:
+                if not digits_confirm:
+                    selected = int(ch) - 1
+                    render_menu()
+                    continue
                 return int(ch) - 1
 
             # Handle y/n
@@ -637,7 +646,8 @@ class ScenarioRunner:
             prompt = step.get("prompt", "")
             goto_map = step.get("goto_map", {})
 
-            selected = interactive_menu(options, prompt)
+            selected = interactive_menu(options, prompt,
+                                        digits_confirm=step.get("digits_confirm", True))
 
             if selected >= 0 and selected in goto_map:
                 return f"goto:{goto_map[selected]}"

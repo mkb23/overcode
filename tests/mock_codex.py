@@ -92,6 +92,51 @@ INTERRUPTED_MARKER = (
 )
 
 
+# codex 0.164 startup chrome (tests/fixtures_codex_panes/*_0164.txt): an
+# update menu, then the folder-trust dialog, each drawn over a cleared
+# screen. On the trust dialog a digit only moves the highlight; Enter
+# confirms (on 0.156 "1" confirmed at once).
+CLEAR = "\033[2J\033[H"
+
+UPDATE_MENU_0164 = CLEAR + """
+  Update available · 0.164.0 → 0.172.0
+  Release notes: https://github.com/openai/codex/releases/latest
+
+  enter continue · esc skip
+"""
+
+TRUST_DIALOG_0164 = CLEAR + """
+  Folder access
+  /private/tmp/probe-codex-0164
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your
+  permission settings. Folder settings can run code automatically, even
+  without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+"""
+
+UPDATE_BANNER_0164 = CLEAR + """\
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.164.0 -> 0.172.0         │
+│ Run npm install -g @openai/codex to update.     │
+╰─────────────────────────────────────────────────╯
+
+  >_ OpenAI Codex (v0.164.0)
+     /private/tmp/probe-codex-0164
+
+                                    ⣀⣤⣤⣤⣀⣀
+                                 ⣠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣦⣤⣤⣤⣤⣤⣤⡀
+                               ⢀⣾⣿⣿⠿⠋⠉⠉⢉⣭⣿⣿⣿⣿⣿⠿⣿⣿⣿⣿⣷⣄
+"""
+
+STARTUP_RESPONSE = "\n• startup-dialogs-ok: prompt received\n"
+
+
 def get_scenario_dir() -> Path:
     return Path(__file__).parent / "scenarios"
 
@@ -127,6 +172,42 @@ def get_builtin_scenarios() -> Dict[str, Dict[str, Any]]:
                 {"type": "output", "text": IDLE_PROMPT, "delay_ms": 50},
                 {"type": "wait_for_input", "timeout_seconds": 300},
             ],
+        },
+        "cx_startup_dialogs": {
+            "name": "cx_startup_dialogs",
+            "description": "codex 0.164 update menu + trust dialog, then the initial prompt",
+            "steps": [
+                {"type": "output", "text": UPDATE_MENU_0164, "delay_ms": 100},
+                # "2" skips at once; Enter on the preselected option would
+                # run `npm install -g`: this mock exits instead.
+                {"type": "menu", "options": [
+                    "Update now (runs `npm install -g @openai/codex`)",
+                    "Skip",
+                    "Skip until next version",
+                ], "prompt": "", "goto_map": {0: "updated", 1: "trust", 2: "trust"}},
+            ],
+            "labels": {
+                "updated": [
+                    {"type": "exit", "code": 1, "message": "mock: update accepted\n"},
+                ],
+                "trust": [
+                    {"type": "output", "text": TRUST_DIALOG_0164, "delay_ms": 100},
+                    {"type": "menu", "options": ["Trust and continue", "Quit"],
+                     "prompt": "", "digits_confirm": False,
+                     "goto_map": {0: "trusted", 1: "quit"}},
+                ],
+                "quit": [
+                    {"type": "exit", "code": 0, "message": "mock: trust declined\n"},
+                ],
+                "trusted": [
+                    {"type": "output", "text": UPDATE_BANNER_0164, "delay_ms": 100},
+                    {"type": "output", "text": IDLE_PROMPT, "delay_ms": 50},
+                    {"type": "wait_for_input", "timeout_seconds": 120},
+                    {"type": "output", "text": STARTUP_RESPONSE, "delay_ms": 100},
+                    {"type": "output", "text": IDLE_PROMPT, "delay_ms": 50},
+                    {"type": "wait_for_input", "timeout_seconds": 300},
+                ],
+            },
         },
         "cx_permission_command": {
             "name": "cx_permission_command",

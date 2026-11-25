@@ -23,7 +23,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pytest
 
@@ -58,6 +58,11 @@ class BackendSpec:
     # A substring of the finished scripted turn (response_scenario).
     turn_marker: str
     extra_env: Dict[str, str] = field(default_factory=dict)
+    # A scenario that draws the CLI's startup dialogs before its input line,
+    # and what it prints once the initial prompt (``--prompt``) arrives: the
+    # launcher must answer each dialog and then deliver the prompt.
+    startup_scenario: Optional[str] = None
+    startup_outcome: str = ""
 
 
 SPECS: List[BackendSpec] = [
@@ -90,6 +95,8 @@ SPECS: List[BackendSpec] = [
         approve_outcome="• Ran touch ~/codex_probe_outside_test.txt",
         reject_outcome="Conversation interrupted",
         turn_marker="• Ran",
+        startup_scenario="cx_startup_dialogs",
+        startup_outcome="startup-dialogs-ok: prompt received",
     ),
     BackendSpec(
         backend="grok",
@@ -172,6 +179,30 @@ class TestBackendMatrix:
             env=env,
             cwd=Path(__file__).parent.parent.parent,
         )
+
+    def test_startup_dialogs_answered_and_initial_prompt_delivered(self):
+        """`launch --prompt` waits out the startup dialogs (codex 0.164: an
+        update menu, then a trust dialog a digit alone does not confirm),
+        then the prompt reaches the input line."""
+        if not self.spec.startup_scenario:
+            pytest.skip(f"{self.spec.backend}: no startup-dialog scenario")
+        name = f"{self.spec.backend}-start"
+        env = self.env["env"].copy()
+        env["MOCK_SCENARIO"] = self.spec.startup_scenario
+        env.update(self.spec.extra_env)
+        result = subprocess.run(
+            ["python", "-m", "overcode.cli", "launch",
+             "--name", name, "--session", self.session,
+             "--backend", self.spec.backend,
+             "--directory", str(self.work_dir),
+             "--prompt", "say the startup word"],
+            capture_output=True, text=True, timeout=90, env=env,
+            cwd=Path(__file__).parent.parent.parent,
+        )
+        assert result.returncode == 0, f"Launch failed: {result.stdout}\n{result.stderr}"
+        content = self._wait_for_pane(name, self.spec.startup_outcome, timeout=20)
+        assert "say the startup word" in content
+        assert "mock: update accepted" not in content
 
     def _cli(self, *args, env_extra=None, timeout: int = 30):
         env = self.env["env"].copy()

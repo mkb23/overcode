@@ -50,12 +50,20 @@ def detect(pane: str):
 
 
 class TestScenarios:
-    def test_all_three_scenarios_exist(self):
+    def test_all_scenarios_exist(self):
         assert set(mock_codex.get_builtin_scenarios()) == {
             "cx_launch_and_idle",
             "cx_simple_response",
             "cx_permission_command",
+            "cx_startup_dialogs",
         }
+
+    def test_startup_trust_menu_wants_enter_after_its_digit(self):
+        """codex 0.164's trust dialog: a digit moves the highlight only."""
+        labels = mock_codex.get_builtin_scenarios()["cx_startup_dialogs"]["labels"]
+        menu = next(s for s in labels["trust"] if s["type"] == "menu")
+        assert menu["digits_confirm"] is False
+        assert "Trust this folder?" in mock_codex.TRUST_DIALOG_0164
 
     def test_scenario_names_cannot_collide_with_other_mocks(self):
         import mock_claude

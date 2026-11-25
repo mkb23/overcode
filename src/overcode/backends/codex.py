@@ -462,9 +462,21 @@ class CodexBackend(AgentBackendBase):
             ),
             # codex 0.156.1 (seen live Oct 12 2026): "Trust this folder? ...
             # › 1. Trust and continue / 2. Quit / enter continue · esc quit"
+            # There "1" confirmed at once; on 0.164 (seen live Nov 25 2026,
+            # "2. Back to Agent Command Center" / "enter continue · esc
+            # back") a digit only moves the highlight and Enter confirms, so
+            # a bare "1" left the dialog up until the launcher gave up and
+            # pasted the initial prompt into it. "1" puts the highlight on
+            # "Trust and continue" whatever the version, then Enter confirms
+            # it — sent only while the dialog still shows that option
+            # highlighted (where "1" already confirmed, it is gone and
+            # nothing more is sent).
             DialogRule(
                 marker="Trust this folder?",
-                presses=[KeyPress("1", enter=False)],
+                presses=[
+                    KeyPress("1", enter=False, delay_after=0.5),
+                    KeyPress("", enter=True, wait_for="› 1. Trust and continue"),
+                ],
                 settle_seconds=1.5,
             ),
         ]
