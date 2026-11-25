@@ -940,6 +940,50 @@ class TestReportCommand:
         assert result.exit_code == 0
         assert "Report filed: failure" in result.output
 
+    def _as(self, monkeypatch, agent):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", agent.name)
+        monkeypatch.setenv("OVERCODE_SESSION_ID", agent.id)
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+
+    def test_report_refused_while_a_child_is_at_work(self, fleet, monkeypatch):
+        """A report while its own child still works is refused and files nothing."""
+        from overcode.paths import agent_file
+        me = fleet.add("me")
+        fleet.add("busy-kid", status="running", parent_session_id=me.id)
+        fleet.add("done-kid", status="done", parent_session_id=me.id)
+        self._as(monkeypatch, me)
+        with patch("overcode.monitor_daemon_state.get_monitor_daemon_state", return_value=None):
+            result = runner.invoke(app, ["report", "--status", "success"])
+        assert result.exit_code == 1
+        assert "busy-kid" in result.output and "done-kid" not in result.output
+        assert fleet.get("me").report_status is None
+        assert not agent_file("agents", me.id, "report").exists()
+
+        with patch("overcode.monitor_daemon_state.get_monitor_daemon_state", return_value=None):
+            forced = runner.invoke(app, ["report", "--status", "success", "--force"])
+        assert forced.exit_code == 0
+        assert fleet.get("me").report_status == "success"
+
+    def test_report_refused_while_a_job_runs(self, fleet, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+        me = fleet.add("me")
+        self._as(monkeypatch, me)
+        jobs = [SimpleNamespace(name="long-build", agent_session_id=me.id, status="running"),
+                SimpleNamespace(name="someone-elses", agent_session_id="other", status="running")]
+        with patch("overcode.job_manager.JobManager") as jm:
+            jm.return_value.list_jobs.return_value = jobs
+            result = runner.invoke(app, ["report", "--status", "success"])
+        assert result.exit_code == 1
+        assert "long-build" in result.output and "someone-elses" not in result.output
+
+    def test_report_with_children_at_rest_is_filed(self, fleet, monkeypatch):
+        me = fleet.add("me")
+        fleet.add("kid", status="waiting_oversight", parent_session_id=me.id)
+        self._as(monkeypatch, me)
+        with patch("overcode.monitor_daemon_state.get_monitor_daemon_state", return_value=None):
+            result = runner.invoke(app, ["report", "--status", "success"])
+        assert result.exit_code == 0
+
 
 class TestCleanupExtended:
     """Test cleanup with --done flag."""

@@ -286,22 +286,61 @@ class TestDoneChildBackAtWork:
         assert sm.get_session(child.id).status == "done"
         assert sm.get_session(child.id).report_status == "success"
 
-    def test_timed_out_child_resumes_only_after_its_deadline(self, root):
+    def test_timed_out_child_resumes_only_after_it_went_done(self, root):
+        import time
         from overcode.child_lifecycle import OVERSIGHT_TIMEOUT_REASON
         daemon, sm, sessions = _daemon(root)
         child = sessions[11]
+        now = time.time()
         sm.update_session(child.id, report_status="failure",
                           report_reason=OVERSIGHT_TIMEOUT_REASON,
-                          oversight_deadline_at=1000.0)
+                          oversight_deadline_at=now - 1)
         sm.update_session_status(child.id, "done")
-        _hook_event(child.name, "PreToolUse", 999.0)
+        _hook_event(child.name, "PreToolUse", now - 2)
         _ticks(daemon, 2)
         assert sm.get_session(child.id).status == "done"
-        _hook_event(child.name, "UserPromptSubmit", 1001.0)
+        _hook_event(child.name, "UserPromptSubmit", now + 5)
         _ticks(daemon, 2, start=START + timedelta(seconds=10))
         record = sm.get_session(child.id)
         assert record.status == "running"
         assert record.oversight_deadline_at is None
+        assert record.done_at is None
+
+    def test_pending_oversight_deadline_does_not_hide_new_work(self, root):
+        """experiment-billing, 2026-11-25: reported with a 3 h oversight
+        deadline still ahead, prompted again, worked 43 min shown done."""
+        import time
+        daemon, sm, child = self._done_child(root)
+        sm.update_session(child.id, oversight_deadline_at=time.time() + 10800)
+        _hook_event(child.name, "UserPromptSubmit", time.time() + 5)
+        _ticks(daemon, 2, start=START + timedelta(seconds=10))
+        assert sm.get_session(child.id).status == "running"
+
+    def test_turn_between_ticks_resumes_from_the_event_log(self, root):
+        """Prompted, worked and stopped between two ticks: the last event is a
+        Stop again, but the log shows the work."""
+        import time
+        daemon, sm, child = self._done_child(root)
+        at = time.time() + 5
+        daemon.detector.hooks._read_recent_events = lambda name: (
+            [{"event": "UserPromptSubmit", "timestamp": at},
+             {"event": "PreToolUse", "timestamp": at + 1},
+             {"event": "Stop", "timestamp": at + 2}] if name == child.name else [])
+        _hook_event(child.name, "Stop", at + 2)
+        _ticks(daemon, 1, start=START + timedelta(seconds=10))
+        assert sm.get_session(child.id).status == "running"
+
+    def test_events_of_the_reporting_turn_do_not_resume(self, root):
+        """The report's own tool call and the Stop after it predate done_at."""
+        daemon, sm, child = self._done_child(root)
+        done_at = sm.get_session(child.id).done_at
+        assert done_at is not None
+        daemon.detector.hooks._read_recent_events = lambda name: [
+            {"event": "PostToolUse", "timestamp": done_at - 1},
+            {"event": "Stop", "timestamp": done_at - 0.5}]
+        _ticks(daemon, 2, start=START + timedelta(seconds=10))
+        assert sm.get_session(child.id).status == "done"
+
 
     def test_resumed_child_is_not_auto_archived_that_tick(self, root):
         daemon, sm, child = self._done_child(root)
@@ -312,6 +351,37 @@ class TestDoneChildBackAtWork:
             daemon.housekeeping.auto_archive_done_agents(
                 [snapshot], daemon._pending, START)
         tmux.return_value.kill_window.assert_not_called()
+
+
+class TestDoneSince:
+    def _session(self, **kw):
+        from types import SimpleNamespace
+        base = dict(name="c", id="cid", tmux_session="agents", parent_session_id="p",
+                    status="done", oversight_deadline_at=None, done_at=None)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_prefers_done_at(self, root):
+        from overcode.child_lifecycle import done_since
+        assert done_since(self._session(done_at=50.0, oversight_deadline_at=99.0)) == 50.0
+
+    def test_legacy_record_ignores_a_deadline_still_ahead(self, root):
+        from overcode.child_lifecycle import done_since, resumed_after_done
+        s = self._session(oversight_deadline_at=2000.0)
+        assert done_since(s, now=1000.0) is None
+        assert done_since(s, now=3000.0) == 2000.0
+        _report("c")
+        report_at = done_since(s, now=1000.0)
+        assert report_at is not None
+        assert resumed_after_done(
+            s, {"event": "UserPromptSubmit", "timestamp": report_at + 1}, now=1000.0)
+
+    def test_legacy_record_does_not_read_the_log(self, root):
+        from overcode.child_lifecycle import resumed_after_done
+        _report("c")
+        s = self._session()
+        log = [{"event": "PostToolUse", "timestamp": 9e12}]  # the report's own call
+        assert not resumed_after_done(s, {"event": "Stop", "timestamp": 9e12}, log)
 
 
 class TestReconcileLifecycle:

@@ -126,6 +126,16 @@ launches), so it only works inside an agent. When the child's turn ends:
   oversight policy (below) decides what happens next. If you or its parent
   prompt it again, it goes back to work.
 
+A `done` child given more work (a prompt from you, its parent or
+`overcode send`) goes back to running: any prompt or tool call after the
+moment it went done counts, and its report is set aside, so it settles
+afresh when that turn ends.
+
+The report is refused (exit 1, nothing filed) while the child's own child
+agents are still at work or its overcode jobs still running: a child should
+report last, after everything it started has finished. `--force` reports
+anyway, for work meant to outlive it. Background shells are not checked.
+
 **End every child's prompt with the report line.** A child that never
 reports is never counted as done:
 

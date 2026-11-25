@@ -330,6 +330,7 @@ overcode report --status <success|failure> [--reason <text>]
 |--------|-------|-------------|
 | `--status` | `-s` | **Required.** `success` or `failure` |
 | `--reason` | `-r` | Optional explanation |
+| `--force` | | Report even while this agent's child agents or jobs are still running (refused otherwise, exit 1) |
 
 The command reads `OVERCODE_SESSION_NAME` and `OVERCODE_TMUX_SESSION` from the environment (automatically set for all agents launched by overcode).
 
