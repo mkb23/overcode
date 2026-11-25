@@ -1,5 +1,13 @@
 # overcode 0.6.4
 
+- **Typing into the TUI by mistake no longer scrambles it (#560).** A burst
+  of keys typed like prose is caught. overcode ignores the rest of it, undoes
+  what the first keys toggled or opened, and says so. Quitting, launching and
+  sending to an agent wait until it is clear the keys weren't typing. Ctrl+Z
+  (or "Undo last change") undoes setting changes. Rarely used settings and
+  daemon keys (`M Y E L [ ] \ A w G W U K`) are palette-only now;
+  `keys: {preset: classic}` brings them back, and `tui.typing_guard: false`
+  turns the guard off.
 - **A TAG column (#356).** Each agent's tags as `#name`, `+N` for those that
   do not fit, all of them on hover; it sorts by first tag. It shows while
   your agents' tags differ, and on a row too narrow for every column it is
@@ -25,4 +33,13 @@
   that starts work again goes back to running (#556). Hooks from Claude's
   pre-warmed background worker, and a conversation parked mid-turn, still
   find their agent (#559). Full detail drops its extra columns to fit,
-  rather than cutting CTX and the model off the right end.
+  rather than cutting CTX and the model off the right end. `restart --model`
+  now wins over a `-m` passed through at launch (opencode, codex, grok,
+  hermes). opencode agents get their PR number from their own `gh pr
+  create` output (#532). Emoji that some terminals drew at the wrong width
+  are replaced (#461).
+- **Cheaper at scale (#528).** Following a running child costs one tmux call
+  per poll, not two. A sister's `/api/status` lists panes once and reuses
+  unchanged captures. Jobs and the summarizer skip work for panes that
+  haven't changed or are gone. A cascade kill writes state once, and kill
+  and clean-up no longer freeze the TUI.
