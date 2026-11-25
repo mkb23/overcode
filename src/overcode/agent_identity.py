@@ -27,6 +27,11 @@ def env_agent_name(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
 # the agent (its reports, hooks and state access are its own).
 JOB_OWNER_VAR = "OVERCODE_JOB_OWNER_ID"
 
+# The agent spend recorded from this process bills to (experiment billing,
+# ``external_spend``): set by an agent's ``overcode bash`` job, or by hand.
+# Cleared from launch lines: an agent bills its own evals.
+BILL_TO_VAR = "OVERCODE_BILL_TO"
+
 
 def env_job_owner_id(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
     """The id of the agent whose job this process runs in, or None."""

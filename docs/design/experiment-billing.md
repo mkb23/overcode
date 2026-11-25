@@ -187,12 +187,14 @@ that should be the default is Q2.
 
 - **Crash mid-eval**: counted up to the last flush (the helper flushes every
   30 s, at `close()` and at interpreter exit). No open segment is left behind.
-- **Crash mid-record**: the ledger row is appended before `external.json` is
-  saved, both under the ledger lock; sessions.json is written after both
-  (outer lock). A crash between the row and `external.json` re-bases the
-  next delta on the older cumulative: the next row is *lower* than the last
-  one written, and since the last row wins, spend between them is lost, not
-  doubled. Bounded by one flush; acceptable, noted.
+- **Crash mid-record**: `external.json` (the run's new cumulative) is saved
+  *before* the ledger row is appended, both under the ledger lock;
+  sessions.json is written after both (outer lock). A crash between the
+  two leaves the row missing, but the run's next record carries the full
+  cumulative, so nothing is lost or doubled, unless that was the run's
+  last record (then one flush is lost). A crash before sessions.json is
+  written leaves the agent's `external_cost_usd` one flush low (the ledger
+  is right; the budget check is lenient by that much).
 - **Retries**: a caller that retries a flush that actually succeeded counts
   it twice. Not solved in the increment (Q6: an optional idempotency key per
   flush, kept per run).

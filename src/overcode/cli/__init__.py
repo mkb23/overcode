@@ -14,6 +14,7 @@ from ..launcher import AgentLauncher  # noqa: F401
 # Import submodules to register their commands with the Typer apps
 from . import agent  # noqa: F401
 from . import budget  # noqa: F401
+from . import spend  # noqa: F401
 from . import hooks  # noqa: F401
 from . import skills  # noqa: F401
 from . import skill_profiles  # noqa: F401

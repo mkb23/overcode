@@ -13,6 +13,7 @@ import logging
 
 from . import paths
 from .agent_files import remove_agent_dir
+from .budget_gate import charged_cost
 from .exceptions import StateWriteError
 from .json_store import JsonStore, Transaction
 from .ledger import Ledger, make_row
@@ -47,6 +48,11 @@ class SessionStats:
     # (``conversation_spend``): kept per conversation so a read that no
     # longer covers one (pruned, or not the newest) keeps its spend
     conversations: Dict[str, dict] = field(default_factory=dict)
+    # Spend outside the agent's conversation that it is charged for: evals
+    # and sims it ran (``external_spend``). Not in the totals above; the
+    # budget is charged both (``budget_gate.charged_cost``)
+    external_cost_usd: float = 0.0
+    external_tokens: int = 0
 
     # State tracking
     current_state: str = "running"  # running, waiting_user, waiting_approval, waiting_heartbeat
@@ -1442,8 +1448,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
                 continue
             seen.add(sid)
             record = state[sid]
-            stats = record.get("stats") or {}
-            total += float(stats.get("estimated_cost_usd", 0.0) or 0.0)
+            total += charged_cost(record.get("stats") or {})
             total += float(record.get("released_children_cost_usd", 0.0) or 0.0)
             todo.extend(children.get(sid, ()))
         return total
@@ -1598,7 +1603,7 @@ class SessionManager(SessionArchiveMixin, GitContextMixin, SessionIdentityMixin)
             if not parent_id or parent_id not in state:
                 return None
 
-            spent = float(((child.get('stats') or {}).get('estimated_cost_usd', 0.0)) or 0.0)
+            spent = charged_cost(child.get('stats') or {})
             # An adopted child's budget at adoption was nobody's grant: only
             # what the parent gave it since can go back
             floor = max(spent, float(child.get('budget_at_adoption_usd', 0.0) or 0.0))

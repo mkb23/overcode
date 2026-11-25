@@ -84,6 +84,14 @@ billing_app = typer.Typer(
 )
 app.add_typer(billing_app, name="billing")
 
+# Spend outside agents' conversations: evals and sims (experiment billing)
+spend_app = typer.Typer(
+    name="spend",
+    help="Record spend an agent's evals and sims made outside its conversation.",
+    no_args_is_help=True,
+)
+app.add_typer(spend_app, name="spend")
+
 # Sister subcommand group
 sister_app = typer.Typer(
     name="sister",

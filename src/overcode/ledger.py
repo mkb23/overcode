@@ -28,6 +28,14 @@ same way, as an "agent" of its own (``sid`` ``claude-bg:<sessionId>``,
 ``claude_bg: true`` (``claude_bg_ledger``); reports count those segments
 in ``background`` as well as ``agents``.
 
+Spend outside any agent's conversation (an eval or sim an agent ran,
+``external_spend``) is billed as **runs**: pseudo-agents (``sid``
+``ext:<run>``, ``parent`` the agent it is attributed to, or None) whose
+rows carry ``external: true`` and are always ``final`` (each new row of a
+run restates its cumulative spend and replaces the last). Totals and
+reports count them in ``runs`` (not ``agents``) and their spend in
+``ext_cost`` / ``ext_tokens`` as well as ``cost`` / ``tokens``.
+
 ``kind`` is ``checkpoint`` (a running agent, at most every
 ``ledger.checkpoint_minutes``), ``final`` (written with its archive
 record), ``close`` / ``open`` (a rebill: the old code's last row, the new
@@ -118,6 +126,27 @@ AMOUNTS = ("cost", "tokens", "tok_in", "tok_out", "tok_cache")
 CLOSING_KINDS = ("final", "close", "backfill")
 # A reader fix restating a segment's spend (see the module docstring)
 CORRECTION = "correction"
+# What an external run adds to its code besides the amounts
+EXT_FIELDS = ("ext_cost", "ext_tokens")
+
+
+def is_external(row: dict) -> bool:
+    """Whether a row is spend outside an agent's conversation (an eval run)."""
+    return bool(row.get("external"))
+
+
+def _new_entry() -> dict:
+    return dict.fromkeys(AMOUNTS, 0) | {"agents": 0, "runs": 0, "ext_cost": 0.0, "ext_tokens": 0}
+
+
+def _count(entry: dict, row: dict, amounts: Dict[str, float], sign: int = 1) -> None:
+    """Add (``sign`` -1: take back) one segment's count and external share to a code's entry."""
+    if is_external(row):
+        entry["runs"] = entry.get("runs", 0) + sign
+        entry["ext_cost"] = entry.get("ext_cost", 0.0) + sign * float(amounts.get("cost", 0) or 0)
+        entry["ext_tokens"] = entry.get("ext_tokens", 0) + sign * int(amounts.get("tokens", 0) or 0)
+    else:
+        entry["agents"] = entry.get("agents", 0) + sign
 
 
 def is_closing(row: dict) -> bool:
@@ -547,19 +576,31 @@ class Ledger:
         if not rows:
             return
         with self._lock():
-            month = writable_month(self.dir, (now or datetime.now()).strftime("%Y-%m"))
-            path = self.dir / f"{month}{PLAIN_SUFFIX}"
-            with open(path, "a+b") as f:
-                f.seek(0, os.SEEK_END)
-                if f.tell() > 0:
-                    f.seek(-1, os.SEEK_END)
-                    if f.read(1) != b"\n":
-                        f.write(b"\n")
-                for row in rows:
-                    f.write((json.dumps(row, default=str) + "\n").encode("utf-8"))
-                f.flush()
-                os.fsync(f.fileno())
-            self._gzip_closed(month)
+            self.append_locked(rows, now=now)
+
+    def locked(self):
+        """The ledger lock, for a caller that reads state and appends in one step
+        (``external_spend``): append with ``append_locked`` inside it."""
+        return self._lock()
+
+    def append_locked(self, rows: Iterable[dict], *, now: Optional[datetime] = None) -> None:
+        """``append``, for a caller already holding the ledger lock (``locked``)."""
+        rows = [r for r in rows if r.get("sid")]
+        if not rows:
+            return
+        month = writable_month(self.dir, (now or datetime.now()).strftime("%Y-%m"))
+        path = self.dir / f"{month}{PLAIN_SUFFIX}"
+        with open(path, "a+b") as f:
+            f.seek(0, os.SEEK_END)
+            if f.tell() > 0:
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    f.write(b"\n")
+            for row in rows:
+                f.write((json.dumps(row, default=str) + "\n").encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+        self._gzip_closed(month)
 
     def _gzip_closed(self, current: str) -> None:
         """Gzip every plain month before ``current`` (caller holds the lock).
@@ -654,7 +695,7 @@ class Ledger:
             # forgotten: its code moves by the difference
             code = row_code(row)
             amounts, was = contribution(row), row["was"]
-            entry = codes.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0})
+            entry = codes.setdefault(code, _new_entry())
             for name in AMOUNTS:
                 entry[name] = entry.get(name, 0) + amounts[name] - (was.get(name, 0) or 0)
             closed[key] = {"code": code, "amounts": amounts, "at": stamp(now),
@@ -670,10 +711,10 @@ class Ledger:
                 return
             # A duplicate or revised closing row: replace its share
             code, previous = closed[key]["code"], closed[key]["amounts"]
-            entry = codes.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0})
+            entry = codes.setdefault(code, _new_entry())
             for name in AMOUNTS:
                 entry[name] = entry.get(name, 0) - previous.get(name, 0)
-            entry["agents"] = entry.get("agents", 0) - 1
+            _count(entry, {"external": closed[key].get("ext")}, previous, -1)
             if closed[key].get("bg"):
                 entry["background"] = entry.get("background", 0) - 1
             del closed[key]
@@ -685,12 +726,14 @@ class Ledger:
             open_.pop(key, None)
             code = row_code(row)
             amounts = contribution(row)
-            entry = codes.setdefault(code, dict.fromkeys(AMOUNTS, 0) | {"agents": 0})
+            entry = codes.setdefault(code, _new_entry())
             for name in AMOUNTS:
                 entry[name] = entry.get(name, 0) + amounts[name]
-            entry["agents"] = entry.get("agents", 0) + 1
+            _count(entry, row, amounts)
             closed[key] = {"code": code, "amounts": amounts, "at": stamp(now),
                            "seq": int(row.get("seq", 0))}
+            if is_external(row):
+                closed[key]["ext"] = True
             if row.get("claude_bg"):
                 entry["background"] = entry.get("background", 0) + 1
                 closed[key]["bg"] = True
@@ -759,16 +802,16 @@ class Ledger:
         report: Dict[str, dict] = {}
         for code, entry in totals["codes"].items():
             report[code] = {name: entry.get(name, 0) for name in AMOUNTS}
-            report[code]["agents"] = entry.get("agents", 0)
+            for name in ("agents", "runs", "ext_cost", "ext_tokens", "background"):
+                report[code][name] = entry.get(name, 0)
             report[code]["running"] = 0
-            report[code]["background"] = entry.get("background", 0)
         for row in totals["open"].values():
             code = row_code(row)
-            entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0)
-                                      | {"agents": 0, "running": 0, "background": 0})
-            for name, value in contribution(row).items():
+            entry = report.setdefault(code, _new_entry() | {"running": 0, "background": 0})
+            amounts = contribution(row)
+            for name, value in amounts.items():
                 entry[name] += value
-            entry["agents"] += 1
+            _count(entry, row, amounts)
             entry["running"] += 1
             if row.get("claude_bg"):
                 entry["background"] += 1
@@ -822,11 +865,10 @@ class Ledger:
                                                 - price(px, prior_usage))
                                           * row_factor["cost"])
             code = row_code(row)
-            entry = report.setdefault(code, dict.fromkeys(AMOUNTS, 0)
-                                      | {"agents": 0, "running": 0, "background": 0})
+            entry = report.setdefault(code, _new_entry() | {"running": 0, "background": 0})
             for name in AMOUNTS:
                 entry[name] += amounts[name]
-            entry["agents"] += 1
+            _count(entry, row, amounts)
             if not is_closing(row):
                 entry["running"] += 1
             if row.get("claude_bg"):
@@ -834,7 +876,8 @@ class Ledger:
             if agents is not None:
                 spent = agents.setdefault(self.codes.canonical(code), {}).setdefault(
                     str(row.get("sid")), {"name": row.get("name") or "?", "cost": 0.0,
-                                          "running": False})
+                                          "running": False, "external": is_external(row),
+                                          "parent": row.get("parent")})
                 spent["cost"] += amounts["cost"]
                 spent["running"] = spent["running"] or not is_closing(row)
         return self.by_code(report)

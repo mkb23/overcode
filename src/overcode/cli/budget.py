@@ -186,9 +186,13 @@ def budget_show(
             rprint("[dim]No running agents[/dim]")
             return
 
+    from ..budget_gate import charged_cost
+
     for agent in agents:
         budget = agent.cost_budget_usd
-        spent = agent.stats.estimated_cost_usd
+        # Its evals and sims count against its budget (experiment billing)
+        spent = charged_cost(agent.stats)
+        external = float(getattr(agent.stats, "external_cost_usd", 0.0) or 0.0)
         budget_str = f"${budget:.2f}" if budget > 0 else "unlimited"
         spent_str = f"${spent:.4f}"
 
@@ -203,11 +207,13 @@ def budget_show(
         children = manager.get_descendants(agent.id)
         # Released children's spend until their release stays here (#520)
         carried = sum(_released_cost(a) for a in [agent, *children])
-        subtree_spend = spent + sum(c.stats.estimated_cost_usd for c in children) + carried
+        subtree_spend = spent + sum(charged_cost(c.stats) for c in children) + carried
 
         depth = manager.compute_depth(agent)
         indent = "  " * depth
         line = f"  {indent}{agent.name:<16} budget={budget_str:<10} spent={spent_str:<10} {status}"
+        if external > 0:
+            line += f"  (evals: ${external:.4f})"
         if children or carried > 0:
             line += f"  (subtree: ${subtree_spend:.4f})"
         print(line)
@@ -344,24 +350,115 @@ def billing(
     # Claude background sessions billed to a code are among its agents
     background = any(entry.get("background") for _, entry in rows)
     bg_head = "  background" if background else ""
+    # Spend outside agents' conversations (evals, sims: external_spend), part of cost
+    evals = any(entry.get("runs") for _, entry in rows)
+    ev_head = f"  {'evals':>10}  {'runs':>4}" if evals else ""
     q_head = f"  {quota['label']:>9}" if quota is not None else ""
     id_head = f"  {'id':<34}" if ids else ""
-    print(f"  {'code':<{width}}  {'cost':>10}  {'tokens':>8}{q_head}  {'agents':>6}  running"
+    print(f"  {'code':<{width}}  {'cost':>10}{ev_head}  {'tokens':>8}{q_head}  {'agents':>6}  running"
           f"{bg_head}{id_head}")
     for code, entry in rows:
         bg_cell = f"  {entry.get('background', 0):>10}" if background else ""
         q_cell = f"  {format_pp(entry.get('quota_pp', 0.0)):>9}" if quota is not None else ""
         id_cell = f"  {code if is_code_id(code) else '(no id)':<34}" if ids else ""
-        print(f"  {entry['name']:<{width}}  ${entry['cost']:>9.2f}  {format_tokens(entry['tokens']):>8}"
+        ev_cell = (f"  ${entry.get('ext_cost', 0.0):>9.2f}  {entry.get('runs', 0):>4}"
+                   if evals else "")
+        print(f"  {entry['name']:<{width}}  ${entry['cost']:>9.2f}{ev_cell}"
+              f"  {format_tokens(entry['tokens']):>8}"
               f"{q_cell}  {entry['agents']:>6}  {entry['running']:>7}{bg_cell}{id_cell}")
     if quota is not None and quota.get("unattributed") is not None:
         print(f"  {'unattributed':<{width}}  {'':>10}  {'':>8}  {format_pp(quota['unattributed']):>9}")
     total = sum(e["cost"] for _, e in rows)
     q_total = f"  {format_pp(sum(quota['codes'].values())):>9}" if quota is not None else ""
-    print(f"  {'total':<{width}}  ${total:>9.2f}  {'':>8}{q_total}")
+    ev_total = (f"  ${sum(e.get('ext_cost', 0.0) for _, e in rows):>9.2f}  {'':>4}"
+                if evals else "")
+    print(f"  {'total':<{width}}  ${total:>9.2f}{ev_total}  {'':>8}{q_total}")
+    if evals:
+        rprint("\n  [dim]evals: spend recorded by agents' evals and sims (overcode spend "
+               "record), part of cost; runs: how many[/dim]")
     if quota is not None:
         rprint(f"\n  [dim]{quota['label'].strip()}: predicted points of the weekly subscription "
                f"quota (estimate, model {quota['confidence']}; overcode usage model)[/dim]")
+
+
+@billing_app.command("show")
+def billing_show(
+    code: Annotated[str, typer.Argument(help="The code (an experiment): its name, a previous name, or its id")],
+    since: Annotated[
+        Optional[str],
+        typer.Option("--since", help="Spend since: 30d, 2w, 12h, 2026-09, 2026-09-15"),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON")] = False,
+):
+    """One code's spend, split: each agent's own, and each eval run's.
+
+    Eval runs are spend recorded with `overcode spend record` (or the
+    Python helper) by an agent's evals and sims, billed to the agent's code
+    and shown under the agent that ran them.
+
+    Examples:
+        overcode billing show exp-tuning
+        overcode billing show exp-tuning --since 7d
+    """
+    import json
+
+    from ..session_archive import parse_since
+    from ..session_manager import SessionManager
+
+    manager = SessionManager()
+    ledger = manager.ledger
+    code_id = ledger.codes.find(code)
+    if code_id is None:
+        rprint(f"[red]Error: no billing code '{code}'[/red]")
+        raise typer.Exit(code=1)
+    try:
+        start = parse_since(since) if since else None
+    except ValueError as e:
+        rprint(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    detail: dict = {}
+    ledger.report(since=start, agents=detail)
+    spent = detail.get(code_id, {})
+    names = {sid: d["name"] for sid, d in spent.items() if not d.get("external")}
+    live = {s.id: s.name for s in manager.list_sessions()}
+
+    def agent_name(sid):
+        if not sid:
+            return "-"
+        return names.get(sid) or live.get(sid) or sid[:8]
+
+    agents = sorted(((sid, d) for sid, d in spent.items() if not d.get("external")),
+                    key=lambda kv: -kv[1]["cost"])
+    runs = sorted(((sid, d) for sid, d in spent.items() if d.get("external")),
+                  key=lambda kv: -kv[1]["cost"])
+    own = sum(d["cost"] for _, d in agents)
+    evals = sum(d["cost"] for _, d in runs)
+    name = ledger.codes.name_of(code_id)
+    if as_json:
+        print(json.dumps({
+            "code": code_id, "name": name, "scope": f"since {since}" if since else "all time",
+            "agents_cost": own, "evals_cost": evals, "cost": own + evals,
+            "agents": [{"id": sid, "name": d["name"], "cost": d["cost"], "running": d["running"]}
+                       for sid, d in agents],
+            "runs": [{"run": sid, "label": d["name"], "agent": d.get("parent"),
+                      "agent_name": agent_name(d.get("parent")), "cost": d["cost"]}
+                     for sid, d in runs]}, indent=2))
+        return
+    scope = f"since {since}" if since else "all time"
+    if not spent:
+        rprint(f"[dim]No spend on {name} ({scope})[/dim]")
+        return
+    rprint(f"\n[bold]{name}[/bold] ({scope}): ${own + evals:.2f}  "
+           f"= agents ${own:.2f} + evals ${evals:.2f}\n")
+    width = max(12, *(len(str(d["name"])) for _, d in [*agents, *runs]))
+    if agents:
+        print(f"  {'agent':<{width}}  {'cost':>10}")
+        for _, d in agents:
+            print(f"  {d['name']:<{width}}  ${d['cost']:>9.2f}" + ("  running" if d["running"] else ""))
+    if runs:
+        print(f"\n  {'eval run':<{width}}  {'cost':>10}  agent")
+        for _, d in runs:
+            print(f"  {d['name']:<{width}}  ${d['cost']:>9.2f}  {agent_name(d.get('parent'))}")
 
 
 @billing_app.command("rename")

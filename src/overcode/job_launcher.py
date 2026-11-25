@@ -81,9 +81,13 @@ class JobLauncher:
         exit_file = self._exit_code_path(job.id)
         # The window's environment is the tmux server's, never the caller's:
         # set (or clear) the owner explicitly
-        from .agent_identity import JOB_OWNER_VAR
+        from .agent_identity import BILL_TO_VAR, JOB_OWNER_VAR
         owner = (f"export {JOB_OWNER_VAR}={shlex.quote(agent_session_id)}; "
                  if agent_session_id and parent_launches else f"unset {JOB_OWNER_VAR}; ")
+        # Spend the job records (an eval: ``overcode spend record``) bills to
+        # its agent, whether or not agents it launches are that agent's children
+        owner += (f"export {BILL_TO_VAR}={shlex.quote(agent_session_id)}; "
+                  if agent_session_id else f"unset {BILL_TO_VAR}; ")
         wrapper = (
             f"{owner}"
             f"echo {shlex.quote('╭─── Job: ' + job.name)} && "

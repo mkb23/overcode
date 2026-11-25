@@ -40,14 +40,31 @@ PERMIT_SECONDS = 120.0
 REJECTED_ACTIVITY = "Prompt blocked: over its cost budget"
 
 
+def charged_cost(stats) -> float:
+    """What an agent's budget is charged: its own estimated cost plus its
+    external spend (evals and sims it ran, ``external_spend``).
+
+    ``stats`` is a ``SessionStats`` or its dict (a sessions.json record's).
+    """
+    def num(key):
+        value = stats.get(key, 0.0) if isinstance(stats, dict) else getattr(stats, key, 0.0)
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    if stats is None:
+        return 0.0
+    return num("estimated_cost_usd") + num("external_cost_usd")
+
+
 def is_budget_exceeded(session, stats=None) -> bool:
-    """Whether ``session``'s estimated cost has reached its budget (#173).
+    """Whether ``session``'s charged cost (own plus external) has reached its budget (#173).
 
     ``stats`` defaults to the session's own.
     """
     try:
         budget = session.cost_budget_usd
-        cost = (stats if stats is not None else session.stats).estimated_cost_usd
+        cost = charged_cost(stats if stats is not None else session.stats)
         return isinstance(budget, (int, float)) and budget > 0 and cost >= budget
     except (AttributeError, TypeError):
         return False
@@ -76,7 +93,7 @@ def refusal(session, sessions=None) -> Optional[str]:
         return None  # its own host's overcode gates it
     if not is_budget_exceeded(session):
         return None
-    cost = session.stats.estimated_cost_usd
+    cost = charged_cost(session.stats)
     budget = session.cost_budget_usd
     return (f"'{session.name}' is over its cost budget (${cost:.2f} of ${budget:.2f}): "
             f"not sent. Raise it with: {raise_hint(session, sessions)}")
