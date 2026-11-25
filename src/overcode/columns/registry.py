@@ -5,12 +5,13 @@ from typing import Callable, List, Optional, TYPE_CHECKING, Tuple
 
 from ..clock import seconds_since
 from .column import ALL, HIGH_PLUS, MED_PLUS, SummaryColumn
-from .context import ColumnContext
+from .context import ColumnContext, eval_cost_of
 from .hover import (
     hover_agent_name,
     hover_allowed_tools,
     hover_available_skills,
     hover_child_count,
+    hover_eval_cost,
     hover_loaded_skills,
     hover_permission_mode,
     hover_quota,
@@ -140,6 +141,8 @@ from .render_usage import (
     render_burn_rate,
     render_burn_rate_plain,
     render_cost,
+    render_eval_cost,
+    render_eval_cost_plain,
     render_cost_plain,
     render_joules,
     quota_pp,
@@ -469,6 +472,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_key=_if_stats(shown_cost),
                   sort_desc=True, hover=hover_spend,
                   virtual_render=render_virtual_cost),
+    SummaryColumn(id="eval_cost", group="llm_usage", detail_levels=set(), render=render_eval_cost,
+                  label="Evals", render_plain=render_eval_cost_plain,
+                  visible=lambda ctx: ctx.fleet.any_has_eval_cost, placeholder_width=7,
+                  header="EVAL", name="Eval Spend",
+                  description="What its evals and sims cost (the spend gateway, or overcode "
+                              "spend record): on top of $, and counted with it against the budget",
+                  sort_key=lambda ctx: eval_cost_of(ctx.session) or None,
+                  sort_desc=True, hover=hover_eval_cost),
     SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
                   visible=lambda ctx: ctx.fleet.any_has_budget, placeholder_width=7,
                   header="BDG", name="Budget",

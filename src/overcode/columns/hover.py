@@ -238,6 +238,29 @@ def hover_spend(ctx: ColumnContext):
     return _emoji_legend("Spend", rows, "\n".join(notes))
 
 
+def hover_eval_cost(ctx: ColumnContext):
+    """EVAL: what its evals cost, and how its budget stands with them."""
+    from .context import eval_cost_of
+    from .render_usage import charged
+
+    evals = eval_cost_of(ctx.session)
+    if evals <= 0:
+        return None
+    own = getattr(ctx.session.stats, "estimated_cost_usd", 0.0) or 0.0
+    rows = [("$", f"${own:.2f} its own conversation"),
+            ("+", f"${evals:.2f} evals and sims it ran"),
+            ("=", f"${charged(ctx):.2f} charged")]
+    budget = getattr(ctx.session, "cost_budget_usd", 0.0) or 0.0
+    if budget > 0:
+        left = budget - charged(ctx)
+        rows.append(("/", f"${budget:.2f} budget, "
+                          + (f"${left:.2f} left" if left > 0 else "spent: prompts and the "
+                             "gateway refuse it")))
+    return _emoji_legend("Eval spend", rows,
+                         "Metered by the spend gateway (or recorded with overcode spend "
+                         "record). Not inside $: add it.")
+
+
 def hover_subtree_cost(ctx: ColumnContext):
     """SUB$ on trips: the rows' sum beside the subtree's total."""
     shown = ctx.subtree_trip_cost_usd

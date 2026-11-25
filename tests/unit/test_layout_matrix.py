@@ -129,6 +129,10 @@ class TripEngine(GridEngine):
             "estimated_energy_j": 900.0, "input_tokens": 10, "output_tokens": 5,
             "cache_creation_tokens": 0, "cache_read_tokens": 0, "pp7d": 0.01}
         snap.agents["id-bravo"].update(subtree_cost_usd=3.0, subtree_trip_cost_usd=1.0)
+        # EVAL (experiment billing): alpha's evals over its budget, charlie's
+        # in thousands; bravo's placeholder
+        snap.agents["id-alpha"]["external_cost_usd"] = 6.25
+        snap.agents["id-charlie"]["external_cost_usd"] = 1234.5
         return snap
 
 
@@ -147,6 +151,7 @@ async def test_layout_holds_with_trip_counters_in_every_cost_mode(make_tui, widt
     async with app.run_test(size=(width, 40)) as pilot:
         await _open(pilot, engine)
         marked = set()
+        evals_seen = False
         for level in app.SUMMARY_LEVELS:
             app._set_summary_level(level)
             await _settle(pilot)
@@ -164,10 +169,18 @@ async def test_layout_holds_with_trip_counters_in_every_cost_mode(make_tui, widt
                 line = alpha.render().plain
                 if "↺" in line:
                     marked.add(mode)
+                if "+$" in line:
+                    assert mode == "cost", mode  # EVAL only with $
+                    assert re.search(r" \+\$6", line), (width, level, line)
+                    evals_seen = True
+                if mode == "cost" and width == 260:
+                    assert re.search(r" \+\$1\.2K", _row_text(app, "charlie")), (level,)
                 if mode == "quota" and level in ("high", "full") and width >= 200:
                     # 0.84 points over the burn window, in points per hour
                     assert re.search(r"🔥\d+\.\d\d%/h", line), (width, level, line)
         assert {"tokens", "cost", "joules", "quota"} <= marked
+        # At 120 the row is cut before the $ group's tail (as BDG and SUB$ are)
+        assert evals_seen or width < 160, "EVAL shows in the $ presets"
 
         app.action_toggle_emoji_free()
         await _settle(pilot)

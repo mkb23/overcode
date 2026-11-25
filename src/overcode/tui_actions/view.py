@@ -496,23 +496,23 @@ class ViewActionsMixin:
     # hides itself for a fleet with no subscription agent.
     _COST_PRESETS = [
         ("Showing token counts", {
-            "token_count": True, "cost": False, "joules": False,
+            "token_count": True, "cost": False, "eval_cost": False, "joules": False,
             "budget": False, "subtree_cost": False, "quota": False,
         }, "tokens"),
         ("Showing cost/budget", {
-            "token_count": False, "cost": True, "joules": False,
+            "token_count": False, "cost": True, "eval_cost": True, "joules": False,
             "budget": True, "subtree_cost": True, "quota": False,
         }, "cost"),
         ("Showing energy (joules)", {
-            "token_count": False, "cost": False, "joules": True,
+            "token_count": False, "cost": False, "eval_cost": False, "joules": True,
             "budget": False, "subtree_cost": True, "quota": False,
         }, "joules"),
         ("Showing weekly quota (pp, estimate)", {
-            "token_count": False, "cost": False, "joules": False,
+            "token_count": False, "cost": False, "eval_cost": False, "joules": False,
             "budget": False, "subtree_cost": False, "quota": True,
         }, "quota"),
         ("Showing tokens + cost + joules", {
-            "token_count": True, "cost": True, "joules": True,
+            "token_count": True, "cost": True, "eval_cost": True, "joules": True,
             "budget": True, "subtree_cost": True, "quota": False,
         }, "cost"),
     ]

@@ -1634,6 +1634,7 @@ class TestComputeFleetFlags:
             "any_has_workflow": self._row(has_workflow=True),
             "any_has_weft": self._row(has_weft=True),
             "any_has_tags": self._row(tags=["infra"]),
+            "any_has_eval_cost": self._row(stats=SimpleNamespace(external_cost_usd=0.5)),
         }
         # swarm_types_shown comes from the TUI's expanded lines, never from rows
         assert set(cases) == _FLEET_FIELDS - {"swarm_types_shown"}

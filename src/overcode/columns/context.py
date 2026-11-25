@@ -53,6 +53,7 @@ class FleetFlags:
     any_has_workflow: bool = False  # an agent with a Workflow run going (WF, #498)
     any_has_weft: bool = False  # an agent holding a live weft claim (WFT)
     any_has_tags: bool = False  # an agent with a tag (#356; the TAG column)
+    any_has_eval_cost: bool = False  # an agent charged for evals/sims (EVAL)
     # The expanded delegated rows hold two or more agent types (TYPE): set
     # by the TUI from its swarm lines, never by compute_fleet_flags
     swarm_types_shown: bool = False
@@ -73,6 +74,12 @@ class FleetRow:
     has_quota: bool = False  # a quota estimate published for it
     has_workflow: bool = False  # a Workflow run of its going (#498)
     has_weft: bool = False  # a live weft claim of its
+
+
+def eval_cost_of(session) -> float:
+    """What a session is charged for evals and sims (``external_spend``), 0 if none."""
+    value = getattr(getattr(session, "stats", None), "external_cost_usd", 0.0)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
 
 
 def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
@@ -108,6 +115,7 @@ def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
         any_has_workflow=any(r.has_workflow for r in rows),
         any_has_weft=any(r.has_weft for r in rows),
         any_has_tags=any(getattr(s, 'tags', None) for s in sessions),
+        any_has_eval_cost=any(eval_cost_of(s) > 0 for s in sessions),
     )
 
 

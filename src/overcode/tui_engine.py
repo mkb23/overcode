@@ -44,7 +44,7 @@ _SESSION_FIELDS = ("model", "effort", "cpu_percent", "rss_bytes", "repo_name", "
 _STATS_FIELDS = (
     "interaction_count", "estimated_cost_usd", "estimated_energy_j", "steers_count",
     "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
-    "current_context_tokens",
+    "current_context_tokens", "external_cost_usd",
 )
 
 # The pane-derived counts, as published and as the row widget names them
@@ -256,7 +256,7 @@ def is_unvisited(view: AgentView, visited_here: Optional[float] = None) -> bool:
 STATUS_BAR_AGENT_FIELDS = (
     "session_id", "current_status", "status_since", "median_work_time",
     "input_tokens", "output_tokens", "estimated_cost_usd", "estimated_energy_j",
-    "quota", "spin_units",
+    "quota", "spin_units", "external_cost_usd",
 )
 
 

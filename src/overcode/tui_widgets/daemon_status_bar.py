@@ -448,9 +448,14 @@ class DaemonStatusBar(Static):
             if self.show_cost == "cost":
                 total_cost = sum(s.estimated_cost_usd for s in local_sessions)
                 total_cost += sum(s.total_cost for s in reachable_sisters)
-                if total_cost > 0:
+                # Evals and sims the agents ran (experiment billing): on top
+                evals = sum(v for v in (getattr(s, "external_cost_usd", 0.0) for s in local_sessions)
+                            if isinstance(v, (int, float)) and not isinstance(v, bool))
+                if total_cost > 0 or evals > 0:
                     content.append(" │ ", style="dim")
-                    content.append(f"Σ{format_cost(total_cost)}", style="orange1")
+                    content.append(f"Σ{format_cost(total_cost + evals)}", style="orange1")
+                    if evals > 0:
+                        content.append(f" (+{format_cost(evals)} evals)", style="dim orange1")
             elif self.show_cost == "joules":
                 total_energy = sum(s.estimated_energy_j for s in local_sessions)
                 for sister in reachable_sisters:

@@ -143,8 +143,12 @@ class SessionDaemonState:
 
     # Cost budget (#173)
     cost_budget_usd: float = 0.0  # 0 = unlimited
-    budget_exceeded: bool = False  # True when cost >= budget
-    subtree_cost_usd: float = 0.0  # self + all descendants (0 = leaf or not computed)
+    budget_exceeded: bool = False  # True when charged cost (own + evals) >= budget
+    # Spend outside its conversation that it is charged for: the evals and
+    # sims it ran (external_spend; gateway-metered or recorded). Not inside
+    # estimated_cost_usd; the budget counts both. Holds still between syncs.
+    external_cost_usd: float = 0.0
+    subtree_cost_usd: float = 0.0  # self + all descendants, evals included (0 = leaf)
     # The trip counter (trip.trip_view): spend since the agent's trip was
     # reset, {"reset_at", TRIP_FIELDS..., "pp7d"?}; None if never reset.
     # Rows show it; the totals above keep counting (budgets use them).

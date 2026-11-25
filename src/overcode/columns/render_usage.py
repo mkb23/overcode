@@ -43,11 +43,53 @@ def render_token_count(ctx: ColumnContext) -> ColumnOutput:
         return [("       -", f"dim orange1{ctx.bg}")]
 
 
+def charged(ctx: ColumnContext) -> float:
+    """What the agent's budget is charged: its own spend plus its evals (budget_gate)."""
+    from .context import eval_cost_of
+    return (ctx.session.stats.estimated_cost_usd or 0.0) + eval_cost_of(ctx.session)
+
+
+def budget_style(ctx: ColumnContext) -> str:
+    """The $ / EVAL / BDG colour: red at the budget, yellow from 80%, as the gate counts."""
+    budget = ctx.session.cost_budget_usd or 0.0
+    if budget > 0:
+        total = charged(ctx)
+        if total >= budget:
+            return f"bold red{ctx.bg}"
+        if total >= budget * 0.8:
+            return f"bold yellow{ctx.bg}"
+    return f"bold orange1{ctx.bg}"
+
+
+# The EVAL cell's width (" +$12.3", " +$1.2K"): the "-" placeholder matches it
+EVAL_W = 7
+
+
+def render_eval_cost(ctx: ColumnContext) -> ColumnOutput:
+    """What its evals and sims cost (gateway-metered or recorded), beside $.
+
+    "+" because it is on top of $ (never inside it); both count against the
+    budget, so it takes the same colour as $.
+    """
+    from .context import eval_cost_of
+    value = eval_cost_of(ctx.session)
+    if value <= 0:
+        return [(f"{'-':>{EVAL_W}}", f"dim orange1{ctx.bg}")]
+    return [(f"{'+' + format_cost(value):>{EVAL_W}}", budget_style(ctx))]
+
+
+def render_eval_cost_plain(ctx: ColumnContext) -> Optional[str]:
+    from .context import eval_cost_of
+    value = eval_cost_of(ctx.session)
+    return f"+{format_cost(value)}" if value > 0 else None
+
+
 def render_cost(ctx: ColumnContext) -> ColumnOutput:
-    """Dollar cost. The budget colours follow the total: a trip reset never adds budget."""
+    """Dollar cost. The budget colours follow the charged total (own + evals):
+    a trip reset never adds budget."""
     s = ctx.session
     if ctx.claude_stats is not None:
-        total = s.stats.estimated_cost_usd
+        total = charged(ctx)
         budget = s.cost_budget_usd
         if budget > 0:
             if total >= budget:
@@ -221,6 +263,9 @@ def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     if ctx.claude_stats is None:
         return None
     cost = f"{_plain_mark(ctx)}{format_cost(shown_cost(ctx))}"
+    evals = render_eval_cost_plain(ctx)
+    if evals:
+        cost += evals  # "$4.0+$1.2/$10.0": its own, its evals, the budget both count against
     budget = s.cost_budget_usd
     if budget > 0:
         return f"{cost}/{format_cost(budget)}"

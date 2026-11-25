@@ -40,21 +40,28 @@ PERMIT_SECONDS = 120.0
 REJECTED_ACTIVITY = "Prompt blocked: over its cost budget"
 
 
+def _amount(stats, key: str) -> float:
+    if stats is None:
+        return 0.0
+    value = stats.get(key, 0.0) if isinstance(stats, dict) else getattr(stats, key, 0.0)
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def external_cost(stats) -> float:
+    """What an agent is charged for evals and sims it ran (``external_spend``)."""
+    return _amount(stats, "external_cost_usd")
+
+
 def charged_cost(stats) -> float:
     """What an agent's budget is charged: its own estimated cost plus its
     external spend (evals and sims it ran, ``external_spend``).
 
     ``stats`` is a ``SessionStats`` or its dict (a sessions.json record's).
     """
-    def num(key):
-        value = stats.get(key, 0.0) if isinstance(stats, dict) else getattr(stats, key, 0.0)
-        try:
-            return float(value or 0.0)
-        except (TypeError, ValueError):
-            return 0.0
-    if stats is None:
-        return 0.0
-    return num("estimated_cost_usd") + num("external_cost_usd")
+    return _amount(stats, "estimated_cost_usd") + external_cost(stats)
 
 
 def is_budget_exceeded(session, stats=None) -> bool:

@@ -866,6 +866,7 @@ class MonitorDaemon:
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),
+            external_cost_usd=budget_gate.external_cost(stats),
             # Agent hierarchy (#244), from the tick's index
             parent_name=index.parent_name(session),
             depth=index.depth(session),
@@ -2339,7 +2340,9 @@ class MonitorDaemon:
 
         def _sum(sid, visited):
             visited.add(sid)
-            total = by_id[sid].estimated_cost_usd + carried.get(sid, 0.0)
+            # Charged cost, as budgets count it: its own plus its evals
+            total = (by_id[sid].estimated_cost_usd + (by_id[sid].external_cost_usd or 0.0)
+                     + carried.get(sid, 0.0))
             for child in children_map.get(sid, []):
                 if child not in visited:
                     total += _sum(child, visited)

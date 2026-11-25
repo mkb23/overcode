@@ -824,6 +824,11 @@ class TUIPreferences:
                 if isinstance(col_cfg, dict):
                     for lvl, overrides in list(col_cfg.items()):
                         col_cfg[lvl] = migrate_column_overrides(overrides)
+                        # EVAL (experiment billing) follows $ where $ was set
+                        # before it existed
+                        if (isinstance(col_cfg[lvl], dict) and "eval_cost" not in col_cfg[lvl]
+                                and isinstance(col_cfg[lvl].get("cost"), bool)):
+                            col_cfg[lvl]["eval_cost"] = col_cfg[lvl]["cost"]
                 sort_mode = kwargs.get("sort_mode")
                 if isinstance(sort_mode, str) and sort_mode.startswith("col:"):
                     if sort_mode[4:] in REMOVED_COLUMNS:
