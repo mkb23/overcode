@@ -1,10 +1,10 @@
 {
   "tier": "live-backends",
   "result": "passed",
-  "commit": "d1cf87fe6514fbbab130f21d18ebaf305401d5a5",
+  "commit": "1bc331b5dc6e656c62f266deb62a39e0285e29c4",
   "src_dirty": false,
-  "ran_at": "2026-10-20T19:46:19+00:00",
-  "duration_s": 394,
+  "ran_at": "2026-11-25T20:51:38+00:00",
+  "duration_s": 359,
   "exit_code": 0,
   "counts": {
     "passed": 8,
@@ -29,8 +29,8 @@
   "versions": {
     "python": "3.12.9",
     "platform": "Darwin 25.5.0 arm64",
-    "claude": "2.1.304 (Claude Code)",
-    "codex": "codex-cli 0.156.1",
+    "claude": "2.1.332 (Claude Code)",
+    "codex": "codex-cli 0.164.0",
     "opencode": "1.18.29",
     "hermes": "Hermes Agent v0.21.3 (2026.9.14) \u00b7 upstream 98f758ae",
     "grok": "grok 1.0.34 (3736acbc8658) [stable]"

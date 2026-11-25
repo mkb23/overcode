@@ -35,7 +35,8 @@
   find their agent (#559). Full detail drops its extra columns to fit,
   rather than cutting CTX and the model off the right end. `restart --model`
   now wins over a `-m` passed through at launch (opencode, codex, grok,
-  hermes). opencode agents get their PR number from their own `gh pr
+  hermes). codex 0.164's folder-trust dialog no longer eats the launch
+  prompt. opencode agents get their PR number from their own `gh pr
   create` output (#532). Emoji that some terminals drew at the wrong width
   are replaced (#461).
 - **Cheaper at scale (#528).** Following a running child costs one tmux call
